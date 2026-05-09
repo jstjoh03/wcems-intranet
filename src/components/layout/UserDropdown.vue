@@ -261,17 +261,13 @@ function signOut() {
 .user-dropdown__stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 6px 4px;
+  gap: 18px;
+  padding: 4px 4px 2px;
 }
 .user-dropdown__stat {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 12px;
-  background: var(--color-surface-soft);
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
+  gap: 1px;
   min-width: 0;
 }
 .user-dropdown__stat-label {
@@ -282,7 +278,6 @@ function signOut() {
   color: var(--color-muted);
 }
 .user-dropdown__stat-value {
-  font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 600;
   color: var(--color-ink);
@@ -293,7 +288,7 @@ function signOut() {
 }
 .user-dropdown__stat-empty {
   color: var(--color-muted);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .user-dropdown__fuel {
