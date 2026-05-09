@@ -1,7 +1,15 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { X, Upload, FileText, Trash2 } from 'lucide-vue-next'
 import { useNewsletter } from '@/composables/useNewsletter'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+const fileSizeHint = computed(() =>
+  auth.usingDevStub
+    ? 'Dev mode caps offline storage at 3 MB. Sign in for real to upload up to 25 MB to Storage.'
+    : 'Up to 25 MB. PDFs are stored in Supabase Storage and served via short-lived signed URLs.',
+)
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -162,9 +170,7 @@ function clearPickedFile() {
                 <span class="truncate">Currently: {{ current.fileName }}</span>
               </div>
             </div>
-            <span class="news-modal__hint">
-              Phase 1 stores up to 3 MB locally. Larger PDFs need Supabase Storage (Phase 2).
-            </span>
+            <span class="news-modal__hint">{{ fileSizeHint }}</span>
           </div>
 
           <div v-if="error" class="news-modal__error" role="alert">

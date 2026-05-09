@@ -15,9 +15,10 @@ import { useNewsletter } from '@/composables/useNewsletter'
 import NewsletterEditModal from './NewsletterEditModal.vue'
 
 const auth = useAuthStore()
-const { current } = useNewsletter()
+const { current, getPdfUrl } = useNewsletter()
 
 const editing = ref(false)
+const fetchingPdf = ref(false)
 
 const publishedDate = computed(() => {
   if (!current.value) return ''
@@ -27,6 +28,21 @@ const publishedDate = computed(() => {
     year: 'numeric',
   })
 })
+
+const hasPdf = computed(
+  () => !!(current.value && (current.value.pdfPath || current.value.dataUrl)),
+)
+
+async function openPdf() {
+  if (fetchingPdf.value) return
+  fetchingPdf.value = true
+  try {
+    const url = await getPdfUrl()
+    if (url) window.open(url, '_blank', 'noopener')
+  } finally {
+    fetchingPdf.value = false
+  }
+}
 </script>
 
 <template>
@@ -66,16 +82,16 @@ const publishedDate = computed(() => {
             {{ current.fileName }}
           </span>
         </div>
-        <a
-          v-if="current.dataUrl"
-          :href="current.dataUrl"
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          v-if="hasPdf"
+          type="button"
           class="newsletter-card__open"
+          :disabled="fetchingPdf"
+          @click="openPdf"
         >
-          Open PDF
+          {{ fetchingPdf ? 'Opening…' : 'Open PDF' }}
           <ExternalLink :size="13" />
-        </a>
+        </button>
         <button v-else class="newsletter-card__more" disabled>
           No PDF attached <ChevronRight :size="13" />
         </button>
