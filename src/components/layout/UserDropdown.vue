@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check } from 'lucide-vue-next'
+import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check, Pencil } from 'lucide-vue-next'
 import { useCodeReveal } from '@/composables/useCodeReveal'
 
 const auth = useAuthStore()
@@ -10,6 +10,12 @@ const root = ref<HTMLElement | null>(null)
 const copied = ref(false)
 
 const fuel = useCodeReveal()
+
+const editingStation = ref(false)
+const stationDraft = ref('')
+const stationInput = ref<HTMLInputElement | null>(null)
+const stationError = ref<string | null>(null)
+const savingStation = ref(false)
 
 const initials = computed(() => auth.appUser?.initials ?? '?')
 const firstName = computed(() => auth.appUser?.firstName ?? '')
@@ -22,11 +28,51 @@ const station = computed(() => auth.appUser?.station ?? null)
 function close() {
   open.value = false
   fuel.hide()
+  cancelEditStation()
 }
 
 function toggle() {
   open.value = !open.value
-  if (!open.value) fuel.hide()
+  if (!open.value) {
+    fuel.hide()
+    cancelEditStation()
+  }
+}
+
+async function startEditStation() {
+  stationDraft.value = station.value ?? ''
+  stationError.value = null
+  editingStation.value = true
+  await nextTick()
+  stationInput.value?.focus()
+  stationInput.value?.select()
+}
+
+function cancelEditStation() {
+  editingStation.value = false
+  stationDraft.value = ''
+  stationError.value = null
+}
+
+async function saveStation() {
+  if (savingStation.value) return
+  const trimmed = stationDraft.value.trim()
+  const current = station.value ?? ''
+  if (trimmed === current) {
+    cancelEditStation()
+    return
+  }
+  savingStation.value = true
+  stationError.value = null
+  try {
+    await auth.updateOwnStation(trimmed || null)
+    editingStation.value = false
+    stationDraft.value = ''
+  } catch (err) {
+    stationError.value = (err as Error).message
+  } finally {
+    savingStation.value = false
+  }
 }
 
 function onClickOutside(e: MouseEvent) {
@@ -111,10 +157,38 @@ function signOut() {
           </div>
           <div class="user-dropdown__stat">
             <div class="user-dropdown__stat-label">Station</div>
-            <div class="user-dropdown__stat-value">
-              <template v-if="station">{{ station }}</template>
-              <span v-else class="user-dropdown__stat-empty">—</span>
-            </div>
+            <template v-if="!editingStation">
+              <button
+                type="button"
+                class="user-dropdown__stat-edit-btn"
+                :aria-label="station ? `Edit station (currently ${station})` : 'Set your station'"
+                @click="startEditStation"
+              >
+                <span class="user-dropdown__stat-value">
+                  <template v-if="station">{{ station }}</template>
+                  <span v-else class="user-dropdown__stat-empty">— set</span>
+                </span>
+                <Pencil :size="11" :stroke-width="1.85" class="user-dropdown__stat-pencil" />
+              </button>
+            </template>
+            <template v-else>
+              <input
+                ref="stationInput"
+                v-model="stationDraft"
+                type="text"
+                class="user-dropdown__stat-input"
+                maxlength="40"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="e.g. S202"
+                :disabled="savingStation"
+                @keydown.enter.prevent="saveStation"
+                @keydown.escape.prevent="cancelEditStation"
+              />
+              <div v-if="stationError" class="user-dropdown__stat-error">
+                {{ stationError }}
+              </div>
+            </template>
           </div>
         </div>
 
@@ -289,6 +363,65 @@ function signOut() {
 .user-dropdown__stat-empty {
   color: var(--color-muted);
   font-weight: 400;
+}
+
+.user-dropdown__stat-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.user-dropdown__stat-edit-btn:hover .user-dropdown__stat-pencil,
+.user-dropdown__stat-edit-btn:focus-visible .user-dropdown__stat-pencil {
+  opacity: 1;
+  color: var(--color-accent-700);
+}
+.user-dropdown__stat-edit-btn:focus-visible {
+  outline: none;
+}
+.user-dropdown__stat-edit-btn:focus-visible .user-dropdown__stat-value {
+  text-decoration: underline;
+  text-decoration-color: var(--color-accent-500);
+  text-underline-offset: 3px;
+}
+.user-dropdown__stat-pencil {
+  opacity: 0;
+  color: var(--color-muted);
+  transition: opacity 120ms var(--ease-out), color 120ms var(--ease-out);
+  flex-shrink: 0;
+}
+
+.user-dropdown__stat-input {
+  width: 100%;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  padding: 2px 6px;
+  outline: none;
+  margin-top: 1px;
+}
+.user-dropdown__stat-input:focus {
+  border-color: var(--color-accent-500);
+  box-shadow: 0 0 0 2px oklch(0.93 0.04 86.8);
+}
+.user-dropdown__stat-input:disabled {
+  opacity: 0.6;
+}
+.user-dropdown__stat-error {
+  font-size: 11px;
+  color: var(--color-danger-500);
+  margin-top: 3px;
+  line-height: 1.3;
 }
 
 .user-dropdown__fuel {
