@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Hero from '@/components/dashboard/Hero.vue'
 import OperationalStrip from '@/components/dashboard/OperationalStrip.vue'
+import FeaturedQuickLinks from '@/components/dashboard/FeaturedQuickLinks.vue'
 import StationDirectory from '@/components/dashboard/StationDirectory.vue'
 import NewsletterCard from '@/components/dashboard/NewsletterCard.vue'
 import UpcomingTrainingCard from '@/components/dashboard/UpcomingTrainingCard.vue'
@@ -14,6 +15,11 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
   <div class="dash">
     <Hero />
     <OperationalStrip />
+
+    <!-- Four most-used shortcuts (Outlook, Shoutout, Supply Portal,
+         Aladtec) sit between the on-call card and editorial content for
+         one-tap access without opening the Quick Links dock. -->
+    <FeaturedQuickLinks />
 
     <!--
       Quick Links lives in a floating dock (AppShell) so the dashboard
