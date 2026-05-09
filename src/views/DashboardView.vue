@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import Hero from '@/components/dashboard/Hero.vue'
-import OperationalStrip from '@/components/dashboard/OperationalStrip.vue'
 import FeaturedQuickLinks from '@/components/dashboard/FeaturedQuickLinks.vue'
 import StationDirectory from '@/components/dashboard/StationDirectory.vue'
 import NewsletterCard from '@/components/dashboard/NewsletterCard.vue'
@@ -14,25 +13,30 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
 <template>
   <div class="dash">
     <Hero />
-    <OperationalStrip />
 
-    <!-- Four most-used shortcuts (Outlook, Shoutout, Supply Portal,
-         Aladtec) sit between the on-call card and editorial content for
-         one-tap access without opening the Quick Links dock. -->
+    <!-- Horizontal gold accent rule — same gradient treatment as the
+         supply portal's section dividers. Sits between the hero greeting
+         and the featured shortcuts so they read as separate beats. -->
+    <hr class="dash__rule" aria-hidden="true" />
+
+    <!-- Four most-used shortcuts (role-aware: crew sees Outlook /
+         Shoutout / Supply / Protocols, supervisors swap in Responder360
+         + Daily Summary). -->
     <FeaturedQuickLinks />
 
     <!--
       Quick Links lives in a floating dock (AppShell) so the dashboard
       can lead with editorial content. Main column: Announcements →
-      Newsletter → Stations. Sidebar: Upcoming Training, Call Volume.
+      People → Stations. Sidebar: Upcoming Training, Call Volume.
+      Newsletter sits full-width near the bottom with the photo gallery.
     -->
     <div class="dash__grid">
       <div class="dash__main">
         <div id="announcements" class="reveal" style="animation-delay: 80ms">
           <AnnouncementsCard />
         </div>
-        <div id="newsletter" class="reveal" style="animation-delay: 110ms">
-          <NewsletterCard />
+        <div class="reveal" style="animation-delay: 110ms">
+          <PeopleRow />
         </div>
         <div id="stations" class="reveal" style="animation-delay: 140ms">
           <StationDirectory />
@@ -50,7 +54,9 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
     </div>
 
     <PhotoGallery />
-    <PeopleRow />
+    <div id="newsletter" class="reveal dash__newsletter" style="animation-delay: 80ms">
+      <NewsletterCard />
+    </div>
   </div>
 </template>
 
@@ -87,5 +93,28 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+/* Horizontal gold gradient rule — fades in from transparent, holds the
+   gold tone in the middle, fades back out. Same recipe as the hero's
+   vertical divider, ported to horizontal. */
+.dash__rule {
+  border: 0;
+  height: 1px;
+  margin: 24px 0 28px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    oklch(0.734 0.114 86.8 / 0.45) 25%,
+    oklch(0.734 0.114 86.8 / 0.45) 75%,
+    transparent 100%
+  );
+}
+
+/* Breathing room between Around-the-County and the newsletter — without
+   it the photo gallery's bottom edge butts right up against the
+   newsletter hero, which felt cramped. */
+.dash__newsletter {
+  margin-top: 48px;
 }
 </style>

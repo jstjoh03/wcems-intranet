@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Phone, MapPin, Plus, Lock, Edit2, EyeOff } from 'lucide-vue-next'
+import { Phone, MapPin, Plus, Lock, Edit2, Eye, EyeOff } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import AppCard from '@/components/primitives/AppCard.vue'
@@ -154,7 +154,7 @@ const sorted = computed(() => stationsStore.activeStations)
               class="station-card__code-cta"
               @click="reveal(s.id).reveal"
             >
-              Tap to reveal
+              <Eye :size="18" :stroke-width="2" /> Reveal code
             </button>
             <button
               v-else
@@ -163,8 +163,11 @@ const sorted = computed(() => stationsStore.activeStations)
               :title="'Tap to hide'"
               @click="reveal(s.id).hide"
             >
+              <Lock :size="18" :stroke-width="2" class="station-card__code-lock" />
               <span class="font-mono station-card__code-value">{{ s.doorCode }}</span>
-              <EyeOff :size="13" :stroke-width="1.85" class="station-card__code-eye" />
+              <span class="station-card__code-iconbox">
+                <EyeOff :size="16" :stroke-width="2" class="station-card__code-eye" />
+              </span>
               <span class="station-card__code-progress" :style="{ width: reveal(s.id).progressPct.value }" />
             </button>
             <button
@@ -348,65 +351,126 @@ const sorted = computed(() => stationsStore.activeStations)
   letter-spacing: -0.005em;
 }
 .station-card__code-cta {
+  position: relative;
   flex: 1;
-  min-width: 120px;
-  padding: 9px 14px;
+  min-width: 110px;
+  height: 34px;
+  padding: 0 14px;
   border-radius: 8px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  color: var(--color-ink-soft);
-  font-size: 12px;
+  border: 1px solid color-mix(in oklch, var(--color-accent-on-dark) 48%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--color-brand-800) 88%, white 10%),
+    color-mix(in oklch, var(--color-brand-800) 96%, black 4%)
+  );
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 3px 8px rgba(0, 0, 0, 0.14);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all 150ms var(--ease-out);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
 }
 .station-card__code-cta:hover {
-  border-color: var(--color-brand-500);
-  color: var(--color-brand-700);
-  box-shadow: var(--shadow-md);
   transform: translateY(-1px);
+  border-color: color-mix(in oklch, var(--color-accent-on-dark) 70%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 5px 12px rgba(0, 0, 0, 0.18),
+    0 0 14px color-mix(in oklch, var(--color-accent-on-dark) 22%, transparent);
 }
+.station-card__code-cta:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.32),
+    0 2px 6px rgba(0, 0, 0, 0.16);
+}
+.station-card__code-cta svg {
+  width: 14px;
+  height: 14px;
+  color: var(--color-accent-on-dark);
+  flex-shrink: 0;
+}
+
 .station-card__code-revealed {
   position: relative;
   flex: 1;
-  min-width: 120px;
-  padding: 10px 14px;
+  min-width: 130px;
+  height: 34px;
+  padding: 0 14px;
   border-radius: 8px;
-  background: var(--color-brand-800);
-  border: 1px solid var(--color-brand-700);
+  border: 1px solid color-mix(in oklch, var(--color-accent-on-dark) 48%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--color-brand-800) 88%, white 10%),
+    color-mix(in oklch, var(--color-brand-800) 96%, black 4%)
+  );
   color: white;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
   overflow: hidden;
-  letter-spacing: 0.04em;
-  box-shadow: var(--shadow-sm);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 3px 8px rgba(0, 0, 0, 0.14);
+  transition: transform 180ms ease;
 }
 .station-card__code-revealed:hover {
-  background: var(--color-brand-700);
+  transform: translateY(-1px);
+}
+.station-card__code-revealed svg.station-card__code-lock {
+  width: 14px;
+  height: 14px;
+}
+.station-card__code-lock {
+  flex-shrink: 0;
+  color: var(--color-accent-on-dark);
+}
+.station-card__code-iconbox {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+}
+.station-card__code-iconbox svg {
+  width: 13px;
+  height: 13px;
 }
 .station-card__code-value {
   flex: 1;
-  text-align: left;
-  letter-spacing: 0.04em;
+  text-align: center;
 }
 .station-card__code-eye {
-  opacity: 0.7;
-  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.78);
 }
 .station-card__code-progress {
   position: absolute;
   bottom: 0;
   left: 0;
-  height: 2px;
-  background: var(--color-accent-500);
+  height: 2.5px;
+  background: var(--color-accent-on-dark);
   transition: width 0.05s linear;
   pointer-events: none;
 }

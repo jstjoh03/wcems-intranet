@@ -46,10 +46,6 @@ const greetingText = computed(() =>
       </div>
     </div>
 
-    <!-- Vertical gold accent line — same gradient treatment Justin uses
-         in the supply portal's DashboardView header divider. -->
-    <span class="hero__divider" aria-hidden="true" />
-
     <div class="hero__patch patch-in" aria-hidden="true">
       <span class="hero__patch-halo" />
       <img src="/wcems-patch.png" alt="WCEMS patch" width="140" height="140" />
@@ -107,27 +103,6 @@ const greetingText = computed(() =>
 }
 .hero__title--birthday .hero__name {
   color: var(--color-accent-700);
-}
-
-/* Vertical gold gradient line, ported from supply portal DashboardView */
-.hero__divider {
-  display: none;
-  flex-shrink: 0;
-  width: 1px;
-  align-self: stretch;
-  min-height: 92px;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    oklch(0.734 0.114 86.8 / 0.45) 30%,
-    oklch(0.734 0.114 86.8 / 0.45) 70%,
-    transparent 100%
-  );
-}
-@media (min-width: 1024px) {
-  .hero__divider {
-    display: block;
-  }
 }
 
 .hero__patch {

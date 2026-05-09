@@ -318,7 +318,7 @@ const traumaShort = (t: TraumaLevel) => {
                   class="hosp-card__code-cta"
                   @click="reveal(h.id, 'er').reveal"
                 >
-                  <Eye :size="11" :stroke-width="2" /> Tap to reveal
+                  <Eye :size="18" :stroke-width="2" /> Reveal code
                 </button>
                 <button
                   v-else
@@ -327,8 +327,11 @@ const traumaShort = (t: TraumaLevel) => {
                   title="Tap to hide"
                   @click="reveal(h.id, 'er').hide"
                 >
+                  <Lock :size="18" :stroke-width="2" class="hosp-card__code-lock" />
                   <span class="font-mono hosp-card__code-value">{{ h.erDoorCode }}</span>
-                  <EyeOff :size="11" :stroke-width="1.85" />
+                  <span class="hosp-card__code-iconbox">
+                    <EyeOff :size="16" :stroke-width="2" class="hosp-card__code-eye" />
+                  </span>
                   <span class="hosp-card__code-progress" :style="{ width: reveal(h.id, 'er').progressPct.value }" />
                 </button>
                 <button
@@ -349,6 +352,7 @@ const traumaShort = (t: TraumaLevel) => {
                 >
                   <Edit2 :size="10" /> Add code
                 </button>
+                <span class="hosp-card__edit-spacer" aria-hidden="true" />
               </template>
             </div>
 
@@ -369,7 +373,7 @@ const traumaShort = (t: TraumaLevel) => {
                   class="hosp-card__code-cta"
                   @click="reveal(h.id, 'ems_room').reveal"
                 >
-                  <Eye :size="11" :stroke-width="2" /> Tap to reveal
+                  <Eye :size="18" :stroke-width="2" /> Reveal code
                 </button>
                 <button
                   v-else
@@ -378,8 +382,11 @@ const traumaShort = (t: TraumaLevel) => {
                   title="Tap to hide"
                   @click="reveal(h.id, 'ems_room').hide"
                 >
+                  <Lock :size="18" :stroke-width="2" class="hosp-card__code-lock" />
                   <span class="font-mono hosp-card__code-value">{{ h.emsRoomCode }}</span>
-                  <EyeOff :size="11" :stroke-width="1.85" />
+                  <span class="hosp-card__code-iconbox">
+                    <EyeOff :size="16" :stroke-width="2" class="hosp-card__code-eye" />
+                  </span>
                   <span class="hosp-card__code-progress" :style="{ width: reveal(h.id, 'ems_room').progressPct.value }" />
                 </button>
                 <button
@@ -400,6 +407,7 @@ const traumaShort = (t: TraumaLevel) => {
                 >
                   <Edit2 :size="10" /> Add code
                 </button>
+                <span class="hosp-card__edit-spacer" aria-hidden="true" />
               </template>
             </div>
           </aside>
@@ -745,65 +753,128 @@ const traumaShort = (t: TraumaLevel) => {
 }
 
 .hosp-card__code-cta {
+  position: relative;
   flex: 1;
-  min-width: 0;
+  min-width: 110px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklch, var(--color-accent-on-dark) 48%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--color-brand-800) 88%, white 10%),
+    color-mix(in oklch, var(--color-brand-800) 96%, black 4%)
+  );
+  color: white;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  color: var(--color-ink-soft);
-  font-size: 11.5px;
+  gap: 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 3px 8px rgba(0, 0, 0, 0.14);
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: all 150ms var(--ease-out);
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
 }
 .hosp-card__code-cta:hover {
-  border-color: var(--color-brand-500);
-  color: var(--color-brand-700);
   transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  border-color: color-mix(in oklch, var(--color-accent-on-dark) 70%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 5px 12px rgba(0, 0, 0, 0.18),
+    0 0 14px color-mix(in oklch, var(--color-accent-on-dark) 22%, transparent);
+}
+.hosp-card__code-cta:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.32),
+    0 2px 6px rgba(0, 0, 0, 0.16);
+}
+.hosp-card__code-cta svg {
+  width: 13px;
+  height: 13px;
+  color: var(--color-accent-on-dark);
+  flex-shrink: 0;
 }
 
 .hosp-card__code-revealed {
   position: relative;
   flex: 1;
-  min-width: 0;
+  min-width: 110px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in oklch, var(--color-accent-on-dark) 48%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--color-brand-800) 88%, white 10%),
+    color-mix(in oklch, var(--color-brand-800) 96%, black 4%)
+  );
+  color: white;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 9px 12px;
-  border-radius: 8px;
-  background: var(--color-brand-800);
-  border: 1px solid var(--color-brand-700);
-  color: white;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
   cursor: pointer;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 3px 8px rgba(0, 0, 0, 0.14);
+  transition: transform 180ms ease;
 }
 .hosp-card__code-revealed:hover {
-  background: var(--color-brand-700);
+  transform: translateY(-1px);
+}
+.hosp-card__code-revealed svg.hosp-card__code-lock {
+  width: 13px;
+  height: 13px;
+}
+.hosp-card__code-lock {
+  flex-shrink: 0;
+  color: var(--color-accent-on-dark);
+}
+.hosp-card__code-iconbox {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+}
+.hosp-card__code-iconbox svg {
+  width: 12px;
+  height: 12px;
+}
+.hosp-card__code-eye {
+  color: rgba(255, 255, 255, 0.78);
 }
 .hosp-card__code-value {
   flex: 1;
-  text-align: left;
+  text-align: center;
 }
 .hosp-card__code-progress {
+  /* Drains from full → 0 over the 20s reveal window. At full it sits like
+     a static gold border-bottom; the drain is the auto-hide countdown. */
   position: absolute;
   bottom: 0;
   left: 0;
-  height: 2px;
-  background: var(--color-accent-500);
+  height: 2.5px;
+  background: var(--color-accent-on-dark);
   transition: width 0.05s linear;
   pointer-events: none;
 }
@@ -827,6 +898,12 @@ const traumaShort = (t: TraumaLevel) => {
   background: var(--color-surface);
 }
 
+.hosp-card__edit-spacer {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+}
+
 .hosp-card__code-add {
   flex: 1;
   display: inline-flex;
@@ -834,15 +911,14 @@ const traumaShort = (t: TraumaLevel) => {
   justify-content: center;
   gap: 4px;
   padding: 6px 12px;
-  border-radius: 8px;
   background: transparent;
-  border: 1px dashed var(--color-line);
+  border: none;
   color: var(--color-muted);
   font-size: 11.5px;
   cursor: pointer;
+  transition: color 120ms var(--ease-out);
 }
 .hosp-card__code-add:hover {
-  border-color: var(--color-muted-soft);
   color: var(--color-brand-600);
 }
 

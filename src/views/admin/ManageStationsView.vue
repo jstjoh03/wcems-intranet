@@ -118,7 +118,7 @@ function resetSeed() {
 
     <div v-if="!auth.isAdmin" class="ms-view__deny">
       You need admin access to manage stations. Currently signed in as
-      <strong>{{ auth.role.value }}</strong>.
+      <strong>{{ auth.role }}</strong>.
     </div>
 
     <template v-else>

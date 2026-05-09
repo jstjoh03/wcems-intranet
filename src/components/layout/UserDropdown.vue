@@ -161,7 +161,9 @@ function signOut() {
   width: 26px;
   height: 26px;
   border-radius: 6px;
-  background: var(--color-accent-500);
+  /* Trigger avatar sits on the navy topbar — use the on-dark gold so it
+     visually matches the page's antique gold instead of reading bright. */
+  background: var(--color-accent-on-dark);
   color: var(--color-brand-900);
   display: flex;
   align-items: center;
@@ -170,11 +172,14 @@ function signOut() {
   flex-shrink: 0;
   letter-spacing: -0.01em;
 }
+/* Large avatar lives inside the dropdown panel on a white surface, so it
+   gets the canonical page gold (accent-500). */
 .user-dropdown__avatar--lg {
   width: 40px;
   height: 40px;
   font-size: 15px;
   border-radius: 8px;
+  background: var(--color-accent-500);
 }
 
 .user-dropdown__meta {
@@ -194,7 +199,8 @@ function signOut() {
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--color-accent-500);
+  /* Sits in the trigger on navy — use on-dark variant. */
+  color: var(--color-accent-on-dark);
   margin-top: 2px;
 }
 .user-dropdown__chev {

@@ -31,6 +31,11 @@
   --color-accent-500: oklch(0.734 0.114 86.8);
   --color-accent-600: oklch(0.664 0.119 86.8);
   --color-accent-700: oklch(0.584 0.109 86.8);
+  /* Same hue, lower chroma — for gold sitting on the deep navy topbar
+     where simultaneous-contrast pushes accent-500 to read as a brighter
+     yellow than the page's antique gold. Use this instead so on-dark
+     gold and on-cream gold read as the same antique tone. */
+  --color-accent-on-dark: oklch(0.74 0.085 86.8);
 
   /* ── Trauma level palette (hospital chips) ──────────────────────────── */
   --color-trauma-1: oklch(0.55 0.2 27); /* Level I — red */

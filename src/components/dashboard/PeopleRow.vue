@@ -1,16 +1,23 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Cake, Star, Award, Heart, Users } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import peopleData from '@/data/people.json'
 import { useAuthStore } from '@/stores/auth'
+import { useGreeting } from '@/composables/useGreeting'
+import { useBirthdayReactions } from '@/composables/useBirthdayReactions'
 
 const auth = useAuthStore()
+const { isoDate } = useGreeting()
 const people = peopleData as {
   spotlight: { name: string; role: string; tenure: string; blurb: string } | null
   birthdays: Array<{ name: string; role: string; shift: string; date: string }>
 }
+
+const currentUserId = computed(() => auth.appUser?.id ?? 'anonymous')
+const reactions = useBirthdayReactions(currentUserId.value)
 
 function initials(name: string) {
   return name
@@ -19,6 +26,11 @@ function initials(name: string) {
     .filter(Boolean)
     .slice(0, 2)
     .join('')
+}
+
+/** Stable key per person; falls back to a slug of their name. */
+function keyFor(b: { name: string }) {
+  return b.name.toLowerCase().replace(/\s+/g, '-')
 }
 </script>
 
@@ -85,8 +97,28 @@ function initials(name: string) {
                 {{ b.role }} · {{ b.shift }} Shift
               </div>
             </div>
-            <button class="birthdays__heart" aria-label="Send birthday wishes">
-              <Heart :size="14" />
+            <button
+              type="button"
+              class="birthdays__heart"
+              :class="{ 'birthdays__heart--reacted': reactions.hasReacted(isoDate, keyFor(b)) }"
+              :aria-pressed="reactions.hasReacted(isoDate, keyFor(b))"
+              :aria-label="
+                reactions.hasReacted(isoDate, keyFor(b))
+                  ? `You wished ${b.name.split(' ')[0]} happy birthday — tap to undo`
+                  : `Send happy birthday to ${b.name.split(' ')[0]}`
+              "
+              @click="reactions.toggle(isoDate, keyFor(b))"
+            >
+              <Heart
+                :size="14"
+                :fill="reactions.hasReacted(isoDate, keyFor(b)) ? 'currentColor' : 'none'"
+              />
+              <span
+                v-if="reactions.getCount(isoDate, keyFor(b)) > 0"
+                class="birthdays__heart-count"
+              >
+                {{ reactions.getCount(isoDate, keyFor(b)) }}
+              </span>
             </button>
           </div>
         </div>
@@ -245,14 +277,42 @@ function initials(name: string) {
   flex-shrink: 0;
 }
 .birthdays__heart {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: transparent;
-  border: none;
+  border: 1px solid transparent;
   cursor: pointer;
-  padding: 6px;
+  padding: 5px 8px 5px 7px;
   border-radius: 999px;
   color: var(--color-accent-700);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  transition:
+    background 140ms var(--ease-out),
+    border-color 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
 }
 .birthdays__heart:hover {
-  background: oklch(1 0 0 / 0.5);
+  background: oklch(1 0 0 / 0.6);
+  border-color: oklch(0.85 0.07 86.8);
+}
+.birthdays__heart:active {
+  transform: scale(0.94);
+}
+.birthdays__heart--reacted {
+  color: var(--color-danger-500);
+  background: oklch(0.97 0.04 20);
+  border-color: oklch(0.85 0.07 20);
+}
+.birthdays__heart--reacted:hover {
+  background: oklch(0.94 0.06 20);
+  border-color: oklch(0.78 0.1 20);
+}
+.birthdays__heart-count {
+  letter-spacing: 0.02em;
+  min-width: 0.7em;
+  text-align: center;
 }
 </style>

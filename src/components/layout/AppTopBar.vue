@@ -76,7 +76,11 @@ const isDev = import.meta.env.DEV
   background: var(--color-brand-900);
   border-bottom: 1px solid var(--color-brand-800);
   width: 100%;
-  overflow: hidden;
+  /* Clip horizontally so the dev role-switcher / search can't leak past
+     the viewport edge, but keep vertical visible so the user dropdown
+     panel can extend below the bar without being chopped off. */
+  overflow-x: clip;
+  overflow-y: visible;
 }
 
 .topbar__inner {
@@ -97,7 +101,7 @@ const isDev = import.meta.env.DEV
 .topbar__menu {
   background: transparent;
   border: none;
-  color: var(--color-accent-500);
+  color: var(--color-accent-on-dark);
   padding: 6px;
   border-radius: 6px;
   cursor: pointer;
@@ -137,7 +141,7 @@ const isDev = import.meta.env.DEV
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--color-accent-500);
+  color: var(--color-accent-on-dark);
 }
 
 .topbar__search {
@@ -154,7 +158,7 @@ const isDev = import.meta.env.DEV
   border: 1px solid var(--color-brand-700);
 }
 .topbar__search-icon {
-  color: var(--color-accent-500);
+  color: var(--color-accent-on-dark);
   opacity: 0.7;
   flex-shrink: 0;
 }
@@ -217,7 +221,7 @@ const isDev = import.meta.env.DEV
   transition: all 120ms var(--ease-out);
 }
 .topbar__role-btn--active {
-  background: var(--color-accent-500);
+  background: var(--color-accent-on-dark);
   color: var(--color-brand-900);
 }
 </style>

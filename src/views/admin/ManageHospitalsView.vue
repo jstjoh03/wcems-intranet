@@ -162,7 +162,7 @@ function resetSeed() {
 
     <div v-if="!auth.isAdmin" class="mh-view__deny">
       You need admin access to manage hospitals. Currently signed in as
-      <strong>{{ auth.role.value }}</strong>.
+      <strong>{{ auth.role }}</strong>.
     </div>
 
     <template v-else>

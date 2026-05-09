@@ -65,11 +65,11 @@ function save() {
 
 <style scoped>
 .code-editor {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   gap: 4px;
-  width: 100%;
-  max-width: 280px;
+  flex: 1;
+  min-width: 0;
 }
 .code-editor__label {
   font-size: 10px;

@@ -1,37 +1,105 @@
 <script setup lang="ts">
-import { ChevronRight, Image as ImageIcon, Edit2 } from 'lucide-vue-next'
+import { ref, computed } from 'vue'
+import {
+  ChevronRight,
+  Image as ImageIcon,
+  Edit2,
+  FileText,
+  ExternalLink,
+} from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useNewsletter } from '@/composables/useNewsletter'
+import NewsletterEditModal from './NewsletterEditModal.vue'
 
 const auth = useAuthStore()
+const { current } = useNewsletter()
+
+const editing = ref(false)
+
+const publishedDate = computed(() => {
+  if (!current.value) return ''
+  return new Date(current.value.publishedAt).toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+})
 </script>
 
 <template>
   <AppCard class="newsletter-card overflow-hidden">
     <div class="newsletter-card__hero">
-      <ImageIcon :size="26" class="newsletter-card__icon" />
-      <AppChip variant="accent" class="newsletter-card__chip">Featured</AppChip>
+      <FileText
+        v-if="current"
+        :size="38"
+        :stroke-width="1.4"
+        class="newsletter-card__icon"
+      />
+      <ImageIcon v-else :size="26" class="newsletter-card__icon" />
+      <AppChip variant="accent" class="newsletter-card__chip">
+        {{ current ? 'Published' : 'Featured' }}
+      </AppChip>
       <button
         v-if="auth.isAdmin"
         type="button"
         class="newsletter-card__edit"
-        aria-label="Edit newsletter"
+        :aria-label="current ? 'Edit newsletter' : 'Publish newsletter'"
+        @click="editing = true"
       >
         <Edit2 :size="12" />
       </button>
     </div>
     <div class="newsletter-card__body">
       <Eyebrow>Newsletter</Eyebrow>
-      <h3 class="newsletter-card__title display">No newsletter yet</h3>
-      <p class="newsletter-card__sub">
-        When the team publishes the next monthly newsletter, it'll show up here.
-      </p>
-      <button class="newsletter-card__more" disabled>
-        Read more <ChevronRight :size="13" />
-      </button>
+      <template v-if="current">
+        <h3 class="newsletter-card__title display">{{ current.title }}</h3>
+        <p v-if="current.subtitle" class="newsletter-card__sub">
+          {{ current.subtitle }}
+        </p>
+        <div class="newsletter-card__meta">
+          <span class="newsletter-card__date">{{ publishedDate }}</span>
+          <span v-if="current.fileName" class="newsletter-card__filename">
+            <FileText :size="11" :stroke-width="2" />
+            {{ current.fileName }}
+          </span>
+        </div>
+        <a
+          v-if="current.dataUrl"
+          :href="current.dataUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="newsletter-card__open"
+        >
+          Open PDF
+          <ExternalLink :size="13" />
+        </a>
+        <button v-else class="newsletter-card__more" disabled>
+          No PDF attached <ChevronRight :size="13" />
+        </button>
+      </template>
+      <template v-else>
+        <h3 class="newsletter-card__title display">No newsletter yet</h3>
+        <p class="newsletter-card__sub">
+          When the team publishes the next monthly newsletter, it'll show up here.
+        </p>
+        <button
+          v-if="auth.isAdmin"
+          class="newsletter-card__publish-cta"
+          type="button"
+          @click="editing = true"
+        >
+          + Publish newsletter
+        </button>
+        <button v-else class="newsletter-card__more" disabled>
+          Read more <ChevronRight :size="13" />
+        </button>
+      </template>
     </div>
+
+    <NewsletterEditModal :open="editing" @close="editing = false" />
   </AppCard>
 </template>
 
@@ -62,7 +130,7 @@ const auth = useAuthStore()
 .newsletter-card__icon {
   position: relative;
   color: var(--color-accent-500);
-  opacity: 0.6;
+  opacity: 0.7;
 }
 .newsletter-card__chip {
   position: absolute;
@@ -84,10 +152,14 @@ const auth = useAuthStore()
   border-radius: 6px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 150ms;
+  transition: opacity 150ms, background 150ms;
 }
-.newsletter-card:hover .newsletter-card__edit {
+.newsletter-card:hover .newsletter-card__edit,
+.newsletter-card__edit:focus-visible {
   opacity: 1;
+}
+.newsletter-card__edit:hover {
+  background: oklch(0 0 0 / 0.6);
 }
 
 .newsletter-card__body {
@@ -104,6 +176,45 @@ const auth = useAuthStore()
   color: var(--color-ink-soft);
   line-height: 1.5;
 }
+.newsletter-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--color-muted);
+}
+.newsletter-card__date {
+  text-transform: uppercase;
+}
+.newsletter-card__filename {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-muted);
+}
+.newsletter-card__open {
+  margin-top: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 600;
+  color: white;
+  background: var(--color-brand-600);
+  padding: 8px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: background 120ms var(--ease-out);
+}
+.newsletter-card__open:hover {
+  background: var(--color-brand-700);
+}
 .newsletter-card__more {
   margin-top: 12px;
   display: inline-flex;
@@ -119,5 +230,22 @@ const auth = useAuthStore()
 .newsletter-card__more:disabled {
   color: var(--color-muted);
   cursor: not-allowed;
+}
+.newsletter-card__publish-cta {
+  margin-top: 14px;
+  align-self: flex-start;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.newsletter-card__publish-cta:hover {
+  border-color: var(--color-brand-600);
+  color: var(--color-brand-600);
 }
 </style>

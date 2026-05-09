@@ -39,7 +39,7 @@ const customizing = ref(false)
 const search = ref('')
 
 const visibleLinks = computed(() => {
-  const role = auth.role.value ?? 'crew'
+  const role = auth.role ?? 'crew'
   return links.filter((l) => l.visibleTo.includes(role))
 })
 
@@ -161,7 +161,7 @@ onBeforeUnmount(() => {
             <li v-for="l in pinned" :key="l.id">
               <a :href="l.url" target="_blank" rel="noopener noreferrer" class="qld-row qld-row--pinned">
                 <span class="qld-row__icon">
-                  <IconRender :name="l.iconName" :size="14" />
+                  <IconRender :name="l.iconName" :size="16" :stroke-width="1.85" />
                 </span>
                 <span class="qld-row__text">
                   <span class="qld-row__name">{{ l.label }}</span>
@@ -194,7 +194,7 @@ onBeforeUnmount(() => {
             <li v-for="l in items" :key="l.id">
               <a :href="l.url" target="_blank" rel="noopener noreferrer" class="qld-row">
                 <span class="qld-row__icon">
-                  <IconRender :name="l.iconName" :size="14" />
+                  <IconRender :name="l.iconName" :size="16" :stroke-width="1.85" />
                 </span>
                 <span class="qld-row__text">
                   <span class="qld-row__name">{{ l.label }}</span>
@@ -301,7 +301,9 @@ onBeforeUnmount(() => {
   width: 22px;
   height: 22px;
   border-radius: 999px;
-  background: var(--color-accent-500);
+  /* Same antique-gold-on-navy treatment as the topbar avatar so the dock
+     pill reads as the same gold as the rest of the page. */
+  background: var(--color-accent-on-dark);
   color: var(--color-brand-900);
 }
 .qld-pill__label {
@@ -498,7 +500,7 @@ onBeforeUnmount(() => {
 
 .qld-row {
   display: grid;
-  grid-template-columns: 28px 1fr auto;
+  grid-template-columns: 32px 1fr auto;
   align-items: center;
   gap: 12px;
   padding: 9px 12px;
@@ -519,16 +521,62 @@ onBeforeUnmount(() => {
   background: oklch(0.97 0.04 86.8);
 }
 
+/* Navy glass squircle — scaled-down port of the FeaturedQuickLinks shape */
 .qld-row__icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: var(--color-brand-50);
-  color: var(--color-brand-600);
-  border: 1px solid var(--color-brand-100);
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background:
+    linear-gradient(145deg, oklch(0.22 0.10 250) 0%, oklch(0.14 0.06 250) 100%);
+  border: 1px solid oklch(0.45 0.10 250 / 0.32);
+  color: oklch(0.96 0.005 250);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+  isolation: isolate;
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.06),
+    0 1px 1px oklch(0 0 0 / 0.28),
+    0 2px 6px oklch(0 0 0 / 0.16),
+    0 0 12px oklch(0.35 0.14 250 / 0.14);
+  transition:
+    border-color 200ms var(--ease-out),
+    box-shadow 200ms var(--ease-out),
+    color 200ms var(--ease-out);
+}
+.qld-row__icon::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 14%;
+  right: 14%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    oklch(1 0 0 / 0.18) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+.qld-row:hover .qld-row__icon {
+  border-color: oklch(0.734 0.114 86.8 / 0.5);
+  color: var(--color-accent-500);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.1),
+    0 1px 2px oklch(0 0 0 / 0.32),
+    0 4px 10px oklch(0 0 0 / 0.22),
+    0 0 16px oklch(0.734 0.114 86.8 / 0.22);
+}
+.qld-row--pinned .qld-row__icon {
+  border-color: oklch(0.734 0.114 86.8 / 0.5);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.08),
+    0 1px 1px oklch(0 0 0 / 0.28),
+    0 2px 6px oklch(0 0 0 / 0.16),
+    0 0 14px oklch(0.734 0.114 86.8 / 0.18);
 }
 .qld-row__text {
   display: flex;

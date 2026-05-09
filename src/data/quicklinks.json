@@ -1,4 +1,5 @@
 [
+  { "id": "responder360", "label": "Responder360", "sub": "CAD & situational awareness", "url": "https://app.responder360.com/", "iconName": "Radar", "category": "Field & Ops", "visibleTo": ["supervisor", "admin"], "defaultSort": 5 },
   { "id": "operative-iq", "label": "Operative IQ", "sub": "Narcotic tracking", "url": "https://login.operativeiq.com/Login.aspx?identifier=wallercountyems", "iconName": "Package", "category": "Field & Ops", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 10 },
   { "id": "pstrax", "label": "PSTrax", "sub": "Daily truck checks", "url": "https://app1.pstrax.com", "iconName": "Truck", "category": "Field & Ops", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 20 },
   { "id": "eso", "label": "ESO", "sub": "ePCR", "url": "https://esosuite.net/login/wcemseso", "iconName": "Stethoscope", "category": "Field & Ops", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 30 },
@@ -19,5 +20,6 @@
 
   { "id": "supply-portal", "label": "Supply Portal", "sub": "Station orders", "url": "https://wallercountyems.com/supplies", "iconName": "ShoppingCart", "category": "Internal", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 510 },
   { "id": "uniforms", "label": "Uniforms", "sub": "Orders & reimbursement", "url": "https://uniforms.wallercountyems.com", "iconName": "Shirt", "category": "Internal", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 520 },
-  { "id": "shoutout", "label": "Employee Shoutout", "sub": "Recognize a teammate", "url": "https://form.jotform.com/261249366820056", "iconName": "Award", "category": "Internal", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 530 }
+  { "id": "shoutout", "label": "Employee Shoutout", "sub": "Recognize a teammate", "url": "https://form.jotform.com/261249366820056", "iconName": "Award", "category": "Internal", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 530 },
+  { "id": "daily-summary", "label": "Daily Summary", "sub": "Supervisor end-of-shift report", "url": "https://form.jotform.com/251117115417043", "iconName": "ClipboardCheck", "category": "Internal", "visibleTo": ["supervisor", "admin"], "defaultSort": 540 }
 ]
