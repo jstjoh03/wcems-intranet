@@ -54,6 +54,7 @@ export interface Hospital {
   noDoorCode: boolean
   notes: string | null
   codeEffectiveFrom: string | null
+  active: boolean
   doorCodeUpdatedAt: string | null
   doorCodeUpdatedBy: string | null
 }

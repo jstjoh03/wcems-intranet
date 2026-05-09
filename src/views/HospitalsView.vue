@@ -1,29 +1,36 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { MapPin, Hospital as HospitalIcon, BellRing, Edit2, Lock, Eye, EyeOff } from 'lucide-vue-next'
+import { MapPin, Hospital as HospitalIcon, BellRing, Edit2, Lock, Eye, EyeOff, Search, Settings, X } from 'lucide-vue-next'
+import { RouterLink } from 'vue-router'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import CodeEditor from '@/components/dashboard/CodeEditor.vue'
 import { useCodeReveal } from '@/composables/useCodeReveal'
-import hospitalsData from '@/data/hospitals.json'
 import type { Hospital, TraumaLevel, CodeField } from '@/types'
 import { useAuthStore } from '@/stores/auth'
+import { useHospitalsStore } from '@/stores/hospitals'
 import { useCodeEditHistory } from '@/composables/useCodeEditHistory'
 
 const auth = useAuthStore()
-const hospitals = ref<Hospital[]>(JSON.parse(JSON.stringify(hospitalsData)))
+const hospitalsStore = useHospitalsStore()
 const { record, latestFor } = useCodeEditHistory()
 
-// Pre-create reveals per (hospital, field) so composable lifecycle hooks
-// register on this view's instance during setup.
+// Pre-create reveals per (hospital, field). New hospitals added at runtime
+// via the admin route lazily get reveals on demand (same pattern as stations).
 const reveals = new Map<string, ReturnType<typeof useCodeReveal>>()
-for (const h of hospitals.value) {
+for (const h of hospitalsStore.activeHospitals) {
   reveals.set(`${h.id}:er`, useCodeReveal())
   reveals.set(`${h.id}:ems_room`, useCodeReveal())
 }
 function reveal(id: string, field: 'er' | 'ems_room') {
-  return reveals.get(`${id}:${field}`)!
+  const key = `${id}:${field}`
+  let r = reveals.get(key)
+  if (!r) {
+    r = useCodeReveal()
+    reveals.set(key, r)
+  }
+  return r
 }
 
 // ── Filters / sort ───────────────────────────────────────────────────
@@ -34,6 +41,7 @@ const filterStrokeP = ref(false)
 const filterPCI = ref(false)
 const filterPed = ref(false)
 const filterMaternal = ref(false)
+const search = ref('')
 
 type SortKey = 'trauma' | 'name' | 'stroke' | 'pci'
 const sortBy = ref<SortKey>('trauma')
@@ -48,7 +56,18 @@ const traumaRank: Record<TraumaLevel, number> = {
 }
 
 const filtered = computed(() => {
-  let list = hospitals.value.slice()
+  let list = hospitalsStore.activeHospitals.slice()
+
+  const q = search.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter(
+      (h) =>
+        h.name.toLowerCase().includes(q) ||
+        h.address.toLowerCase().includes(q) ||
+        (h.notes ?? '').toLowerCase().includes(q),
+    )
+  }
+
   if (traumaFilter.value !== 'All') {
     list = list.filter((h) => {
       if (traumaFilter.value === 'II') return h.trauma === 'II' || h.trauma === 'In Pursuit II'
@@ -95,18 +114,19 @@ function cancelEdit() {
 }
 function saveCode(h: Hospital, field: 'er' | 'ems_room', newValue: string) {
   const oldValue = field === 'er' ? h.erDoorCode ?? '' : h.emsRoomCode ?? ''
-  if (field === 'er') h.erDoorCode = newValue
-  else h.emsRoomCode = newValue
-  h.doorCodeUpdatedAt = new Date().toISOString()
-  h.doorCodeUpdatedBy = auth.appUser?.fullName ?? 'Unknown'
-
+  const updatedBy = auth.appUser?.fullName ?? 'Unknown'
+  hospitalsStore.update(h.id, {
+    [field === 'er' ? 'erDoorCode' : 'emsRoomCode']: newValue,
+    doorCodeUpdatedAt: new Date().toISOString(),
+    doorCodeUpdatedBy: updatedBy,
+  } as Partial<Hospital>)
   record({
     entityType: 'hospital',
     entityId: h.id,
     codeField: field as CodeField,
     oldValue,
     newValue,
-    changedBy: h.doorCodeUpdatedBy ?? 'Unknown',
+    changedBy: updatedBy,
   })
   editing.value = null
 }
@@ -152,18 +172,48 @@ const traumaShort = (t: TraumaLevel) => {
 <template>
   <div class="hosp-view">
     <header class="hosp-view__header">
-      <div class="flex items-center gap-2">
-        <HospitalIcon :size="22" :stroke-width="1.85" style="color: var(--color-brand-600)" />
-        <h1 class="display hosp-view__title">Hospitals</h1>
+      <div class="hosp-view__title-row">
+        <div class="flex items-center gap-2">
+          <HospitalIcon :size="22" :stroke-width="1.85" style="color: var(--color-brand-600)" />
+          <h1 class="display hosp-view__title">Hospitals</h1>
+        </div>
+        <RouterLink
+          v-if="auth.isAdmin"
+          to="/admin/hospitals"
+          class="hosp-view__manage"
+        >
+          <Settings :size="13" :stroke-width="1.85" />
+          Manage
+        </RouterLink>
       </div>
       <p class="hosp-view__sub">
-        {{ filtered.length }} of {{ hospitals.length }} hospitals — sorted by
-        {{ sortBy === 'trauma' ? 'trauma level' : sortBy }}.
-        Door codes shown in gold; tap to reveal.
+        {{ filtered.length }} of {{ hospitalsStore.activeHospitals.length }} hospitals
+        <span v-if="search">matching "{{ search }}"</span>
+        — sorted by {{ sortBy === 'trauma' ? 'trauma level' : sortBy }}.
       </p>
     </header>
 
     <div class="hosp-view__controls" role="toolbar" aria-label="Hospital filters">
+      <!-- Search bar -->
+      <label class="hosp-view__search">
+        <Search :size="14" :stroke-width="1.85" />
+        <input
+          v-model="search"
+          type="search"
+          placeholder="Search by name, address, or notes…"
+          aria-label="Search hospitals"
+          autocomplete="off"
+        />
+        <button
+          v-if="search"
+          type="button"
+          class="hosp-view__search-clear"
+          aria-label="Clear search"
+          @click="search = ''"
+        >
+          <X :size="13" />
+        </button>
+      </label>
       <div class="hosp-view__chip-row" role="radiogroup" aria-label="Trauma level">
         <button
           v-for="t in (['All', 'I', 'II', 'III', 'IV'] as const)"
@@ -388,6 +438,13 @@ const traumaShort = (t: TraumaLevel) => {
   }
 }
 
+.hosp-view__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .hosp-view__title {
   font-size: 32px;
   letter-spacing: -0.01em;
@@ -398,10 +455,71 @@ const traumaShort = (t: TraumaLevel) => {
     font-size: 40px;
   }
 }
+.hosp-view__manage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  background: var(--color-brand-600);
+  color: white;
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 120ms var(--ease-out);
+}
+.hosp-view__manage:hover {
+  background: var(--color-brand-700);
+}
 .hosp-view__sub {
   font-size: 13px;
   color: var(--color-muted);
   margin-top: 4px;
+}
+
+.hosp-view__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  color: var(--color-muted);
+  transition: border-color 120ms var(--ease-out);
+}
+.hosp-view__search:focus-within {
+  border-color: var(--color-brand-500);
+  color: var(--color-ink);
+  box-shadow: 0 0 0 2px var(--color-brand-100);
+}
+.hosp-view__search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--color-ink);
+  min-width: 0;
+}
+.hosp-view__search input::-webkit-search-cancel-button {
+  display: none;
+}
+.hosp-view__search-clear {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-muted);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+.hosp-view__search-clear:hover {
+  color: var(--color-ink);
+  background: var(--color-surface-soft);
 }
 
 .hosp-view__controls {

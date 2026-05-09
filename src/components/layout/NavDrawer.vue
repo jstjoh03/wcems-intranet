@@ -51,6 +51,7 @@ const pages: NavItem[] = [
 ]
 const adminPages: NavItem[] = [
   { label: 'Manage Stations', to: '/admin/stations', icon: Settings },
+  { label: 'Manage Hospitals', to: '/admin/hospitals', icon: Hospital },
 ]
 
 function jumpTo(item: NavItem) {
