@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Settings, Plus, Power, RotateCcw, Save, X, Trash2 } from 'lucide-vue-next'
+import { Settings, Plus, Power, Save, X, Trash2 } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import AppCard from '@/components/primitives/AppCard.vue'
@@ -56,7 +56,7 @@ function cancel() {
   error.value = null
 }
 
-function save() {
+async function save() {
   error.value = null
 
   // Auto-fill name from id
@@ -75,9 +75,9 @@ function save() {
 
   try {
     if (composing.value) {
-      stationsStore.add({ ...draft.value })
+      await stationsStore.add({ ...draft.value })
     } else if (editing.value) {
-      stationsStore.update(editing.value, draft.value)
+      await stationsStore.update(editing.value, draft.value)
     }
     composing.value = false
     editing.value = null
@@ -86,19 +86,21 @@ function save() {
   }
 }
 
-function toggleActive(s: Station) {
-  stationsStore.setActive(s.id, !s.active)
+async function toggleActive(s: Station) {
+  try {
+    await stationsStore.setActive(s.id, !s.active)
+  } catch (err) {
+    error.value = (err as Error).message
+  }
 }
 
-function remove(s: Station) {
+async function remove(s: Station) {
   if (!confirm(`Remove ${s.name}? This is a hard delete.`)) return
-  stationsStore.remove(s.id)
-}
-
-function resetSeed() {
-  if (!confirm('Reset all stations to the seed list? Local edits will be lost.')) return
-  stationsStore.resetToSeed()
-  cancel()
+  try {
+    await stationsStore.remove(s.id)
+  } catch (err) {
+    error.value = (err as Error).message
+  }
 }
 </script>
 
@@ -130,14 +132,6 @@ function resetSeed() {
           @click="startCreate"
         >
           <Plus :size="14" :stroke-width="2" /> Add station
-        </button>
-        <button
-          type="button"
-          class="btn btn-ghost ms-view__reset"
-          aria-label="Reset to seed data"
-          @click="resetSeed"
-        >
-          <RotateCcw :size="13" :stroke-width="1.85" /> Reset to seed
         </button>
       </div>
 

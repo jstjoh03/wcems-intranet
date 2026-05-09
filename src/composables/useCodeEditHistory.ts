@@ -1,59 +1,79 @@
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import type { CodeChange, CodeEntityType, CodeField } from '@/types'
+import { supabase } from '@/lib/supabase'
+import { useAuthStore } from '@/stores/auth'
 
 /**
- * Audit log for door-code edits — stations and hospitals share this
- * machinery. Crews can update a code in the field and the change is logged
- * with their identity, the previous value, and the new value so future
- * crews can see "Updated by X · 3 days ago" inline near the code.
+ * Cross-device audit log for door-code edits, sourced from the
+ * `code_edit_history` table. The DB triggers on `stations` and
+ * `hospitals` write rows automatically when a code changes — clients
+ * never call a `record()` function. The Phase 1 localStorage layer is
+ * gone; the legacy key is removed on init.
  *
- * Phase 1: localStorage. Phase 2: swap to a Supabase
- * `code_change_log` table — the public surface stays identical.
+ * The module-level `all` ref is a shared singleton across components.
+ * It loads once on first import and is currently not refreshed
+ * automatically after a code edit — `lastChanged()` callers fall back to
+ * the row's own `*_updated_at`/`*_updated_by` stamp, which is fresh
+ * after every update. A future improvement is realtime subscription;
+ * not needed for the first ship.
  */
 
-const STORAGE_KEY = 'wcems:code-changes'
+interface CodeEditHistoryRow {
+  id: string
+  entity_type: CodeEntityType
+  entity_id: string
+  code_field: CodeField
+  old_value: string
+  new_value: string
+  changed_by: string
+  changed_at: string
+}
 
-function load(): CodeChange[] {
-  if (typeof localStorage === 'undefined') return []
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as CodeChange[]) : []
-  } catch {
-    return []
+function rowToCodeChange(r: CodeEditHistoryRow): CodeChange {
+  return {
+    id: r.id,
+    entityType: r.entity_type,
+    entityId: r.entity_id,
+    codeField: r.code_field,
+    oldValue: r.old_value,
+    newValue: r.new_value,
+    changedBy: r.changed_by,
+    changedAt: r.changed_at,
   }
 }
 
-function persist(items: CodeChange[]) {
-  if (typeof localStorage === 'undefined') return
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(items))
+const all = ref<CodeChange[]>([])
+const ready = ref(false)
+let loadStarted = false
+
+async function load() {
+  if (loadStarted) return
+  loadStarted = true
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('wcems:code-changes')
+  }
+  const auth = useAuthStore()
+  if (auth.usingDevStub || !auth.appUser) {
+    all.value = []
+    ready.value = true
+    return
+  }
+  const { data, error } = await supabase
+    .from('code_edit_history')
+    .select('id, entity_type, entity_id, code_field, old_value, new_value, changed_by, changed_at')
+    .order('changed_at', { ascending: false })
+    .limit(500)
+  if (error) {
+    console.error('[code-history] failed to load:', error.message)
+    ready.value = true
+    return
+  }
+  all.value = (data ?? []).map((d) => rowToCodeChange(d as CodeEditHistoryRow))
+  ready.value = true
 }
-
-const all = ref<CodeChange[]>(load())
-
-watch(all, persist, { deep: true })
 
 export function useCodeEditHistory() {
-  function record(opts: {
-    entityType: CodeEntityType
-    entityId: string
-    codeField: CodeField
-    oldValue: string
-    newValue: string
-    changedBy: string
-  }): CodeChange {
-    const change: CodeChange = {
-      id: crypto.randomUUID(),
-      entityType: opts.entityType,
-      entityId: opts.entityId,
-      codeField: opts.codeField,
-      oldValue: opts.oldValue,
-      newValue: opts.newValue,
-      changedBy: opts.changedBy,
-      changedAt: new Date().toISOString(),
-    }
-    all.value = [change, ...all.value]
-    return change
-  }
+  void load()
 
   function historyFor(entityType: CodeEntityType, entityId: string): CodeChange[] {
     return all.value.filter(
@@ -76,5 +96,5 @@ export function useCodeEditHistory() {
     )
   }
 
-  return { all, record, historyFor, latestFor }
+  return { all, ready, historyFor, latestFor }
 }

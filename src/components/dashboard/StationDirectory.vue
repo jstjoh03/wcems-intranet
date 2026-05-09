@@ -15,7 +15,7 @@ const auth = useAuthStore()
 const stationsStore = useStationsStore()
 
 const editingId = ref<string | null>(null)
-const { record, latestFor } = useCodeEditHistory()
+const { latestFor } = useCodeEditHistory()
 
 // Each station gets its own reveal state, pre-created during setup. The
 // admin's "Manage Stations" view can add new stations at runtime — for
@@ -45,23 +45,15 @@ function cancelEdit() {
   editingId.value = null
 }
 
-function saveCode(station: Station, newValue: string) {
-  const oldValue = station.doorCode
-  const updatedBy = auth.appUser?.fullName ?? 'Unknown'
-  stationsStore.update(station.id, {
-    doorCode: newValue,
-    doorCodeUpdatedAt: new Date().toISOString(),
-    doorCodeUpdatedBy: updatedBy,
-  })
-  record({
-    entityType: 'station',
-    entityId: station.id,
-    codeField: 'door',
-    oldValue,
-    newValue,
-    changedBy: updatedBy,
-  })
+async function saveCode(station: Station, newValue: string) {
   editingId.value = null
+  /* The DB stamp + audit triggers handle door_code_updated_at/by and the
+     code_edit_history row; the client only sends the new value. */
+  try {
+    await stationsStore.update(station.id, { doorCode: newValue })
+  } catch (err) {
+    console.error('[StationDirectory] save failed:', (err as Error).message)
+  }
 }
 
 function lastChanged(station: Station) {

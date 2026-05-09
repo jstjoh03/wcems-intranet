@@ -7,14 +7,14 @@ import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import CodeEditor from '@/components/dashboard/CodeEditor.vue'
 import { useCodeReveal } from '@/composables/useCodeReveal'
-import type { Hospital, TraumaLevel, CodeField } from '@/types'
+import type { Hospital, TraumaLevel } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useHospitalsStore } from '@/stores/hospitals'
 import { useCodeEditHistory } from '@/composables/useCodeEditHistory'
 
 const auth = useAuthStore()
 const hospitalsStore = useHospitalsStore()
-const { record, latestFor } = useCodeEditHistory()
+const { latestFor } = useCodeEditHistory()
 
 // Pre-create reveals per (hospital, field). New hospitals added at runtime
 // via the admin route lazily get reveals on demand (same pattern as stations).
@@ -112,23 +112,18 @@ function startEdit(id: string, field: 'er' | 'ems_room') {
 function cancelEdit() {
   editing.value = null
 }
-function saveCode(h: Hospital, field: 'er' | 'ems_room', newValue: string) {
-  const oldValue = field === 'er' ? h.erDoorCode ?? '' : h.emsRoomCode ?? ''
-  const updatedBy = auth.appUser?.fullName ?? 'Unknown'
-  hospitalsStore.update(h.id, {
-    [field === 'er' ? 'erDoorCode' : 'emsRoomCode']: newValue,
-    doorCodeUpdatedAt: new Date().toISOString(),
-    doorCodeUpdatedBy: updatedBy,
-  } as Partial<Hospital>)
-  record({
-    entityType: 'hospital',
-    entityId: h.id,
-    codeField: field as CodeField,
-    oldValue,
-    newValue,
-    changedBy: updatedBy,
-  })
+async function saveCode(h: Hospital, field: 'er' | 'ems_room', newValue: string) {
   editing.value = null
+  /* The DB stamp + audit triggers handle door_code_updated_at/by and the
+     code_edit_history row; the client only sends the new value. */
+  const patch: Partial<Hospital> = {
+    [field === 'er' ? 'erDoorCode' : 'emsRoomCode']: newValue,
+  }
+  try {
+    await hospitalsStore.update(h.id, patch)
+  } catch (err) {
+    console.error('[HospitalsView] save failed:', (err as Error).message)
+  }
 }
 
 function lastChanged(h: Hospital) {
