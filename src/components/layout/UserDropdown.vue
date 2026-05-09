@@ -16,6 +16,8 @@ const firstName = computed(() => auth.appUser?.firstName ?? '')
 const role = computed(() => auth.appUser?.role ?? 'crew')
 const fullName = computed(() => auth.appUser?.fullName ?? '')
 const fuelNumber = computed(() => auth.appUser?.fuelNumber ?? null)
+const shift = computed(() => auth.appUser?.shift ?? null)
+const station = computed(() => auth.appUser?.station ?? null)
 
 function close() {
   open.value = false
@@ -93,6 +95,28 @@ function signOut() {
             </div>
           </div>
         </header>
+
+        <div class="user-dropdown__divider" />
+
+        <!-- Shift / Station — non-secret stats. Render '—' when null so a
+             missing value reads as "not set" instead of disappearing
+             silently (prompts the user / admin to fill it in). -->
+        <div class="user-dropdown__stats">
+          <div class="user-dropdown__stat">
+            <div class="user-dropdown__stat-label">Shift</div>
+            <div class="user-dropdown__stat-value">
+              <template v-if="shift">{{ shift }}</template>
+              <span v-else class="user-dropdown__stat-empty">—</span>
+            </div>
+          </div>
+          <div class="user-dropdown__stat">
+            <div class="user-dropdown__stat-label">Station</div>
+            <div class="user-dropdown__stat-value">
+              <template v-if="station">{{ station }}</template>
+              <span v-else class="user-dropdown__stat-empty">—</span>
+            </div>
+          </div>
+        </div>
 
         <div class="user-dropdown__divider" />
 
@@ -232,6 +256,44 @@ function signOut() {
   height: 1px;
   background: var(--color-line-soft);
   margin: 6px -12px;
+}
+
+.user-dropdown__stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 6px 4px;
+}
+.user-dropdown__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  min-width: 0;
+}
+.user-dropdown__stat-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.user-dropdown__stat-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-ink);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-dropdown__stat-empty {
+  color: var(--color-muted);
+  font-weight: 500;
 }
 
 .user-dropdown__fuel {
