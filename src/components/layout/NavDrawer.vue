@@ -3,7 +3,6 @@ import { onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Activity,
-  LayoutGrid,
   MapPin,
   GraduationCap,
   Bell,
@@ -36,10 +35,10 @@ interface NavItem {
 
 const sections: NavItem[] = [
   { id: 'operations', label: 'Operations', icon: Activity, hash: '#operations' },
-  { id: 'quick-links', label: 'Quick Links', icon: LayoutGrid, hash: '#quick-links' },
+  { id: 'announcements', label: 'Announcements', icon: Bell, hash: '#announcements' },
+  { id: 'newsletter', label: 'Newsletter', icon: Activity, hash: '#newsletter' },
   { id: 'stations', label: 'Stations', icon: MapPin, hash: '#stations' },
   { id: 'training', label: 'Upcoming Training', icon: GraduationCap, hash: '#training' },
-  { id: 'announcements', label: 'Announcements', icon: Bell, hash: '#announcements' },
   { id: 'photos', label: 'Around the County', icon: Camera, hash: '#photos' },
   { id: 'people', label: 'People', icon: Users, hash: '#people' },
 ]

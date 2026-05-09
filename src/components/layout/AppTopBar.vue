@@ -10,6 +10,7 @@ defineEmits<{
 
 const auth = useAuthStore()
 const roles = ['crew', 'supervisor', 'admin'] as const
+const isDev = import.meta.env.DEV
 </script>
 
 <template>
@@ -43,8 +44,14 @@ const roles = ['crew', 'supervisor', 'admin'] as const
         <kbd class="topbar__kbd">⌘K</kbd>
       </div>
 
-      <!-- Dev role switcher (hidden in production) -->
-      <div class="topbar__role-switcher hidden md:flex">
+      <!--
+        Dev role switcher — only renders in dev builds.
+        In production the role is set by Entra group → Supabase JWT and
+        is not user-toggleable. `isDev` is constant-folded by Vite, so
+        this entire block is removed from the production bundle.
+      -->
+      <div v-if="isDev" class="topbar__role-switcher" :title="'Dev only — production reads role from Entra ID'">
+        <span class="topbar__role-dev-tag">DEV</span>
         <button
           v-for="r in roles"
           :key="r"
@@ -68,15 +75,18 @@ const roles = ['crew', 'supervisor', 'admin'] as const
   z-index: 40;
   background: var(--color-brand-900);
   border-bottom: 1px solid var(--color-brand-800);
+  width: 100%;
+  overflow: hidden;
 }
 
 .topbar__inner {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 10px 16px;
+  padding: 10px 14px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
 }
 @media (min-width: 768px) {
   .topbar__inner {
@@ -132,6 +142,7 @@ const roles = ['crew', 'supervisor', 'admin'] as const
 
 .topbar__search {
   flex: 1;
+  min-width: 0;
   max-width: 480px;
   margin: 0 auto;
   display: flex;
@@ -170,13 +181,27 @@ const roles = ['crew', 'supervisor', 'admin'] as const
 }
 
 .topbar__role-switcher {
-  display: flex;
+  display: none; /* hidden on mobile */
   align-items: center;
   gap: 2px;
-  padding: 2px;
+  padding: 2px 2px 2px 7px;
   border-radius: 8px;
   background: var(--color-brand-800);
-  border: 1px solid var(--color-brand-700);
+  border: 1px dashed oklch(0.5 0.16 60); /* dashed amber to read as "dev only" */
+  flex-shrink: 0;
+}
+@media (min-width: 1024px) {
+  .topbar__role-switcher {
+    display: flex;
+  }
+}
+.topbar__role-dev-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: oklch(0.7 0.16 60);
+  margin-right: 4px;
 }
 .topbar__role-btn {
   padding: 4px 10px;

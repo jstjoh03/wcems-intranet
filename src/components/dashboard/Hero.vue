@@ -16,16 +16,18 @@ const { greeting, todayStr } = useGreeting()
         {{ greeting }}<template v-if="auth.appUser?.firstName">,
           <em class="hero__name italic">{{ auth.appUser.firstName }}</em></template>.
       </h1>
-      <p class="hero__sub">
-        Your hub for protocols, training, station info, and everything Waller County EMS.
-      </p>
       <div class="hero__pill">
         <ShiftPill />
       </div>
     </div>
 
+    <!-- Vertical gold accent line — same gradient treatment Justin uses
+         in the supply portal's DashboardView header divider. -->
+    <span class="hero__divider" aria-hidden="true" />
+
     <div class="hero__patch patch-in" aria-hidden="true">
-      <img src="/wcems-patch.png" alt="WCEMS patch" width="104" height="104" />
+      <span class="hero__patch-halo" />
+      <img src="/wcems-patch.png" alt="WCEMS patch" width="140" height="140" />
     </div>
   </header>
 </template>
@@ -33,10 +35,11 @@ const { greeting, todayStr } = useGreeting()
 <style scoped>
 .hero {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 32px;
+  gap: 28px;
   margin-bottom: 32px;
+  min-width: 0;
 }
 .hero__main {
   flex: 1;
@@ -57,21 +60,38 @@ const { greeting, todayStr } = useGreeting()
 .hero__name {
   color: var(--color-brand-600);
 }
-.hero__sub {
-  margin-top: 12px;
-  max-width: 36rem;
-  color: var(--color-ink-soft);
-  font-size: 14.5px;
-  line-height: 1.55;
-}
 .hero__pill {
   margin-top: 18px;
 }
-.hero__patch {
+
+/* Vertical gold gradient line, ported from supply portal DashboardView */
+.hero__divider {
   display: none;
   flex-shrink: 0;
-  filter: drop-shadow(0 2px 6px oklch(0.18 0.015 260 / 0.12))
-    drop-shadow(0 6px 16px oklch(0.18 0.015 260 / 0.06));
+  width: 1px;
+  align-self: stretch;
+  min-height: 92px;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    oklch(0.734 0.114 86.8 / 0.45) 30%,
+    oklch(0.734 0.114 86.8 / 0.45) 70%,
+    transparent 100%
+  );
+}
+@media (min-width: 1024px) {
+  .hero__divider {
+    display: block;
+  }
+}
+
+.hero__patch {
+  position: relative;
+  display: none;
+  flex-shrink: 0;
+  width: 140px;
+  height: 140px;
+  display: none;
 }
 @media (min-width: 1024px) {
   .hero__patch {
@@ -79,8 +99,35 @@ const { greeting, todayStr } = useGreeting()
   }
 }
 .hero__patch img {
-  width: 104px;
-  height: 104px;
+  position: relative;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
+  z-index: 1;
+  /* Stacked drop-shadows: tight contact + soft elevation */
+  filter:
+    drop-shadow(0 1px 1px oklch(0.18 0.015 260 / 0.18))
+    drop-shadow(0 4px 8px oklch(0.18 0.015 260 / 0.12))
+    drop-shadow(0 12px 24px oklch(0.18 0.015 260 / 0.08));
+  transition: transform 400ms var(--ease-out);
+}
+.hero__patch:hover img {
+  transform: translateY(-2px);
+}
+
+/* Subtle radial gold halo behind the patch — gives the shield depth and
+   echoes the gold accent line without colored fill on the surface */
+.hero__patch-halo {
+  position: absolute;
+  inset: -22px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at center,
+    oklch(0.734 0.114 86.8 / 0.18) 0%,
+    oklch(0.734 0.114 86.8 / 0.06) 38%,
+    transparent 68%
+  );
+  z-index: 0;
+  pointer-events: none;
 }
 </style>

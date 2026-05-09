@@ -13,10 +13,10 @@ const year = new Date().getFullYear()
       </div>
       <div class="footer__links">
         <span class="font-mono text-[10.5px]" style="color: var(--color-muted)">v0.1.0 · {{ year }}</span>
-        <a class="footer__link" href="mailto:tori.bell@wallercountyems.com?subject=WCEMS%20Intranet%20feedback">
+        <a class="footer__link" href="mailto:justin.stjohn@wallercountyems.com?subject=WCEMS%20Intranet%20-%20Issue%20report">
           Report an issue
         </a>
-        <a class="footer__link" href="mailto:justin.stjohn@wallercountyems.com?subject=Suggest%20a%20link">
+        <a class="footer__link" href="mailto:justin.stjohn@wallercountyems.com?subject=WCEMS%20Intranet%20-%20Suggest%20a%20link">
           Suggest a link
         </a>
       </div>

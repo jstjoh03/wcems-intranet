@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import Hero from '@/components/dashboard/Hero.vue'
 import OperationalStrip from '@/components/dashboard/OperationalStrip.vue'
-import QuickLinks from '@/components/dashboard/QuickLinks.vue'
 import StationDirectory from '@/components/dashboard/StationDirectory.vue'
 import NewsletterCard from '@/components/dashboard/NewsletterCard.vue'
 import UpcomingTrainingCard from '@/components/dashboard/UpcomingTrainingCard.vue'
@@ -17,11 +16,9 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
     <OperationalStrip />
 
     <!--
-      Layout intent: Announcements + Newsletter sit at the top of the main
-      column so editorial content is the first thing crews see after the
-      operational strip. Quick Links is compact tile-grid below — the new
-      tile sizing makes it short enough to fit alongside the right-rail
-      training/call-volume cards without forcing a long scroll.
+      Quick Links lives in a floating dock (AppShell) so the dashboard
+      can lead with editorial content. Main column: Announcements →
+      Newsletter → Stations. Sidebar: Upcoming Training, Call Volume.
     -->
     <div class="dash__grid">
       <div class="dash__main">
@@ -31,10 +28,7 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
         <div id="newsletter" class="reveal" style="animation-delay: 110ms">
           <NewsletterCard />
         </div>
-        <div id="quick-links" class="reveal" style="animation-delay: 140ms">
-          <QuickLinks />
-        </div>
-        <div id="stations" class="reveal" style="animation-delay: 170ms">
+        <div id="stations" class="reveal" style="animation-delay: 140ms">
           <StationDirectory />
         </div>
       </div>

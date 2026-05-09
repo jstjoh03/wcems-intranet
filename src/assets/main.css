@@ -84,6 +84,14 @@
     font-feature-settings: 'cv11', 'ss01';
   }
 
+  html,
+  body {
+    /* Hard cap horizontal width so a single overflowing element can't
+       force the whole page to scroll sideways on mobile. */
+    overflow-x: clip;
+    max-width: 100%;
+  }
+
   body {
     font-family: var(--font-sans);
     font-size: 15px;

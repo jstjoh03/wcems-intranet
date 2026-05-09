@@ -300,16 +300,32 @@ const sorted = computed(() => stationsStore.activeStations)
   color: var(--color-muted);
 }
 
-/* Code zone — visual centerpiece of the card */
+/* Code zone — elevated treatment, no fill panel.
+   A thin gold gradient rule across the top, white surface, and a
+   navy-on-white code chip do the visual work. */
 .station-card__code-zone {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: oklch(0.97 0.04 86.8);
-  border: 1px solid oklch(0.92 0.07 86.8);
+  padding: 12px 0 4px;
   flex-wrap: wrap;
+  margin-top: 2px;
+}
+.station-card__code-zone::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    oklch(0.734 0.114 86.8 / 0.5) 18%,
+    oklch(0.734 0.114 86.8 / 0.5) 82%,
+    transparent 100%
+  );
 }
 .station-card__code-zone-label {
   display: inline-flex;
@@ -319,43 +335,47 @@ const sorted = computed(() => stationsStore.activeStations)
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-accent-700);
+  color: var(--color-muted);
   flex-shrink: 0;
 }
 .station-card__code-app {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--color-brand-700);
+  letter-spacing: -0.005em;
 }
 .station-card__code-cta {
   flex: 1;
   min-width: 120px;
-  padding: 8px 14px;
+  padding: 9px 14px;
   border-radius: 8px;
   background: var(--color-surface);
-  border: 1px solid var(--color-accent-500);
-  color: var(--color-brand-700);
-  font-size: 12.5px;
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-soft);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: all 120ms var(--ease-out);
+  box-shadow: var(--shadow-sm);
+  transition: all 150ms var(--ease-out);
 }
 .station-card__code-cta:hover {
-  background: var(--color-accent-500);
-  color: var(--color-brand-900);
+  border-color: var(--color-brand-500);
+  color: var(--color-brand-700);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 .station-card__code-revealed {
   position: relative;
   flex: 1;
   min-width: 120px;
-  padding: 9px 14px;
+  padding: 10px 14px;
   border-radius: 8px;
-  background: var(--color-brand-700);
+  background: var(--color-brand-800);
   border: 1px solid var(--color-brand-700);
   color: white;
   font-size: 15px;
@@ -366,7 +386,11 @@ const sorted = computed(() => stationsStore.activeStations)
   justify-content: space-between;
   gap: 10px;
   overflow: hidden;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+  box-shadow: var(--shadow-sm);
+}
+.station-card__code-revealed:hover {
+  background: var(--color-brand-700);
 }
 .station-card__code-value {
   flex: 1;

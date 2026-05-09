@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import AppTopBar from './AppTopBar.vue'
 import NavDrawer from './NavDrawer.vue'
 import AppFooter from './AppFooter.vue'
+import QuickLinksDock from './QuickLinksDock.vue'
 
 const navOpen = ref(false)
 </script>
@@ -17,5 +18,8 @@ const navOpen = ref(false)
     </main>
 
     <AppFooter />
+
+    <!-- Floating quick-links dock — visible on every route -->
+    <QuickLinksDock />
   </div>
 </template>

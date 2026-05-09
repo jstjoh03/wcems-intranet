@@ -540,20 +540,52 @@ const traumaShort = (t: TraumaLevel) => {
   gap: 4px;
 }
 
-/* Codes panel — the most-used info, given dominant treatment */
+/* Codes panel — elevated treatment with a thin gold accent rule
+   instead of a colored fill. White surface, hairline divider, and
+   strong type hierarchy do the work. */
 .hosp-card__codes {
-  background: oklch(0.97 0.04 86.8);
-  border-top: 1px solid oklch(0.92 0.07 86.8);
-  padding: 12px 16px;
+  position: relative;
+  background: var(--color-surface);
+  padding: 14px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
 }
+
+/* Mobile: gold rule across the top of the codes block */
+.hosp-card__codes::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    oklch(0.734 0.114 86.8 / 0.55) 18%,
+    oklch(0.734 0.114 86.8 / 0.55) 82%,
+    transparent 100%
+  );
+}
+
 @media (min-width: 640px) {
-  .hosp-card__codes {
-    border-top: none;
-    border-left: 1px solid oklch(0.92 0.07 86.8);
+  /* Desktop: gold rule runs vertically as the column divider */
+  .hosp-card__codes::before {
+    top: 14px;
+    bottom: 14px;
+    left: 0;
+    right: auto;
+    height: auto;
+    width: 1px;
+    background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      oklch(0.734 0.114 86.8 / 0.55) 30%,
+      oklch(0.734 0.114 86.8 / 0.55) 70%,
+      transparent 100%
+    );
   }
 }
 
@@ -565,7 +597,7 @@ const traumaShort = (t: TraumaLevel) => {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--color-accent-700);
+  color: var(--color-muted);
 }
 
 .hosp-card__code-row {
@@ -590,7 +622,7 @@ const traumaShort = (t: TraumaLevel) => {
   gap: 5px;
   font-size: 12px;
   font-weight: 500;
-  color: var(--color-accent-700);
+  color: var(--color-ink-soft);
   font-style: italic;
 }
 
@@ -601,21 +633,24 @@ const traumaShort = (t: TraumaLevel) => {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 7px 12px;
+  padding: 8px 12px;
   border-radius: 8px;
   background: var(--color-surface);
-  border: 1px solid var(--color-accent-500);
-  color: var(--color-brand-700);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-soft);
   font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: all 120ms var(--ease-out);
+  box-shadow: var(--shadow-sm);
+  transition: all 150ms var(--ease-out);
 }
 .hosp-card__code-cta:hover {
-  background: var(--color-accent-500);
-  color: var(--color-brand-900);
+  border-color: var(--color-brand-500);
+  color: var(--color-brand-700);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .hosp-card__code-revealed {
@@ -626,9 +661,9 @@ const traumaShort = (t: TraumaLevel) => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 12px;
+  padding: 9px 12px;
   border-radius: 8px;
-  background: var(--color-brand-700);
+  background: var(--color-brand-800);
   border: 1px solid var(--color-brand-700);
   color: white;
   font-size: 14px;
@@ -636,6 +671,10 @@ const traumaShort = (t: TraumaLevel) => {
   letter-spacing: 0.04em;
   cursor: pointer;
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.hosp-card__code-revealed:hover {
+  background: var(--color-brand-700);
 }
 .hosp-card__code-value {
   flex: 1;
