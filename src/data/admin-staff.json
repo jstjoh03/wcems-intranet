@@ -1,0 +1,11 @@
+[
+  { "title": "Medical Director", "name": "Aaron Buzzard, MD", "email": "aaron.buzzard@wallercountyems.com", "phone": "(210) 380-6017", "notes": "Online medical control · Mon–Fri daytime hours" },
+  { "title": "Chief", "name": "Rhonda Getschman", "email": "rhonda.getschman@wallercountyems.com", "phone": "(281) 330-9193", "notes": null },
+  { "title": "Assistant Chief", "name": "Heather Fojt", "email": "heather.fojt@wallercountyems.com", "phone": "(832) 520-6771", "notes": null },
+  { "title": "Controller", "name": "Rhonda Becvar", "email": "rhonda.becvar@wallercountyems.com", "phone": "(832) 367-7959", "notes": null },
+  { "title": "Outreach Director", "name": "April Mancini", "email": "april.mancini@wallercountyems.com", "phone": "(281) 986-9226", "notes": null },
+  { "title": "Administrative Manager", "name": "Tori Bell", "email": "tori.bell@wallercountyems.com", "phone": "(512) 755-3495", "notes": null },
+  { "title": "Supplies", "name": "Erica Adams", "email": "erica.adams@wallercountyems.com", "phone": "(832) 306-8761", "notes": null },
+  { "title": "Clinical Coordinator", "name": "Open position", "email": null, "phone": null, "notes": "Position currently open" },
+  { "title": "Administration", "name": "Laurel Vandagriff", "email": "laurel.vandagriff@wallercountyems.com", "phone": "(832) 920-6323", "notes": null }
+]

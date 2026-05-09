@@ -1,0 +1,23 @@
+[
+  { "id": "operative-iq", "label": "Operative IQ", "sub": "Narcotic tracking", "url": "https://login.operativeiq.com/Login.aspx?identifier=wallercountyems", "iconName": "Package", "category": "Field & Ops", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 10 },
+  { "id": "pstrax", "label": "PSTrax", "sub": "Daily truck checks", "url": "https://app1.pstrax.com", "iconName": "Truck", "category": "Field & Ops", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 20 },
+  { "id": "eso", "label": "ESO", "sub": "ePCR", "url": "https://esosuite.net/login/wcemseso", "iconName": "Stethoscope", "category": "Field & Ops", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 30 },
+  { "id": "pulsara", "label": "Pulsara", "sub": "STEMI · CVA notification", "url": "https://us-app.pulsara.com/user/login", "iconName": "Activity", "category": "Field & Ops", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 40 },
+  { "id": "protocols", "label": "Protocols", "sub": "Reference", "url": "https://protocols.wallercountyems.com", "iconName": "BookOpen", "category": "Field & Ops", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 50 },
+
+  { "id": "outlook", "label": "Outlook", "sub": "M365 mail", "url": "https://outlook.cloud.microsoft/mail/", "iconName": "Mail", "category": "Communication", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 110 },
+  { "id": "teams", "label": "Microsoft Teams", "sub": "Chat", "url": "https://teams.cloud.microsoft/", "iconName": "MessageSquare", "category": "Communication", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 120 },
+
+  { "id": "aladtec", "label": "Aladtec", "sub": "Schedule", "url": "https://aladtec.com/wcvems", "iconName": "Calendar", "category": "Schedule & Pay", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 210 },
+  { "id": "paycom", "label": "Paycom", "sub": "Time & pay", "url": "https://www.paycomonline.net/v4/ee/web.php/app/login", "iconName": "ClipboardList", "category": "Schedule & Pay", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 220 },
+
+  { "id": "internal-edu", "label": "Internal Education", "sub": "CE catalog", "url": "https://www.wallercountyems.com/internaleducation", "iconName": "GraduationCap", "category": "Training", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 310 },
+  { "id": "ems1-academy", "label": "EMS1 Academy", "sub": "Self-paced CE", "url": "https://olt.ems1academy.com/login/", "iconName": "BookOpen", "category": "Training", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 320 },
+
+  { "id": "nremt", "label": "NREMT", "sub": "National registry", "url": "https://nremt.org/login", "iconName": "FileCheck", "category": "Licensure", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 410 },
+  { "id": "dshs", "label": "Texas DSHS", "sub": "State licensing", "url": "https://vo.ras.dshs.state.tx.us/datamart/login.do", "iconName": "Shield", "category": "Licensure", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 420 },
+
+  { "id": "supply-portal", "label": "Supply Portal", "sub": "Station orders", "url": "https://wallercountyems.com/supplies", "iconName": "ShoppingCart", "category": "Internal", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 510 },
+  { "id": "uniforms", "label": "Uniforms", "sub": "Orders & reimbursement", "url": "https://uniforms.wallercountyems.com", "iconName": "Shirt", "category": "Internal", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 520 },
+  { "id": "shoutout", "label": "Employee Shoutout", "sub": "Recognize a teammate", "url": "https://form.jotform.com/261249366820056", "iconName": "Award", "category": "Internal", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 530 }
+]

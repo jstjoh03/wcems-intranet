@@ -1,0 +1,305 @@
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WCEMS INTRANET · DESIGN SYSTEM
+   Editorial serif display + precise sans + tabular monospace.
+   Aligned with the supply-portal palette so every internal app feels cohesive.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* ── Typography ─────────────────────────────────────────────────────── */
+  --font-display: 'Instrument Serif', ui-serif, Georgia, serif;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ── Brand · WCEMS navy (hue 250) ───────────────────────────────────── */
+  --color-brand-50: oklch(0.97 0.015 250);
+  --color-brand-100: oklch(0.93 0.03 250);
+  --color-brand-200: oklch(0.85 0.06 250);
+  --color-brand-300: oklch(0.73 0.1 250);
+  --color-brand-400: oklch(0.58 0.14 250);
+  --color-brand-500: oklch(0.45 0.16 250);
+  --color-brand-600: oklch(0.35 0.14 250); /* canonical WCEMS navy */
+  --color-brand-700: oklch(0.28 0.12 250);
+  --color-brand-800: oklch(0.22 0.1 250);
+  --color-brand-900: oklch(0.16 0.07 250);
+  --color-brand-950: oklch(0.11 0.05 250);
+
+  /* ── Accent · antique gold (hue 86.8, ≈ #C8A44D at 500) ─────────────── */
+  --color-accent-400: oklch(0.814 0.104 86.8);
+  --color-accent-500: oklch(0.734 0.114 86.8);
+  --color-accent-600: oklch(0.664 0.119 86.8);
+  --color-accent-700: oklch(0.584 0.109 86.8);
+
+  /* ── Trauma level palette (hospital chips) ──────────────────────────── */
+  --color-trauma-1: oklch(0.55 0.2 27); /* Level I — red */
+  --color-trauma-2: oklch(0.65 0.16 50); /* Level II — orange */
+  --color-trauma-3: oklch(0.734 0.114 86.8); /* Level III — gold */
+  --color-trauma-4: oklch(0.6 0.07 200); /* Level IV — slate-blue */
+
+  /* ── Neutrals (warm slate) ──────────────────────────────────────────── */
+  --color-ink: oklch(0.18 0.015 260);
+  --color-ink-soft: oklch(0.35 0.012 260);
+  --color-muted: oklch(0.5 0.01 260);
+  --color-muted-soft: oklch(0.68 0.008 260);
+  --color-line: oklch(0.88 0.006 260);
+  --color-line-soft: oklch(0.93 0.004 260);
+  --color-canvas: oklch(0.985 0.002 90);
+  --color-surface: oklch(1 0 0);
+  --color-surface-soft: oklch(0.97 0.004 90);
+  --color-surface-sunk: oklch(0.94 0.006 90);
+
+  /* ── Semantic ───────────────────────────────────────────────────────── */
+  --color-success-500: oklch(0.55 0.15 150);
+  --color-success-50: oklch(0.96 0.02 150);
+  --color-warning-500: oklch(0.65 0.15 60);
+  --color-warning-50: oklch(0.97 0.03 60);
+  --color-danger-500: oklch(0.55 0.2 20);
+  --color-danger-50: oklch(0.96 0.025 20);
+
+  /* ── Shadow system ──────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px -1px oklch(0.18 0.015 260 / 0.08);
+  --shadow-md:
+    0 2px 4px -2px oklch(0.18 0.015 260 / 0.06),
+    0 4px 8px -2px oklch(0.18 0.015 260 / 0.08);
+  --shadow-lg:
+    0 4px 8px -4px oklch(0.18 0.015 260 / 0.08),
+    0 16px 32px -8px oklch(0.18 0.015 260 / 0.12);
+
+  /* ── Easing ─────────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BASE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--color-ink);
+    background: var(--color-canvas);
+    min-height: 100dvh;
+  }
+
+  .tabular,
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  .display {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line);
+    border-radius: 6px;
+    border: 2px solid var(--color-canvas);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-muted-soft);
+  }
+
+  ::selection {
+    background: var(--color-brand-100);
+    color: var(--color-brand-900);
+  }
+
+  /* Sticky-bar offset so anchor jumps clear the top bar */
+  section[id],
+  div[id] {
+    scroll-margin-top: 84px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPONENT PRIMITIVES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@layer components {
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1rem;
+    font-weight: 500;
+    font-size: 14px;
+    letter-spacing: -0.005em;
+    border-radius: 8px;
+    transition: all 150ms var(--ease-out);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-brand-600);
+    color: white;
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-brand-700);
+    box-shadow: var(--shadow-md);
+  }
+
+  .btn-secondary {
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--color-line);
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--color-surface-soft);
+    border-color: var(--color-muted-soft);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--color-ink-soft);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-surface-soft);
+    color: var(--color-ink);
+  }
+
+  /* Card surface */
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: 12px;
+  }
+
+  .hairline-b {
+    border-bottom: 1px solid var(--color-line);
+  }
+  .hairline-t {
+    border-top: 1px solid var(--color-line);
+  }
+
+  /* Eyebrow */
+  .eyebrow {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-muted);
+  }
+
+  /* Stat block */
+  .stat-value {
+    font-family: var(--font-display);
+    font-size: 2.75rem;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Chip */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 2px 8px;
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.005em;
+    border-radius: 999px;
+    border: 1px solid var(--color-line);
+    background: var(--color-surface-soft);
+    color: var(--color-ink-soft);
+    line-height: 1.6;
+  }
+  .chip-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(6px);
+  animation: reveal-in 500ms var(--ease-out) forwards;
+}
+@keyframes reveal-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.patch-in {
+  animation: patch-in 600ms var(--ease-out) 120ms both;
+}
+@keyframes patch-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.dot-pulse {
+  animation: dot-pulse 2.4s var(--ease-in-out) infinite;
+}
+
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 200ms var(--ease-out);
+}
+.page-enter-from,
+.page-leave-to {
+  opacity: 0;
+}

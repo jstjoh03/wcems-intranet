@@ -1,0 +1,79 @@
+[
+  {
+    "id": "206",
+    "name": "Medic 206",
+    "address": "25243 Stockdick School Rd",
+    "city": "Katy, TX 77493",
+    "phone": "(979) 221-9202",
+    "mapUrl": "https://www.google.com/maps/place/25243+Stockdick+School+Rd,+Katy,+TX+77493",
+    "doorCode": "App Access",
+    "doorCodeUpdatedAt": "2026-04-02T00:00:00Z",
+    "doorCodeUpdatedBy": "Justin St. John"
+  },
+  {
+    "id": "211",
+    "name": "Medic 211",
+    "address": "905 4th St",
+    "city": "Hempstead, TX 77445",
+    "phone": "(713) 875-7164",
+    "mapUrl": "https://www.google.com/maps/place/905+4th+St,+Hempstead,+TX+77445",
+    "doorCode": "Press 4 & 2, then 3",
+    "doorCodeUpdatedAt": "2026-03-15T00:00:00Z",
+    "doorCodeUpdatedBy": "Heather Fojt"
+  },
+  {
+    "id": "221",
+    "name": "Medic 221",
+    "address": "612 Walnut St",
+    "city": "Waller, TX 77484",
+    "phone": "(713) 875-5171",
+    "mapUrl": "https://www.google.com/maps?cid=13707604231195849037",
+    "doorCode": "2, 3, 4, 5",
+    "doorCodeUpdatedAt": "2026-03-15T00:00:00Z",
+    "doorCodeUpdatedBy": "Heather Fojt"
+  },
+  {
+    "id": "231",
+    "name": "Medic 231",
+    "address": "37594 Richard Frey Rd",
+    "city": "Hempstead, TX 77445",
+    "phone": "(936) 727-6770",
+    "mapUrl": "https://www.google.com/maps/place/37594+Richard+Frey+Rd,+Hempstead,+TX+77445",
+    "doorCode": "3, 5, 7, 9",
+    "doorCodeUpdatedAt": "2026-03-15T00:00:00Z",
+    "doorCodeUpdatedBy": "Heather Fojt"
+  },
+  {
+    "id": "242",
+    "name": "Medic 242",
+    "address": "26156 FM 362",
+    "city": "Waller, TX 77484",
+    "phone": "(832) 470-5402",
+    "mapUrl": "https://www.google.com/maps/place/26156+FM+362,+Waller,+TX+77484",
+    "doorCode": "Press 4 & 2, then 3",
+    "doorCodeUpdatedAt": "2026-03-15T00:00:00Z",
+    "doorCodeUpdatedBy": "Heather Fojt"
+  },
+  {
+    "id": "271",
+    "name": "Medic 271",
+    "address": "33977 Hoff Rd",
+    "city": "Brookshire, TX 77423",
+    "phone": "(713) 875-3787",
+    "mapUrl": "https://www.google.com/maps/place/33977+Hoff+Rd,+Brookshire,+TX+77423",
+    "doorCode": "App Access",
+    "doorCodeUpdatedAt": "2026-04-10T00:00:00Z",
+    "doorCodeUpdatedBy": "Justin St. John"
+  },
+  {
+    "id": "281",
+    "name": "Medic 281",
+    "address": "540 Ellen Powell Dr",
+    "city": "Prairie View, TX 77445",
+    "phone": "(713) 875-3787",
+    "mapUrl": "https://www.google.com/maps/place/540+Ellen+Powell,+Prairie+View,+TX+77445",
+    "doorCode": "App Access",
+    "doorCodeUpdatedAt": "2026-04-10T00:00:00Z",
+    "doorCodeUpdatedBy": "Justin St. John"
+  }
+]
