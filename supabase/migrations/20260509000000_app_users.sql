@@ -164,10 +164,13 @@ END$$;
 
 -- Justin's seed values — match the dev stub so admin previewing in
 -- production looks identical to dev.
+-- S201/S202 are physical-location-only stations — do NOT pair with a
+-- medic unit number. Other stations use the combined `S### / M###`
+-- format because their crews have a fixed unit.
 UPDATE public.app_users
 SET
   shift = 'C',
-  station = 'S202 / M271',
+  station = 'S202',
   fuel_number = '30988',
   date_of_birth = '1991-04-03',
   show_birthday = true

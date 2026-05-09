@@ -31,7 +31,7 @@ const DEV_STUB_USER: AppUser = {
   initials: 'JS',
   role: 'admin',
   shift: 'C',
-  station: 'S202 / M271',
+  station: 'S202',
   fuelNumber: '30988',
   dateOfBirth: '1991-04-03',
   showBirthday: true,
