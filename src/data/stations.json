@@ -7,8 +7,9 @@
     "phone": "(979) 221-9202",
     "mapUrl": "https://www.google.com/maps/place/25243+Stockdick+School+Rd,+Katy,+TX+77493",
     "doorCode": "App Access",
-    "doorCodeUpdatedAt": "2026-04-02T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "active": true,
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "211",
@@ -18,8 +19,9 @@
     "phone": "(713) 875-7164",
     "mapUrl": "https://www.google.com/maps/place/905+4th+St,+Hempstead,+TX+77445",
     "doorCode": "Press 4 & 2, then 3",
-    "doorCodeUpdatedAt": "2026-03-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Heather Fojt"
+    "active": true,
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "221",
@@ -29,8 +31,9 @@
     "phone": "(713) 875-5171",
     "mapUrl": "https://www.google.com/maps?cid=13707604231195849037",
     "doorCode": "2, 3, 4, 5",
-    "doorCodeUpdatedAt": "2026-03-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Heather Fojt"
+    "active": true,
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "231",
@@ -40,8 +43,9 @@
     "phone": "(936) 727-6770",
     "mapUrl": "https://www.google.com/maps/place/37594+Richard+Frey+Rd,+Hempstead,+TX+77445",
     "doorCode": "3, 5, 7, 9",
-    "doorCodeUpdatedAt": "2026-03-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Heather Fojt"
+    "active": true,
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "242",
@@ -51,8 +55,9 @@
     "phone": "(832) 470-5402",
     "mapUrl": "https://www.google.com/maps/place/26156+FM+362,+Waller,+TX+77484",
     "doorCode": "Press 4 & 2, then 3",
-    "doorCodeUpdatedAt": "2026-03-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Heather Fojt"
+    "active": true,
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "271",
@@ -62,8 +67,9 @@
     "phone": "(713) 875-3787",
     "mapUrl": "https://www.google.com/maps/place/33977+Hoff+Rd,+Brookshire,+TX+77423",
     "doorCode": "App Access",
-    "doorCodeUpdatedAt": "2026-04-10T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "active": true,
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "281",
@@ -73,7 +79,8 @@
     "phone": "(713) 875-3787",
     "mapUrl": "https://www.google.com/maps/place/540+Ellen+Powell,+Prairie+View,+TX+77445",
     "doorCode": "App Access",
-    "doorCodeUpdatedAt": "2026-04-10T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "active": true,
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   }
 ]

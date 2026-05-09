@@ -5,6 +5,10 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  server: {
+    host: true, // bind on 0.0.0.0 so a phone on the same Wi-Fi can hit http://<your-pc-ip>:5173
+    port: 5173,
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

@@ -14,8 +14,8 @@ import {
   Hospital,
   BarChart3,
   Building2,
-  BookOpen,
-  FileCheck,
+  Briefcase,
+  Settings,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -48,8 +48,10 @@ const pages: NavItem[] = [
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
   { label: 'Admin Staff', to: '/admin-staff', icon: Building2 },
-  { label: 'Forms Library', to: '/', icon: FileCheck, badge: 'Soon' },
-  { label: 'Protocol Manual', to: '/', icon: BookOpen, badge: 'Soon' },
+  { label: 'HR Hub', to: '/', icon: Briefcase, badge: 'Soon' },
+]
+const adminPages: NavItem[] = [
+  { label: 'Manage Stations', to: '/admin/stations', icon: Settings },
 ]
 
 function jumpTo(item: NavItem) {
@@ -143,6 +145,23 @@ function signOut() {
         <div class="space-y-0.5">
           <button
             v-for="p in pages"
+            :key="p.label"
+            type="button"
+            class="nav-item"
+            @click="jumpTo(p)"
+          >
+            <component :is="p.icon" :size="16" :stroke-width="1.85" class="nav-item__icon" />
+            <span>{{ p.label }}</span>
+            <span v-if="p.badge" class="nav-item__badge">{{ p.badge }}</span>
+          </button>
+        </div>
+      </section>
+
+      <section v-if="auth.isAdmin" class="mt-6">
+        <Eyebrow class="px-2 mb-2">Admin</Eyebrow>
+        <div class="space-y-0.5">
+          <button
+            v-for="p in adminPages"
             :key="p.label"
             type="button"
             class="nav-item"

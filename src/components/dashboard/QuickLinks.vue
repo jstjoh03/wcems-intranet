@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Settings2, X } from 'lucide-vue-next'
+import { Settings2, X, Pin } from 'lucide-vue-next'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
-import MLink from '@/components/primitives/MLink.vue'
+import QuickLinkTile from '@/components/primitives/QuickLinkTile.vue'
 import linksData from '@/data/quicklinks.json'
 import type { QuickLink } from '@/types'
 import { useAuthStore } from '@/stores/auth'
@@ -14,7 +14,7 @@ const links = linksData as QuickLink[]
 const customizing = ref(false)
 
 const userId = computed(() => auth.appUser?.id ?? 'anonymous')
-const { getPref, togglePin, toggleHide } = useUserLinkPreferences(userId.value)
+const { getPref, togglePin } = useUserLinkPreferences(userId.value)
 
 const visibleLinks = computed(() => {
   const role = auth.role.value ?? 'crew'
@@ -24,7 +24,8 @@ const visibleLinks = computed(() => {
 })
 
 const pinned = computed(() => visibleLinks.value.filter((l) => getPref(l.id).pinned))
-const unpinnedByCategory = computed(() => {
+
+const groupedUnpinned = computed(() => {
   const grouped = new Map<string, QuickLink[]>()
   for (const l of visibleLinks.value) {
     if (getPref(l.id).pinned) continue
@@ -32,21 +33,19 @@ const unpinnedByCategory = computed(() => {
     arr.push(l)
     grouped.set(l.category, arr)
   }
-  for (const [, arr] of grouped) {
-    arr.sort((a, b) => a.defaultSort - b.defaultSort)
-  }
+  for (const [, arr] of grouped) arr.sort((a, b) => a.defaultSort - b.defaultSort)
   return Array.from(grouped.entries())
 })
 </script>
 
 <template>
   <section>
-    <header class="quick-links__header">
+    <header class="ql__header">
       <Eyebrow>Quick Links</Eyebrow>
       <button
         type="button"
-        class="quick-links__customize"
-        :class="{ 'quick-links__customize--on': customizing }"
+        class="ql__customize"
+        :class="{ 'ql__customize--on': customizing }"
         @click="customizing = !customizing"
       >
         <component :is="customizing ? X : Settings2" :size="13" :stroke-width="1.85" />
@@ -55,10 +54,12 @@ const unpinnedByCategory = computed(() => {
     </header>
 
     <!-- Pinned strip -->
-    <div v-if="pinned.length > 0" class="quick-links__pinned">
-      <Eyebrow class="mb-3">Pinned</Eyebrow>
-      <div class="grid grid-cols-2 gap-2.5">
-        <MLink
+    <div v-if="pinned.length > 0" class="ql__pinned">
+      <div class="ql__pinned-label">
+        <Pin :size="11" :stroke-width="2" /> Pinned
+      </div>
+      <div class="ql__grid">
+        <QuickLinkTile
           v-for="link in pinned"
           :key="link.id"
           :link="link"
@@ -69,17 +70,16 @@ const unpinnedByCategory = computed(() => {
       </div>
     </div>
 
-    <!-- Empty state if all hidden / none visible -->
-    <div v-if="visibleLinks.length === 0" class="quick-links__empty">
-      No quick links available for your role yet.
+    <div v-if="visibleLinks.length === 0" class="ql__empty">
+      No quick links available for your role.
     </div>
 
     <!-- Categorized lists -->
-    <div class="quick-links__groups">
-      <div v-for="[category, items] in unpinnedByCategory" :key="category">
-        <Eyebrow class="mb-3">{{ category }}</Eyebrow>
-        <div class="grid grid-cols-2 gap-2.5">
-          <MLink
+    <div class="ql__groups">
+      <div v-for="[category, items] in groupedUnpinned" :key="category" class="ql__group">
+        <Eyebrow class="ql__group-label">{{ category }}</Eyebrow>
+        <div class="ql__grid">
+          <QuickLinkTile
             v-for="link in items"
             :key="link.id"
             :link="link"
@@ -91,24 +91,23 @@ const unpinnedByCategory = computed(() => {
       </div>
     </div>
 
-    <p v-if="customizing" class="quick-links__hint">
-      Tap the pin icon on any link to pin it to the top of this list. Pin/hide
-      preferences are stored locally during the build phase — they will move to
-      your account when the database is back online.
+    <p v-if="customizing" class="ql__hint">
+      Tap the pin icon on any tile to pin it to the top. Pin/hide preferences are
+      stored locally for now and will sync to your account when the database is restored.
     </p>
   </section>
 </template>
 
 <style scoped>
-.quick-links__header {
+.ql__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
 }
-.quick-links__customize {
+.ql__customize {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -123,25 +122,36 @@ const unpinnedByCategory = computed(() => {
   cursor: pointer;
   transition: all 120ms var(--ease-out);
 }
-.quick-links__customize:hover {
+.ql__customize:hover {
   border-color: var(--color-muted-soft);
   color: var(--color-ink);
 }
-.quick-links__customize--on {
+.ql__customize--on {
   background: var(--color-brand-600);
   color: white;
   border-color: var(--color-brand-600);
 }
 
-.quick-links__pinned {
-  margin-bottom: 28px;
-  padding: 14px;
+.ql__pinned {
+  margin-bottom: 18px;
+  padding: 12px;
   border-radius: 12px;
   background: oklch(0.99 0.01 86.8);
   border: 1px dashed oklch(0.85 0.07 86.8);
 }
+.ql__pinned-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+  margin-bottom: 10px;
+}
 
-.quick-links__empty {
+.ql__empty {
   padding: 24px;
   border: 1px dashed var(--color-line);
   border-radius: 12px;
@@ -150,20 +160,34 @@ const unpinnedByCategory = computed(() => {
   font-size: 13px;
 }
 
-.quick-links__groups {
+.ql__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ql__group-label {
+  margin-bottom: 8px;
+}
+
+/* Compact tile grid: 2 cols on phone, 3 on tablet, 4 on desktop */
+.ql__grid {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 28px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+@media (min-width: 480px) {
+  .ql__grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 @media (min-width: 768px) {
-  .quick-links__groups {
-    grid-template-columns: 1fr 1fr;
-    gap: 32px 32px;
+  .ql__grid {
+    grid-template-columns: repeat(4, 1fr);
   }
 }
 
-.quick-links__hint {
-  margin-top: 18px;
+.ql__hint {
+  margin-top: 14px;
   font-size: 11.5px;
   color: var(--color-muted);
   font-style: italic;

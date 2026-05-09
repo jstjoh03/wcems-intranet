@@ -15,24 +15,30 @@ const auth = useAuthStore()
 const announcements = ref<Announcement[]>(JSON.parse(JSON.stringify(announcementsData)))
 
 const composing = ref(false)
+const PRESET_CATEGORIES = ['Operations', 'Protocol', 'Education', 'Recognition', 'Outreach'] as const
 const draft = ref({
-  tag: 'Operations',
+  tag: 'Operations' as string,
+  customTag: '',
   title: '',
   body: '',
 })
 
 function startCompose() {
   composing.value = true
-  draft.value = { tag: 'Operations', title: '', body: '' }
+  draft.value = { tag: 'Operations', customTag: '', title: '', body: '' }
 }
 
 function publish() {
   if (!draft.value.title.trim()) return
+  const finalTag =
+    draft.value.tag === 'Other'
+      ? draft.value.customTag.trim() || 'Other'
+      : draft.value.tag
   announcements.value = [
     {
       id: crypto.randomUUID(),
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      tag: draft.value.tag,
+      tag: finalTag,
       title: draft.value.title.trim(),
       body: draft.value.body.trim(),
       authorName: auth.appUser?.fullName ?? 'Admin',
@@ -67,12 +73,17 @@ function remove(id: string) {
         required
       />
       <select v-model="draft.tag" class="announcements-card__select">
-        <option>Operations</option>
-        <option>Protocol</option>
-        <option>Education</option>
-        <option>Recognition</option>
-        <option>Outreach</option>
+        <option v-for="c in PRESET_CATEGORIES" :key="c">{{ c }}</option>
+        <option>Other</option>
       </select>
+      <input
+        v-if="draft.tag === 'Other'"
+        v-model="draft.customTag"
+        type="text"
+        placeholder="Custom category (e.g. CISM, Recall, Holiday)"
+        class="announcements-card__input"
+        maxlength="24"
+      />
       <textarea
         v-model="draft.body"
         placeholder="Body (optional)"

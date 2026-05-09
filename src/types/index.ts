@@ -29,8 +29,9 @@ export interface Station {
   phone: string
   mapUrl: string
   doorCode: string
-  doorCodeUpdatedAt: string
-  doorCodeUpdatedBy: string
+  active: boolean
+  doorCodeUpdatedAt: string | null
+  doorCodeUpdatedBy: string | null
 }
 
 /* ── Hospitals ─────────────────────────────────────────────────────── */

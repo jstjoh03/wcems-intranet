@@ -16,27 +16,34 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
     <Hero />
     <OperationalStrip />
 
+    <!--
+      Layout intent: Announcements + Newsletter sit at the top of the main
+      column so editorial content is the first thing crews see after the
+      operational strip. Quick Links is compact tile-grid below — the new
+      tile sizing makes it short enough to fit alongside the right-rail
+      training/call-volume cards without forcing a long scroll.
+    -->
     <div class="dash__grid">
       <div class="dash__main">
-        <div id="quick-links" class="reveal" style="animation-delay: 90ms">
+        <div id="announcements" class="reveal" style="animation-delay: 80ms">
+          <AnnouncementsCard />
+        </div>
+        <div id="newsletter" class="reveal" style="animation-delay: 110ms">
+          <NewsletterCard />
+        </div>
+        <div id="quick-links" class="reveal" style="animation-delay: 140ms">
           <QuickLinks />
         </div>
-        <div id="stations" class="reveal" style="animation-delay: 120ms">
+        <div id="stations" class="reveal" style="animation-delay: 170ms">
           <StationDirectory />
         </div>
       </div>
 
       <aside class="dash__aside">
-        <div id="newsletter" class="reveal" style="animation-delay: 100ms">
-          <NewsletterCard />
-        </div>
-        <div id="training" class="reveal" style="animation-delay: 140ms">
+        <div id="training" class="reveal" style="animation-delay: 100ms">
           <UpcomingTrainingCard />
         </div>
-        <div id="announcements" class="reveal" style="animation-delay: 180ms">
-          <AnnouncementsCard />
-        </div>
-        <div class="reveal" style="animation-delay: 220ms">
+        <div class="reveal" style="animation-delay: 160ms">
           <CallVolumeTile />
         </div>
       </aside>
@@ -73,7 +80,7 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
 .dash__main {
   display: flex;
   flex-direction: column;
-  gap: 48px;
+  gap: 36px;
   min-width: 0;
 }
 .dash__aside {

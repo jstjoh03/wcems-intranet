@@ -34,8 +34,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "hca-tomball",
@@ -53,8 +53,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "memorial-hermann-cypress",
@@ -72,8 +72,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "memorial-hermann-katy",
@@ -91,8 +91,8 @@
     "noDoorCode": false,
     "notes": "In active pursuit of Trauma Level II designation",
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "memorial-hermann-tmc",
@@ -110,8 +110,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "houston-methodist-cypress",
@@ -129,8 +129,8 @@
     "noDoorCode": false,
     "notes": "Codes change annually — current code effective May 13, 2026",
     "codeEffectiveFrom": "2026-05-13",
-    "doorCodeUpdatedAt": "2026-05-13T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "houston-methodist-ecc-cypress",
@@ -148,8 +148,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "houston-methodist-west",
@@ -167,8 +167,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "houston-methodist-woodlands",
@@ -186,8 +186,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "houston-methodist-tmc",
@@ -224,8 +224,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "houston-methodist-ecc-magnolia",
@@ -243,8 +243,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "stjoseph-navasota",
@@ -281,8 +281,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "bsw-college-station",
@@ -300,8 +300,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "stjoseph-bryan",
@@ -319,8 +319,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "stjoseph-college-station",
@@ -357,8 +357,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "stlukes-tmc",
@@ -395,8 +395,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "tch-west",
@@ -414,8 +414,8 @@
     "noDoorCode": false,
     "notes": null,
     "codeEffectiveFrom": null,
-    "doorCodeUpdatedAt": "2026-04-15T00:00:00Z",
-    "doorCodeUpdatedBy": "Justin St. John"
+    "doorCodeUpdatedAt": null,
+    "doorCodeUpdatedBy": null
   },
   {
     "id": "tch-tmc",
