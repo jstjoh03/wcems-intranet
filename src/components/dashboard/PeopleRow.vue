@@ -84,7 +84,7 @@ function keyFor(b: { name: string }) {
           <p class="birthdays__empty-sub">We'll celebrate again tomorrow.</p>
         </div>
 
-        <div v-else class="space-y-2">
+        <div v-else class="birthdays__list">
           <div
             v-for="b in people.birthdays"
             :key="b.name"
@@ -92,8 +92,8 @@ function keyFor(b: { name: string }) {
           >
             <div class="birthdays__avatar display">{{ initials(b.name) }}</div>
             <div class="flex-1 min-w-0">
-              <div class="display text-[16px]" style="color: var(--color-ink)">{{ b.name }}</div>
-              <div class="font-mono text-[10.5px]" style="color: var(--color-muted)">
+              <div class="birthdays__name display">{{ b.name }}</div>
+              <div class="birthdays__meta">
                 {{ b.role }} · {{ b.shift }} Shift
               </div>
             </div>
@@ -256,59 +256,70 @@ function keyFor(b: { name: string }) {
   color: var(--color-muted);
 }
 
+.birthdays__list {
+  display: flex;
+  flex-direction: column;
+}
 .birthdays__row {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: oklch(0.97 0.04 86.8);
+  padding: 10px 0;
+}
+.birthdays__row + .birthdays__row {
+  border-top: 1px solid var(--color-line-soft);
 }
 .birthdays__avatar {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 999px;
   background: var(--color-accent-500);
   color: var(--color-brand-900);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 12.5px;
   flex-shrink: 0;
+}
+.birthdays__name {
+  font-size: 15.5px;
+  letter-spacing: -0.005em;
+  color: var(--color-ink);
+  line-height: 1.2;
+}
+.birthdays__meta {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--color-muted);
 }
 .birthdays__heart {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   background: transparent;
-  border: 1px solid transparent;
+  border: none;
   cursor: pointer;
-  padding: 5px 8px 5px 7px;
-  border-radius: 999px;
-  color: var(--color-accent-700);
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: var(--color-muted);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
   transition:
-    background 140ms var(--ease-out),
-    border-color 140ms var(--ease-out),
+    color 140ms var(--ease-out),
     transform 140ms var(--ease-out);
 }
 .birthdays__heart:hover {
-  background: oklch(1 0 0 / 0.6);
-  border-color: oklch(0.85 0.07 86.8);
+  color: var(--color-ink-soft);
 }
 .birthdays__heart:active {
   transform: scale(0.94);
 }
-.birthdays__heart--reacted {
-  color: var(--color-danger-500);
-  background: oklch(0.97 0.04 20);
-  border-color: oklch(0.85 0.07 20);
-}
+.birthdays__heart--reacted,
 .birthdays__heart--reacted:hover {
-  background: oklch(0.94 0.06 20);
-  border-color: oklch(0.78 0.1 20);
+  color: var(--color-danger-500);
 }
 .birthdays__heart-count {
   letter-spacing: 0.02em;
