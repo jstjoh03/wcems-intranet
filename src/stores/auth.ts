@@ -90,6 +90,7 @@ function deriveAppUserFromSession(supaUser: User): AppUser {
 
 interface AppUserRow {
   id: string
+  auth_user_id: string | null
   email: string
   first_name: string
   last_name: string
@@ -120,13 +121,18 @@ function rowToAppUser(row: AppUserRow): AppUser {
   }
 }
 
-async function fetchAppUserRow(id: string): Promise<AppUserRow | null> {
+async function fetchAppUserRow(authUserId: string): Promise<AppUserRow | null> {
+  /* Look up by auth_user_id rather than id — after the
+     20260509001100_app_users_decouple_auth migration, app_users.id is
+     a stable internal uuid that doesn't necessarily equal auth.uid()
+     (so pre-seeded rows can exist before sign-in). The auth_user_id
+     column is the bridge from the auth provider's UID to the row. */
   const { data, error } = await supabase
     .from('app_users')
     .select(
-      'id, email, first_name, last_name, full_name, role, shift, station, fuel_number, date_of_birth, show_birthday, active',
+      'id, auth_user_id, email, first_name, last_name, full_name, role, shift, station, fuel_number, date_of_birth, show_birthday, active',
     )
-    .eq('id', id)
+    .eq('auth_user_id', authUserId)
     .maybeSingle()
   if (error) {
     console.error('[auth] failed to load app_users row:', error.message)
