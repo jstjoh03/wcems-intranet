@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Image as ImageIcon,
   Edit2,
+  Trash2,
   FileText,
   ExternalLink,
 } from 'lucide-vue-next'
@@ -15,7 +16,7 @@ import { useNewsletter } from '@/composables/useNewsletter'
 import NewsletterEditModal from './NewsletterEditModal.vue'
 
 const auth = useAuthStore()
-const { current, getPdfUrl } = useNewsletter()
+const { current, getPdfUrl, clear } = useNewsletter()
 
 const editing = ref(false)
 const fetchingPdf = ref(false)
@@ -43,6 +44,12 @@ async function openPdf() {
     fetchingPdf.value = false
   }
 }
+
+async function removePublished() {
+  if (!current.value) return
+  if (!confirm(`Remove "${current.value.title}"? It'll come off the dashboard immediately.`)) return
+  await clear()
+}
 </script>
 
 <template>
@@ -58,15 +65,25 @@ async function openPdf() {
       <AppChip variant="accent" class="newsletter-card__chip">
         {{ current ? 'Published' : 'Featured' }}
       </AppChip>
-      <button
-        v-if="auth.isAdmin"
-        type="button"
-        class="newsletter-card__edit"
-        :aria-label="current ? 'Edit newsletter' : 'Publish newsletter'"
-        @click="editing = true"
-      >
-        <Edit2 :size="12" />
-      </button>
+      <div v-if="auth.isAdmin" class="newsletter-card__admin-actions">
+        <button
+          type="button"
+          class="newsletter-card__action"
+          :aria-label="current ? 'Edit newsletter' : 'Publish newsletter'"
+          @click="editing = true"
+        >
+          <Edit2 :size="12" />
+        </button>
+        <button
+          v-if="current"
+          type="button"
+          class="newsletter-card__action newsletter-card__action--danger"
+          aria-label="Remove published newsletter"
+          @click="removePublished"
+        >
+          <Trash2 :size="12" />
+        </button>
+      </div>
     </div>
     <div class="newsletter-card__body">
       <Eyebrow>Newsletter</Eyebrow>
@@ -157,25 +174,32 @@ async function openPdf() {
   border-color: transparent;
   font-weight: 600;
 }
-.newsletter-card__edit {
+.newsletter-card__admin-actions {
   position: absolute;
   top: 12px;
   right: 12px;
-  background: oklch(0 0 0 / 0.4);
+  display: inline-flex;
+  gap: 6px;
+}
+.newsletter-card__action {
+  background: oklch(0 0 0 / 0.35);
   border: none;
   color: white;
-  padding: 6px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 6px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 150ms, background 150ms;
+  transition: background 140ms var(--ease-out), color 140ms var(--ease-out);
 }
-.newsletter-card:hover .newsletter-card__edit,
-.newsletter-card__edit:focus-visible {
-  opacity: 1;
+.newsletter-card__action:hover {
+  background: oklch(0 0 0 / 0.55);
 }
-.newsletter-card__edit:hover {
-  background: oklch(0 0 0 / 0.6);
+.newsletter-card__action--danger:hover {
+  background: var(--color-danger-500);
+  color: white;
 }
 
 .newsletter-card__body {
