@@ -109,6 +109,11 @@ function clearPickedHero() {
 </script>
 
 <template>
+  <!-- Teleport to body so the overlay escapes any ancestor transform
+       contexts (the dashboard's .reveal sections + the page-transition
+       wrapper would otherwise contain `position: fixed`, leaving the
+       modal anchored hundreds of pixels below the viewport). -->
+  <Teleport to="body">
   <Transition name="news-modal">
     <div v-if="open" class="news-modal-overlay" @click.self="$emit('close')">
       <div class="news-modal" role="dialog" aria-labelledby="news-modal-title">
@@ -279,6 +284,7 @@ function clearPickedHero() {
       </div>
     </div>
   </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -356,6 +362,11 @@ function clearPickedHero() {
   gap: 14px;
   padding: 12px 18px 18px;
   overflow-y: auto;
+  /* Without flex+min-height, the form expands to fit content and the
+     footer ends up below the viewport. Constraining it makes the
+     overflow-y: auto actually engage. */
+  flex: 1;
+  min-height: 0;
 }
 
 .news-modal__field {
@@ -503,7 +514,17 @@ function clearPickedHero() {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 4px;
+  /* Sticky so the Publish button is always reachable regardless of
+     whether the form is scrolled. Negative margins + matching padding
+     extend the surface to the modal edges so the border-top reads as
+     a divider rather than a floating bar. */
+  position: sticky;
+  bottom: -18px;
+  margin: 8px -18px -18px;
+  padding: 12px 18px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-line-soft);
+  z-index: 1;
 }
 .news-modal__primary-actions {
   display: inline-flex;
