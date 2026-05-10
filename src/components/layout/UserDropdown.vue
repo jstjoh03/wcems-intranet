@@ -1,82 +1,101 @@
 <script setup lang="ts">
-import { ref, computed, nextTick, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check, Pencil } from 'lucide-vue-next'
+import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check } from 'lucide-vue-next'
 import { useCodeReveal } from '@/composables/useCodeReveal'
+import type { ShiftLetter } from '@/types'
 
 const auth = useAuthStore()
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
 const copied = ref(false)
+let openedAt = 0
 
 const fuel = useCodeReveal()
-
-const editingStation = ref(false)
-const stationDraft = ref('')
-const stationInput = ref<HTMLInputElement | null>(null)
-const stationError = ref<string | null>(null)
-const savingStation = ref(false)
 
 const initials = computed(() => auth.appUser?.initials ?? '?')
 const firstName = computed(() => auth.appUser?.firstName ?? '')
 const role = computed(() => auth.appUser?.role ?? 'crew')
 const fullName = computed(() => auth.appUser?.fullName ?? '')
 const fuelNumber = computed(() => auth.appUser?.fuelNumber ?? null)
-const shift = computed(() => auth.appUser?.shift ?? null)
-const station = computed(() => auth.appUser?.station ?? null)
+
+/* Closed list of valid stations — keeps entry uniform across the crew. */
+const STATION_OPTIONS = [
+  'S201',
+  'S202',
+  'Medic 206',
+  'Medic 211',
+  'Medic 221',
+  'Medic 231',
+  'Medic 242',
+  'Medic 271',
+  'Medic 281',
+  'EMS Admin',
+  'FLOAT',
+  'PRN',
+] as const
+const SHIFT_OPTIONS: ShiftLetter[] = ['A', 'B', 'C']
+
+/* Local refs synced to the auth store. We `watch` rather than computed
+   so binding to a <select> via v-model works (computed is read-only). */
+const stationLocal = ref(auth.appUser?.station ?? '')
+const shiftLocal = ref<ShiftLetter | ''>(auth.appUser?.shift ?? '')
+watch(
+  () => auth.appUser?.station,
+  (v) => (stationLocal.value = v ?? ''),
+)
+watch(
+  () => auth.appUser?.shift,
+  (v) => (shiftLocal.value = v ?? ''),
+)
+
+const stationError = ref<string | null>(null)
+const shiftError = ref<string | null>(null)
+
+async function saveStation() {
+  stationError.value = null
+  try {
+    await auth.updateOwnStation(stationLocal.value || null)
+  } catch (err) {
+    stationError.value = (err as Error).message
+    /* Roll the dropdown back to the last-saved value. */
+    stationLocal.value = auth.appUser?.station ?? ''
+  }
+}
+
+async function saveShift() {
+  shiftError.value = null
+  try {
+    await auth.updateOwnShift(shiftLocal.value || null)
+  } catch (err) {
+    shiftError.value = (err as Error).message
+    shiftLocal.value = auth.appUser?.shift ?? ''
+  }
+}
 
 function close() {
   open.value = false
   fuel.hide()
-  cancelEditStation()
 }
 
 function toggle() {
   open.value = !open.value
-  if (!open.value) {
-    fuel.hide()
-    cancelEditStation()
-  }
+  if (open.value) openedAt = Date.now()
+  else fuel.hide()
 }
 
-async function startEditStation() {
-  stationDraft.value = station.value ?? ''
-  stationError.value = null
-  editingStation.value = true
-  await nextTick()
-  stationInput.value?.focus()
-  stationInput.value?.select()
-}
-
-function cancelEditStation() {
-  editingStation.value = false
-  stationDraft.value = ''
-  stationError.value = null
-}
-
-async function saveStation() {
-  if (savingStation.value) return
-  const trimmed = stationDraft.value.trim()
-  const current = station.value ?? ''
-  if (trimmed === current) {
-    cancelEditStation()
-    return
-  }
-  savingStation.value = true
-  stationError.value = null
-  try {
-    await auth.updateOwnStation(trimmed || null)
-    editingStation.value = false
-    stationDraft.value = ''
-  } catch (err) {
-    stationError.value = (err as Error).message
-  } finally {
-    savingStation.value = false
-  }
-}
-
+/* Close-on-click-outside.
+ *
+ * Listens on `click` rather than `mousedown` — on iOS Safari the touch
+ * → mouse synthetic-event ordering can fire mousedown after the click
+ * that opens us, leading to "flashes and disappears". Using `click`
+ * matches the trigger's @click ordering reliably. The 200ms grace
+ * period is belt-and-suspenders against any edge-case re-fire on the
+ * very same gesture. */
 function onClickOutside(e: MouseEvent) {
-  if (open.value && root.value && !root.value.contains(e.target as Node)) close()
+  if (!open.value) return
+  if (Date.now() - openedAt < 200) return
+  if (root.value && !root.value.contains(e.target as Node)) close()
 }
 
 function onEsc(e: KeyboardEvent) {
@@ -84,11 +103,11 @@ function onEsc(e: KeyboardEvent) {
 }
 
 onMounted(() => {
-  document.addEventListener('mousedown', onClickOutside)
+  document.addEventListener('click', onClickOutside)
   document.addEventListener('keydown', onEsc)
 })
 onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onClickOutside)
+  document.removeEventListener('click', onClickOutside)
   document.removeEventListener('keydown', onEsc)
 })
 
@@ -144,51 +163,34 @@ function signOut() {
 
         <div class="user-dropdown__divider" />
 
-        <!-- Shift / Station — non-secret stats. Render '—' when null so a
-             missing value reads as "not set" instead of disappearing
-             silently (prompts the user / admin to fill it in). -->
+        <!-- Shift / Station — both editable from a closed dropdown of
+             valid values so entries stay uniform across the crew. -->
         <div class="user-dropdown__stats">
           <div class="user-dropdown__stat">
             <div class="user-dropdown__stat-label">Shift</div>
-            <div class="user-dropdown__stat-value">
-              <template v-if="shift">{{ shift }}</template>
-              <span v-else class="user-dropdown__stat-empty">—</span>
-            </div>
+            <select
+              v-model="shiftLocal"
+              class="user-dropdown__stat-select"
+              aria-label="Edit shift"
+              @change="saveShift"
+            >
+              <option value="">—</option>
+              <option v-for="s in SHIFT_OPTIONS" :key="s" :value="s">{{ s }}</option>
+            </select>
+            <div v-if="shiftError" class="user-dropdown__stat-error">{{ shiftError }}</div>
           </div>
           <div class="user-dropdown__stat">
             <div class="user-dropdown__stat-label">Station</div>
-            <template v-if="!editingStation">
-              <button
-                type="button"
-                class="user-dropdown__stat-edit-btn"
-                :aria-label="station ? `Edit station (currently ${station})` : 'Set your station'"
-                @click="startEditStation"
-              >
-                <span class="user-dropdown__stat-value">
-                  <template v-if="station">{{ station }}</template>
-                  <span v-else class="user-dropdown__stat-empty">— set</span>
-                </span>
-                <Pencil :size="11" :stroke-width="1.85" class="user-dropdown__stat-pencil" />
-              </button>
-            </template>
-            <template v-else>
-              <input
-                ref="stationInput"
-                v-model="stationDraft"
-                type="text"
-                class="user-dropdown__stat-input"
-                maxlength="40"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="e.g. S202"
-                :disabled="savingStation"
-                @keydown.enter.prevent="saveStation"
-                @keydown.escape.prevent="cancelEditStation"
-              />
-              <div v-if="stationError" class="user-dropdown__stat-error">
-                {{ stationError }}
-              </div>
-            </template>
+            <select
+              v-model="stationLocal"
+              class="user-dropdown__stat-select"
+              aria-label="Edit station"
+              @change="saveStation"
+            >
+              <option value="">— set</option>
+              <option v-for="s in STATION_OPTIONS" :key="s" :value="s">{{ s }}</option>
+            </select>
+            <div v-if="stationError" class="user-dropdown__stat-error">{{ stationError }}</div>
           </div>
         </div>
 
@@ -365,58 +367,46 @@ function signOut() {
   font-weight: 400;
 }
 
-.user-dropdown__stat-edit-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+/* Native <select> styled to read like the typographic value above it.
+   The chevron lives in the background-image so the select still looks
+   tappable but doesn't pull in the OS dropdown chrome. Mobile gets the
+   native picker on tap, which is the right UX there. */
+.user-dropdown__stat-select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
   background: transparent;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%2399a' stroke-width='1.6' stroke-linecap='round'%3E%3Cpath d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0 center;
+  background-size: 12px 12px;
   border: none;
-  padding: 0;
-  margin: 0;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-.user-dropdown__stat-edit-btn:hover .user-dropdown__stat-pencil,
-.user-dropdown__stat-edit-btn:focus-visible .user-dropdown__stat-pencil {
-  opacity: 1;
-  color: var(--color-accent-700);
-}
-.user-dropdown__stat-edit-btn:focus-visible {
   outline: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-ink);
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  padding: 0 16px 0 0;
+  margin: 0;
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
-.user-dropdown__stat-edit-btn:focus-visible .user-dropdown__stat-value {
+.user-dropdown__stat-select:focus-visible {
+  outline: none;
   text-decoration: underline;
   text-decoration-color: var(--color-accent-500);
   text-underline-offset: 3px;
 }
-.user-dropdown__stat-pencil {
-  opacity: 0;
-  color: var(--color-muted);
-  transition: opacity 120ms var(--ease-out), color 120ms var(--ease-out);
-  flex-shrink: 0;
-}
-
-.user-dropdown__stat-input {
-  width: 100%;
-  font-size: 14px;
-  font-weight: 600;
+.user-dropdown__stat-select option {
+  /* Native option text ignores most CSS — keep it readable for the OS
+     picker by relying on system defaults. */
   color: var(--color-ink);
   background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-radius: 4px;
-  padding: 2px 6px;
-  outline: none;
-  margin-top: 1px;
 }
-.user-dropdown__stat-input:focus {
-  border-color: var(--color-accent-500);
-  box-shadow: 0 0 0 2px oklch(0.93 0.04 86.8);
-}
-.user-dropdown__stat-input:disabled {
-  opacity: 0.6;
-}
+
 .user-dropdown__stat-error {
   font-size: 11px;
   color: var(--color-danger-500);

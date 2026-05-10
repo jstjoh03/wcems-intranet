@@ -3,6 +3,14 @@ import { GraduationCap } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import trainingData from '@/data/training.json'
+import { parseDateOnly } from '@/utils/date'
+
+function monthAbbr(iso: string) {
+  return parseDateOnly(iso)?.toLocaleDateString('en-US', { month: 'short' }) ?? ''
+}
+function dayOfMonth(iso: string) {
+  return parseDateOnly(iso)?.getDate() ?? ''
+}
 
 const events = trainingData as Array<{
   id: string
@@ -44,12 +52,8 @@ const events = trainingData as Array<{
         :class="{ 'training-card__row--last': i === events.length - 1 }"
       >
         <div class="training-card__date">
-          <div class="training-card__date-mo">
-            {{ new Date(t.date).toLocaleDateString('en-US', { month: 'short' }) }}
-          </div>
-          <div class="training-card__date-day display">
-            {{ new Date(t.date).getDate() }}
-          </div>
+          <div class="training-card__date-mo">{{ monthAbbr(t.date) }}</div>
+          <div class="training-card__date-day display">{{ dayOfMonth(t.date) }}</div>
         </div>
         <div class="flex-1 min-w-0">
           <div class="training-card__title display">{{ t.title }}</div>

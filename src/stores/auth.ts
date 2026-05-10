@@ -175,11 +175,9 @@ export const useAuthStore = defineStore('auth', () => {
   /**
    * Update the signed-in user's home station. Pass `null` to clear it.
    *
-   * In dev-stub mode we just mutate the in-memory user — no real session
-   * exists so a Supabase round-trip would 401. In real-session mode we
-   * UPDATE the row and re-fetch so any DB-side normalization is
-   * reflected. The DB enforces that only `station` (and `show_birthday`)
-   * can change on a self-update; trying anything else throws 42501.
+   * Dev-stub mode mutates the in-memory user only. Real-session mode
+   * UPDATEs and re-fetches. The column-lock trigger admits station +
+   * shift + show_birthday from non-admins; everything else 42501s.
    */
   async function updateOwnStation(next: string | null) {
     const value = next?.trim() ? next.trim() : null
@@ -192,6 +190,23 @@ export const useAuthStore = defineStore('auth', () => {
     const { error } = await supabase
       .from('app_users')
       .update({ station: value })
+      .eq('id', id)
+    if (error) throw error
+    await refresh()
+  }
+
+  /** Update the signed-in user's shift assignment. Same dev/real split
+   *  as updateOwnStation. */
+  async function updateOwnShift(next: 'A' | 'B' | 'C' | null) {
+    if (usingDevStub.value) {
+      if (appUser.value) appUser.value = { ...appUser.value, shift: next }
+      return
+    }
+    const id = appUser.value?.id
+    if (!id) throw new Error('Not signed in')
+    const { error } = await supabase
+      .from('app_users')
+      .update({ shift: next })
       .eq('id', id)
     if (error) throw error
     await refresh()
@@ -268,6 +283,7 @@ export const useAuthStore = defineStore('auth', () => {
     init,
     refresh,
     updateOwnStation,
+    updateOwnShift,
     signInWithMicrosoft,
     signOut,
     setRole,

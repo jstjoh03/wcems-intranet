@@ -7,6 +7,7 @@ import AppChip from '@/components/primitives/AppChip.vue'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 import type { AppUser, Role, ShiftLetter } from '@/types'
+import { formatShortDate } from '@/utils/date'
 
 const auth = useAuthStore()
 
@@ -247,17 +248,7 @@ function shiftLabel(s: ShiftLetter | null) {
   return s ?? '—'
 }
 
-/** Format an ISO date string (YYYY-MM-DD) as a short local-time month/day,
- *  avoiding the UTC-vs-local off-by-one from `new Date('YYYY-MM-DD')`. */
-function formatDob(iso: string | null) {
-  if (!iso) return ''
-  const [y, m, d] = iso.split('-').map(Number)
-  if (!y || !m || !d) return ''
-  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-  })
-}
+const formatDob = formatShortDate
 
 onMounted(load)
 </script>

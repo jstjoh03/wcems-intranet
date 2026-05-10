@@ -11,6 +11,7 @@ import type { Hospital, TraumaLevel } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useHospitalsStore } from '@/stores/hospitals'
 import { useCodeEditHistory } from '@/composables/useCodeEditHistory'
+import { formatLongDate } from '@/utils/date'
 
 const auth = useAuthStore()
 const hospitalsStore = useHospitalsStore()
@@ -413,7 +414,7 @@ const traumaShort = (t: TraumaLevel) => {
           <div v-if="h.notes" class="hosp-card__notes">{{ h.notes }}</div>
           <div class="hosp-card__meta">
             <span v-if="h.codeEffectiveFrom">
-              Effective from {{ new Date(h.codeEffectiveFrom).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }}
+              Effective from {{ formatLongDate(h.codeEffectiveFrom) }}
             </span>
             <span v-if="lastChanged(h)" class="hosp-card__updated">
               Updated by <strong>{{ lastChanged(h)?.by }}</strong> · {{ timeAgo(lastChanged(h)!.at) }}

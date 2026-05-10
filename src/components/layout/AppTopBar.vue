@@ -84,8 +84,9 @@ const isDev = import.meta.env.DEV
 }
 
 .topbar__inner {
-  max-width: 1400px;
-  margin: 0 auto;
+  /* Spans the full viewport width with responsive padding — capping at
+     a max-width left big empty edges on >1500px screens and felt
+     misaligned. */
   padding: 10px 14px;
   display: flex;
   align-items: center;
@@ -95,6 +96,11 @@ const isDev = import.meta.env.DEV
 @media (min-width: 768px) {
   .topbar__inner {
     padding: 10px 40px;
+  }
+}
+@media (min-width: 1280px) {
+  .topbar__inner {
+    padding: 10px 56px;
   }
 }
 
