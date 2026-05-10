@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import { X, Upload, FileText, Trash2 } from 'lucide-vue-next'
+import { X, Upload, FileText, Trash2, Image as ImageIcon } from 'lucide-vue-next'
 import { useNewsletter } from '@/composables/useNewsletter'
 import { useAuthStore } from '@/stores/auth'
 
@@ -20,6 +20,9 @@ const title = ref('')
 const subtitle = ref('')
 const file = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
+const heroImage = ref<File | null>(null)
+const heroImageInput = ref<HTMLInputElement | null>(null)
+const heroPreview = ref<string | null>(null)
 const error = ref<string | null>(null)
 const submitting = ref(false)
 
@@ -30,6 +33,8 @@ watch(
       title.value = current.value?.title ?? ''
       subtitle.value = current.value?.subtitle ?? ''
       file.value = null
+      heroImage.value = null
+      heroPreview.value = null
       error.value = null
       document.body.style.overflow = 'hidden'
       window.addEventListener('keydown', onEsc)
@@ -58,6 +63,15 @@ function onFilePicked(e: Event) {
   error.value = null
 }
 
+function onHeroImagePicked(e: Event) {
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0] ?? null
+  heroImage.value = f
+  if (heroPreview.value) URL.revokeObjectURL(heroPreview.value)
+  heroPreview.value = f ? URL.createObjectURL(f) : null
+  error.value = null
+}
+
 async function submit() {
   error.value = null
   submitting.value = true
@@ -65,6 +79,7 @@ async function submit() {
     title: title.value,
     subtitle: subtitle.value,
     file: file.value,
+    heroImage: heroImage.value,
   })
   submitting.value = false
   if (!result.ok) {
@@ -83,6 +98,13 @@ function removePublished() {
 function clearPickedFile() {
   file.value = null
   if (fileInput.value) fileInput.value.value = ''
+}
+
+function clearPickedHero() {
+  heroImage.value = null
+  if (heroPreview.value) URL.revokeObjectURL(heroPreview.value)
+  heroPreview.value = null
+  if (heroImageInput.value) heroImageInput.value.value = ''
 }
 </script>
 
@@ -171,6 +193,55 @@ function clearPickedFile() {
               </div>
             </div>
             <span class="news-modal__hint">{{ fileSizeHint }}</span>
+          </div>
+
+          <div class="news-modal__field">
+            <span class="news-modal__label">Hero image (optional)</span>
+            <input
+              ref="heroImageInput"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              class="sr-only"
+              @change="onHeroImagePicked"
+            />
+            <div class="news-modal__file-row">
+              <button
+                type="button"
+                class="news-modal__file-btn"
+                @click="heroImageInput?.click()"
+              >
+                <ImageIcon :size="13" :stroke-width="1.85" />
+                {{ heroImage ? 'Choose a different image' : 'Choose image' }}
+              </button>
+              <div v-if="heroImage" class="news-modal__file-info">
+                <ImageIcon :size="13" :stroke-width="1.85" />
+                <span class="truncate">{{ heroImage.name }}</span>
+                <span class="news-modal__file-size">
+                  {{ (heroImage.size / 1024 / 1024).toFixed(2) }} MB
+                </span>
+                <button
+                  type="button"
+                  class="news-modal__file-clear"
+                  aria-label="Remove image"
+                  @click="clearPickedHero"
+                >
+                  <X :size="12" />
+                </button>
+              </div>
+              <div
+                v-else-if="current?.heroImagePath || current?.heroImageDataUrl"
+                class="news-modal__file-info news-modal__file-info--current"
+              >
+                <ImageIcon :size="13" :stroke-width="1.85" />
+                <span>Currently set</span>
+              </div>
+            </div>
+            <div v-if="heroPreview" class="news-modal__hero-preview">
+              <img :src="heroPreview" alt="Hero preview" />
+            </div>
+            <span class="news-modal__hint">
+              5 MB max. JPG / PNG / WebP. Crops to the card's aspect ratio.
+            </span>
           </div>
 
           <div v-if="error" class="news-modal__error" role="alert">
@@ -389,6 +460,21 @@ function clearPickedFile() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.news-modal__hero-preview {
+  margin-top: 8px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  aspect-ratio: 16 / 9;
+  background: var(--color-surface-soft);
+}
+.news-modal__hero-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .sr-only {

@@ -54,9 +54,18 @@ async function removePublished() {
 
 <template>
   <AppCard class="newsletter-card overflow-hidden">
-    <div class="newsletter-card__hero">
+    <div
+      class="newsletter-card__hero"
+      :class="{ 'newsletter-card__hero--has-photo': current?.heroImageUrl }"
+    >
+      <img
+        v-if="current?.heroImageUrl"
+        :src="current.heroImageUrl"
+        alt=""
+        class="newsletter-card__hero-photo"
+      />
       <FileText
-        v-if="current"
+        v-else-if="current"
         :size="38"
         :stroke-width="1.4"
         class="newsletter-card__icon"
@@ -139,7 +148,8 @@ async function removePublished() {
 <style scoped>
 .newsletter-card__hero {
   position: relative;
-  height: 144px;
+  aspect-ratio: 16 / 9;
+  min-height: 180px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -148,6 +158,25 @@ async function removePublished() {
     var(--color-brand-600) 0%,
     var(--color-brand-800) 100%
   );
+}
+.newsletter-card__hero-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* When there's a photo, replace the navy radial overlay with a tighter
+   top-corner gradient just to keep the chip + admin actions readable
+   over arbitrary photo content. */
+.newsletter-card__hero--has-photo::after {
+  background: linear-gradient(
+    180deg,
+    oklch(0 0 0 / 0.35) 0%,
+    transparent 38%
+  );
+  opacity: 1;
 }
 .newsletter-card__hero::after {
   content: '';

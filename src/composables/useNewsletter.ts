@@ -27,8 +27,14 @@ export interface NewsletterDoc {
   fileType: string | null
   /** Storage path inside the `newsletter-pdfs` bucket — real-session only */
   pdfPath: string | null
+  /** Storage path inside the `newsletter-hero-images` (public) bucket */
+  heroImagePath: string | null
+  /** Resolved public URL for the hero image — populated on load in real-session mode */
+  heroImageUrl: string | null
   /** Inline base64 PDF — dev-stub fallback only */
   dataUrl: string | null
+  /** Inline base64 hero image — dev-stub fallback only */
+  heroImageDataUrl: string | null
   publishedAt: string
   publishedBy: string | null
 }
@@ -36,7 +42,9 @@ export interface NewsletterDoc {
 const STORAGE_KEY = 'wcems:newsletter:current'
 const MAX_DEV_FILE_BYTES = 3 * 1024 * 1024 /* 3 MB pre-encode (localStorage cap) */
 const MAX_REAL_FILE_BYTES = 25 * 1024 * 1024 /* 25 MB upload cap (Supabase free tier comfort) */
-const BUCKET = 'newsletter-pdfs'
+const MAX_HERO_IMAGE_BYTES = 5 * 1024 * 1024 /* 5 MB cap on hero images — display assets, no need to be huge */
+const PDF_BUCKET = 'newsletter-pdfs'
+const HERO_BUCKET = 'newsletter-hero-images'
 const SIGNED_URL_TTL_SECONDS = 3600
 
 interface NewsletterRow {
@@ -45,6 +53,7 @@ interface NewsletterRow {
   blurb: string
   pdf_path: string | null
   pdf_filename: string | null
+  hero_image_path: string | null
   published_at: string
   published_by: string | null
 }
@@ -52,6 +61,12 @@ interface NewsletterRow {
 const current = ref<NewsletterDoc | null>(null)
 const ready = ref(false)
 let loadStarted = false
+
+function heroPublicUrl(heroPath: string | null): string | null {
+  if (!heroPath) return null
+  const { data } = supabase.storage.from(HERO_BUCKET).getPublicUrl(heroPath)
+  return data?.publicUrl ?? null
+}
 
 function rowToDoc(r: NewsletterRow): NewsletterDoc {
   return {
@@ -61,7 +76,10 @@ function rowToDoc(r: NewsletterRow): NewsletterDoc {
     fileName: r.pdf_filename,
     fileType: r.pdf_path ? 'application/pdf' : null,
     pdfPath: r.pdf_path,
+    heroImagePath: r.hero_image_path,
+    heroImageUrl: heroPublicUrl(r.hero_image_path),
     dataUrl: null,
+    heroImageDataUrl: null,
     publishedAt: r.published_at,
     publishedBy: r.published_by,
   }
@@ -99,7 +117,9 @@ async function load() {
 
   const { data, error } = await supabase
     .from('newsletters')
-    .select('id, title, blurb, pdf_path, pdf_filename, published_at, published_by')
+    .select(
+      'id, title, blurb, pdf_path, pdf_filename, hero_image_path, published_at, published_by',
+    )
     .eq('active', true)
     .order('published_at', { ascending: false })
     .limit(1)
@@ -130,6 +150,7 @@ export function useNewsletter() {
     title: string
     subtitle: string
     file: File | null
+    heroImage: File | null
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     const title = input.title.trim()
     const subtitle = input.subtitle.trim()
@@ -141,6 +162,7 @@ export function useNewsletter() {
       let dataUrl = current.value?.dataUrl ?? null
       let fileName = current.value?.fileName ?? null
       let fileType = current.value?.fileType ?? null
+      let heroImageDataUrl = current.value?.heroImageDataUrl ?? null
       if (input.file) {
         if (input.file.size > MAX_DEV_FILE_BYTES) {
           return {
@@ -160,6 +182,21 @@ export function useNewsletter() {
           return { ok: false, error: 'Could not read that file. Try again?' }
         }
       }
+      if (input.heroImage) {
+        if (input.heroImage.size > MAX_DEV_FILE_BYTES) {
+          return {
+            ok: false,
+            error: `Hero image is ${(input.heroImage.size / 1024 / 1024).toFixed(
+              1,
+            )} MB; dev mode caps storage at 3 MB.`,
+          }
+        }
+        try {
+          heroImageDataUrl = await readAsDataUrl(input.heroImage)
+        } catch {
+          return { ok: false, error: 'Could not read the hero image. Try again?' }
+        }
+      }
       current.value = {
         id: 'dev-stub',
         title,
@@ -167,7 +204,10 @@ export function useNewsletter() {
         fileName,
         fileType,
         pdfPath: null,
+        heroImagePath: null,
+        heroImageUrl: heroImageDataUrl,
         dataUrl,
+        heroImageDataUrl,
         publishedAt: new Date().toISOString(),
         publishedBy: auth.appUser?.id ?? null,
       }
@@ -178,6 +218,7 @@ export function useNewsletter() {
     /* Real session ── upload to Storage, then INSERT row. */
     let pdfPath: string | null = current.value?.pdfPath ?? null
     let pdfFilename: string | null = current.value?.fileName ?? null
+    let heroImagePath: string | null = current.value?.heroImagePath ?? null
 
     if (input.file) {
       if (input.file.size > MAX_REAL_FILE_BYTES) {
@@ -191,7 +232,7 @@ export function useNewsletter() {
       const safeName = input.file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
       const path = `${crypto.randomUUID()}/${safeName}`
       const { error: upErr } = await supabase.storage
-        .from(BUCKET)
+        .from(PDF_BUCKET)
         .upload(path, input.file, {
           upsert: false,
           contentType: 'application/pdf',
@@ -199,6 +240,27 @@ export function useNewsletter() {
       if (upErr) return { ok: false, error: `Upload failed: ${upErr.message}` }
       pdfPath = path
       pdfFilename = input.file.name
+    }
+
+    if (input.heroImage) {
+      if (input.heroImage.size > MAX_HERO_IMAGE_BYTES) {
+        return {
+          ok: false,
+          error: `Hero image is ${(input.heroImage.size / 1024 / 1024).toFixed(
+            1,
+          )} MB; the cap is 5 MB. Resize or compress the image.`,
+        }
+      }
+      const safeName = input.heroImage.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const path = `${crypto.randomUUID()}/${safeName}`
+      const { error: upErr } = await supabase.storage
+        .from(HERO_BUCKET)
+        .upload(path, input.heroImage, {
+          upsert: false,
+          contentType: input.heroImage.type || 'image/jpeg',
+        })
+      if (upErr) return { ok: false, error: `Hero image upload failed: ${upErr.message}` }
+      heroImagePath = path
     }
 
     /* Soft-deactivate previous active rows so only the new one is current. */
@@ -217,11 +279,12 @@ export function useNewsletter() {
         blurb: subtitle,
         pdf_path: pdfPath,
         pdf_filename: pdfFilename,
+        hero_image_path: heroImagePath,
         published_by: auth.appUser?.id ?? null,
         active: true,
       })
       .select(
-        'id, title, blurb, pdf_path, pdf_filename, published_at, published_by',
+        'id, title, blurb, pdf_path, pdf_filename, hero_image_path, published_at, published_by',
       )
       .single()
     if (insErr) return { ok: false, error: `Save failed: ${insErr.message}` }
@@ -262,7 +325,7 @@ export function useNewsletter() {
     if (doc.dataUrl) return doc.dataUrl
     if (!doc.pdfPath) return null
     const { data, error } = await supabase.storage
-      .from(BUCKET)
+      .from(PDF_BUCKET)
       .createSignedUrl(doc.pdfPath, SIGNED_URL_TTL_SECONDS)
     if (error) {
       console.error('[newsletter] signed URL failed:', error.message)
