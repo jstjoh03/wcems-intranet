@@ -146,10 +146,24 @@ async function removePublished() {
 </template>
 
 <style scoped>
+/* Layout: stacked on mobile, side-by-side on desktop (mirrors the
+   Spotlight card on PeopleRow). Hero takes ~42% on the left so the
+   right side holds title/blurb/CTA instead of bleeding empty pixels. */
+.newsletter-card {
+  display: flex;
+  flex-direction: column;
+}
+@media (min-width: 768px) {
+  .newsletter-card {
+    flex-direction: row;
+    align-items: stretch;
+  }
+}
+
 .newsletter-card__hero {
   position: relative;
   aspect-ratio: 16 / 9;
-  min-height: 180px;
+  min-height: 200px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -158,6 +172,15 @@ async function removePublished() {
     var(--color-brand-600) 0%,
     var(--color-brand-800) 100%
   );
+}
+@media (min-width: 768px) {
+  .newsletter-card__hero {
+    width: 42%;
+    flex-shrink: 0;
+    aspect-ratio: auto;
+    min-height: auto;
+    height: auto;
+  }
 }
 .newsletter-card__hero-photo {
   position: absolute;
@@ -234,6 +257,15 @@ async function removePublished() {
 
 .newsletter-card__body {
   padding: 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+@media (min-width: 768px) {
+  .newsletter-card__body {
+    padding: 28px 32px;
+    justify-content: center;
+  }
 }
 .newsletter-card__title {
   font-size: 22px;
