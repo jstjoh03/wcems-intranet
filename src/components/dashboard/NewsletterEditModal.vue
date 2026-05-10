@@ -109,13 +109,9 @@ function clearPickedHero() {
 </script>
 
 <template>
-  <!-- Teleport to body so the overlay escapes any ancestor transform
-       contexts (the dashboard's .reveal sections + the page-transition
-       wrapper would otherwise contain `position: fixed`, leaving the
-       modal anchored hundreds of pixels below the viewport). -->
   <Teleport to="body">
-  <Transition name="news-modal">
-    <div v-if="open" class="news-modal-overlay" @click.self="$emit('close')">
+    <Transition name="news-modal">
+      <div v-if="open" class="news-modal-overlay" @click.self="$emit('close')">
       <div class="news-modal" role="dialog" aria-labelledby="news-modal-title">
         <header class="news-modal__head">
           <div>

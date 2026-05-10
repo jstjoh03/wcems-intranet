@@ -50,6 +50,7 @@ const pages: NavItem[] = [
   { label: 'HR Hub', to: '/', icon: Briefcase, badge: 'Soon' },
 ]
 const adminPages: NavItem[] = [
+  { label: 'Manage Employees', to: '/admin/employees', icon: Users },
   { label: 'Manage Stations', to: '/admin/stations', icon: Settings },
   { label: 'Manage Hospitals', to: '/admin/hospitals', icon: Hospital },
 ]
