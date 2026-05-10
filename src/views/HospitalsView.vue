@@ -722,11 +722,15 @@ const traumaShort = (t: TraumaLevel) => {
   color: var(--color-muted);
 }
 
+/* Grid so the label + button + edit pencil share the same column tracks
+   on every row. `1fr` for the button column rather than `minmax(0,
+   1fr)` so the button column can't shrink below its content size and
+   force "Reveal code" to wrap. */
 .hosp-card__code-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
   align-items: center;
   gap: 8px;
-  min-width: 0;
 }
 .hosp-card__code-key {
   font-size: 10.5px;
@@ -734,8 +738,6 @@ const traumaShort = (t: TraumaLevel) => {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--color-ink-soft);
-  min-width: 56px;
-  flex-shrink: 0;
 }
 
 .hosp-card__bell {
@@ -771,6 +773,7 @@ const traumaShort = (t: TraumaLevel) => {
   font-weight: 600;
   letter-spacing: 0.01em;
   text-transform: none;
+  white-space: nowrap;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
     inset 0 -1px 0 rgba(0, 0, 0, 0.25),
@@ -807,6 +810,7 @@ const traumaShort = (t: TraumaLevel) => {
   flex: 1;
   min-width: 110px;
   height: 32px;
+  white-space: nowrap;
   padding: 0 12px;
   border-radius: 8px;
   border: 1px solid color-mix(in oklch, var(--color-accent-on-dark) 48%, transparent);
