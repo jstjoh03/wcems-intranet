@@ -159,6 +159,7 @@ async function removePublished() {
     transparent 60%
   );
   opacity: 0.6;
+  pointer-events: none;
 }
 .newsletter-card__icon {
   position: relative;
