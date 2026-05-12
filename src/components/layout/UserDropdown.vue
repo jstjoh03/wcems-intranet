@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check } from 'lucide-vue-next'
 import { useCodeReveal } from '@/composables/useCodeReveal'
 import type { ShiftLetter } from '@/types'
 
 const auth = useAuthStore()
+const router = useRouter()
 const open = ref(false)
 const root = ref<HTMLElement | null>(null)
 const copied = ref(false)
@@ -122,9 +124,19 @@ async function copyFuel() {
   }
 }
 
-function signOut() {
-  auth.signOut()
+/**
+ * Sign out cleanly: close the dropdown, clear the Supabase session,
+ * then push to /signin so the user actually leaves the authenticated
+ * surface. Without the navigation, signing out just clears appUser
+ * but leaves the current page rendered with broken auth-dependent
+ * UI (admin actions disappearing, etc.) — the route guard only fires
+ * on the NEXT navigation. Pushing to /signin makes the signed-out
+ * state immediately visible.
+ */
+async function signOut() {
   close()
+  await auth.signOut()
+  void router.push({ name: 'signin' })
 }
 </script>
 

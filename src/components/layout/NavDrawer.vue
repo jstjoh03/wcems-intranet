@@ -108,9 +108,13 @@ onBeforeUnmount(() => {
   document.body.style.overflow = ''
 })
 
-function signOut() {
-  auth.signOut()
+/* Same flow as UserDropdown.signOut — clear the session, then push
+   to /signin so the signed-out state is immediately visible. The
+   router instance is already imported at the top of this file. */
+async function signOut() {
   emit('close')
+  await auth.signOut()
+  void router.push({ name: 'signin' })
 }
 </script>
 
