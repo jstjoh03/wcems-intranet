@@ -13,13 +13,13 @@ const roles = ['crew', 'supervisor', 'admin'] as const
 const isDev = import.meta.env.DEV
 
 /**
- * Topbar search opens the Quick Links dock — the dock already has a
- * search box that filters the catalog, so the topbar's pill acts as a
- * more prominent entry point + ⌘K shortcut surface. Cross-component
- * coordination via a window event keeps the dock and topbar decoupled.
+ * Topbar search opens the global site-search overlay (command palette
+ * over pages, quick links, hospitals, stations, training). The overlay
+ * also binds Cmd/Ctrl+K so the kbd hint is accurate. Cross-component
+ * coordination via a window event keeps topbar and overlay decoupled.
  */
-function openQuickLinks() {
-  window.dispatchEvent(new CustomEvent('wcems:open-quicklinks'))
+function openSearch() {
+  window.dispatchEvent(new CustomEvent('wcems:open-search'))
 }
 </script>
 
@@ -47,11 +47,11 @@ function openQuickLinks() {
       <button
         type="button"
         class="topbar__search"
-        aria-label="Open Quick Links search"
-        @click="openQuickLinks"
+        aria-label="Search the intranet"
+        @click="openSearch"
       >
         <Search :size="13" class="topbar__search-icon" />
-        <span class="topbar__search-placeholder">Search Quick Links…</span>
+        <span class="topbar__search-placeholder">Search the intranet…</span>
         <kbd class="topbar__kbd">⌘K</kbd>
       </button>
 

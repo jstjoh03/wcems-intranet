@@ -4,6 +4,7 @@ import AppTopBar from './AppTopBar.vue'
 import NavDrawer from './NavDrawer.vue'
 import AppFooter from './AppFooter.vue'
 import QuickLinksDock from './QuickLinksDock.vue'
+import GlobalSearchOverlay from './GlobalSearchOverlay.vue'
 
 const navOpen = ref(false)
 </script>
@@ -21,5 +22,8 @@ const navOpen = ref(false)
 
     <!-- Floating quick-links dock — visible on every route -->
     <QuickLinksDock />
+
+    <!-- Global site search (Cmd/Ctrl+K from anywhere; topbar search opens it) -->
+    <GlobalSearchOverlay />
   </div>
 </template>

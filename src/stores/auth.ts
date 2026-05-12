@@ -36,6 +36,7 @@ const DEV_STUB_USER: AppUser = {
   fuelNumber: '30988',
   dateOfBirth: '1991-04-03',
   showBirthday: true,
+  featuredQuickLinkIds: [],
 }
 
 /**
@@ -87,6 +88,7 @@ function deriveAppUserFromSession(supaUser: User): AppUser {
     fuelNumber: null,
     dateOfBirth: null,
     showBirthday: true,
+    featuredQuickLinkIds: [],
   }
 }
 
@@ -105,6 +107,7 @@ interface AppUserRow {
   date_of_birth: string | null
   show_birthday: boolean
   active: boolean
+  featured_quick_link_ids: string[] | null
 }
 
 function rowToAppUser(row: AppUserRow): AppUser {
@@ -122,6 +125,7 @@ function rowToAppUser(row: AppUserRow): AppUser {
     fuelNumber: row.fuel_number,
     dateOfBirth: row.date_of_birth,
     showBirthday: row.show_birthday,
+    featuredQuickLinkIds: row.featured_quick_link_ids ?? [],
   }
 }
 
@@ -134,7 +138,7 @@ async function fetchAppUserRow(authUserId: string): Promise<AppUserRow | null> {
   const { data, error } = await supabase
     .from('app_users')
     .select(
-      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, active',
+      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, active, featured_quick_link_ids',
     )
     .eq('auth_user_id', authUserId)
     .maybeSingle()
@@ -216,6 +220,27 @@ export const useAuthStore = defineStore('auth', () => {
     await refresh()
   }
 
+  /** Update the signed-in user's customized featured-shortcut list.
+   *  Pass an array of quick_links.id values (up to 4). Empty array
+   *  resets to role-based defaults. */
+  async function updateOwnFeaturedQuickLinks(ids: string[]) {
+    const next = ids.slice(0, 4)
+    if (usingDevStub.value) {
+      if (appUser.value) {
+        appUser.value = { ...appUser.value, featuredQuickLinkIds: next }
+      }
+      return
+    }
+    const id = appUser.value?.id
+    if (!id) throw new Error('Not signed in')
+    const { error } = await supabase
+      .from('app_users')
+      .update({ featured_quick_link_ids: next })
+      .eq('id', id)
+    if (error) throw error
+    await refresh()
+  }
+
   /** Re-fetch the current user's app_users row. Useful after self-edits
    *  (profile updates) or after an admin promotes someone. No-op when no
    *  real session is active. */
@@ -288,6 +313,7 @@ export const useAuthStore = defineStore('auth', () => {
     refresh,
     updateOwnStation,
     updateOwnShift,
+    updateOwnFeaturedQuickLinks,
     signInWithMicrosoft,
     signOut,
     setRole,

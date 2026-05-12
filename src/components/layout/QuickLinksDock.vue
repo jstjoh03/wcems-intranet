@@ -92,25 +92,19 @@ watch(open, async (v) => {
   }
 })
 
-/* Cross-component triggers: the topbar's search button dispatches
-   `wcems:open-quicklinks`; Cmd+K / Ctrl+K opens the dock from anywhere
-   (matches the kbd hint on the topbar). */
+/* Cross-component trigger: anything that wants to open the dock
+   (e.g. a future "open quick links" button) can dispatch this event.
+   The Cmd+K shortcut and topbar search button both now go to the
+   GlobalSearchOverlay instead — the dock's role is browsing the
+   catalog, not jumping to a single link. */
 function onOpenEvent() {
   open.value = true
 }
-function onShortcut(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-    e.preventDefault()
-    open.value = !open.value
-  }
-}
 onMounted(() => {
   window.addEventListener('wcems:open-quicklinks', onOpenEvent)
-  window.addEventListener('keydown', onShortcut)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('wcems:open-quicklinks', onOpenEvent)
-  window.removeEventListener('keydown', onShortcut)
   window.removeEventListener('keydown', onEsc)
   document.body.style.overflow = ''
 })

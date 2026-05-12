@@ -1,23 +1,22 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { Settings2 } from 'lucide-vue-next'
 import IconRender from '@/components/primitives/IconRender.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
+import FeaturedLinksEditModal from './FeaturedLinksEditModal.vue'
 
 /**
- * Hand-picked most-used shortcuts, surfaced just under the hero. Visual
- * treatment is deliberate: navy layered-gradient "glass command button"
- * — reads as operational control, not content card.
+ * Most-used shortcuts under the hero. Visual treatment is deliberate:
+ * navy layered-gradient "glass command button" — reads as operational
+ * control, not content card.
  *
- * Crew see the everyday stack (Outlook, Shoutout, Supply, Protocols).
- * Supervisors + admins swap Shoutout/Supply for Responder360 + Daily
- * Summary. Hospitals (an internal app page) closes the strip for
- * everyone since it's referenced constantly during transports.
- *
- * The featured set is keyed by `label` against the live quick_links
- * catalog (admin-editable). If an admin renames or removes a featured
- * link, the missing tile silently drops out of the strip rather than
- * 404ing.
+ * Per-user customization: tiles 1–4 come from the user's chosen list
+ * (app_users.featured_quick_link_ids). When the user has picked fewer
+ * than 4, the remaining slots fill from role-based defaults so the
+ * strip is never bare. Tile 5 is always Hospitals — referenced
+ * constantly during transports, doesn't belong in the catalog. The
+ * "Edit" pencil opens FeaturedLinksEditModal to change tiles 1–4.
  */
 interface FeaturedTile {
   id: string
@@ -40,10 +39,6 @@ const FEATURED_LABELS_SUPERVISOR = [
   'Protocols',
 ]
 
-/**
- * Internal app routes surfaced in the strip without needing a row
- * in the quick_links catalog (which is reserved for external utilities).
- */
 const INTERNAL_HOSPITALS: FeaturedTile = {
   id: 'hospitals',
   label: 'Hospitals',
@@ -55,20 +50,46 @@ const INTERNAL_HOSPITALS: FeaturedTile = {
 const auth = useAuthStore()
 const { links } = useQuickLinks()
 
-const featured = computed<FeaturedTile[]>(() => {
-  const labels = auth.isSupervisor ? FEATURED_LABELS_SUPERVISOR : FEATURED_LABELS_CREW
-  const externals: FeaturedTile[] = []
-  for (const label of labels) {
-    const match = links.value.find((l) => l.label === label)
-    if (!match) continue
-    externals.push({
-      id: match.id,
-      label: match.label,
-      iconName: match.iconName,
-      url: match.url,
-      internal: false,
-    })
+const editOpen = ref(false)
+
+function tileFromLink(l: { id: string; label: string; iconName: string; url: string }): FeaturedTile {
+  return {
+    id: l.id,
+    label: l.label,
+    iconName: l.iconName,
+    url: l.url,
+    internal: false,
   }
+}
+
+const featured = computed<FeaturedTile[]>(() => {
+  const userIds = auth.appUser?.featuredQuickLinkIds ?? []
+  const externals: FeaturedTile[] = []
+
+  /* 1) The user's chosen tiles, in their saved order, resolved
+     against the live catalog. Missing IDs (e.g. admin deleted that
+     link) silently drop. */
+  for (const id of userIds) {
+    const match = links.value.find((l) => l.id === id)
+    if (match) externals.push(tileFromLink(match))
+    if (externals.length >= 4) break
+  }
+
+  /* 2) Top up empty slots from the role-based default list, skipping
+     anything already chosen above to avoid duplicates. */
+  if (externals.length < 4) {
+    const defaultLabels = auth.isSupervisor
+      ? FEATURED_LABELS_SUPERVISOR
+      : FEATURED_LABELS_CREW
+    for (const label of defaultLabels) {
+      if (externals.length >= 4) break
+      const match = links.value.find((l) => l.label === label)
+      if (!match) continue
+      if (externals.some((t) => t.id === match.id)) continue
+      externals.push(tileFromLink(match))
+    }
+  }
+
   return [...externals, INTERNAL_HOSPITALS]
 })
 </script>
@@ -113,6 +134,19 @@ const featured = computed<FeaturedTile[]>(() => {
         </a>
       </li>
     </ul>
+
+    <button
+      v-if="auth.appUser"
+      type="button"
+      class="fql__edit"
+      aria-label="Customize featured shortcuts"
+      @click="editOpen = true"
+    >
+      <Settings2 :size="12" :stroke-width="1.85" />
+      <span>Customize</span>
+    </button>
+
+    <FeaturedLinksEditModal :open="editOpen" @close="editOpen = false" />
   </section>
 </template>
 
@@ -121,6 +155,9 @@ const featured = computed<FeaturedTile[]>(() => {
    On phones the four tiles stretch to fill the row (space is precious).
    On tablet+ they snap to a fixed width and cluster on the left so they
    read as command buttons, not stretched bars. */
+.fql {
+  position: relative;
+}
 .fql__grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -128,6 +165,41 @@ const featured = computed<FeaturedTile[]>(() => {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+
+/* Customize affordance — small, low-emphasis pill below the strip
+   (right-aligned on tablet+, full-width on phones). Only shows for
+   signed-in users since it persists per-user. */
+.fql__edit {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition:
+    color 120ms var(--ease-out),
+    border-color 120ms var(--ease-out);
+}
+.fql__edit:hover {
+  color: var(--color-ink);
+  border-color: var(--color-muted-soft);
+}
+@media (min-width: 640px) {
+  .fql__edit {
+    position: absolute;
+    right: 0;
+    top: -2px;
+    margin-top: 0;
+  }
 }
 @media (min-width: 640px) {
   .fql__grid {

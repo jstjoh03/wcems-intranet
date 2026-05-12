@@ -20,6 +20,10 @@ export interface AppUser {
   fuelNumber: string | null
   dateOfBirth: string | null
   showBirthday: boolean
+  /** quick_links.id values (text[]) that the user wants to feature in
+   *  the dashboard hero strip. Up to 4 entries; empty falls back to
+   *  role-based defaults. */
+  featuredQuickLinkIds: string[]
 }
 
 /* ── Stations ──────────────────────────────────────────────────────── */
