@@ -18,6 +18,11 @@ export function useCodeReveal() {
 
   let hideTimer: ReturnType<typeof setTimeout> | null = null
   let rafHandle: number | null = null
+  /* Debounce double-fire (touch synthetic events on iOS, accidental
+     double-clicks). Without this, tapping the reveal button can flip
+     state twice within ~50ms and the code "autocloses" before the
+     user sees it. */
+  let lastToggleAt = 0
 
   const tickProgress = () => {
     const elapsed = Date.now() - revealedAt.value
@@ -50,6 +55,9 @@ export function useCodeReveal() {
   }
 
   const toggle = () => {
+    const now = Date.now()
+    if (now - lastToggleAt < 250) return
+    lastToggleAt = now
     if (revealed.value) hide()
     else reveal()
   }

@@ -205,7 +205,7 @@ function signOut() {
               class="user-dropdown__fuel-btn"
               :aria-pressed="fuel.revealed.value"
               :aria-label="fuel.revealed.value ? 'Hide fuel number' : 'Reveal fuel number'"
-              @click="fuel.toggle"
+              @click.stop="fuel.toggle"
             >
               <component :is="fuel.revealed.value ? EyeOff : Eye" :size="13" :stroke-width="1.85" />
               <span class="font-mono">{{ fuel.revealed.value ? fuelNumber : '••••••' }}</span>
@@ -215,7 +215,7 @@ function signOut() {
               type="button"
               class="user-dropdown__copy"
               :aria-label="copied ? 'Copied' : 'Copy fuel number'"
-              @click="copyFuel"
+              @click.stop="copyFuel"
             >
               <component :is="copied ? Check : Copy" :size="12" :stroke-width="1.85" />
             </button>
