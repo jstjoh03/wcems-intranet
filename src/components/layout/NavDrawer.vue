@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Activity,
   MapPin,
@@ -15,6 +15,9 @@ import {
   Building2,
   Briefcase,
   Settings,
+  LayoutGrid,
+  Home,
+  Newspaper,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -22,7 +25,12 @@ import Eyebrow from '@/components/primitives/Eyebrow.vue'
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
+
+/* "On this page" anchors only make sense on the dashboard — every
+   other route has its own content and no #section hashes. */
+const isOnDashboard = computed(() => route.path === '/')
 
 interface NavItem {
   id?: string
@@ -33,18 +41,24 @@ interface NavItem {
   badge?: string
 }
 
+/* Order mirrors the dashboard's actual top-to-bottom render
+   (Operations → Announcements → People → Stations → Training in
+   sidebar → Photos → Newsletter) so the nav reads as a table of
+   contents for the page in front of you. */
 const sections: NavItem[] = [
   { id: 'operations', label: 'Operations', icon: Activity, hash: '#operations' },
   { id: 'announcements', label: 'Announcements', icon: Bell, hash: '#announcements' },
-  { id: 'newsletter', label: 'Newsletter', icon: Activity, hash: '#newsletter' },
+  { id: 'people', label: 'People', icon: Users, hash: '#people' },
   { id: 'stations', label: 'Stations', icon: MapPin, hash: '#stations' },
   { id: 'training', label: 'Upcoming Training', icon: GraduationCap, hash: '#training' },
   { id: 'photos', label: 'Around the County', icon: Camera, hash: '#photos' },
-  { id: 'people', label: 'People', icon: Users, hash: '#people' },
+  { id: 'newsletter', label: 'Newsletter', icon: Newspaper, hash: '#newsletter' },
 ]
 
 const pages: NavItem[] = [
+  { label: 'Home', to: '/', icon: Home },
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
+  { label: 'Training', to: '/training', icon: GraduationCap },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
   { label: 'Admin Staff', to: '/admin-staff', icon: Building2 },
   { label: 'HR Hub', to: '/', icon: Briefcase, badge: 'Soon' },
@@ -53,6 +67,9 @@ const adminPages: NavItem[] = [
   { label: 'Manage Employees', to: '/admin/employees', icon: Users },
   { label: 'Manage Stations', to: '/admin/stations', icon: Settings },
   { label: 'Manage Hospitals', to: '/admin/hospitals', icon: Hospital },
+  { label: 'Manage Call Volume', to: '/admin/call-volume', icon: BarChart3 },
+  { label: 'Manage Training', to: '/admin/training', icon: GraduationCap },
+  { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
 ]
 
 function jumpTo(item: NavItem) {
@@ -125,7 +142,7 @@ function signOut() {
     </div>
 
     <div class="drawer__body">
-      <section>
+      <section v-if="isOnDashboard">
         <Eyebrow class="px-2 mb-2">On this page</Eyebrow>
         <div class="space-y-0.5">
           <button

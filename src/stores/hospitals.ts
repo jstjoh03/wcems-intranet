@@ -111,6 +111,43 @@ export const useHospitalsStore = defineStore('hospitals', () => {
     }
     hospitals.value = (data ?? []).map((d) => rowToHospital(d as HospitalRow))
     ready.value = true
+    subscribeRealtime()
+  }
+
+  /**
+   * Live updates from the `hospitals` table — same idempotent pattern
+   * as the stations store.
+   */
+  function subscribeRealtime() {
+    supabase
+      .channel('hospitals')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'hospitals' },
+        (payload) => {
+          const row = rowToHospital(payload.new as HospitalRow)
+          if (hospitals.value.some((h) => h.id === row.id)) return
+          hospitals.value = [...hospitals.value, row]
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'hospitals' },
+        (payload) => {
+          const row = rowToHospital(payload.new as HospitalRow)
+          hospitals.value = hospitals.value.map((h) => (h.id === row.id ? row : h))
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'hospitals' },
+        (payload) => {
+          const old = payload.old as { id?: string }
+          if (!old.id) return
+          hospitals.value = hospitals.value.filter((h) => h.id !== old.id)
+        },
+      )
+      .subscribe()
   }
 
   async function refetchOne(id: string) {

@@ -2,7 +2,6 @@
 import { ref, computed } from 'vue'
 import { MapPin, Hospital as HospitalIcon, BellRing, Edit2, Lock, Eye, EyeOff, Search, Settings, X } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
-import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import CodeEditor from '@/components/dashboard/CodeEditor.vue'

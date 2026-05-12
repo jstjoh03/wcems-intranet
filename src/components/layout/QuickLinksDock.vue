@@ -1,46 +1,39 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import {
-  LayoutGrid,
-  ChevronUp,
-  X,
-  Settings2,
-  Pin,
-  Search,
-  ExternalLink,
-} from 'lucide-vue-next'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { LayoutGrid, ChevronUp, X, Pin, Search, ExternalLink } from 'lucide-vue-next'
 import IconRender from '@/components/primitives/IconRender.vue'
-import linksData from '@/data/quicklinks.json'
-import type { QuickLink } from '@/types'
 import { useAuthStore } from '@/stores/auth'
+import { useQuickLinks } from '@/composables/useQuickLinks'
 import { useUserLinkPreferences } from '@/composables/useUserLinkPreferences'
 
 /**
  * Floating dock + slide-up sheet for the Quick Links system.
  *
- * Replaces the old in-page grid section. The dock is a small fixed
- * pill at the bottom of the viewport — visible on every route. Tapping
- * opens a sheet:
+ * Links catalog is admin-curated (DB-backed via useQuickLinks).
+ * Per-user pinning lives in useUserLinkPreferences. Pinning happens
+ * inline — every row has a small pin button, always visible. Clicking
+ * it toggles pinned state for the current user. No more Customize /
+ * Done toggle.
  *
- *   - Mobile (< 640px): full-width sheet rising from the bottom edge
- *   - Desktop (>= 640px): popover panel above the dock pill
- *
- * Pinned tiles render as small icon-only chips inline on the dock so
- * the user's most-used shortcuts are one tap away without opening the
- * sheet at all.
+ * Layout: mobile (<768px) is a full-width slide-up sheet; desktop is
+ * a popover panel above the dock pill on the right.
  */
 const auth = useAuthStore()
-const links = linksData as QuickLink[]
+const { links } = useQuickLinks()
 const userId = computed(() => auth.appUser?.id ?? 'anonymous')
-const { getPref, togglePin, toggleHide } = useUserLinkPreferences(userId.value)
+const { getPref, togglePin } = useUserLinkPreferences(userId.value)
 
 const open = ref(false)
-const customizing = ref(false)
 const search = ref('')
+const searchInput = ref<HTMLInputElement | null>(null)
 
 const visibleLinks = computed(() => {
   const role = auth.role ?? 'crew'
-  return links.filter((l) => l.visibleTo.includes(role))
+  return links.value.filter((l) => {
+    /* Empty visibleTo array = visible to everyone. */
+    if (!l.visibleTo || l.visibleTo.length === 0) return true
+    return l.visibleTo.includes(role)
+  })
 })
 
 const pinned = computed(() =>
@@ -50,24 +43,27 @@ const pinned = computed(() =>
 const filteredAll = computed(() => {
   const q = search.value.trim().toLowerCase()
   let arr = visibleLinks.value
-  if (!customizing.value) arr = arr.filter((l) => !getPref(l.id).hidden)
+  /* Hide is no longer user-toggleable, but legacy prefs may have it.
+     Treat hidden=true as just "don't show in the catalog". */
+  arr = arr.filter((l) => !getPref(l.id).hidden)
   if (q) {
     arr = arr.filter(
       (l) =>
         l.label.toLowerCase().includes(q) ||
         (l.sub ?? '').toLowerCase().includes(q) ||
-        l.category.toLowerCase().includes(q),
+        (l.category ?? '').toLowerCase().includes(q),
     )
   }
   return arr
 })
 
 const groupedFiltered = computed(() => {
-  const grouped = new Map<string, QuickLink[]>()
+  const grouped = new Map<string, typeof filteredAll.value>()
   for (const l of filteredAll.value) {
-    const arr = grouped.get(l.category) ?? []
+    const key = l.category || 'Other'
+    const arr = grouped.get(key) ?? []
     arr.push(l)
-    grouped.set(l.category, arr)
+    grouped.set(key, arr)
   }
   for (const [, arr] of grouped) arr.sort((a, b) => a.defaultSort - b.defaultSort)
   return Array.from(grouped.entries())
@@ -76,23 +72,45 @@ const groupedFiltered = computed(() => {
 function closeSheet() {
   open.value = false
   search.value = ''
-  customizing.value = false
 }
 
 function onEsc(e: KeyboardEvent) {
   if (e.key === 'Escape' && open.value) closeSheet()
 }
 
-watch(open, (v) => {
+watch(open, async (v) => {
   if (v) {
     window.addEventListener('keydown', onEsc)
     document.body.style.overflow = 'hidden'
+    /* Focus the search input as soon as the sheet renders so users
+       can start typing immediately — pairs with the Cmd+K shortcut. */
+    await nextTick()
+    searchInput.value?.focus()
   } else {
     window.removeEventListener('keydown', onEsc)
     document.body.style.overflow = ''
   }
 })
+
+/* Cross-component triggers: the topbar's search button dispatches
+   `wcems:open-quicklinks`; Cmd+K / Ctrl+K opens the dock from anywhere
+   (matches the kbd hint on the topbar). */
+function onOpenEvent() {
+  open.value = true
+}
+function onShortcut(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault()
+    open.value = !open.value
+  }
+}
+onMounted(() => {
+  window.addEventListener('wcems:open-quicklinks', onOpenEvent)
+  window.addEventListener('keydown', onShortcut)
+})
 onBeforeUnmount(() => {
+  window.removeEventListener('wcems:open-quicklinks', onOpenEvent)
+  window.removeEventListener('keydown', onShortcut)
   window.removeEventListener('keydown', onEsc)
   document.body.style.overflow = ''
 })
@@ -118,30 +136,20 @@ onBeforeUnmount(() => {
           <span class="eyebrow">Quick Links</span>
           <span class="qld-sheet__count">{{ visibleLinks.length }}</span>
         </div>
-        <div class="qld-sheet__actions">
-          <button
-            type="button"
-            class="qld-sheet__customize"
-            :class="{ 'qld-sheet__customize--on': customizing }"
-            @click="customizing = !customizing"
-          >
-            <component :is="customizing ? X : Settings2" :size="13" :stroke-width="1.85" />
-            {{ customizing ? 'Done' : 'Customize' }}
-          </button>
-          <button
-            type="button"
-            class="qld-sheet__close"
-            aria-label="Close"
-            @click="closeSheet"
-          >
-            <X :size="16" />
-          </button>
-        </div>
+        <button
+          type="button"
+          class="qld-sheet__close"
+          aria-label="Close"
+          @click="closeSheet"
+        >
+          <X :size="16" />
+        </button>
       </header>
 
       <div class="qld-sheet__search">
         <Search :size="13" :stroke-width="1.85" />
         <input
+          ref="searchInput"
           v-model="search"
           type="search"
           placeholder="Search links…"
@@ -159,7 +167,12 @@ onBeforeUnmount(() => {
           </div>
           <ul class="qld-list">
             <li v-for="l in pinned" :key="l.id">
-              <a :href="l.url" target="_blank" rel="noopener noreferrer" class="qld-row qld-row--pinned">
+              <a
+                :href="l.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="qld-row qld-row--pinned"
+              >
                 <span class="qld-row__icon">
                   <IconRender :name="l.iconName" :size="16" :stroke-width="1.85" />
                 </span>
@@ -168,15 +181,14 @@ onBeforeUnmount(() => {
                   <span v-if="l.sub" class="qld-row__sub">{{ l.sub }}</span>
                 </span>
                 <button
-                  v-if="customizing"
                   type="button"
                   class="qld-row__pin qld-row__pin--on"
-                  :aria-label="'Unpin'"
+                  aria-label="Unpin"
                   @click.stop.prevent="togglePin(l.id)"
                 >
                   <Pin :size="11" :stroke-width="2.2" />
                 </button>
-                <ExternalLink v-else :size="11" class="qld-row__arrow" />
+                <ExternalLink :size="11" class="qld-row__arrow" />
               </a>
             </li>
           </ul>
@@ -192,7 +204,12 @@ onBeforeUnmount(() => {
           </div>
           <ul class="qld-list">
             <li v-for="l in items" :key="l.id">
-              <a :href="l.url" target="_blank" rel="noopener noreferrer" class="qld-row">
+              <a
+                :href="l.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="qld-row"
+              >
                 <span class="qld-row__icon">
                   <IconRender :name="l.iconName" :size="16" :stroke-width="1.85" />
                 </span>
@@ -200,28 +217,17 @@ onBeforeUnmount(() => {
                   <span class="qld-row__name">{{ l.label }}</span>
                   <span v-if="l.sub" class="qld-row__sub">{{ l.sub }}</span>
                 </span>
-                <span v-if="customizing" class="qld-row__controls">
-                  <button
-                    type="button"
-                    class="qld-row__pin"
-                    :class="{ 'qld-row__pin--on': getPref(l.id).pinned }"
-                    :aria-label="getPref(l.id).pinned ? 'Unpin' : 'Pin'"
-                    :aria-pressed="getPref(l.id).pinned ?? false"
-                    @click.stop.prevent="togglePin(l.id)"
-                  >
-                    <Pin :size="11" :stroke-width="2.2" />
-                  </button>
-                  <button
-                    type="button"
-                    class="qld-row__hide"
-                    :class="{ 'qld-row__hide--on': getPref(l.id).hidden }"
-                    :aria-label="getPref(l.id).hidden ? 'Show' : 'Hide'"
-                    @click.stop.prevent="toggleHide(l.id)"
-                  >
-                    {{ getPref(l.id).hidden ? 'Show' : 'Hide' }}
-                  </button>
-                </span>
-                <ExternalLink v-else :size="11" class="qld-row__arrow" />
+                <button
+                  type="button"
+                  class="qld-row__pin"
+                  :class="{ 'qld-row__pin--on': getPref(l.id).pinned }"
+                  :aria-label="getPref(l.id).pinned ? 'Unpin' : 'Pin'"
+                  :aria-pressed="getPref(l.id).pinned ?? false"
+                  @click.stop.prevent="togglePin(l.id)"
+                >
+                  <Pin :size="11" :stroke-width="2.2" />
+                </button>
+                <ExternalLink :size="11" class="qld-row__arrow" />
               </a>
             </li>
           </ul>
@@ -301,8 +307,6 @@ onBeforeUnmount(() => {
   width: 22px;
   height: 22px;
   border-radius: 999px;
-  /* Same antique-gold-on-navy treatment as the topbar avatar so the dock
-     pill reads as the same gold as the rest of the page. */
   background: var(--color-accent-on-dark);
   color: var(--color-brand-900);
 }
@@ -362,7 +366,6 @@ onBeforeUnmount(() => {
     0 -16px 48px oklch(0.18 0.015 260 / 0.2),
     inset 0 1px 0 oklch(1 0 0 / 0.6);
 
-  /* Mobile: full-width slide-up sheet */
   bottom: 0;
   left: 0;
   right: 0;
@@ -371,7 +374,6 @@ onBeforeUnmount(() => {
 }
 @media (min-width: 768px) {
   .qld-sheet {
-    /* Desktop: popover panel above the dock pill on the right */
     left: auto;
     right: 28px;
     bottom: 80px;
@@ -404,34 +406,6 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: var(--color-surface-soft);
   color: var(--color-muted);
-}
-.qld-sheet__actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.qld-sheet__customize {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--color-line);
-  background: var(--color-surface);
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--color-ink-soft);
-  cursor: pointer;
-  transition: all 120ms var(--ease-out);
-}
-.qld-sheet__customize:hover {
-  border-color: var(--color-muted-soft);
-  color: var(--color-ink);
-}
-.qld-sheet__customize--on {
-  background: var(--color-brand-600);
-  color: white;
-  border-color: var(--color-brand-600);
 }
 .qld-sheet__close {
   background: transparent;
@@ -500,9 +474,9 @@ onBeforeUnmount(() => {
 
 .qld-row {
   display: grid;
-  grid-template-columns: 32px 1fr auto;
+  grid-template-columns: 32px 1fr auto auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 9px 12px;
   border-radius: 8px;
   text-decoration: none;
@@ -521,7 +495,6 @@ onBeforeUnmount(() => {
   background: oklch(0.97 0.04 86.8);
 }
 
-/* Navy glass squircle — scaled-down port of the FeaturedQuickLinks shape */
 .qld-row__icon {
   position: relative;
   width: 32px;
@@ -602,45 +575,32 @@ onBeforeUnmount(() => {
 .qld-row__arrow {
   color: var(--color-muted-soft);
 }
-.qld-row__controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.qld-row__pin,
-.qld-row__hide {
+.qld-row__pin {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 26px;
+  height: 26px;
   background: transparent;
   border: 1px solid var(--color-line);
   border-radius: 999px;
-  font-family: var(--font-sans);
-  font-size: 10.5px;
-  font-weight: 500;
   color: var(--color-muted);
   cursor: pointer;
-  padding: 3px 8px;
-  transition: all 120ms var(--ease-out);
-}
-.qld-row__pin {
-  width: 26px;
-  height: 26px;
   padding: 0;
+  transition:
+    color 120ms var(--ease-out),
+    border-color 120ms var(--ease-out),
+    background 120ms var(--ease-out);
 }
-.qld-row__pin:hover,
-.qld-row__hide:hover {
+.qld-row__pin:hover {
   border-color: var(--color-muted-soft);
   color: var(--color-ink);
 }
-.qld-row__pin--on {
+.qld-row__pin--on,
+.qld-row__pin--on:hover {
   color: var(--color-accent-700);
   border-color: oklch(0.85 0.07 86.8);
   background: oklch(0.99 0.01 86.8);
-}
-.qld-row__hide--on {
-  color: var(--color-danger-500);
-  border-color: oklch(0.85 0.07 20);
 }
 
 .qld-empty {

@@ -30,6 +30,7 @@ const DEV_STUB_USER: AppUser = {
   fullName: 'Justin St. John',
   initials: 'JS',
   role: 'admin',
+  title: 'Paramedic',
   shift: 'C',
   station: 'S202',
   fuelNumber: '30988',
@@ -80,6 +81,7 @@ function deriveAppUserFromSession(supaUser: User): AppUser {
     fullName: fullName || email,
     initials: computeInitials(fullName || email),
     role,
+    title: null,
     shift: null,
     station: null,
     fuelNumber: null,
@@ -96,6 +98,7 @@ interface AppUserRow {
   last_name: string
   full_name: string
   role: Role
+  title: string | null
   shift: ShiftLetter | null
   station: string | null
   fuel_number: string | null
@@ -113,6 +116,7 @@ function rowToAppUser(row: AppUserRow): AppUser {
     fullName: row.full_name,
     initials: computeInitials(row.full_name || row.email),
     role: row.role,
+    title: row.title,
     shift: row.shift,
     station: row.station,
     fuelNumber: row.fuel_number,
@@ -130,7 +134,7 @@ async function fetchAppUserRow(authUserId: string): Promise<AppUserRow | null> {
   const { data, error } = await supabase
     .from('app_users')
     .select(
-      'id, auth_user_id, email, first_name, last_name, full_name, role, shift, station, fuel_number, date_of_birth, show_birthday, active',
+      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, active',
     )
     .eq('auth_user_id', authUserId)
     .maybeSingle()

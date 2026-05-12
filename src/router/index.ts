@@ -29,6 +29,16 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AdminStaffView.vue'),
   },
   {
+    path: '/gallery',
+    name: 'gallery',
+    component: () => import('@/views/GalleryView.vue'),
+  },
+  {
+    path: '/training',
+    name: 'training',
+    component: () => import('@/views/TrainingView.vue'),
+  },
+  {
     path: '/admin/stations',
     name: 'admin-stations',
     component: () => import('@/views/admin/ManageStationsView.vue'),
@@ -44,6 +54,24 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/employees',
     name: 'admin-employees',
     component: () => import('@/views/admin/ManageEmployeesView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
+    path: '/admin/call-volume',
+    name: 'admin-call-volume',
+    component: () => import('@/views/admin/ManageCallVolumeView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
+    path: '/admin/training',
+    name: 'admin-training',
+    component: () => import('@/views/admin/ManageTrainingView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
+    path: '/admin/quick-links',
+    name: 'admin-quick-links',
+    component: () => import('@/views/admin/ManageQuickLinksView.vue'),
     meta: { adminOnly: true },
   },
   {

@@ -13,6 +13,8 @@ export interface AppUser {
   fullName: string
   initials: string
   role: Role
+  /** Free-text credential / job title (Paramedic, EMT, Operations Director, …). */
+  title: string | null
   shift: ShiftLetter | null
   station: string | null
   fuelNumber: string | null
@@ -173,10 +175,3 @@ export interface TrainingEvent {
   location: string
 }
 
-export interface PhotoCell {
-  id: string
-  caption: string
-  tag: string
-  imagePath: string | null
-  gradient: [string, string]
-}

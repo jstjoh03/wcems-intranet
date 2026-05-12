@@ -20,6 +20,9 @@ dev-dist
 .env.local
 .env.*.local
 
+# Supabase CLI local state (linked-project ref, version pins, etc.)
+supabase/.temp/
+
 # Claude harness
 .claude/launch.json
 

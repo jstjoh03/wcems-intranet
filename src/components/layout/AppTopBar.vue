@@ -11,6 +11,16 @@ defineEmits<{
 const auth = useAuthStore()
 const roles = ['crew', 'supervisor', 'admin'] as const
 const isDev = import.meta.env.DEV
+
+/**
+ * Topbar search opens the Quick Links dock — the dock already has a
+ * search box that filters the catalog, so the topbar's pill acts as a
+ * more prominent entry point + ⌘K shortcut surface. Cross-component
+ * coordination via a window event keeps the dock and topbar decoupled.
+ */
+function openQuickLinks() {
+  window.dispatchEvent(new CustomEvent('wcems:open-quicklinks'))
+}
 </script>
 
 <template>
@@ -34,15 +44,16 @@ const isDev = import.meta.env.DEV
         </div>
       </RouterLink>
 
-      <div class="topbar__search">
+      <button
+        type="button"
+        class="topbar__search"
+        aria-label="Open Quick Links search"
+        @click="openQuickLinks"
+      >
         <Search :size="13" class="topbar__search-icon" />
-        <input
-          placeholder="Search the intranet…"
-          class="topbar__search-input"
-          aria-label="Search"
-        />
+        <span class="topbar__search-placeholder">Search Quick Links…</span>
         <kbd class="topbar__kbd">⌘K</kbd>
-      </div>
+      </button>
 
       <!--
         Dev role switcher — only renders in dev builds.
@@ -156,23 +167,29 @@ const isDev = import.meta.env.DEV
   border-radius: 8px;
   background: var(--color-brand-800);
   border: 1px solid var(--color-brand-700);
+  /* Looks like a text input but is actually a button — opens the
+     Quick Links dock with its search prefocused. */
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: left;
+  transition: background 120ms var(--ease-out);
+}
+.topbar__search:hover {
+  background: var(--color-brand-700);
 }
 .topbar__search-icon {
   color: var(--color-accent-on-dark);
   opacity: 0.7;
   flex-shrink: 0;
 }
-.topbar__search-input {
+.topbar__search-placeholder {
   flex: 1;
-  background: transparent;
-  outline: none;
-  border: none;
   font-size: 13px;
-  color: white;
-  min-width: 0;
-}
-.topbar__search-input::placeholder {
   color: oklch(0.7 0.02 250);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .topbar__kbd {
   font-family: var(--font-mono);

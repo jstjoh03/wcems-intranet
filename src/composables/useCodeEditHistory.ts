@@ -70,6 +70,32 @@ async function load() {
   }
   all.value = (data ?? []).map((d) => rowToCodeChange(d as CodeEditHistoryRow))
   ready.value = true
+  subscribeRealtime()
+}
+
+/**
+ * Live INSERT events from `code_edit_history`. The table is append-only
+ * (triggers on stations / hospitals write rows when a code changes; no
+ * UPDATE or DELETE path exists), so we only handle INSERT and prepend
+ * to the local cache since the list is sorted by `changed_at DESC`.
+ *
+ * Echoes of our own edit aren't a problem: the trigger writes one row
+ * per code change with a fresh UUID, so dedupe on id and the second
+ * arrival (if any) is a no-op.
+ */
+function subscribeRealtime() {
+  supabase
+    .channel('code_edit_history')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'code_edit_history' },
+      (payload) => {
+        const row = rowToCodeChange(payload.new as CodeEditHistoryRow)
+        if (all.value.some((c) => c.id === row.id)) return
+        all.value = [row, ...all.value]
+      },
+    )
+    .subscribe()
 }
 
 export function useCodeEditHistory() {

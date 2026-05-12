@@ -87,6 +87,56 @@ async function load() {
   }
   state.value = next
   ready.value = true
+
+  subscribeRealtime()
+}
+
+/**
+ * Live INSERT/DELETE updates from `birthday_reactions`. Same idempotent
+ * presence-check pattern as photo reactions.
+ */
+function subscribeRealtime() {
+  const channel = supabase
+    .channel('birthday_reactions')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'birthday_reactions' },
+      (payload) => {
+        const row = payload.new as {
+          birthday_date: string
+          person_key: string
+          user_id: string
+        }
+        const key = makeKey(row.birthday_date, row.person_key)
+        const list = state.value[key] ? [...state.value[key]] : []
+        if (list.includes(row.user_id)) return
+        list.push(row.user_id)
+        state.value = { ...state.value, [key]: list }
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'birthday_reactions' },
+      (payload) => {
+        const row = payload.old as {
+          birthday_date?: string
+          person_key?: string
+          user_id?: string
+        }
+        if (!row.birthday_date || !row.person_key || !row.user_id) return
+        const key = makeKey(row.birthday_date, row.person_key)
+        const list = state.value[key]
+        if (!list) return
+        const next = list.filter((id) => id !== row.user_id)
+        if (next.length === list.length) return
+        const cloned = { ...state.value }
+        if (next.length === 0) delete cloned[key]
+        else cloned[key] = next
+        state.value = cloned
+      },
+    )
+    .subscribe()
+  return channel
 }
 
 export function useBirthdayReactions(currentUserId: string) {

@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import IconRender from '@/components/primitives/IconRender.vue'
-import linksData from '@/data/quicklinks.json'
-import type { QuickLink } from '@/types'
 import { useAuthStore } from '@/stores/auth'
+import { useQuickLinks } from '@/composables/useQuickLinks'
 
 /**
  * Hand-picked most-used shortcuts, surfaced just under the hero. Visual
@@ -14,6 +13,11 @@ import { useAuthStore } from '@/stores/auth'
  * Supervisors + admins swap Shoutout/Supply for Responder360 + Daily
  * Summary. Hospitals (an internal app page) closes the strip for
  * everyone since it's referenced constantly during transports.
+ *
+ * The featured set is keyed by `label` against the live quick_links
+ * catalog (admin-editable). If an admin renames or removes a featured
+ * link, the missing tile silently drops out of the strip rather than
+ * 404ing.
  */
 interface FeaturedTile {
   id: string
@@ -23,17 +27,22 @@ interface FeaturedTile {
   internal: boolean
 }
 
-const FEATURED_IDS_CREW = ['outlook', 'shoutout', 'supply-portal', 'protocols']
-const FEATURED_IDS_SUPERVISOR = [
-  'outlook',
-  'responder360',
-  'daily-summary',
-  'protocols',
+const FEATURED_LABELS_CREW = [
+  'Outlook',
+  'Employee Shoutout',
+  'Supply Portal',
+  'Protocols',
+]
+const FEATURED_LABELS_SUPERVISOR = [
+  'Outlook',
+  'Responder360',
+  'Daily Summary',
+  'Protocols',
 ]
 
 /**
- * Internal app pages surfaced in the strip without polluting
- * quicklinks.json (which is reserved for external utilities).
+ * Internal app routes surfaced in the strip without needing a row
+ * in the quick_links catalog (which is reserved for external utilities).
  */
 const INTERNAL_HOSPITALS: FeaturedTile = {
   id: 'hospitals',
@@ -44,20 +53,22 @@ const INTERNAL_HOSPITALS: FeaturedTile = {
 }
 
 const auth = useAuthStore()
-const links = linksData as QuickLink[]
+const { links } = useQuickLinks()
 
 const featured = computed<FeaturedTile[]>(() => {
-  const ids = auth.isSupervisor ? FEATURED_IDS_SUPERVISOR : FEATURED_IDS_CREW
-  const externals = ids
-    .map((id) => links.find((l) => l.id === id))
-    .filter((l): l is QuickLink => !!l)
-    .map<FeaturedTile>((l) => ({
-      id: l.id,
-      label: l.label,
-      iconName: l.iconName,
-      url: l.url,
+  const labels = auth.isSupervisor ? FEATURED_LABELS_SUPERVISOR : FEATURED_LABELS_CREW
+  const externals: FeaturedTile[] = []
+  for (const label of labels) {
+    const match = links.value.find((l) => l.label === label)
+    if (!match) continue
+    externals.push({
+      id: match.id,
+      label: match.label,
+      iconName: match.iconName,
+      url: match.url,
       internal: false,
-    }))
+    })
+  }
   return [...externals, INTERNAL_HOSPITALS]
 })
 </script>

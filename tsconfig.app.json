@@ -3,6 +3,10 @@
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "types": ["vite/client", "vite-plugin-pwa/client"],
+    /* Silence TS6's deprecation warning on `baseUrl`. Removing baseUrl
+       (and using bundler-style path resolution) is cleaner long-term,
+       but isn't worth churning vue-tsc + vite alignment for right now. */
+    "ignoreDeprecations": "6.0",
 
     /* Path aliases */
     "baseUrl": ".",

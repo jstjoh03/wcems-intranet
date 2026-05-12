@@ -8,8 +8,10 @@ import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 import type { AppUser, Role, ShiftLetter } from '@/types'
 import { formatShortDate } from '@/utils/date'
+import { useTodaysBirthdays } from '@/composables/useTodaysBirthdays'
 
 const auth = useAuthStore()
+const birthdays = useTodaysBirthdays()
 
 interface AppUserRow {
   id: string
@@ -18,6 +20,7 @@ interface AppUserRow {
   last_name: string
   full_name: string
   role: Role
+  title: string | null
   shift: ShiftLetter | null
   station: string | null
   fuel_number: string | null
@@ -33,6 +36,7 @@ interface DraftUser {
   lastName: string
   fullName: string
   role: Role
+  title: string
   shift: ShiftLetter | null
   station: string
   fuelNumber: string
@@ -62,6 +66,7 @@ function rowToUser(r: AppUserRow): AppUser & { active: boolean } {
     fullName: r.full_name,
     initials: computeInitials(r.full_name || r.email),
     role: r.role,
+    title: r.title,
     shift: r.shift,
     station: r.station,
     fuelNumber: r.fuel_number,
@@ -99,7 +104,7 @@ async function load() {
   const { data, error: fetchErr } = await supabase
     .from('app_users')
     .select(
-      'id, email, first_name, last_name, full_name, role, shift, station, fuel_number, date_of_birth, show_birthday, active',
+      'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, active',
     )
     .order('full_name')
   if (fetchErr) {
@@ -133,6 +138,7 @@ function userToDraft(u: AppUser & { active: boolean }): DraftUser {
     lastName: u.lastName,
     fullName: u.fullName,
     role: u.role,
+    title: u.title ?? '',
     shift: u.shift,
     station: u.station ?? '',
     fuelNumber: u.fuelNumber ?? '',
@@ -169,6 +175,7 @@ async function save() {
               lastName: draft.value!.lastName,
               fullName: draft.value!.fullName,
               role: draft.value!.role,
+              title: draft.value!.title.trim() || null,
               shift: draft.value!.shift,
               station: draft.value!.station || null,
               fuelNumber: draft.value!.fuelNumber || null,
@@ -188,6 +195,7 @@ async function save() {
       last_name: draft.value.lastName,
       full_name: draft.value.fullName,
       role: draft.value.role,
+      title: draft.value.title.trim() || null,
       shift: draft.value.shift,
       station: draft.value.station || null,
       fuel_number: draft.value.fuelNumber || null,
@@ -200,7 +208,7 @@ async function save() {
       .update(patch)
       .eq('id', draft.value.id)
       .select(
-        'id, email, first_name, last_name, full_name, role, shift, station, fuel_number, date_of_birth, show_birthday, active',
+        'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, active',
       )
       .single()
     if (updErr) {
@@ -210,6 +218,10 @@ async function save() {
     users.value = users.value.map((u) =>
       u.id === draft.value!.id ? rowToUser(data as AppUserRow) : u,
     )
+    /* Pull the dashboard birthday list back in sync — a DOB edit here
+       should immediately reflect on the home page without a reload.
+       No-op in dev-stub mode. */
+    void birthdays.refresh()
     cancelEdit()
   } finally {
     saving.value = false
@@ -236,6 +248,9 @@ async function toggleActive(u: AppUser & { active: boolean }) {
     return
   }
   users.value = users.value.map((x) => (x.id === u.id ? rowToUser(data as AppUserRow) : x))
+  /* Re-pull birthdays — flipping someone's active flag should hide
+     them from the home page list if their birthday was today. */
+  void birthdays.refresh()
 }
 
 function syncFullName() {
@@ -319,11 +334,22 @@ onMounted(load)
           </label>
 
           <label class="me-form__field">
-            <span class="me-form__label">Role</span>
+            <span class="me-form__label">Role (permissions)</span>
             <select v-model="draft.role" class="me-form__input">
               <option v-for="r in ROLES" :key="r" :value="r">{{ r }}</option>
             </select>
           </label>
+          <label class="me-form__field">
+            <span class="me-form__label">Title</span>
+            <input
+              v-model="draft.title"
+              type="text"
+              class="me-form__input"
+              placeholder="e.g. Paramedic, EMT, Operations Director"
+              maxlength="60"
+            />
+          </label>
+
           <label class="me-form__field">
             <span class="me-form__label">Shift</span>
             <select
@@ -406,7 +432,9 @@ onMounted(load)
             </div>
             <div class="me-row__email">{{ u.email }}</div>
             <div class="me-row__meta">
-              <span>Shift {{ shiftLabel(u.shift) }}</span>
+              <span v-if="u.title">{{ u.title }}</span>
+              <span v-if="u.title">· Shift {{ shiftLabel(u.shift) }}</span>
+              <span v-else>Shift {{ shiftLabel(u.shift) }}</span>
               <span v-if="u.station">· {{ u.station }}</span>
               <span v-if="u.fuelNumber">· Fuel #{{ u.fuelNumber }}</span>
               <span v-if="u.dateOfBirth">· DOB {{ formatDob(u.dateOfBirth) }}</span>

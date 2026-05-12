@@ -98,6 +98,46 @@ export const useStationsStore = defineStore('stations', () => {
     }
     stations.value = (data ?? []).map((d) => rowToStation(d as StationRow))
     ready.value = true
+    subscribeRealtime()
+  }
+
+  /**
+   * Live updates from the `stations` table. Idempotent against our own
+   * optimistic mutations: INSERT dedupes by id, UPDATE replaces by id
+   * (also useful for picking up the server-stamped
+   * door_code_updated_at / _by after our own edit), DELETE removes by
+   * id and is a no-op if already gone.
+   */
+  function subscribeRealtime() {
+    supabase
+      .channel('stations')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'stations' },
+        (payload) => {
+          const row = rowToStation(payload.new as StationRow)
+          if (stations.value.some((s) => s.id === row.id)) return
+          stations.value = [...stations.value, row]
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'stations' },
+        (payload) => {
+          const row = rowToStation(payload.new as StationRow)
+          stations.value = stations.value.map((s) => (s.id === row.id ? row : s))
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'stations' },
+        (payload) => {
+          const old = payload.old as { id?: string }
+          if (!old.id) return
+          stations.value = stations.value.filter((s) => s.id !== old.id)
+        },
+      )
+      .subscribe()
   }
 
   async function refetchOne(id: string) {

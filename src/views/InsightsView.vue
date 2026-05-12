@@ -1,39 +1,82 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import AppCard from '@/components/primitives/AppCard.vue'
-import callVolume from '@/data/call-volume.json'
 import { BarChart3 } from 'lucide-vue-next'
+import { useCallVolume } from '@/composables/useCallVolume'
 
 type Tab = 'trend' | 'units' | 'zones'
 const tab = ref<Tab>('trend')
 
-const summaries = [...callVolume.summaries].sort(
-  (a, b) => new Date(a.reportMonth).getTime() - new Date(b.reportMonth).getTime(),
+const {
+  summaries: rawSummaries,
+  units: rawUnits,
+  zones: rawZones,
+  months: allMonths,
+} = useCallVolume()
+
+const summaries = computed(() =>
+  [...rawSummaries.value].sort(
+    (a, b) => new Date(a.reportMonth).getTime() - new Date(b.reportMonth).getTime(),
+  ),
 )
 
-const months = computed(() => summaries.map((s) => s.reportMonth))
-const selectedMonth = ref(months.value[months.value.length - 1])
+const months = computed(() => [...allMonths.value])
+const selectedMonth = ref<string>('')
+
+/* Keep selectedMonth pointed at the latest month as data loads. Without
+   this, the dropdown would stay on an empty default until the user
+   touched it. */
+watch(
+  months,
+  (list) => {
+    if (list.length === 0) {
+      selectedMonth.value = ''
+      return
+    }
+    if (!selectedMonth.value || !list.includes(selectedMonth.value)) {
+      selectedMonth.value = list[list.length - 1]
+    }
+  },
+  { immediate: true },
+)
 
 const summary = computed(
-  () => summaries.find((s) => s.reportMonth === selectedMonth.value) ?? summaries[summaries.length - 1],
+  () =>
+    summaries.value.find((s) => s.reportMonth === selectedMonth.value) ??
+    summaries.value[summaries.value.length - 1] ?? {
+      reportMonth: '',
+      totalCalls: 0,
+      totalPatients: 0,
+      totalTransports: 0,
+      avgResponseSeconds: 0,
+    },
 )
 
 const monthLabel = (iso: string) =>
-  new Date(iso).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+  iso
+    ? new Date(iso).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    : ''
 const shortMonth = (iso: string) =>
   new Date(iso).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }).toUpperCase()
 
-const units = computed(() =>
-  callVolume.units
+/* Augment each row with a percentage computed from the column sum, so
+   the template can render `(13.5%)` etc. without storing percentages
+   in the DB. Done once per selectedMonth change. */
+const units = computed(() => {
+  const filtered = rawUnits.value
     .filter((u) => u.reportMonth === selectedMonth.value && u.runs > 0)
-    .sort((a, b) => b.runs - a.runs),
-)
-const zones = computed(() =>
-  callVolume.zones
+    .sort((a, b) => b.runs - a.runs)
+  const total = filtered.reduce((s, u) => s + u.runs, 0) || 1
+  return filtered.map((u) => ({ ...u, percentage: (u.runs / total) * 100 }))
+})
+const zones = computed(() => {
+  const filtered = rawZones.value
     .filter((z) => z.reportMonth === selectedMonth.value && z.calls > 0)
-    .sort((a, b) => b.calls - a.calls),
-)
+    .sort((a, b) => b.calls - a.calls)
+  const total = filtered.reduce((s, z) => s + z.calls, 0) || 1
+  return filtered.map((z) => ({ ...z, percentage: (z.calls / total) * 100 }))
+})
 
 const maxRuns = computed(() => Math.max(1, ...units.value.map((u) => u.runs)))
 
@@ -70,16 +113,17 @@ const donut = computed(() => {
 
 // Trend line
 const trend = computed(() => {
-  if (summaries.length < 2) return null
+  const list = summaries.value
+  if (list.length < 2) return null
   const W = 720
   const H = 160
   const PAD_X = 32
   const PAD_Y = 24
-  const max = Math.max(...summaries.map((s) => s.totalCalls))
-  const min = Math.min(...summaries.map((s) => s.totalCalls)) * 0.85
+  const max = Math.max(...list.map((s) => s.totalCalls))
+  const min = Math.min(...list.map((s) => s.totalCalls)) * 0.85
   const range = max - min || 1
-  const pts = summaries.map((s, i) => ({
-    x: PAD_X + (i / (summaries.length - 1)) * (W - PAD_X * 2),
+  const pts = list.map((s, i) => ({
+    x: PAD_X + (i / (list.length - 1)) * (W - PAD_X * 2),
     y: PAD_Y + (1 - (s.totalCalls - min) / range) * (H - PAD_Y * 2),
     label: shortMonth(s.reportMonth),
     calls: s.totalCalls,
@@ -125,6 +169,20 @@ function secsToMMSS(secs: number) {
         <div class="insights__metric-value display">{{ summary.totalCalls }}</div>
       </AppCard>
       <AppCard class="insights__metric">
+        <div class="insights__metric-label">Avg Response</div>
+        <div class="insights__metric-value display font-mono">
+          {{ secsToMMSS(summary.avgResponseSeconds) }}
+        </div>
+      </AppCard>
+      <AppCard class="insights__metric">
+        <div class="insights__metric-label">In District</div>
+        <div class="insights__metric-value display">{{ summary.callsInDistrict }}</div>
+      </AppCard>
+      <AppCard class="insights__metric">
+        <div class="insights__metric-label">Out of District</div>
+        <div class="insights__metric-value display">{{ summary.callsOutOfDistrict }}</div>
+      </AppCard>
+      <AppCard class="insights__metric">
         <div class="insights__metric-label">Patients</div>
         <div class="insights__metric-value display">{{ summary.totalPatients }}</div>
       </AppCard>
@@ -133,10 +191,14 @@ function secsToMMSS(secs: number) {
         <div class="insights__metric-value display">{{ summary.totalTransports }}</div>
       </AppCard>
       <AppCard class="insights__metric">
-        <div class="insights__metric-label">Avg Response</div>
+        <div class="insights__metric-label">UHU</div>
         <div class="insights__metric-value display font-mono">
-          {{ secsToMMSS(summary.avgResponseSeconds) }}
+          {{ summary.unitHourUtilization.toFixed(3) }}
         </div>
+      </AppCard>
+      <AppCard class="insights__metric">
+        <div class="insights__metric-label">Air Transports</div>
+        <div class="insights__metric-value display">{{ summary.airTransports }}</div>
       </AppCard>
     </div>
 
@@ -230,9 +292,6 @@ function secsToMMSS(secs: number) {
             <div class="insights__unit-head">
               <span class="display insights__unit-name">{{ u.unitName }}</span>
               <span class="insights__unit-meta">
-                <span v-if="u.avgResponseSeconds > 0" class="font-mono">
-                  Avg {{ secsToMMSS(u.avgResponseSeconds) }} ·
-                </span>
                 <span class="font-mono insights__unit-runs">
                   {{ u.runs }} runs ({{ u.percentage.toFixed(2) }}%)
                 </span>
