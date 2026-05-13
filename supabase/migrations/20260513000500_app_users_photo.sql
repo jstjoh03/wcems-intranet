@@ -22,8 +22,13 @@
 alter table public.app_users
   add column if not exists photo_url text;
 
--- Refresh the directory function to include the photo column. CREATE OR
--- REPLACE swaps the body in place; existing GRANT EXECUTE survives.
+-- Refresh the directory function to include the photo column.
+-- DROP first because CREATE OR REPLACE refuses to change a function's
+-- return-type signature, and we're adding a column to the RETURNS TABLE
+-- definition. The grant is re-applied below; nothing else depends on
+-- this function.
+drop function if exists public.get_employee_directory();
+
 create or replace function public.get_employee_directory()
 returns table (
   id uuid,
