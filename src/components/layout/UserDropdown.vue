@@ -17,7 +17,6 @@ const fuel = useCodeReveal()
 
 const initials = computed(() => auth.appUser?.initials ?? '?')
 const firstName = computed(() => auth.appUser?.firstName ?? '')
-const role = computed(() => auth.appUser?.role ?? 'crew')
 const fullName = computed(() => auth.appUser?.fullName ?? '')
 const fuelNumber = computed(() => auth.appUser?.fuelNumber ?? null)
 
