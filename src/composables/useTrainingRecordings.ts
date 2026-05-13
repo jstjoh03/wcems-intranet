@@ -4,6 +4,26 @@ import { useAuthStore } from '@/stores/auth'
 import type { VideoSource } from '@/lib/videoSource'
 
 /**
+ * Strict preset list for the admin category selector. Free-text fallback
+ * is the literal value `Other` — when the admin picks Other, a text
+ * input appears for one-off categories. Edit this list to add/remove
+ * top-level categories; existing rows on the renamed category keep
+ * working until you migrate them.
+ */
+export const RECORDING_CATEGORY_PRESETS = [
+  'Doc Day',
+  'Protocol Updates',
+  'Skills',
+  'Community Paramedicine',
+  'Operations',
+  'Equipment',
+  'Annual / Required',
+] as const
+export const RECORDING_CATEGORY_OTHER = 'Other' as const
+
+export type SortKey = 'newest' | 'oldest' | 'most-viewed' | 'alpha'
+
+/**
  * Browsable library of past training recordings. RLS on the server hides
  * inactive rows and rows whose `visible_to_roles` doesn't include the
  * current user's role, so we don't need to re-filter client-side beyond
@@ -21,6 +41,8 @@ export interface TrainingRecording {
   recordedAt: string | null            // YYYY-MM-DD
   durationMinutes: number | null
   category: string | null
+  /** Free-form chip tags — secondary axis for cross-cutting discovery. */
+  tags: string[]
   thumbnailUrl: string | null
   videoSource: VideoSource
   videoRef: string
@@ -37,6 +59,7 @@ interface TrainingRecordingRow {
   recorded_at: string | null
   duration_minutes: number | null
   category: string | null
+  tags: string[] | null
   thumbnail_url: string | null
   video_source: VideoSource
   video_ref: string
@@ -54,6 +77,7 @@ function rowToRecording(r: TrainingRecordingRow): TrainingRecording {
     recordedAt: r.recorded_at,
     durationMinutes: r.duration_minutes,
     category: r.category,
+    tags: r.tags ?? [],
     thumbnailUrl: r.thumbnail_url,
     videoSource: r.video_source,
     videoRef: r.video_ref,
@@ -76,7 +100,7 @@ async function loadRecordings() {
   const { data, error } = await supabase
     .from('training_recordings')
     .select(
-      'id, title, description, instructor, recorded_at, duration_minutes, category, thumbnail_url, video_source, video_ref, visible_to_roles, view_count, active',
+      'id, title, description, instructor, recorded_at, duration_minutes, category, tags, thumbnail_url, video_source, video_ref, visible_to_roles, view_count, active',
     )
     .order('recorded_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
@@ -167,16 +191,64 @@ export function useTrainingRecordings() {
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   })
 
+  /** Every tag that exists on any recording — used by the admin chip
+   *  input for autocomplete suggestions. */
+  const allTags = computed(() => {
+    const set = new Set<string>()
+    for (const r of recordings.value) {
+      for (const t of r.tags) {
+        const v = t.trim()
+        if (v) set.add(v)
+      }
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  })
+
   const ready = computed(() => !loading.value && (lastFetchedAt.value !== null || !isLive))
 
   return {
     recordings,           // all rows (admins see inactive too)
     visibleRecordings,    // active-only (for crew library)
     categories,
+    allTags,
     loading,
     ready,
     errorMessage,
     lastFetchedAt,
     refresh,
+  }
+}
+
+/**
+ * Sort a recording list by the given key. Pure function — caller passes
+ * the slice, gets a new array back. Stable within ties on title.
+ */
+export function sortRecordings(
+  list: TrainingRecording[],
+  key: SortKey,
+): TrainingRecording[] {
+  const arr = [...list]
+  switch (key) {
+    case 'newest':
+      return arr.sort((a, b) => {
+        const ad = a.recordedAt ?? ''
+        const bd = b.recordedAt ?? ''
+        if (ad !== bd) return bd.localeCompare(ad)
+        return a.title.localeCompare(b.title)
+      })
+    case 'oldest':
+      return arr.sort((a, b) => {
+        const ad = a.recordedAt ?? ''
+        const bd = b.recordedAt ?? ''
+        if (ad !== bd) return ad.localeCompare(bd)
+        return a.title.localeCompare(b.title)
+      })
+    case 'most-viewed':
+      return arr.sort((a, b) => {
+        if (b.viewCount !== a.viewCount) return b.viewCount - a.viewCount
+        return a.title.localeCompare(b.title)
+      })
+    case 'alpha':
+      return arr.sort((a, b) => a.title.localeCompare(b.title))
   }
 }

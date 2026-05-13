@@ -151,7 +151,6 @@ async function signOut() {
       <span class="user-dropdown__avatar display">{{ initials }}</span>
       <span class="user-dropdown__meta hidden sm:flex">
         <span class="user-dropdown__name">{{ firstName }}</span>
-        <span class="user-dropdown__role">{{ role }}</span>
       </span>
       <ChevronDown :size="13" class="user-dropdown__chev" />
     </button>
@@ -163,12 +162,6 @@ async function signOut() {
           <div class="min-w-0 flex-1">
             <div class="display text-[16px] truncate" style="color: var(--color-ink)">
               {{ fullName }}
-            </div>
-            <div
-              class="font-mono text-[10.5px] uppercase tracking-wider"
-              style="color: var(--color-muted)"
-            >
-              {{ role }}
             </div>
           </div>
         </header>

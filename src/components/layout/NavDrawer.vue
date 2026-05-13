@@ -207,12 +207,6 @@ async function signOut() {
           <div class="display text-[14.5px] truncate" style="color: var(--color-ink)">
             {{ auth.appUser?.fullName }}
           </div>
-          <div
-            class="font-mono text-[10px] uppercase tracking-wider"
-            style="color: var(--color-muted)"
-          >
-            {{ auth.role }}
-          </div>
         </div>
         <button class="drawer__signout" aria-label="Sign out" @click="signOut">
           <LogOut :size="15" />

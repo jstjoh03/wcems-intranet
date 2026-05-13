@@ -58,6 +58,10 @@ export interface SearchResult {
   hash?: string
   /** External URL — opens in a new tab. */
   href?: string
+  /** Extra space-separated terms to match against — not displayed in
+   *  the UI. Used by recording results to make tags findable without
+   *  cluttering the subtitle line. */
+  keywords?: string
 }
 
 /** Fixed app routes worth surfacing in search. */
@@ -222,7 +226,9 @@ export function useGlobalSearch() {
     }
 
     /* Training library recordings — deep-link to /training/recordings?play=<id>
-       so the library view auto-opens the player on arrival. */
+       so the library view auto-opens the player on arrival. Tags go
+       into the hidden `keywords` field so they're searchable without
+       cluttering the visible subtitle. */
     for (const r of visibleRecordings.value) {
       const subParts: string[] = []
       if (r.instructor) subParts.push(r.instructor)
@@ -238,6 +244,7 @@ export function useGlobalSearch() {
         category: 'recording',
         icon: Film,
         to: `/training/recordings?play=${r.id}`,
+        keywords: r.tags.join(' '),
       })
     }
 
@@ -285,7 +292,7 @@ export function useGlobalSearch() {
 
   function search(query: string, limitPerCategory = 6) {
     const filtered = allResults.value.filter((r) =>
-      matchesQuery(query, r.title, r.subtitle),
+      matchesQuery(query, r.title, r.subtitle, r.keywords),
     )
     const buckets: Array<{ category: SearchCategory; label: string; results: SearchResult[] }> = []
     for (const cat of CATEGORY_ORDER) {

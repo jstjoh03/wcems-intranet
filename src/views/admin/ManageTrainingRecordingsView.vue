@@ -3,9 +3,14 @@ import { ref, computed, onMounted } from 'vue'
 import { Film, Plus, Save, X, Edit2, Trash2, Upload, ExternalLink } from 'lucide-vue-next'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import AppCard from '@/components/primitives/AppCard.vue'
+import TagInput from '@/components/primitives/TagInput.vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
-import { useTrainingRecordings } from '@/composables/useTrainingRecordings'
+import {
+  useTrainingRecordings,
+  RECORDING_CATEGORY_PRESETS,
+  RECORDING_CATEGORY_OTHER,
+} from '@/composables/useTrainingRecordings'
 import {
   extractYouTubeId,
   resolveThumbnail,
@@ -21,6 +26,7 @@ interface RecordingRow {
   recorded_at: string | null
   duration_minutes: number | null
   category: string | null
+  tags: string[] | null
   thumbnail_url: string | null
   video_source: VideoSource
   video_ref: string
@@ -36,7 +42,11 @@ interface Draft {
   instructor: string
   recorded_at: string
   duration_minutes: number | null
-  category: string
+  /** One of RECORDING_CATEGORY_PRESETS, or 'Other' to enable category_other. */
+  category_pick: string
+  /** Free-text value used only when category_pick === 'Other'. */
+  category_other: string
+  tags: string[]
   thumbnail_url: string
   video_source: VideoSource
   video_ref: string
@@ -69,7 +79,7 @@ const SOURCES: Array<{ value: VideoSource; label: string; hint: string }> = [
 ]
 
 const auth = useAuthStore()
-const { categories: existingCategories, refresh: refreshLibrary } = useTrainingRecordings()
+const { allTags, refresh: refreshLibrary } = useTrainingRecordings()
 
 const rows = ref<RecordingRow[]>([])
 const loading = ref(true)
@@ -85,7 +95,7 @@ async function load() {
   const { data, error: fetchErr } = await supabase
     .from('training_recordings')
     .select(
-      'id, title, description, instructor, recorded_at, duration_minutes, category, thumbnail_url, video_source, video_ref, visible_to_roles, view_count, active',
+      'id, title, description, instructor, recorded_at, duration_minutes, category, tags, thumbnail_url, video_source, video_ref, visible_to_roles, view_count, active',
     )
     .order('recorded_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
@@ -108,7 +118,9 @@ function blankDraft(): Draft {
     instructor: '',
     recorded_at: '',
     duration_minutes: null,
-    category: '',
+    category_pick: '',
+    category_other: '',
+    tags: [],
     thumbnail_url: '',
     video_source: 'wix',
     video_ref: '',
@@ -123,6 +135,12 @@ function startCreate() {
 }
 
 function startEdit(r: RecordingRow) {
+  /* Map the row's persisted category back into the form's two-field
+     representation. If the value matches a preset, it goes into the
+     selector. If not, it lands in the "Other" free-text and the
+     selector is set to 'Other' so the input reveals. */
+  const cat = r.category ?? ''
+  const matchesPreset = (RECORDING_CATEGORY_PRESETS as readonly string[]).includes(cat)
   draft.value = {
     id: r.id,
     title: r.title,
@@ -130,7 +148,9 @@ function startEdit(r: RecordingRow) {
     instructor: r.instructor ?? '',
     recorded_at: r.recorded_at ?? '',
     duration_minutes: r.duration_minutes,
-    category: r.category ?? '',
+    category_pick: matchesPreset ? cat : cat ? RECORDING_CATEGORY_OTHER : '',
+    category_other: matchesPreset ? '' : cat,
+    tags: (r.tags ?? []).slice(),
     thumbnail_url: r.thumbnail_url ?? '',
     video_source: r.video_source,
     video_ref: r.video_ref,
@@ -138,6 +158,15 @@ function startEdit(r: RecordingRow) {
     active: r.active,
   }
   error.value = null
+}
+
+/** Resolve a draft's two-field category representation back into the
+ *  single string we actually persist. Returns null for "uncategorized." */
+function resolvedCategory(d: Draft): string | null {
+  if (d.category_pick === RECORDING_CATEGORY_OTHER) {
+    return d.category_other.trim() || null
+  }
+  return d.category_pick.trim() || null
 }
 
 function cancelEdit() {
@@ -198,7 +227,8 @@ async function save() {
     instructor: d.instructor.trim() || null,
     recorded_at: d.recorded_at || null,
     duration_minutes: d.duration_minutes,
-    category: d.category.trim() || null,
+    category: resolvedCategory(d),
+    tags: d.tags.map((t) => t.trim()).filter((t) => t.length > 0),
     thumbnail_url: d.thumbnail_url.trim() || null,
     video_source: d.video_source,
     video_ref: normalizeRef(d.video_source, d.video_ref),
@@ -299,7 +329,8 @@ const filteredRows = computed(() => {
     (r) =>
       r.title.toLowerCase().includes(q) ||
       (r.instructor ?? '').toLowerCase().includes(q) ||
-      (r.category ?? '').toLowerCase().includes(q),
+      (r.category ?? '').toLowerCase().includes(q) ||
+      (r.tags ?? []).some((t) => t.toLowerCase().includes(q)),
   )
 })
 
@@ -407,19 +438,36 @@ const activeSourceHint = computed(() => {
 
           <label class="mtr-form__field">
             <span class="mtr-form__label">Category</span>
+            <select v-model="draft.category_pick" class="mtr-form__input">
+              <option value="">— None —</option>
+              <option v-for="c in RECORDING_CATEGORY_PRESETS" :key="c" :value="c">
+                {{ c }}
+              </option>
+              <option :value="RECORDING_CATEGORY_OTHER">Other…</option>
+            </select>
             <input
-              v-model="draft.category"
+              v-if="draft.category_pick === RECORDING_CATEGORY_OTHER"
+              v-model="draft.category_other"
               type="text"
               maxlength="40"
-              placeholder="e.g. Protocols, Doc Day, Skills"
-              list="training-rec-categories"
+              placeholder="Type a custom category"
               class="mtr-form__input"
+              style="margin-top: 6px"
             />
-            <datalist id="training-rec-categories">
-              <option v-for="c in existingCategories" :key="c" :value="c" />
-            </datalist>
-            <span class="mtr-form__hint">Type to add a new category or pick an existing one.</span>
+            <span class="mtr-form__hint">Pick a preset; choose "Other" for a one-off.</span>
           </label>
+
+          <div class="mtr-form__field mtr-form__field--wide">
+            <span class="mtr-form__label">Tags</span>
+            <TagInput
+              v-model="draft.tags"
+              :suggestions="allTags"
+              placeholder="Type a tag, press Enter (e.g. cardiac, pediatric, 2026)"
+            />
+            <span class="mtr-form__hint">
+              Optional cross-cutting tags for search. Pulls from existing tags as you type.
+            </span>
+          </div>
 
           <div class="mtr-form__field mtr-form__field--wide">
             <span class="mtr-form__label">Video source</span>
@@ -567,6 +615,9 @@ const activeSourceHint = computed(() => {
             <span v-if="r.recorded_at">{{ r.recorded_at }}</span>
             <span v-if="r.duration_minutes"> · {{ r.duration_minutes }} min</span>
             <span v-if="r.category"> · {{ r.category }}</span>
+            <span v-if="r.tags && r.tags.length > 0" class="mtr-row__tags">
+              <span v-for="t in r.tags" :key="t" class="mtr-row__tag">{{ t }}</span>
+            </span>
             <span class="mtr-row__source-tag">{{ sourceLabel(r.video_source) }}</span>
             <span v-if="!r.active" class="mtr-row__inactive-chip">Hidden</span>
             <span class="mtr-row__views">{{ r.view_count }} view{{ r.view_count === 1 ? '' : 's' }}</span>
@@ -942,6 +993,23 @@ const activeSourceHint = computed(() => {
   color: var(--color-ink-soft);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+.mtr-row__tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-left: 4px;
+}
+.mtr-row__tag {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--color-brand-100);
+  color: var(--color-brand-700);
+  letter-spacing: 0;
+  text-transform: none;
 }
 .mtr-row__inactive-chip {
   font-family: var(--font-sans);

@@ -6,7 +6,9 @@ import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import RecordingPlayerModal from '@/components/training/RecordingPlayerModal.vue'
 import {
   useTrainingRecordings,
+  sortRecordings,
   type TrainingRecording,
+  type SortKey,
 } from '@/composables/useTrainingRecordings'
 import { resolveThumbnail } from '@/lib/videoSource'
 
@@ -16,7 +18,15 @@ const { visibleRecordings, categories, loading, ready } = useTrainingRecordings(
 
 const search = ref('')
 const activeCategory = ref<string | null>(null)
+const sortKey = ref<SortKey>('newest')
 const activeRecording = ref<TrainingRecording | null>(null)
+
+const SORT_OPTIONS: Array<{ value: SortKey; label: string }> = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'most-viewed', label: 'Most viewed' },
+  { value: 'alpha', label: 'A → Z' },
+]
 
 /* `?play=<id>` deep-links from the global search overlay (and anywhere
    else) auto-open the player on arrival. We watch both the query and
@@ -33,18 +43,50 @@ watch(
   { immediate: true },
 )
 
+/* Search + category filter + sort.
+   - When activeCategory is null, the grid below switches to "grouped by
+     category" sections. When it's set, the grid is a flat list of just
+     that category — grouping by one category would be redundant.
+   - Sort is applied AFTER filtering so the "Most viewed" option reflects
+     the visible slice, not the global library. */
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  return visibleRecordings.value.filter((r) => {
+  const base = visibleRecordings.value.filter((r) => {
     if (activeCategory.value && r.category !== activeCategory.value) return false
     if (!q) return true
     return (
       r.title.toLowerCase().includes(q) ||
       (r.description ?? '').toLowerCase().includes(q) ||
       (r.instructor ?? '').toLowerCase().includes(q) ||
-      (r.category ?? '').toLowerCase().includes(q)
+      (r.category ?? '').toLowerCase().includes(q) ||
+      r.tags.some((t) => t.toLowerCase().includes(q))
     )
   })
+  return sortRecordings(base, sortKey.value)
+})
+
+/* When activeCategory is null AND there's no search, render groups.
+   Each group is { name, items }; uncategorized rows fall into a
+   "Other" bucket at the bottom. Empty groups are skipped per Justin's
+   spec — keeps the page clean when categories haven't been populated. */
+const grouped = computed(() => {
+  if (activeCategory.value || search.value.trim()) return null
+  const map = new Map<string, TrainingRecording[]>()
+  for (const r of filtered.value) {
+    const key = (r.category ?? '').trim() || 'Other'
+    const list = map.get(key) ?? []
+    list.push(r)
+    map.set(key, list)
+  }
+  return Array.from(map.entries())
+    .filter(([, items]) => items.length > 0)
+    .sort(([a], [b]) => {
+      /* "Other" sinks to the bottom; otherwise alphabetical. */
+      if (a === 'Other' && b !== 'Other') return 1
+      if (b === 'Other' && a !== 'Other') return -1
+      return a.localeCompare(b)
+    })
+    .map(([name, items]) => ({ name, items }))
 })
 
 function thumbFor(r: TrainingRecording): string | null {
@@ -95,30 +137,38 @@ function close() {
         <input
           v-model="search"
           type="search"
-          placeholder="Search by title, instructor, or topic…"
+          placeholder="Search by title, instructor, topic, or tag…"
           aria-label="Search recordings"
         />
       </label>
-      <div v-if="categories.length" class="tr__cats">
-        <button
-          type="button"
-          class="tr__cat"
-          :class="{ 'tr__cat--on': activeCategory === null }"
-          @click="activeCategory = null"
-        >
-          All
-        </button>
-        <button
-          v-for="c in categories"
-          :key="c"
-          type="button"
-          class="tr__cat"
-          :class="{ 'tr__cat--on': activeCategory === c }"
-          @click="activeCategory = c"
-        >
-          {{ c }}
-        </button>
+      <div class="tr__toolbar-right">
+        <select v-model="sortKey" class="tr__sort" aria-label="Sort recordings">
+          <option v-for="s in SORT_OPTIONS" :key="s.value" :value="s.value">
+            Sort: {{ s.label }}
+          </option>
+        </select>
       </div>
+    </div>
+
+    <div v-if="categories.length" class="tr__cats">
+      <button
+        type="button"
+        class="tr__cat"
+        :class="{ 'tr__cat--on': activeCategory === null }"
+        @click="activeCategory = null"
+      >
+        All
+      </button>
+      <button
+        v-for="c in categories"
+        :key="c"
+        type="button"
+        class="tr__cat"
+        :class="{ 'tr__cat--on': activeCategory === c }"
+        @click="activeCategory = c"
+      >
+        {{ c }}
+      </button>
     </div>
 
     <div v-if="!ready && loading" class="tr__empty">Loading recordings…</div>
@@ -129,6 +179,57 @@ function close() {
       </template>
     </div>
 
+    <!-- Grouped view: "All" + no search → category sections with headers. -->
+    <template v-else-if="grouped">
+      <section v-for="g in grouped" :key="g.name" class="tr-group">
+        <div class="tr-group__head">
+          <h2 class="display tr-group__title">{{ g.name }}</h2>
+          <span class="tr-group__count">{{ g.items.length }}</span>
+        </div>
+        <div class="tr__grid">
+          <button
+            v-for="r in g.items"
+            :key="r.id"
+            type="button"
+            class="tr-card"
+            @click="open(r)"
+          >
+            <div class="tr-card__thumb">
+              <img
+                v-if="thumbFor(r)"
+                :src="thumbFor(r) || ''"
+                :alt="r.title"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+              />
+              <div v-else class="tr-card__thumb-fallback">
+                <Eyebrow style="color: white">Recording</Eyebrow>
+                <span class="display">{{ r.title }}</span>
+              </div>
+              <span class="tr-card__play" aria-hidden="true">
+                <Play :size="20" :stroke-width="2" fill="white" />
+              </span>
+              <span v-if="r.durationMinutes" class="tr-card__duration">
+                {{ r.durationMinutes }} min
+              </span>
+            </div>
+            <div class="tr-card__body">
+              <div class="display tr-card__title">{{ r.title }}</div>
+              <div class="tr-card__meta">
+                <span v-if="r.instructor">{{ r.instructor }}</span>
+                <span v-if="r.instructor && r.recordedAt"> · </span>
+                <span v-if="r.recordedAt">{{ formatRecordedAt(r.recordedAt) }}</span>
+              </div>
+              <div v-if="r.tags.length > 0" class="tr-card__tags">
+                <span v-for="t in r.tags" :key="t" class="tr-card__tag">{{ t }}</span>
+              </div>
+            </div>
+          </button>
+        </div>
+      </section>
+    </template>
+
+    <!-- Flat view: a specific category is selected, or there's a search. -->
     <div v-else class="tr__grid">
       <button
         v-for="r in filtered"
@@ -164,6 +265,9 @@ function close() {
             <span v-if="r.recordedAt">{{ formatRecordedAt(r.recordedAt) }}</span>
           </div>
           <Eyebrow v-if="r.category" class="tr-card__cat">{{ r.category }}</Eyebrow>
+          <div v-if="r.tags.length > 0" class="tr-card__tags">
+            <span v-for="t in r.tags" :key="t" class="tr-card__tag">{{ t }}</span>
+          </div>
         </div>
       </button>
     </div>
@@ -213,6 +317,25 @@ function close() {
     justify-content: space-between;
   }
 }
+.tr__toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.tr__sort {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.tr__sort:focus-visible {
+  outline: none;
+  border-color: var(--color-brand-600);
+}
 
 .tr__search {
   position: relative;
@@ -246,6 +369,7 @@ function close() {
 }
 
 .tr__cats {
+  margin-top: 14px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -402,5 +526,44 @@ function close() {
 .tr-card__cat {
   margin-top: 8px;
   display: inline-block;
+}
+.tr-card__tags {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tr-card__tag {
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--color-brand-100);
+  color: var(--color-brand-700);
+}
+
+/* ── Grouped-by-category sections ─────────────────────────────────── */
+.tr-group {
+  margin-top: 28px;
+}
+.tr-group__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--color-line);
+}
+.tr-group__title {
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+}
+.tr-group__count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-muted);
+  letter-spacing: 0.04em;
 }
 </style>
