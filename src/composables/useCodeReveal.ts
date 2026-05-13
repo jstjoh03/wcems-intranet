@@ -1,6 +1,18 @@
 import { ref, computed, onUnmounted } from 'vue'
 
 const REVEAL_MS = 20_000
+/* Debounce window for toggle(). The previous 250ms value caught
+   simultaneous touch→mouse synthetic doubles but NOT iOS Safari's
+   "ghost click" — a synthetic click event dispatched ~300ms after the
+   real touchend when the target doesn't have `touch-action:
+   manipulation`. That ghost click slid under the 250ms window and
+   re-toggled the reveal, making the number appear then immediately
+   disappear on mobile. 500ms is comfortably above the iOS ghost-click
+   delay and still short enough that an intentional rapid toggle feels
+   responsive. The reveal button's CSS also sets `touch-action:
+   manipulation` so the ghost click ideally never fires; this debounce
+   is the backstop. */
+const TOGGLE_DEBOUNCE_MS = 500
 
 /**
  * Tap-to-reveal with auto-hide after 20s and a thin progress bar.
@@ -18,10 +30,6 @@ export function useCodeReveal() {
 
   let hideTimer: ReturnType<typeof setTimeout> | null = null
   let rafHandle: number | null = null
-  /* Debounce double-fire (touch synthetic events on iOS, accidental
-     double-clicks). Without this, tapping the reveal button can flip
-     state twice within ~50ms and the code "autocloses" before the
-     user sees it. */
   let lastToggleAt = 0
 
   const tickProgress = () => {
@@ -56,7 +64,7 @@ export function useCodeReveal() {
 
   const toggle = () => {
     const now = Date.now()
-    if (now - lastToggleAt < 250) return
+    if (now - lastToggleAt < TOGGLE_DEBOUNCE_MS) return
     lastToggleAt = now
     if (revealed.value) hide()
     else reveal()

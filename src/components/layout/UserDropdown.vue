@@ -217,7 +217,7 @@ async function signOut() {
               class="user-dropdown__fuel-btn"
               :aria-pressed="fuel.revealed.value"
               :aria-label="fuel.revealed.value ? 'Hide fuel number' : 'Reveal fuel number'"
-              @click.stop="fuel.toggle"
+              @click.stop.prevent="fuel.toggle"
             >
               <component :is="fuel.revealed.value ? EyeOff : Eye" :size="13" :stroke-width="1.85" />
               <span class="font-mono">{{ fuel.revealed.value ? fuelNumber : '••••••' }}</span>
@@ -227,7 +227,7 @@ async function signOut() {
               type="button"
               class="user-dropdown__copy"
               :aria-label="copied ? 'Copied' : 'Copy fuel number'"
-              @click.stop="copyFuel"
+              @click.stop.prevent="copyFuel"
             >
               <component :is="copied ? Check : Copy" :size="12" :stroke-width="1.85" />
             </button>
@@ -321,16 +321,36 @@ async function signOut() {
 }
 
 .user-dropdown__panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
+  /* Anchored to the viewport (not the trigger) so we don't get clipped
+     by the topbar's stacking context. The topbar uses
+     `overflow-x: clip; overflow-y: visible`, but per CSS spec a single
+     `visible` axis next to `clip` computes to `auto` — which turns the
+     topbar into a scroll container that clips anything extending below
+     it. On mobile that meant the panel "opened behind the page."
+     position: fixed escapes that entirely. */
+  position: fixed;
+  top: 56px; /* topbar height (~48px) + 8px gap */
+  right: 12px; /* matches topbar horizontal padding */
   min-width: 240px;
+  max-width: calc(100vw - 24px);
+  /* Don't let an unusually-tall panel run off the bottom on short
+     phones — let it scroll internally if needed. */
+  max-height: calc(100vh - 72px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--color-surface);
   border: 1px solid var(--color-line);
   border-radius: 12px;
   box-shadow: var(--shadow-lg);
   padding: 12px;
-  z-index: 60;
+  /* Above the topbar (40) but below modal overlays (80) and the
+     command palette (90). */
+  z-index: 70;
+}
+@media (min-width: 1280px) {
+  .user-dropdown__panel {
+    right: 26px; /* matches the larger topbar padding at this breakpoint */
+  }
 }
 
 .user-dropdown__header {
@@ -458,6 +478,13 @@ async function signOut() {
   color: var(--color-ink);
   cursor: pointer;
   transition: border-color 120ms var(--ease-out);
+  /* Kill iOS Safari's 300ms double-tap-zoom wait so a single tap dispatches
+     a single click — no synthetic "ghost click" 300ms later re-toggling
+     the reveal. Without this, the fuel number flashed on then immediately
+     hid on mobile. Pair with the toggle debounce in useCodeReveal as a
+     belt-and-suspenders defense. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .user-dropdown__fuel-btn:hover {
   border-color: var(--color-accent-500);
@@ -474,6 +501,10 @@ async function signOut() {
   cursor: pointer;
   color: var(--color-muted);
   transition: color 120ms var(--ease-out), border-color 120ms var(--ease-out);
+  /* Same iOS ghost-click defense as the reveal button — see comment
+     on .user-dropdown__fuel-btn above. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .user-dropdown__copy:hover {
   color: var(--color-brand-600);
