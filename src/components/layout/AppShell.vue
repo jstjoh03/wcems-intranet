@@ -6,6 +6,7 @@ import AppFooter from './AppFooter.vue'
 import QuickLinksDock from './QuickLinksDock.vue'
 import GlobalSearchOverlay from './GlobalSearchOverlay.vue'
 import UserProfileModal from './UserProfileModal.vue'
+import InstallPromptBanner from './InstallPromptBanner.vue'
 
 const navOpen = ref(false)
 </script>
@@ -30,5 +31,11 @@ const navOpen = ref(false)
     <!-- Self-serve profile modal — opened via the `wcems:open-profile`
          window event from the nav drawer footer or the user dropdown. -->
     <UserProfileModal />
+
+    <!-- "Install the app" prompt for mobile visitors who arrived in a
+         browser tab. Self-gates on display-mode, mobile UA, and a
+         localStorage dismiss flag — desktop + already-installed users
+         never see it. -->
+    <InstallPromptBanner />
   </div>
 </template>
