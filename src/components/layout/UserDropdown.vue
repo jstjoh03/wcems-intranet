@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check, User as UserIcon } from 'lucide-vue-next'
 import { useCodeReveal } from '@/composables/useCodeReveal'
+import { STATION_OPTIONS } from '@/constants/stations'
 import type { ShiftLetter } from '@/types'
 
 const auth = useAuthStore()
@@ -20,21 +21,8 @@ const firstName = computed(() => auth.appUser?.firstName ?? '')
 const fullName = computed(() => auth.appUser?.fullName ?? '')
 const fuelNumber = computed(() => auth.appUser?.fuelNumber ?? null)
 
-/* Closed list of valid stations — keeps entry uniform across the crew. */
-const STATION_OPTIONS = [
-  'S201',
-  'S202',
-  'Medic 206',
-  'Medic 211',
-  'Medic 221',
-  'Medic 231',
-  'Medic 242',
-  'Medic 271',
-  'Medic 281',
-  'EMS Admin',
-  'FLOAT',
-  'PRN',
-] as const
+/* Station list is shared with the profile modal via @/constants/stations
+   so renames only happen in one place. */
 const SHIFT_OPTIONS: ShiftLetter[] = ['A', 'B', 'C']
 
 /* Local refs synced to the auth store. We `watch` rather than computed

@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { X, LogOut, Mail } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
+import { STATION_OPTIONS } from '@/constants/stations'
 import type { ShiftLetter } from '@/types'
 
 /**
@@ -26,20 +27,8 @@ const router = useRouter()
 
 const open = ref(false)
 
-const STATION_OPTIONS = [
-  'S201',
-  'S202',
-  'Medic 206',
-  'Medic 211',
-  'Medic 221',
-  'Medic 231',
-  'Medic 242',
-  'Medic 271',
-  'Medic 281',
-  'EMS Admin',
-  'FLOAT',
-  'PRN',
-] as const
+/* STATION_OPTIONS imported from @/constants/stations so it stays in
+   sync with the user dropdown's quick-edit selects. */
 const SHIFT_OPTIONS: ShiftLetter[] = ['A', 'B', 'C']
 
 /* Local state mirrors the auth store. Watchers keep these in sync when

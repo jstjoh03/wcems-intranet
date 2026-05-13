@@ -183,8 +183,7 @@ function entryHref(e: DirectoryEntry): string | null {
             <div class="display dir-card__name">{{ e.fullName }}</div>
             <div v-if="e.title || e.role" class="dir-card__title">
               <span v-if="e.title">{{ e.title }}</span>
-              <span v-if="e.title && e.role !== 'crew'"> · </span>
-              <span v-if="e.role !== 'crew'" class="dir-card__role">{{ e.role }}</span>
+              <span v-else class="dir-card__role">{{ e.role }}</span>
             </div>
           </div>
         </header>
