@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { GraduationCap, RefreshCw, ExternalLink } from 'lucide-vue-next'
-import { RouterLink } from 'vue-router'
+import { ref, computed } from 'vue'
+import { GraduationCap, RefreshCw, ExternalLink, ChevronDown } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { parseDateOnly } from '@/utils/date'
@@ -9,6 +9,21 @@ import { useTraining } from '@/composables/useTraining'
 const REGISTER_URL = 'https://www.wallercountyems.com/internaleducation'
 
 const { events, loading, lastFetchedAt, errorMessage, refresh } = useTraining()
+
+/* Default-collapse the list at 7 events so the dashboard card doesn't
+   eat the entire page when the calendar is full. Users tap "View all"
+   to expand inline; richer full-page view still lives at /training
+   (reachable from the nav drawer). */
+const COLLAPSED_COUNT = 7
+const expanded = ref(false)
+
+const visibleEvents = computed(() =>
+  expanded.value ? events.value : events.value.slice(0, COLLAPSED_COUNT),
+)
+const hiddenCount = computed(() =>
+  Math.max(0, events.value.length - COLLAPSED_COUNT),
+)
+const hasOverflow = computed(() => events.value.length > COLLAPSED_COUNT)
 
 function monthAbbr(iso: string) {
   return parseDateOnly(iso)?.toLocaleDateString('en-US', { month: 'short' }) ?? ''
@@ -44,13 +59,6 @@ function freshnessLabel(d: Date | null): string {
         >
           <RefreshCw :size="13" :stroke-width="1.85" :class="loading ? 'spin' : ''" />
         </button>
-        <RouterLink
-          v-if="events.length > 0"
-          to="/training"
-          class="training-card__view-all"
-        >
-          View all
-        </RouterLink>
       </div>
     </div>
 
@@ -82,10 +90,13 @@ function freshnessLabel(d: Date | null): string {
 
     <div v-else class="space-y-3">
       <div
-        v-for="(t, i) in events"
+        v-for="(t, i) in visibleEvents"
         :key="t.id"
         class="training-card__row"
-        :class="{ 'training-card__row--last': i === events.length - 1 }"
+        :class="{
+          'training-card__row--last':
+            i === visibleEvents.length - 1 && !hasOverflow,
+        }"
       >
         <div class="training-card__date">
           <div class="training-card__date-mo">{{ monthAbbr(t.date) }}</div>
@@ -131,6 +142,28 @@ function freshnessLabel(d: Date | null): string {
           </a>
         </div>
       </div>
+
+      <button
+        v-if="hasOverflow"
+        type="button"
+        class="training-card__expand"
+        :aria-expanded="expanded"
+        @click="expanded = !expanded"
+      >
+        <span>
+          {{
+            expanded
+              ? 'Show less'
+              : `View all (${hiddenCount} more)`
+          }}
+        </span>
+        <ChevronDown
+          :size="13"
+          :stroke-width="2"
+          class="training-card__expand-chev"
+          :class="{ 'training-card__expand-chev--up': expanded }"
+        />
+      </button>
     </div>
   </AppCard>
 </template>
@@ -268,5 +301,33 @@ function freshnessLabel(d: Date | null): string {
 .training-card__register:hover {
   color: var(--color-brand-700);
   text-decoration: underline;
+}
+
+/* Expand/collapse toggle at the bottom of the list. Subtle on purpose
+   — it's a utility action, not a feature. Reads like a hint line, not
+   a primary button. */
+.training-card__expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  background: transparent;
+  border: none;
+  padding: 6px 4px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-brand-600);
+  cursor: pointer;
+  transition: color 120ms var(--ease-out);
+}
+.training-card__expand:hover {
+  color: var(--color-brand-700);
+}
+.training-card__expand-chev {
+  transition: transform 180ms var(--ease-out);
+}
+.training-card__expand-chev--up {
+  transform: rotate(180deg);
 }
 </style>
