@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { Contact, Search, Phone, Mail, MapPin, Calendar } from 'lucide-vue-next'
+import Avatar from '@/components/primitives/Avatar.vue'
 import {
   useEmployeeDirectory,
   type DirectoryEntry,
@@ -178,7 +179,13 @@ function entryHref(e: DirectoryEntry): string | null {
     <div v-else class="dir__grid">
       <article v-for="e in filtered" :key="e.id" class="dir-card">
         <header class="dir-card__head">
-          <div class="dir-card__avatar display">{{ e.initials }}</div>
+          <Avatar
+            :photo-url="e.photoUrl"
+            :initials="e.initials"
+            size="lg"
+            tone="on-light"
+            :alt="e.fullName"
+          />
           <div class="dir-card__head-text">
             <div class="display dir-card__name">{{ e.fullName }}</div>
             <div v-if="e.title || e.role" class="dir-card__title">

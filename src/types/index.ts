@@ -27,6 +27,9 @@ export interface AppUser {
    *  true; users uncheck to hide themselves. Hidden users are still
    *  visible to admins via /admin/employees. */
   inDirectory: boolean
+  /** Public URL of the user's profile photo (Supabase Storage). Null
+   *  when not uploaded — the Avatar component falls back to initials. */
+  photoUrl: string | null
   /** quick_links.id values (text[]) that the user wants to feature in
    *  the dashboard hero strip. Up to 4 entries; empty falls back to
    *  role-based defaults. */

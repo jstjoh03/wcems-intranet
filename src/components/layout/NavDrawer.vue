@@ -23,6 +23,7 @@ import {
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
+import Avatar from '@/components/primitives/Avatar.vue'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -216,7 +217,12 @@ function openProfile() {
            the row click via @click.stop so the existing quick sign-out
            gesture keeps working. -->
       <button type="button" class="drawer__user" @click="openProfile">
-        <div class="drawer__user-avatar display">{{ auth.appUser?.initials ?? '?' }}</div>
+        <Avatar
+          :photo-url="auth.appUser?.photoUrl ?? null"
+          :initials="auth.appUser?.initials ?? '?'"
+          size="md"
+          tone="on-light"
+        />
         <div class="flex-1 min-w-0 text-left">
           <div class="display text-[14.5px] truncate" style="color: var(--color-ink)">
             {{ auth.appUser?.fullName }}

@@ -38,6 +38,7 @@ const DEV_STUB_USER: AppUser = {
   showBirthday: true,
   phone: '(979) 555-0123',
   inDirectory: true,
+  photoUrl: null,
   featuredQuickLinkIds: [],
 }
 
@@ -92,6 +93,7 @@ function deriveAppUserFromSession(supaUser: User): AppUser {
     showBirthday: true,
     phone: null,
     inDirectory: true,
+    photoUrl: null,
     featuredQuickLinkIds: [],
   }
 }
@@ -112,6 +114,7 @@ interface AppUserRow {
   show_birthday: boolean
   phone: string | null
   in_directory: boolean | null
+  photo_url: string | null
   active: boolean
   featured_quick_link_ids: string[] | null
 }
@@ -136,6 +139,7 @@ function rowToAppUser(row: AppUserRow): AppUser {
        existing UI behavior (users visible) and matches the column's
        SQL default once the migration lands. */
     inDirectory: row.in_directory ?? true,
+    photoUrl: row.photo_url,
     featuredQuickLinkIds: row.featured_quick_link_ids ?? [],
   }
 }
@@ -149,7 +153,7 @@ async function fetchAppUserRow(authUserId: string): Promise<AppUserRow | null> {
   const { data, error } = await supabase
     .from('app_users')
     .select(
-      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, active, featured_quick_link_ids',
+      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, photo_url, active, featured_quick_link_ids',
     )
     .eq('auth_user_id', authUserId)
     .maybeSingle()
@@ -260,6 +264,26 @@ export const useAuthStore = defineStore('auth', () => {
     const { error } = await supabase
       .from('app_users')
       .update({ in_directory: next })
+      .eq('id', id)
+    if (error) throw error
+    await refresh()
+  }
+
+  /** Update the signed-in user's profile photo URL. Pass null to clear
+   *  (Avatar falls back to initials). The upload itself happens in the
+   *  caller via supabase.storage; this just persists the resulting
+   *  public URL on app_users. */
+  async function updateOwnPhotoUrl(next: string | null) {
+    const value = next?.trim() ? next.trim() : null
+    if (usingDevStub.value) {
+      if (appUser.value) appUser.value = { ...appUser.value, photoUrl: value }
+      return
+    }
+    const id = appUser.value?.id
+    if (!id) throw new Error('Not signed in')
+    const { error } = await supabase
+      .from('app_users')
+      .update({ photo_url: value })
       .eq('id', id)
     if (error) throw error
     await refresh()
@@ -377,6 +401,7 @@ export const useAuthStore = defineStore('auth', () => {
     updateOwnPhone,
     updateOwnInDirectory,
     updateOwnShowBirthday,
+    updateOwnPhotoUrl,
     updateOwnFeaturedQuickLinks,
     signInWithMicrosoft,
     signOut,

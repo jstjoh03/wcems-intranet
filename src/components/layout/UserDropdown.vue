@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check, User as UserIcon } from 'lucide-vue-next'
 import { useCodeReveal } from '@/composables/useCodeReveal'
+import Avatar from '@/components/primitives/Avatar.vue'
 import { STATION_OPTIONS } from '@/constants/stations'
 import type { ShiftLetter } from '@/types'
 
@@ -20,6 +21,7 @@ const initials = computed(() => auth.appUser?.initials ?? '?')
 const firstName = computed(() => auth.appUser?.firstName ?? '')
 const fullName = computed(() => auth.appUser?.fullName ?? '')
 const fuelNumber = computed(() => auth.appUser?.fuelNumber ?? null)
+const photoUrl = computed(() => auth.appUser?.photoUrl ?? null)
 
 /* Station list is shared with the profile modal via @/constants/stations
    so renames only happen in one place. */
@@ -142,7 +144,7 @@ function openProfile() {
       aria-haspopup="menu"
       @click="toggle"
     >
-      <span class="user-dropdown__avatar display">{{ initials }}</span>
+      <Avatar :photo-url="photoUrl" :initials="initials" size="sm" tone="on-dark" />
       <span class="user-dropdown__meta hidden sm:flex">
         <span class="user-dropdown__name">{{ firstName }}</span>
       </span>
@@ -152,7 +154,7 @@ function openProfile() {
     <Transition name="user-dropdown-fade">
       <div v-if="open" class="user-dropdown__panel" role="menu">
         <header class="user-dropdown__header">
-          <div class="user-dropdown__avatar user-dropdown__avatar--lg display">{{ initials }}</div>
+          <Avatar :photo-url="photoUrl" :initials="initials" size="lg" tone="on-light" />
           <div class="min-w-0 flex-1">
             <div class="display text-[16px] truncate" style="color: var(--color-ink)">
               {{ fullName }}

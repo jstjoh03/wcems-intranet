@@ -31,6 +31,7 @@ export interface DirectoryEntry {
   station: string | null
   email: string
   phone: string | null
+  photoUrl: string | null
   initials: string
 }
 
@@ -45,6 +46,7 @@ interface DirectoryRow {
   station: string | null
   email: string
   phone: string | null
+  photo_url: string | null
 }
 
 function computeInitials(fullName: string): string {
@@ -72,6 +74,7 @@ function rowToEntry(r: DirectoryRow): DirectoryEntry {
     station: r.station,
     email: r.email,
     phone: r.phone,
+    photoUrl: r.photo_url,
     initials: computeInitials(r.full_name || r.email),
   }
 }

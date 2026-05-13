@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { X, LogOut, Mail } from 'lucide-vue-next'
+import { X, LogOut, Mail, Camera, Trash2 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
+import Avatar from '@/components/primitives/Avatar.vue'
+import { supabase } from '@/lib/supabase'
 import { STATION_OPTIONS } from '@/constants/stations'
 import type { ShiftLetter } from '@/types'
 
@@ -70,6 +72,80 @@ const email = computed(() => auth.appUser?.email ?? '')
 const role = computed(() => auth.appUser?.role ?? 'crew')
 const title = computed(() => auth.appUser?.title ?? '')
 const dob = computed(() => auth.appUser?.dateOfBirth ?? null)
+const photoUrl = computed(() => auth.appUser?.photoUrl ?? null)
+
+const uploadingPhoto = ref(false)
+const photoError = ref<string | null>(null)
+const photoInputRef = ref<HTMLInputElement | null>(null)
+
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024 // 5MB
+
+/* Upload flow:
+   1. Validate type + size client-side. The bucket RLS will accept any
+      file from the user's own folder, but a 50MB upload wastes their
+      time and our bandwidth before failing on display anyway.
+   2. Write to app-user-photos/<user_id>/<random>.<ext>. The first folder
+      segment must equal the user's app_users.id — that's what the
+      storage RLS policy keys on.
+   3. Grab the public URL (bucket is public-read so no signed-URL dance)
+      and persist to app_users.photo_url via the auth store action.
+   4. The auth store's refresh() round-trip propagates the new URL into
+      every reactive consumer (Avatar in directory cards, dropdown, etc).
+
+   Orphan cleanup: if a user re-uploads, the previous file lingers in
+   the bucket. That's tech debt — fix when we add a Storage cleanup
+   cron, not worth a delete-before-upload race here. */
+async function onPhotoPicked(event: Event) {
+  photoError.value = null
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    photoError.value = 'Please choose an image file.'
+    input.value = ''
+    return
+  }
+  if (file.size > PHOTO_MAX_BYTES) {
+    photoError.value = 'Photo is too large (max 5 MB).'
+    input.value = ''
+    return
+  }
+  const userId = auth.appUser?.id
+  if (!userId) {
+    photoError.value = 'Not signed in.'
+    input.value = ''
+    return
+  }
+  uploadingPhoto.value = true
+  try {
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+    const key = `${userId}/${crypto.randomUUID()}.${ext}`
+    const { error: upErr } = await supabase.storage
+      .from('app-user-photos')
+      .upload(key, file, {
+        cacheControl: '31536000',
+        upsert: false,
+        contentType: file.type,
+      })
+    if (upErr) throw upErr
+    const { data } = supabase.storage.from('app-user-photos').getPublicUrl(key)
+    await auth.updateOwnPhotoUrl(data.publicUrl)
+  } catch (err) {
+    photoError.value = `Upload failed: ${(err as Error).message}`
+  } finally {
+    uploadingPhoto.value = false
+    input.value = ''
+  }
+}
+
+async function removePhoto() {
+  photoError.value = null
+  try {
+    await auth.updateOwnPhotoUrl(null)
+  } catch (err) {
+    photoError.value = `Remove failed: ${(err as Error).message}`
+  }
+}
 
 const dobLabel = computed(() => {
   if (!dob.value) return null
@@ -179,18 +255,74 @@ async function signOut() {
       </button>
 
       <header class="upm__head">
-        <div class="upm__avatar display">{{ initials }}</div>
+        <div class="upm__photo-wrap">
+          <Avatar
+            :photo-url="photoUrl"
+            :initials="initials"
+            size="xl"
+            tone="on-light"
+            :alt="fullName"
+          />
+          <button
+            type="button"
+            class="upm__photo-edit"
+            :title="photoUrl ? 'Change photo' : 'Upload photo'"
+            :aria-label="photoUrl ? 'Change photo' : 'Upload photo'"
+            :disabled="uploadingPhoto"
+            @click="photoInputRef?.click()"
+          >
+            <Camera :size="14" :stroke-width="2" />
+          </button>
+          <input
+            ref="photoInputRef"
+            type="file"
+            accept="image/*"
+            class="upm__photo-input"
+            @change="onPhotoPicked"
+          />
+        </div>
         <div class="upm__head-text">
           <h2 class="display upm__name">{{ fullName }}</h2>
           <p class="upm__title-line">
             <span v-if="title">{{ title }}</span>
-            <span v-if="title"> · </span>
-            <span class="upm__role">{{ role }}</span>
+            <span v-if="title && role !== 'crew'"> · </span>
+            <span v-if="!title || role !== 'crew'" class="upm__role">{{ role }}</span>
           </p>
           <p class="upm__email">
             <Mail :size="12" :stroke-width="1.85" />
             {{ email }}
           </p>
+          <div class="upm__photo-controls">
+            <button
+              v-if="!photoUrl && !uploadingPhoto"
+              type="button"
+              class="upm__photo-btn"
+              @click="photoInputRef?.click()"
+            >
+              <Camera :size="12" :stroke-width="2" />
+              Add photo
+            </button>
+            <button
+              v-if="photoUrl && !uploadingPhoto"
+              type="button"
+              class="upm__photo-btn"
+              @click="photoInputRef?.click()"
+            >
+              <Camera :size="12" :stroke-width="2" />
+              Change
+            </button>
+            <button
+              v-if="photoUrl && !uploadingPhoto"
+              type="button"
+              class="upm__photo-btn upm__photo-btn--danger"
+              @click="removePhoto"
+            >
+              <Trash2 :size="12" :stroke-width="2" />
+              Remove
+            </button>
+            <span v-if="uploadingPhoto" class="upm__photo-uploading">Uploading…</span>
+          </div>
+          <span v-if="photoError" class="upm__photo-error">{{ photoError }}</span>
         </div>
       </header>
 
@@ -322,23 +454,82 @@ async function signOut() {
 .upm__head {
   display: flex;
   gap: 14px;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 18px;
   padding-bottom: 18px;
   border-bottom: 1px solid var(--color-line-soft);
 }
-.upm__avatar {
+
+.upm__photo-wrap {
+  position: relative;
   flex-shrink: 0;
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
-  background: var(--color-accent-500);
-  color: var(--color-brand-900);
+}
+.upm__photo-edit {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
-  letter-spacing: -0.01em;
+  background: var(--color-brand-600);
+  color: white;
+  border: 2px solid var(--color-surface);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms var(--ease-out);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.upm__photo-edit:hover {
+  background: var(--color-brand-700);
+}
+.upm__photo-edit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.upm__photo-input {
+  display: none;
+}
+.upm__photo-controls {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.upm__photo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.upm__photo-btn:hover {
+  border-color: var(--color-muted-soft);
+  color: var(--color-ink);
+}
+.upm__photo-btn--danger:hover {
+  border-color: var(--color-danger-500);
+  color: var(--color-danger-500);
+}
+.upm__photo-uploading {
+  font-size: 11.5px;
+  color: var(--color-muted);
+  font-style: italic;
+}
+.upm__photo-error {
+  display: block;
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--color-danger-500);
 }
 .upm__head-text {
   min-width: 0;
