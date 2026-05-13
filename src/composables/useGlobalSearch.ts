@@ -10,6 +10,7 @@ import {
   LayoutGrid,
   Home,
   Settings,
+  Film,
   type LucideIcon,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
@@ -17,6 +18,7 @@ import { useQuickLinks } from '@/composables/useQuickLinks'
 import { useHospitalsStore } from '@/stores/hospitals'
 import { useStationsStore } from '@/stores/stations'
 import { useTraining } from '@/composables/useTraining'
+import { useTrainingRecordings } from '@/composables/useTrainingRecordings'
 
 /**
  * Whole-site search index. Combines:
@@ -42,6 +44,7 @@ export type SearchCategory =
   | 'hospital'
   | 'station'
   | 'training'
+  | 'recording'
 
 export interface SearchResult {
   id: string
@@ -82,6 +85,14 @@ const PAGE_ROUTES: SearchResult[] = [
     category: 'page',
     icon: GraduationCap,
     to: '/training',
+  },
+  {
+    id: 'page:training-recordings',
+    title: 'Training Library',
+    subtitle: 'Past recordings',
+    category: 'page',
+    icon: Film,
+    to: '/training/recordings',
   },
   {
     id: 'page:insights',
@@ -143,6 +154,7 @@ const ADMIN_PAGE_ROUTES: SearchResult[] = [
   { id: 'page:admin-hospitals', title: 'Manage Hospitals', subtitle: 'Admin', category: 'page', icon: Hospital, to: '/admin/hospitals' },
   { id: 'page:admin-call-volume', title: 'Manage Call Volume', subtitle: 'Admin', category: 'page', icon: BarChart3, to: '/admin/call-volume' },
   { id: 'page:admin-training', title: 'Manage Training', subtitle: 'Admin', category: 'page', icon: GraduationCap, to: '/admin/training' },
+  { id: 'page:admin-training-recordings', title: 'Manage Training Library', subtitle: 'Admin', category: 'page', icon: Film, to: '/admin/training-recordings' },
   { id: 'page:admin-quick-links', title: 'Manage Quick Links', subtitle: 'Admin', category: 'page', icon: LayoutGrid, to: '/admin/quick-links' },
 ]
 
@@ -158,6 +170,7 @@ export function useGlobalSearch() {
   const hospitalsStore = useHospitalsStore()
   const stationsStore = useStationsStore()
   const { events: trainingEvents } = useTraining()
+  const { visibleRecordings } = useTrainingRecordings()
 
   const allResults = computed<SearchResult[]>(() => {
     const role = auth.role ?? 'crew'
@@ -208,6 +221,26 @@ export function useGlobalSearch() {
       })
     }
 
+    /* Training library recordings — deep-link to /training/recordings?play=<id>
+       so the library view auto-opens the player on arrival. */
+    for (const r of visibleRecordings.value) {
+      const subParts: string[] = []
+      if (r.instructor) subParts.push(r.instructor)
+      if (r.recordedAt) {
+        const d = new Date(r.recordedAt + 'T00:00:00')
+        subParts.push(d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }))
+      }
+      if (r.category) subParts.push(r.category)
+      results.push({
+        id: `recording:${r.id}`,
+        title: r.title,
+        subtitle: subParts.join(' · ') || undefined,
+        category: 'recording',
+        icon: Film,
+        to: `/training/recordings?play=${r.id}`,
+      })
+    }
+
     /* Upcoming training sessions. */
     for (const t of trainingEvents.value) {
       const dateLabel = t.date
@@ -239,6 +272,7 @@ export function useGlobalSearch() {
     'hospital',
     'station',
     'training',
+    'recording',
   ]
   const CATEGORY_LABELS: Record<SearchCategory, string> = {
     page: 'Pages',
@@ -246,6 +280,7 @@ export function useGlobalSearch() {
     hospital: 'Hospitals',
     station: 'Stations',
     training: 'Training',
+    recording: 'Recordings',
   }
 
   function search(query: string, limitPerCategory = 6) {

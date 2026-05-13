@@ -39,6 +39,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/TrainingView.vue'),
   },
   {
+    path: '/training/recordings',
+    name: 'training-recordings',
+    component: () => import('@/views/TrainingRecordingsView.vue'),
+  },
+  {
     path: '/admin/stations',
     name: 'admin-stations',
     component: () => import('@/views/admin/ManageStationsView.vue'),
@@ -66,6 +71,12 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/training',
     name: 'admin-training',
     component: () => import('@/views/admin/ManageTrainingView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
+    path: '/admin/training-recordings',
+    name: 'admin-training-recordings',
+    component: () => import('@/views/admin/ManageTrainingRecordingsView.vue'),
     meta: { adminOnly: true },
   },
   {

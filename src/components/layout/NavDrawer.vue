@@ -18,6 +18,7 @@ import {
   LayoutGrid,
   Home,
   Newspaper,
+  Film,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -59,6 +60,7 @@ const pages: NavItem[] = [
   { label: 'Home', to: '/', icon: Home },
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
   { label: 'Training', to: '/training', icon: GraduationCap },
+  { label: 'Training Library', to: '/training/recordings', icon: Film },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
   { label: 'Admin Staff', to: '/admin-staff', icon: Building2 },
   { label: 'HR Hub', to: '/', icon: Briefcase, badge: 'Soon' },
@@ -69,6 +71,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Hospitals', to: '/admin/hospitals', icon: Hospital },
   { label: 'Manage Call Volume', to: '/admin/call-volume', icon: BarChart3 },
   { label: 'Manage Training', to: '/admin/training', icon: GraduationCap },
+  { label: 'Manage Training Library', to: '/admin/training-recordings', icon: Film },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
 ]
 
