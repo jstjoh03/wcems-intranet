@@ -5,6 +5,7 @@ import NavDrawer from './NavDrawer.vue'
 import AppFooter from './AppFooter.vue'
 import QuickLinksDock from './QuickLinksDock.vue'
 import GlobalSearchOverlay from './GlobalSearchOverlay.vue'
+import UserProfileModal from './UserProfileModal.vue'
 
 const navOpen = ref(false)
 </script>
@@ -25,5 +26,9 @@ const navOpen = ref(false)
 
     <!-- Global site search (Cmd/Ctrl+K from anywhere; topbar search opens it) -->
     <GlobalSearchOverlay />
+
+    <!-- Self-serve profile modal — opened via the `wcems:open-profile`
+         window event from the nav drawer footer or the user dropdown. -->
+    <UserProfileModal />
   </div>
 </template>

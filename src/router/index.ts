@@ -29,6 +29,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AdminStaffView.vue'),
   },
   {
+    path: '/directory',
+    name: 'directory',
+    component: () => import('@/views/DirectoryView.vue'),
+  },
+  {
     path: '/gallery',
     name: 'gallery',
     component: () => import('@/views/GalleryView.vue'),

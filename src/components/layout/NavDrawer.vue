@@ -19,6 +19,7 @@ import {
   Home,
   Newspaper,
   Film,
+  Contact,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -61,6 +62,7 @@ const pages: NavItem[] = [
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
   { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },
   { label: 'Training Library', to: '/training/recordings', icon: Film },
+  { label: 'Employee Directory', to: '/directory', icon: Contact },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
   { label: 'Admin Staff', to: '/admin-staff', icon: Building2 },
   { label: 'HR Hub', to: '/', icon: Briefcase, badge: 'Soon' },
@@ -118,6 +120,15 @@ async function signOut() {
   emit('close')
   await auth.signOut()
   void router.push({ name: 'signin' })
+}
+
+/* Dispatch a window event consumed by UserProfileModal mounted in
+   AppShell. Same decoupled pattern as the search overlay opener —
+   keeps NavDrawer ignorant of the modal's existence. We also close
+   the drawer so the user lands on the modal, not on the drawer. */
+function openProfile() {
+  emit('close')
+  window.dispatchEvent(new CustomEvent('wcems:open-profile'))
 }
 </script>
 
@@ -201,17 +212,29 @@ async function signOut() {
     </div>
 
     <footer class="drawer__footer">
-      <div class="drawer__user">
+      <!-- Whole row opens the profile modal; the sign-out icon escapes
+           the row click via @click.stop so the existing quick sign-out
+           gesture keeps working. -->
+      <button type="button" class="drawer__user" @click="openProfile">
         <div class="drawer__user-avatar display">{{ auth.appUser?.initials ?? '?' }}</div>
-        <div class="flex-1 min-w-0">
+        <div class="flex-1 min-w-0 text-left">
           <div class="display text-[14.5px] truncate" style="color: var(--color-ink)">
             {{ auth.appUser?.fullName }}
           </div>
+          <div class="drawer__user-hint">View profile</div>
         </div>
-        <button class="drawer__signout" aria-label="Sign out" @click="signOut">
+        <span
+          class="drawer__signout"
+          role="button"
+          aria-label="Sign out"
+          tabindex="0"
+          @click.stop="signOut"
+          @keydown.enter.stop="signOut"
+          @keydown.space.prevent.stop="signOut"
+        >
           <LogOut :size="15" />
-        </button>
-      </div>
+        </span>
+      </button>
     </footer>
   </nav>
 </template>
@@ -347,6 +370,23 @@ async function signOut() {
   padding: 8px;
   border-radius: 8px;
   background: var(--color-surface-soft);
+  border: 1px solid transparent;
+  width: 100%;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out), background 120ms var(--ease-out);
+  font: inherit;
+}
+.drawer__user:hover {
+  background: var(--color-surface);
+  border-color: var(--color-line);
+}
+.drawer__user-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-muted);
+  margin-top: 2px;
 }
 .drawer__user-avatar {
   width: 36px;

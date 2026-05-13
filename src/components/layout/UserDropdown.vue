@@ -2,7 +2,7 @@
 import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check } from 'lucide-vue-next'
+import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check, User as UserIcon } from 'lucide-vue-next'
 import { useCodeReveal } from '@/composables/useCodeReveal'
 import type { ShiftLetter } from '@/types'
 
@@ -137,6 +137,13 @@ async function signOut() {
   await auth.signOut()
   void router.push({ name: 'signin' })
 }
+
+/* Mirrors NavDrawer.openProfile — same window event, same modal in
+   AppShell. Close the dropdown first so the modal isn't covered by it. */
+function openProfile() {
+  close()
+  window.dispatchEvent(new CustomEvent('wcems:open-profile'))
+}
 </script>
 
 <template>
@@ -231,6 +238,10 @@ async function signOut() {
 
         <div class="user-dropdown__divider" />
 
+        <button class="user-dropdown__item" @click="openProfile">
+          <UserIcon :size="14" :stroke-width="1.85" />
+          View profile
+        </button>
         <button class="user-dropdown__item" @click="signOut">
           <LogOut :size="14" :stroke-width="1.85" />
           Sign out

@@ -20,6 +20,13 @@ export interface AppUser {
   fuelNumber: string | null
   dateOfBirth: string | null
   showBirthday: boolean
+  /** Self-editable phone for the Employee Directory. Free text, max 30
+   *  chars. Null when the user hasn't entered one. */
+  phone: string | null
+  /** Self-editable opt-out for the Employee Directory page. Defaults
+   *  true; users uncheck to hide themselves. Hidden users are still
+   *  visible to admins via /admin/employees. */
+  inDirectory: boolean
   /** quick_links.id values (text[]) that the user wants to feature in
    *  the dashboard hero strip. Up to 4 entries; empty falls back to
    *  role-based defaults. */

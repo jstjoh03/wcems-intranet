@@ -36,6 +36,8 @@ const DEV_STUB_USER: AppUser = {
   fuelNumber: '30988',
   dateOfBirth: '1991-04-03',
   showBirthday: true,
+  phone: '(979) 555-0123',
+  inDirectory: true,
   featuredQuickLinkIds: [],
 }
 
@@ -88,6 +90,8 @@ function deriveAppUserFromSession(supaUser: User): AppUser {
     fuelNumber: null,
     dateOfBirth: null,
     showBirthday: true,
+    phone: null,
+    inDirectory: true,
     featuredQuickLinkIds: [],
   }
 }
@@ -106,6 +110,8 @@ interface AppUserRow {
   fuel_number: string | null
   date_of_birth: string | null
   show_birthday: boolean
+  phone: string | null
+  in_directory: boolean | null
   active: boolean
   featured_quick_link_ids: string[] | null
 }
@@ -125,6 +131,11 @@ function rowToAppUser(row: AppUserRow): AppUser {
     fuelNumber: row.fuel_number,
     dateOfBirth: row.date_of_birth,
     showBirthday: row.show_birthday,
+    phone: row.phone,
+    /* Default to true if the column hasn't been migrated yet — keeps
+       existing UI behavior (users visible) and matches the column's
+       SQL default once the migration lands. */
+    inDirectory: row.in_directory ?? true,
     featuredQuickLinkIds: row.featured_quick_link_ids ?? [],
   }
 }
@@ -138,7 +149,7 @@ async function fetchAppUserRow(authUserId: string): Promise<AppUserRow | null> {
   const { data, error } = await supabase
     .from('app_users')
     .select(
-      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, active, featured_quick_link_ids',
+      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, active, featured_quick_link_ids',
     )
     .eq('auth_user_id', authUserId)
     .maybeSingle()
@@ -215,6 +226,56 @@ export const useAuthStore = defineStore('auth', () => {
     const { error } = await supabase
       .from('app_users')
       .update({ shift: next })
+      .eq('id', id)
+    if (error) throw error
+    await refresh()
+  }
+
+  /** Update the signed-in user's phone number (free text, ≤30 chars).
+   *  Pass null/empty to clear. */
+  async function updateOwnPhone(next: string | null) {
+    const value = next?.trim() ? next.trim().slice(0, 30) : null
+    if (usingDevStub.value) {
+      if (appUser.value) appUser.value = { ...appUser.value, phone: value }
+      return
+    }
+    const id = appUser.value?.id
+    if (!id) throw new Error('Not signed in')
+    const { error } = await supabase
+      .from('app_users')
+      .update({ phone: value })
+      .eq('id', id)
+    if (error) throw error
+    await refresh()
+  }
+
+  /** Toggle the signed-in user's Employee Directory visibility. */
+  async function updateOwnInDirectory(next: boolean) {
+    if (usingDevStub.value) {
+      if (appUser.value) appUser.value = { ...appUser.value, inDirectory: next }
+      return
+    }
+    const id = appUser.value?.id
+    if (!id) throw new Error('Not signed in')
+    const { error } = await supabase
+      .from('app_users')
+      .update({ in_directory: next })
+      .eq('id', id)
+    if (error) throw error
+    await refresh()
+  }
+
+  /** Toggle the signed-in user's birthday-on-dashboard opt-in. */
+  async function updateOwnShowBirthday(next: boolean) {
+    if (usingDevStub.value) {
+      if (appUser.value) appUser.value = { ...appUser.value, showBirthday: next }
+      return
+    }
+    const id = appUser.value?.id
+    if (!id) throw new Error('Not signed in')
+    const { error } = await supabase
+      .from('app_users')
+      .update({ show_birthday: next })
       .eq('id', id)
     if (error) throw error
     await refresh()
@@ -313,6 +374,9 @@ export const useAuthStore = defineStore('auth', () => {
     refresh,
     updateOwnStation,
     updateOwnShift,
+    updateOwnPhone,
+    updateOwnInDirectory,
+    updateOwnShowBirthday,
     updateOwnFeaturedQuickLinks,
     signInWithMicrosoft,
     signOut,

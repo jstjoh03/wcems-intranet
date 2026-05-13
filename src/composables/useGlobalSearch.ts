@@ -11,6 +11,7 @@ import {
   Home,
   Settings,
   Film,
+  Contact,
   type LucideIcon,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
@@ -19,6 +20,7 @@ import { useHospitalsStore } from '@/stores/hospitals'
 import { useStationsStore } from '@/stores/stations'
 import { useTraining } from '@/composables/useTraining'
 import { useTrainingRecordings } from '@/composables/useTrainingRecordings'
+import { useEmployeeDirectory } from '@/composables/useEmployeeDirectory'
 
 /**
  * Whole-site search index. Combines:
@@ -45,6 +47,7 @@ export type SearchCategory =
   | 'station'
   | 'training'
   | 'recording'
+  | 'employee'
 
 export interface SearchResult {
   id: string
@@ -115,6 +118,14 @@ const PAGE_ROUTES: SearchResult[] = [
     to: '/admin-staff',
   },
   {
+    id: 'page:directory',
+    title: 'Employee Directory',
+    subtitle: 'Find a colleague',
+    category: 'page',
+    icon: Contact,
+    to: '/directory',
+  },
+  {
     id: 'page:gallery',
     title: 'Photo Gallery',
     subtitle: 'Around the County',
@@ -175,6 +186,7 @@ export function useGlobalSearch() {
   const stationsStore = useStationsStore()
   const { events: trainingEvents } = useTraining()
   const { visibleRecordings } = useTrainingRecordings()
+  const { entries: directoryEntries } = useEmployeeDirectory()
 
   const allResults = computed<SearchResult[]>(() => {
     const role = auth.role ?? 'crew'
@@ -248,6 +260,27 @@ export function useGlobalSearch() {
       })
     }
 
+    /* Employee Directory entries — searchable by name, title, or
+       station. Clicking lands on /directory; the user finds the card
+       there. Email goes into the hidden `keywords` field so typing
+       "@wallercountyems.com" doesn't pollute every result with a long
+       email subtitle. */
+    for (const d of directoryEntries.value) {
+      const subParts: string[] = []
+      if (d.title) subParts.push(d.title)
+      if (d.station) subParts.push(d.station)
+      if (d.shift) subParts.push(`Shift ${d.shift}`)
+      results.push({
+        id: `employee:${d.id}`,
+        title: d.fullName,
+        subtitle: subParts.join(' · ') || undefined,
+        category: 'employee',
+        icon: Contact,
+        to: '/directory',
+        keywords: `${d.email} ${d.phone ?? ''}`.trim(),
+      })
+    }
+
     /* Upcoming training sessions. */
     for (const t of trainingEvents.value) {
       const dateLabel = t.date
@@ -276,6 +309,7 @@ export function useGlobalSearch() {
   const CATEGORY_ORDER: SearchCategory[] = [
     'page',
     'quick-link',
+    'employee',
     'hospital',
     'station',
     'training',
@@ -284,6 +318,7 @@ export function useGlobalSearch() {
   const CATEGORY_LABELS: Record<SearchCategory, string> = {
     page: 'Pages',
     'quick-link': 'Quick Links',
+    employee: 'Employees',
     hospital: 'Hospitals',
     station: 'Stations',
     training: 'Classes',
