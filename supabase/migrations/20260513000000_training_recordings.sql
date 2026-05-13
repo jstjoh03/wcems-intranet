@@ -37,6 +37,14 @@ create index training_recordings_category_idx
 
 alter table public.training_recordings enable row level security;
 
+-- Table-level grants. RLS filters which rows each user can access; the
+-- GRANT is what lets them touch the table at all. authenticated covers
+-- every signed-in user (RLS narrows them to their visible rows); the
+-- service_role grant lets Edge Functions / cron jobs do anything later
+-- if we want to auto-sync recordings from somewhere.
+grant select, insert, update, delete on public.training_recordings to authenticated;
+grant all on public.training_recordings to service_role;
+
 -- Admins do everything.
 create policy "training_recordings_admin_all"
   on public.training_recordings for all
