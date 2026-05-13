@@ -45,6 +45,8 @@ create policy "training_recordings_admin_all"
 
 -- Everyone else reads active recordings whose visible_to_roles includes
 -- their role. Inactive rows are hidden from non-admins.
+-- NB: `app_users.role` is the `public.app_role` enum, not text, so we
+-- cast it to text before comparing against the text[] column.
 create policy "training_recordings_role_select"
   on public.training_recordings for select
   using (
@@ -52,7 +54,7 @@ create policy "training_recordings_role_select"
     and exists (
       select 1 from public.app_users u
       where u.id = public.current_app_user_id()
-      and u.role = any (training_recordings.visible_to_roles)
+      and u.role::text = any (training_recordings.visible_to_roles)
     )
   );
 
