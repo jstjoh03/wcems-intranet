@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Activity,
@@ -20,6 +20,7 @@ import {
   Newspaper,
   Film,
   Contact,
+  ChevronDown,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -34,6 +35,27 @@ const auth = useAuthStore()
 /* "On this page" anchors only make sense on the dashboard — every
    other route has its own content and no #section hashes. */
 const isOnDashboard = computed(() => route.path === '/')
+
+/* Collapse state for the "On this page" section. Default expanded so
+   users discover the anchors on first open; localStorage-backed so the
+   choice sticks across nav opens + sessions. The list is 7 items long
+   and was pushing Pages below the fold on shorter phones — Justin's
+   ask. */
+const ON_THIS_PAGE_KEY = 'wcems:nav:on-this-page-collapsed'
+const onThisPageCollapsed = ref(false)
+try {
+  onThisPageCollapsed.value = localStorage.getItem(ON_THIS_PAGE_KEY) === '1'
+} catch {
+  /* localStorage blocked (private mode, etc.) — fall through to default. */
+}
+function toggleOnThisPage() {
+  onThisPageCollapsed.value = !onThisPageCollapsed.value
+  try {
+    localStorage.setItem(ON_THIS_PAGE_KEY, onThisPageCollapsed.value ? '1' : '0')
+  } catch {
+    /* No persistence in private mode — toggle still works in-session. */
+  }
+}
 
 interface NavItem {
   id?: string
@@ -162,18 +184,38 @@ function openProfile() {
 
     <div class="drawer__body">
       <section v-if="isOnDashboard">
-        <Eyebrow class="px-2 mb-2">On this page</Eyebrow>
-        <div class="space-y-0.5">
-          <button
-            v-for="s in sections"
-            :key="s.label"
-            type="button"
-            class="nav-item"
-            @click="jumpTo(s)"
-          >
-            <component :is="s.icon" :size="16" :stroke-width="1.85" class="nav-item__icon" />
-            <span>{{ s.label }}</span>
-          </button>
+        <button
+          type="button"
+          class="nav-section-toggle"
+          :aria-expanded="!onThisPageCollapsed"
+          aria-controls="nav-on-this-page"
+          @click="toggleOnThisPage"
+        >
+          <Eyebrow>On this page</Eyebrow>
+          <ChevronDown
+            :size="14"
+            :stroke-width="2"
+            class="nav-section-toggle__chev"
+            :class="{ 'nav-section-toggle__chev--collapsed': onThisPageCollapsed }"
+          />
+        </button>
+        <div
+          id="nav-on-this-page"
+          class="nav-collapsible"
+          :class="{ 'nav-collapsible--closed': onThisPageCollapsed }"
+        >
+          <div class="nav-collapsible__inner space-y-0.5">
+            <button
+              v-for="s in sections"
+              :key="s.label"
+              type="button"
+              class="nav-item"
+              @click="jumpTo(s)"
+            >
+              <component :is="s.icon" :size="16" :stroke-width="1.85" class="nav-item__icon" />
+              <span>{{ s.label }}</span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -322,6 +364,55 @@ function openProfile() {
   flex: 1;
   overflow-y: auto;
   padding: 20px 12px;
+}
+
+/* Section toggle — clickable Eyebrow + chevron header for the
+   collapsible "On this page" section. Lives outside .nav-item styling
+   so it doesn't read as a navigation link itself. */
+.nav-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: left;
+  transition: background 120ms var(--ease-out);
+}
+.nav-section-toggle:hover {
+  background: var(--color-surface-soft);
+}
+.nav-section-toggle__chev {
+  color: var(--color-muted);
+  transition: transform 180ms var(--ease-out);
+  flex-shrink: 0;
+}
+.nav-section-toggle__chev--collapsed {
+  transform: rotate(-90deg);
+}
+
+/* grid-template-rows trick: animate between `1fr` and `0fr` to smoothly
+   collapse a section whose inner content is variable-height. Requires
+   an inner wrapper with overflow:hidden + min-height:0 so the rows
+   actually compress. Falls back to instant snap in older browsers
+   (grid-template-rows transitions landed in Chrome 117 / Safari 17.4
+   / Firefox 124 — fine for our user base today). */
+.nav-collapsible {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 200ms var(--ease-out);
+}
+.nav-collapsible--closed {
+  grid-template-rows: 0fr;
+}
+.nav-collapsible__inner {
+  overflow: hidden;
+  min-height: 0;
 }
 
 .nav-item {
