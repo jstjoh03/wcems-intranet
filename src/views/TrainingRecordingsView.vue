@@ -28,6 +28,12 @@ const SORT_OPTIONS: Array<{ value: SortKey; label: string }> = [
   { value: 'alpha', label: 'A → Z' },
 ]
 
+/* How many videos to surface in the Recently Added strip at the top
+   of the grouped view. 6 fills two clean rows on a 3-col desktop and
+   wraps gracefully on narrower screens. If the library has fewer than
+   this it just shows what exists. */
+const RECENTLY_ADDED_LIMIT = 6
+
 /* `?play=<id>` deep-links from the global search overlay (and anywhere
    else) auto-open the player on arrival. We watch both the query and
    the loaded list because the user might land before recordings have
@@ -63,6 +69,20 @@ const filtered = computed(() => {
     )
   })
   return sortRecordings(base, sortKey.value)
+})
+
+/* Recently Added — top N by created_at (upload date), not recorded_at,
+   so an older training that was just digitized still counts as "new."
+   Same visibility gate as `grouped` below: only shows when "All" is
+   selected and no search is active. Sort key is forced regardless of
+   what the user picked in the toolbar — the section's whole purpose
+   is "what's new", so user sort would defeat it. */
+const recentlyAdded = computed(() => {
+  if (activeCategory.value || search.value.trim()) return null
+  if (visibleRecordings.value.length === 0) return null
+  return [...visibleRecordings.value]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, RECENTLY_ADDED_LIMIT)
 })
 
 /* When activeCategory is null AND there's no search, render groups.
@@ -179,8 +199,54 @@ function close() {
       </template>
     </div>
 
-    <!-- Grouped view: "All" + no search → category sections with headers. -->
+    <!-- Grouped view: "All" + no search → Recently Added strip on top,
+         then category sections with headers. -->
     <template v-else-if="grouped">
+      <section v-if="recentlyAdded && recentlyAdded.length > 0" class="tr-group tr-group--recent">
+        <div class="tr-group__head">
+          <h2 class="display tr-group__title">Recently Added</h2>
+          <span class="tr-group__count">Just published</span>
+        </div>
+        <div class="tr__grid">
+          <button
+            v-for="r in recentlyAdded"
+            :key="`recent-${r.id}`"
+            type="button"
+            class="tr-card"
+            @click="open(r)"
+          >
+            <div class="tr-card__thumb">
+              <img
+                v-if="thumbFor(r)"
+                :src="thumbFor(r) || ''"
+                :alt="r.title"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+              />
+              <div v-else class="tr-card__thumb-fallback">
+                <Eyebrow style="color: white">Recording</Eyebrow>
+                <span class="display">{{ r.title }}</span>
+              </div>
+              <span class="tr-card__play" aria-hidden="true">
+                <Play :size="20" :stroke-width="2" fill="white" />
+              </span>
+              <span v-if="r.durationMinutes" class="tr-card__duration">
+                {{ r.durationMinutes }} min
+              </span>
+            </div>
+            <div class="tr-card__body">
+              <div class="display tr-card__title">{{ r.title }}</div>
+              <div class="tr-card__meta">
+                <span v-if="r.instructor">{{ r.instructor }}</span>
+                <span v-if="r.instructor && r.recordedAt"> · </span>
+                <span v-if="r.recordedAt">{{ formatRecordedAt(r.recordedAt) }}</span>
+              </div>
+              <Eyebrow v-if="r.category" class="tr-card__cat">{{ r.category }}</Eyebrow>
+            </div>
+          </button>
+        </div>
+      </section>
+
       <section v-for="g in grouped" :key="g.name" class="tr-group">
         <div class="tr-group__head">
           <h2 class="display tr-group__title">{{ g.name }}</h2>

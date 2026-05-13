@@ -38,7 +38,11 @@ export interface TrainingRecording {
   title: string
   description: string | null
   instructor: string | null
-  recordedAt: string | null            // YYYY-MM-DD
+  recordedAt: string | null            // YYYY-MM-DD (when the session happened)
+  /** ISO timestamp of when the row was inserted. Drives the "Recently
+   *  added" section — distinct from recordedAt so digitizing an old
+   *  Doc Day still surfaces as "new" the day it's uploaded. */
+  createdAt: string
   durationMinutes: number | null
   category: string | null
   /** Free-form chip tags — secondary axis for cross-cutting discovery. */
@@ -57,6 +61,7 @@ interface TrainingRecordingRow {
   description: string | null
   instructor: string | null
   recorded_at: string | null
+  created_at: string
   duration_minutes: number | null
   category: string | null
   tags: string[] | null
@@ -75,6 +80,7 @@ function rowToRecording(r: TrainingRecordingRow): TrainingRecording {
     description: r.description,
     instructor: r.instructor,
     recordedAt: r.recorded_at,
+    createdAt: r.created_at,
     durationMinutes: r.duration_minutes,
     category: r.category,
     tags: r.tags ?? [],
@@ -100,7 +106,7 @@ async function loadRecordings() {
   const { data, error } = await supabase
     .from('training_recordings')
     .select(
-      'id, title, description, instructor, recorded_at, duration_minutes, category, tags, thumbnail_url, video_source, video_ref, visible_to_roles, view_count, active',
+      'id, title, description, instructor, recorded_at, created_at, duration_minutes, category, tags, thumbnail_url, video_source, video_ref, visible_to_roles, view_count, active',
     )
     .order('recorded_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
