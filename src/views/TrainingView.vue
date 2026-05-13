@@ -83,7 +83,7 @@ function fillColor(filled: number, total: number) {
             :stroke-width="1.85"
             style="color: var(--color-brand-600)"
           />
-          <h1 class="display training__title">Upcoming Training</h1>
+          <h1 class="display training__title">Upcoming Classes</h1>
         </div>
         <div class="training__toolbar">
           <span v-if="lastFetchedAt" class="training__freshness">

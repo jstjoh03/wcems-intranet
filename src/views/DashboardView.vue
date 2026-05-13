@@ -27,7 +27,7 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
     <!--
       Quick Links lives in a floating dock (AppShell) so the dashboard
       can lead with editorial content. Main column: Announcements →
-      People → Stations. Sidebar: Upcoming Training, Call Volume.
+      People → Stations. Sidebar: Upcoming Classes, Call Volume.
       Newsletter sits full-width near the bottom with the photo gallery.
     -->
     <div class="dash__grid">

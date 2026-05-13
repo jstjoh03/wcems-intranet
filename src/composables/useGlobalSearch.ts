@@ -80,8 +80,8 @@ const PAGE_ROUTES: SearchResult[] = [
   },
   {
     id: 'page:training',
-    title: 'Training',
-    subtitle: 'Upcoming sessions',
+    title: 'Upcoming Classes',
+    subtitle: 'Live class schedule',
     category: 'page',
     icon: GraduationCap,
     to: '/training',
@@ -153,7 +153,7 @@ const ADMIN_PAGE_ROUTES: SearchResult[] = [
   { id: 'page:admin-stations', title: 'Manage Stations', subtitle: 'Admin', category: 'page', icon: Settings, to: '/admin/stations' },
   { id: 'page:admin-hospitals', title: 'Manage Hospitals', subtitle: 'Admin', category: 'page', icon: Hospital, to: '/admin/hospitals' },
   { id: 'page:admin-call-volume', title: 'Manage Call Volume', subtitle: 'Admin', category: 'page', icon: BarChart3, to: '/admin/call-volume' },
-  { id: 'page:admin-training', title: 'Manage Training', subtitle: 'Admin', category: 'page', icon: GraduationCap, to: '/admin/training' },
+  { id: 'page:admin-training', title: 'Manage Classes', subtitle: 'Admin', category: 'page', icon: GraduationCap, to: '/admin/training' },
   { id: 'page:admin-training-recordings', title: 'Manage Training Library', subtitle: 'Admin', category: 'page', icon: Film, to: '/admin/training-recordings' },
   { id: 'page:admin-quick-links', title: 'Manage Quick Links', subtitle: 'Admin', category: 'page', icon: LayoutGrid, to: '/admin/quick-links' },
 ]
@@ -279,7 +279,7 @@ export function useGlobalSearch() {
     'quick-link': 'Quick Links',
     hospital: 'Hospitals',
     station: 'Stations',
-    training: 'Training',
+    training: 'Classes',
     recording: 'Recordings',
   }
 

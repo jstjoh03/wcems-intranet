@@ -189,7 +189,7 @@ const sortedSessions = computed(() =>
     <header class="mt__header">
       <div class="flex items-center gap-2">
         <GraduationCap :size="22" :stroke-width="1.85" style="color: var(--color-brand-600)" />
-        <h1 class="display mt__title">Manage Training</h1>
+        <h1 class="display mt__title">Manage Classes</h1>
       </div>
       <p class="mt__sub">
         Wix bookings sync into the dashboard every 15 minutes. Exclude public courses, edit

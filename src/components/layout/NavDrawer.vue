@@ -51,7 +51,7 @@ const sections: NavItem[] = [
   { id: 'announcements', label: 'Announcements', icon: Bell, hash: '#announcements' },
   { id: 'people', label: 'People', icon: Users, hash: '#people' },
   { id: 'stations', label: 'Stations', icon: MapPin, hash: '#stations' },
-  { id: 'training', label: 'Upcoming Training', icon: GraduationCap, hash: '#training' },
+  { id: 'training', label: 'Upcoming Classes', icon: GraduationCap, hash: '#training' },
   { id: 'photos', label: 'Around the County', icon: Camera, hash: '#photos' },
   { id: 'newsletter', label: 'Newsletter', icon: Newspaper, hash: '#newsletter' },
 ]
@@ -59,7 +59,7 @@ const sections: NavItem[] = [
 const pages: NavItem[] = [
   { label: 'Home', to: '/', icon: Home },
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
-  { label: 'Training', to: '/training', icon: GraduationCap },
+  { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },
   { label: 'Training Library', to: '/training/recordings', icon: Film },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
   { label: 'Admin Staff', to: '/admin-staff', icon: Building2 },
@@ -70,7 +70,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Stations', to: '/admin/stations', icon: Settings },
   { label: 'Manage Hospitals', to: '/admin/hospitals', icon: Hospital },
   { label: 'Manage Call Volume', to: '/admin/call-volume', icon: BarChart3 },
-  { label: 'Manage Training', to: '/admin/training', icon: GraduationCap },
+  { label: 'Manage Classes', to: '/admin/training', icon: GraduationCap },
   { label: 'Manage Training Library', to: '/admin/training-recordings', icon: Film },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
 ]

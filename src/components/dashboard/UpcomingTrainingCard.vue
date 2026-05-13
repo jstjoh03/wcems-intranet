@@ -29,7 +29,7 @@ function freshnessLabel(d: Date | null): string {
 <template>
   <AppCard class="training-card">
     <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-      <Eyebrow>Upcoming Training</Eyebrow>
+      <Eyebrow>Upcoming Classes</Eyebrow>
       <div class="flex items-center gap-3">
         <span v-if="lastFetchedAt" class="training-card__freshness">
           {{ freshnessLabel(lastFetchedAt) }}
