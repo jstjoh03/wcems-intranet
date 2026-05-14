@@ -157,10 +157,15 @@ export interface CallVolumeZone {
 /* ── Announcements + people ────────────────────────────────────────── */
 export interface Announcement {
   id: string
+  /** Short display date label derived client-side from publishedAt
+   *  (e.g. "May 14"). Kept on the type for backward compat with the
+   *  existing card markup; new code can format publishedAt directly. */
   date: string
   tag: string
   title: string
   body: string
+  /** Optional Storage URL for an attached image (event flyer, etc.). */
+  imageUrl: string | null
   authorName: string
   publishedAt: string
 }
