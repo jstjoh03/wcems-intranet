@@ -34,6 +34,17 @@ const delta = computed(() => {
   return { d, pct }
 })
 
+/* reportMonth is a UTC midnight date (e.g. 2026-03-01T00:00Z); format
+   in UTC so it doesn't roll back a month in Central Time. */
+const prevMonthShort = computed(() =>
+  prev.value
+    ? new Date(prev.value.reportMonth).toLocaleDateString('en-US', {
+        month: 'short',
+        timeZone: 'UTC',
+      })
+    : '',
+)
+
 const sparkPath = computed(() => {
   const list = summaries.value
   if (list.length < 2) return ''
@@ -127,7 +138,7 @@ function secsToMMSS(secs: number) {
 
       <div v-if="delta" class="cv-tile__delta">
         <span :class="delta.d >= 0 ? 'cv-tile__delta--up' : 'cv-tile__delta--down'">
-          {{ delta.d >= 0 ? '+' : '' }}{{ delta.d }} vs. {{ prev && new Date(prev.reportMonth).toLocaleDateString('en-US', { month: 'short' }) }}
+          {{ delta.d >= 0 ? '+' : '' }}{{ delta.d }} vs. {{ prevMonthShort }}
         </span>
         ({{ delta.pct >= 0 ? '+' : '' }}{{ delta.pct.toFixed(1) }}%)
       </div>
