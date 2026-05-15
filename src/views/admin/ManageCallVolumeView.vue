@@ -12,6 +12,7 @@ const { ready, months, getMonth, latestMonth, saveMonth, deleteMonth } = useCall
 interface UnitDraft {
   unitName: string
   runs: number
+  avgResponseSeconds: number
 }
 interface ZoneDraft {
   zoneName: string
@@ -70,10 +71,14 @@ const summaryByMonth = computed(() => {
   return map
 })
 
-function firstOfThisMonth(): string {
+function firstOfLastMonth(): string {
+  // Call-volume is always entered for the month that just ended, so
+  // default to the previous month — defaulting to the current month
+  // led to April data being saved under May.
   const now = new Date()
-  const yyyy = now.getFullYear()
-  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const d = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
   return `${yyyy}-${mm}-01`
 }
 
@@ -84,7 +89,7 @@ function startCreate() {
   const seedMonth = latestMonth()
   const seedSnap = seedMonth ? getMonth(seedMonth) : null
   draft.value = {
-    month: firstOfThisMonth(),
+    month: firstOfLastMonth(),
     totalCalls: 0,
     avgResponseSeconds: 0,
     callsInDistrict: 0,
@@ -94,8 +99,8 @@ function startCreate() {
     unitHourUtilization: 0,
     airTransports: 0,
     units: seedSnap
-      ? seedSnap.units.map((u) => ({ unitName: u.unitName, runs: 0 }))
-      : [{ unitName: '', runs: 0 }],
+      ? seedSnap.units.map((u) => ({ unitName: u.unitName, runs: 0, avgResponseSeconds: 0 }))
+      : [{ unitName: '', runs: 0, avgResponseSeconds: 0 }],
     zones: seedSnap
       ? seedSnap.zones.map((z) => ({ zoneName: z.zoneName, calls: 0 }))
       : [{ zoneName: '', calls: 0 }],
@@ -116,7 +121,11 @@ function startEdit(month: string) {
     totalTransports: snap.summary.totalTransports,
     unitHourUtilization: snap.summary.unitHourUtilization,
     airTransports: snap.summary.airTransports,
-    units: snap.units.map((u) => ({ unitName: u.unitName, runs: u.runs })),
+    units: snap.units.map((u) => ({
+      unitName: u.unitName,
+      runs: u.runs,
+      avgResponseSeconds: u.avgResponseSeconds,
+    })),
     zones: snap.zones.map((z) => ({ zoneName: z.zoneName, calls: z.calls })),
     isNew: false,
   }
@@ -130,7 +139,7 @@ function cancel() {
 
 function addUnit() {
   if (!draft.value) return
-  draft.value.units.push({ unitName: '', runs: 0 })
+  draft.value.units.push({ unitName: '', runs: 0, avgResponseSeconds: 0 })
 }
 function removeUnit(i: number) {
   if (!draft.value) return
@@ -196,6 +205,7 @@ watch(
     if (!d) return
     for (const u of d.units) {
       if (u.runs < 0) u.runs = 0
+      if (u.avgResponseSeconds < 0) u.avgResponseSeconds = 0
     }
     for (const z of d.zones) {
       if (z.calls < 0) z.calls = 0
@@ -210,6 +220,18 @@ watch(
     if (d.airTransports < 0) d.airTransports = 0
   },
   { deep: true },
+)
+
+/* Plain-language echo of the picked month + a heads-up when that
+   month already has data (save replaces it). Surfaces a wrong month
+   before the admin commits. */
+const draftMonthLabel = computed(() =>
+  draft.value && /^\d{4}-\d{2}-\d{2}$/.test(draft.value.month)
+    ? monthLabel(draft.value.month)
+    : null,
+)
+const draftMonthExists = computed(
+  () => !!draft.value && draft.value.isNew && months.value.includes(draft.value.month),
 )
 
 /* mm:ss bound input proxy for avg response time. */
@@ -263,6 +285,12 @@ const avgResponseText = computed({
                 />
                 <span v-if="!draft.isNew" class="mcv-form__hint">
                   The month key can't change — delete and re-add if you need a different month.
+                </span>
+                <span v-if="draft.isNew && draftMonthLabel" class="mcv-form__confirm">
+                  Entering data for <strong>{{ draftMonthLabel }}</strong>
+                </span>
+                <span v-if="draftMonthExists" class="mcv-form__warn">
+                  {{ draftMonthLabel }} already has data — saving will replace it.
                 </span>
               </label>
             </div>
@@ -368,6 +396,7 @@ const avgResponseText = computed({
                 <tr>
                   <th>Unit</th>
                   <th class="num">Runs</th>
+                  <th class="num">Avg resp (mm:ss)</th>
                   <th class="num">%</th>
                   <th class="actions"></th>
                 </tr>
@@ -388,6 +417,21 @@ const avgResponseText = computed({
                       type="number"
                       min="0"
                       class="mcv-table__input num"
+                    />
+                  </td>
+                  <td>
+                    <input
+                      :value="secondsToMMSS(u.avgResponseSeconds)"
+                      @input="
+                        u.avgResponseSeconds = mmssToSeconds(
+                          ($event.target as HTMLInputElement).value,
+                        )
+                      "
+                      type="text"
+                      inputmode="numeric"
+                      placeholder="0:00"
+                      class="mcv-table__input num"
+                      aria-label="Average response time for this unit, mm:ss"
                     />
                   </td>
                   <td class="num mcv-table__pct">
@@ -677,6 +721,18 @@ const avgResponseText = computed({
 .mcv-form__hint {
   font-size: 11px;
   color: var(--color-muted);
+}
+.mcv-form__confirm {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+.mcv-form__confirm strong {
+  color: var(--color-brand-600);
+}
+.mcv-form__warn {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-danger-500);
 }
 .mcv-form__input {
   font-family: var(--font-sans);

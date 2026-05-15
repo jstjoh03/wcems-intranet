@@ -41,6 +41,8 @@ export interface CallVolumeUnit {
   reportMonth: string
   unitName: string
   runs: number
+  /** Average response time for this unit, in seconds. 0 when not tracked. */
+  avgResponseSeconds: number
 }
 
 export interface CallVolumeZone {
@@ -64,6 +66,7 @@ interface UnitRow {
   report_month: string
   unit_name: string
   runs: number
+  avg_response_seconds: number
 }
 interface ZoneRow {
   report_month: string
@@ -96,6 +99,7 @@ function unitFromRow(r: UnitRow): CallVolumeUnit {
     reportMonth: r.report_month,
     unitName: r.unit_name,
     runs: r.runs,
+    avgResponseSeconds: r.avg_response_seconds ?? 0,
   }
 }
 function zoneFromRow(r: ZoneRow): CallVolumeZone {
@@ -121,7 +125,7 @@ async function load() {
       zones: CallVolumeZone[]
     }
     summaries.value = data.summaries
-    units.value = data.units
+    units.value = data.units.map((u) => ({ ...u, avgResponseSeconds: u.avgResponseSeconds ?? 0 }))
     zones.value = data.zones
     ready.value = true
     return
@@ -136,7 +140,7 @@ async function load() {
       .order('report_month'),
     supabase
       .from('call_volume_units')
-      .select('report_month, unit_name, runs')
+      .select('report_month, unit_name, runs, avg_response_seconds')
       .order('report_month'),
     supabase
       .from('call_volume_zones')
@@ -270,6 +274,7 @@ export function useCallVolume() {
             report_month: month,
             unit_name: u.unitName,
             runs: u.runs,
+            avg_response_seconds: u.avgResponseSeconds,
           })),
         )
       if (insUnitsErr) return { ok: false, error: `Units save failed: ${insUnitsErr.message}` }
