@@ -82,12 +82,41 @@ function firstOfLastMonth(): string {
   return `${yyyy}-${mm}-01`
 }
 
+/* Canonical unit order from the monthly run report. The form should
+   present units in this sequence rather than whatever order rows come
+   back from the DB. Units not in this list (one-offs) sort to the end
+   keeping their relative order. */
+const UNIT_ORDER = [
+  'Medic 211',
+  'Medic 221',
+  'Medic 231',
+  'Medic 242',
+  'Medic 271',
+  'Medic 206',
+  'Medic 281',
+  'Supervisor',
+  'Community Paramedic',
+]
+
+function unitRank(name: string): number {
+  const i = UNIT_ORDER.indexOf(name.trim())
+  return i === -1 ? UNIT_ORDER.length : i
+}
+
+function sortUnitsByCanonical<T extends { unitName: string }>(arr: T[]): T[] {
+  return [...arr].sort((a, b) => unitRank(a.unitName) - unitRank(b.unitName))
+}
+
 function startCreate() {
-  /* Seed unit + zone names from the latest month so admins don't
-     retype them each cycle. Counts start at 0 — the admin enters
-     fresh numbers off the run report. */
+  /* New months get the full canonical unit list in order so the form
+     always matches the run report. Any one-off units from last month
+     (not in UNIT_ORDER) are carried forward at the end. Zone names
+     still seed from the latest month. Counts start at 0. */
   const seedMonth = latestMonth()
   const seedSnap = seedMonth ? getMonth(seedMonth) : null
+  const carriedExtras = (seedSnap?.units ?? [])
+    .filter((u) => !UNIT_ORDER.includes(u.unitName.trim()))
+    .map((u) => ({ unitName: u.unitName, runs: 0, avgResponseSeconds: 0 }))
   draft.value = {
     month: firstOfLastMonth(),
     totalCalls: 0,
@@ -98,9 +127,10 @@ function startCreate() {
     totalTransports: 0,
     unitHourUtilization: 0,
     airTransports: 0,
-    units: seedSnap
-      ? seedSnap.units.map((u) => ({ unitName: u.unitName, runs: 0, avgResponseSeconds: 0 }))
-      : [{ unitName: '', runs: 0, avgResponseSeconds: 0 }],
+    units: [
+      ...UNIT_ORDER.map((name) => ({ unitName: name, runs: 0, avgResponseSeconds: 0 })),
+      ...carriedExtras,
+    ],
     zones: seedSnap
       ? seedSnap.zones.map((z) => ({ zoneName: z.zoneName, calls: 0 }))
       : [{ zoneName: '', calls: 0 }],
@@ -121,11 +151,13 @@ function startEdit(month: string) {
     totalTransports: snap.summary.totalTransports,
     unitHourUtilization: snap.summary.unitHourUtilization,
     airTransports: snap.summary.airTransports,
-    units: snap.units.map((u) => ({
-      unitName: u.unitName,
-      runs: u.runs,
-      avgResponseSeconds: u.avgResponseSeconds,
-    })),
+    units: sortUnitsByCanonical(
+      snap.units.map((u) => ({
+        unitName: u.unitName,
+        runs: u.runs,
+        avgResponseSeconds: u.avgResponseSeconds,
+      })),
+    ),
     zones: snap.zones.map((z) => ({ zoneName: z.zoneName, calls: z.calls })),
     isNew: false,
   }
