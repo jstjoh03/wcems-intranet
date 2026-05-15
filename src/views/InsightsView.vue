@@ -295,6 +295,12 @@ function secsToMMSS(secs: number) {
                 <span class="font-mono insights__unit-runs">
                   {{ u.runs }} runs ({{ u.percentage.toFixed(2) }}%)
                 </span>
+                <span
+                  v-if="u.avgResponseSeconds > 0"
+                  class="font-mono insights__unit-resp"
+                >
+                  · {{ secsToMMSS(u.avgResponseSeconds) }} avg
+                </span>
               </span>
             </div>
             <div class="insights__unit-bar-track">
@@ -508,6 +514,10 @@ function secsToMMSS(secs: number) {
 .insights__unit-runs {
   color: var(--color-brand-700);
   font-weight: 600;
+}
+.insights__unit-resp {
+  margin-left: 4px;
+  color: var(--color-muted);
 }
 .insights__unit-bar-track {
   height: 8px;
