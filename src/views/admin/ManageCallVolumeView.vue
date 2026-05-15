@@ -421,7 +421,7 @@ const avgResponseText = computed({
                   </td>
                   <td>
                     <input
-                      :value="secondsToMMSS(u.avgResponseSeconds)"
+                      :value="u.avgResponseSeconds > 0 ? secondsToMMSS(u.avgResponseSeconds) : ''"
                       @input="
                         u.avgResponseSeconds = mmssToSeconds(
                           ($event.target as HTMLInputElement).value,
@@ -429,9 +429,9 @@ const avgResponseText = computed({
                       "
                       type="text"
                       inputmode="numeric"
-                      placeholder="0:00"
+                      placeholder="not collected"
                       class="mcv-table__input num"
-                      aria-label="Average response time for this unit, mm:ss"
+                      aria-label="Average response time for this unit, mm:ss — leave blank if not collected"
                     />
                   </td>
                   <td class="num mcv-table__pct">
