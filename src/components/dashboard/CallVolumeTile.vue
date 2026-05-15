@@ -4,37 +4,47 @@ import { ChevronRight } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
-import callVolume from '@/data/call-volume.json'
+import { useCallVolume } from '@/composables/useCallVolume'
 
-const summaries = [...callVolume.summaries].sort(
-  (a, b) => new Date(a.reportMonth).getTime() - new Date(b.reportMonth).getTime(),
+const { summaries: rawSummaries } = useCallVolume()
+
+/* Live data from Supabase (dev-stub falls back to the JSON fixture).
+   Sorted ascending so the last element is the most recent month. */
+const summaries = computed(() =>
+  [...rawSummaries.value].sort(
+    (a, b) => new Date(a.reportMonth).getTime() - new Date(b.reportMonth).getTime(),
+  ),
 )
 
-const latest = computed(() => summaries[summaries.length - 1])
-const prev = computed(() => (summaries.length > 1 ? summaries[summaries.length - 2] : null))
+const latest = computed(() => summaries.value[summaries.value.length - 1] ?? null)
+const prev = computed(() =>
+  summaries.value.length > 1 ? summaries.value[summaries.value.length - 2] : null,
+)
 
 const monthLabel = computed(() => {
+  if (!latest.value) return ''
   const d = new Date(latest.value.reportMonth)
   return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
 })
 
 const delta = computed(() => {
-  if (!prev.value) return null
+  if (!prev.value || !latest.value) return null
   const d = latest.value.totalCalls - prev.value.totalCalls
   const pct = (d / prev.value.totalCalls) * 100
   return { d, pct }
 })
 
 const sparkPath = computed(() => {
-  if (summaries.length < 2) return ''
+  const list = summaries.value
+  if (list.length < 2) return ''
   const W = 140
   const H = 40
   const PAD = 4
-  const max = Math.max(...summaries.map((s) => s.totalCalls))
-  const min = Math.min(...summaries.map((s) => s.totalCalls))
+  const max = Math.max(...list.map((s) => s.totalCalls))
+  const min = Math.min(...list.map((s) => s.totalCalls))
   const range = max - min || 1
-  const pts = summaries.map((s, i) => {
-    const x = PAD + (i / (summaries.length - 1)) * (W - PAD * 2)
+  const pts = list.map((s, i) => {
+    const x = PAD + (i / (list.length - 1)) * (W - PAD * 2)
     const y = PAD + (1 - (s.totalCalls - min) / range) * (H - PAD * 2)
     return [x, y] as const
   })
@@ -63,10 +73,13 @@ function secsToMMSS(secs: number) {
   <RouterLink to="/insights" class="cv-tile-link">
     <AppCard interactive class="cv-tile">
       <div class="cv-tile__head">
-        <Eyebrow>Call Volume · {{ monthLabel }}</Eyebrow>
+        <Eyebrow>Call Volume<template v-if="monthLabel"> · {{ monthLabel }}</template></Eyebrow>
         <ChevronRight :size="14" class="cv-tile__chev" />
       </div>
 
+      <div v-if="!latest" class="cv-tile__empty">Loading…</div>
+
+      <template v-else>
       <div class="cv-tile__metric-row">
         <div class="cv-tile__big">
           <span class="display cv-tile__big-num">{{ latest.totalCalls }}</span>
@@ -118,6 +131,7 @@ function secsToMMSS(secs: number) {
         </span>
         ({{ delta.pct >= 0 ? '+' : '' }}{{ delta.pct.toFixed(1) }}%)
       </div>
+      </template>
     </AppCard>
   </RouterLink>
 </template>
@@ -139,6 +153,11 @@ function secsToMMSS(secs: number) {
   justify-content: space-between;
 }
 .cv-tile__chev {
+  color: var(--color-muted);
+}
+
+.cv-tile__empty {
+  font-size: 12px;
   color: var(--color-muted);
 }
 
