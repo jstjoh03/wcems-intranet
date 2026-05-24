@@ -629,6 +629,7 @@ const submitLabel = computed(() => {
 .announcements-card__title {
   font-size: 16px;
   line-height: 1.25;
+  font-weight: 700;
   color: var(--color-ink);
   margin-top: 4px;
 }
