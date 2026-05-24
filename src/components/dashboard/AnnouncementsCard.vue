@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Plus, Bell, Edit2, X, Upload } from 'lucide-vue-next'
+import { Plus, Bell, Edit2, X, Upload, Archive, ArchiveRestore } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -9,7 +9,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useAnnouncements } from '@/composables/useAnnouncements'
 
 const auth = useAuthStore()
-const { announcements, publish, update, remove } = useAnnouncements()
+const { announcements, publish, update, setArchived, remove } = useAnnouncements()
 
 const PRESET_CATEGORIES = [
   'Operations',
@@ -35,6 +35,25 @@ const submitting = ref(false)
 const uploadingImage = ref(false)
 const composeError = ref<string | null>(null)
 const lightboxUrl = ref<string | null>(null)
+
+/* Admin-only toggle: archived rows are hidden from the list by default
+   (matches what crew sees via RLS) and surfaced only when the admin
+   asks to see them, so the dashboard stays uncluttered. */
+const showArchived = ref(false)
+
+const archivedCount = computed(
+  () => announcements.value.filter((a) => !a.active).length,
+)
+
+const visibleAnnouncements = computed(() => {
+  // Non-admins never receive inactive rows from the server (RLS), so
+  // the filter is effectively a no-op for them. For admins, hide
+  // archived rows unless they opt in.
+  if (auth.isAdmin && !showArchived.value) {
+    return announcements.value.filter((a) => a.active)
+  }
+  return announcements.value
+})
 
 /* Image-size cap kept consistent with the training-recording thumbnail
    uploader. Most invitation flyers are ~1-3 MB; 5 MB gives headroom
@@ -165,6 +184,23 @@ async function removeAnnouncement(id: string, title: string) {
   }
 }
 
+async function archiveAnnouncement(id: string) {
+  // Reversible — no confirm dialog.
+  try {
+    await setArchived(id, true)
+  } catch (err) {
+    alert(`Archive failed: ${(err as Error).message}`)
+  }
+}
+
+async function restoreAnnouncement(id: string) {
+  try {
+    await setArchived(id, false)
+  } catch (err) {
+    alert(`Restore failed: ${(err as Error).message}`)
+  }
+}
+
 function openLightbox(url: string | null) {
   if (!url) return
   lightboxUrl.value = url
@@ -183,13 +219,23 @@ const submitLabel = computed(() => {
   <AppCard class="announcements-card">
     <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
       <Eyebrow>Announcements</Eyebrow>
-      <button
-        v-if="auth.isAdmin && !composing"
-        class="announcements-card__new"
-        @click="startCompose"
-      >
-        <Plus :size="11" :stroke-width="2" /> New
-      </button>
+      <span class="announcements-card__head-actions">
+        <button
+          v-if="auth.isAdmin && archivedCount > 0 && !composing"
+          type="button"
+          class="announcements-card__archive-toggle"
+          @click="showArchived = !showArchived"
+        >
+          {{ showArchived ? 'Hide archived' : `Show archived (${archivedCount})` }}
+        </button>
+        <button
+          v-if="auth.isAdmin && !composing"
+          class="announcements-card__new"
+          @click="startCompose"
+        >
+          <Plus :size="11" :stroke-width="2" /> New
+        </button>
+      </span>
     </div>
 
     <!-- Compose / edit form (admin only) -->
@@ -262,7 +308,7 @@ const submitLabel = computed(() => {
     </form>
 
     <!-- Empty state -->
-    <div v-if="announcements.length === 0 && !composing" class="announcements-card__empty">
+    <div v-if="visibleAnnouncements.length === 0 && !composing" class="announcements-card__empty">
       <Bell :size="20" :stroke-width="1.5" class="announcements-card__empty-icon" />
       <div class="announcements-card__empty-title">No current announcements</div>
       <p v-if="auth.isAdmin" class="announcements-card__empty-sub">
@@ -274,15 +320,25 @@ const submitLabel = computed(() => {
     </div>
 
     <!-- List -->
-    <div v-else-if="announcements.length > 0" class="space-y-3">
+    <div v-else-if="visibleAnnouncements.length > 0" class="space-y-3">
       <article
-        v-for="(a, i) in announcements"
+        v-for="(a, i) in visibleAnnouncements"
         :key="a.id"
         class="announcements-card__row"
-        :class="{ 'announcements-card__row--last': i === announcements.length - 1 }"
+        :class="{
+          'announcements-card__row--last': i === visibleAnnouncements.length - 1,
+          'announcements-card__row--archived': !a.active,
+        }"
       >
         <div class="flex items-center gap-2 mb-1.5 flex-wrap">
           <AppChip variant="brand">{{ a.tag }}</AppChip>
+          <span
+            v-if="!a.active"
+            class="announcements-card__archived-tag"
+            aria-label="Archived"
+          >
+            Archived
+          </span>
           <span class="font-mono text-[10.5px]" style="color: var(--color-muted)">
             {{ a.date }}
           </span>
@@ -294,6 +350,24 @@ const submitLabel = computed(() => {
               @click="startEdit(a.id)"
             >
               <Edit2 :size="11" />
+            </button>
+            <button
+              v-if="auth.isAdmin && a.active"
+              class="announcements-card__edit"
+              aria-label="Archive"
+              title="Archive"
+              @click="archiveAnnouncement(a.id)"
+            >
+              <Archive :size="11" />
+            </button>
+            <button
+              v-if="auth.isAdmin && !a.active"
+              class="announcements-card__edit"
+              aria-label="Restore"
+              title="Restore"
+              @click="restoreAnnouncement(a.id)"
+            >
+              <ArchiveRestore :size="11" />
             </button>
             <button
               v-if="auth.isAdmin"
@@ -360,6 +434,12 @@ const submitLabel = computed(() => {
 .announcements-card {
   padding: 20px;
 }
+.announcements-card__head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .announcements-card__new {
   display: inline-flex;
   align-items: center;
@@ -376,6 +456,39 @@ const submitLabel = computed(() => {
 }
 .announcements-card__new:hover {
   background: var(--color-brand-100);
+}
+.announcements-card__archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--color-muted);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.announcements-card__archive-toggle:hover {
+  border-color: var(--color-muted-soft);
+  color: var(--color-ink-soft);
+}
+
+.announcements-card__row--archived {
+  opacity: 0.6;
+}
+.announcements-card__archived-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 .announcements-card__compose {

@@ -168,6 +168,9 @@ export interface Announcement {
   imageUrl: string | null
   authorName: string
   publishedAt: string
+  /** Soft-archive flag. False = hidden from crew (RLS) but kept in the
+   *  DB so admins can restore. Default true on insert. */
+  active: boolean
 }
 
 export interface BirthdayEntry {

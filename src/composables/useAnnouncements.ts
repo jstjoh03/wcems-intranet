@@ -45,6 +45,7 @@ function rowToAnnouncement(r: AnnouncementRow): Announcement {
     imageUrl: r.image_url,
     authorName: r.author_name,
     publishedAt: r.published_at,
+    active: r.active,
   }
 }
 
@@ -94,6 +95,14 @@ function subscribeRealtime() {
       { event: 'UPDATE', schema: 'public', table: 'announcements' },
       (payload) => {
         const next = rowToAnnouncement(payload.new as AnnouncementRow)
+        const auth = useAuthStore()
+        // Non-admins shouldn't keep an archived row in their cache —
+        // RLS prevents fresh fetches but the realtime UPDATE delivers
+        // here before the predicate hides it.
+        if (!auth.isAdmin && !next.active) {
+          announcements.value = announcements.value.filter((a) => a.id !== next.id)
+          return
+        }
         announcements.value = announcements.value.map((a) =>
           a.id === next.id ? next : a,
         )
@@ -154,6 +163,7 @@ export function useAnnouncements() {
           imageUrl: input.imageUrl,
           authorName: author?.fullName ?? 'Admin',
           publishedAt: new Date().toISOString(),
+          active: true,
         },
         ...announcements.value,
       ]
@@ -200,6 +210,20 @@ export function useAnnouncements() {
     if (error) throw error
   }
 
+  async function setArchived(id: string, archived: boolean) {
+    if (usingDevStubLike()) {
+      announcements.value = announcements.value.map((a) =>
+        a.id === id ? { ...a, active: !archived } : a,
+      )
+      return
+    }
+    const { error } = await supabase
+      .from('announcements')
+      .update({ active: !archived })
+      .eq('id', id)
+    if (error) throw error
+  }
+
   async function remove(id: string) {
     if (usingDevStubLike()) {
       announcements.value = announcements.value.filter((a) => a.id !== id)
@@ -228,6 +252,7 @@ export function useAnnouncements() {
     refresh,
     publish,
     update,
+    setArchived,
     remove,
   }
 }
