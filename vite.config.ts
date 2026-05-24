@@ -19,6 +19,12 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // injectManifest lets us own the service worker (src/sw.ts) so we
+      // can add a `push` event handler. Workbox still injects the
+      // precache manifest at build time via self.__WB_MANIFEST.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       includeAssets: ['favicon.svg', 'wcems-patch.png'],
       manifest: {
         name: 'Waller County EMS Intranet',
@@ -33,7 +39,7 @@ export default defineConfig({
           { src: '/wcems-patch.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
         ],
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
       },
     }),

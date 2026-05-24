@@ -8,6 +8,7 @@ import Avatar from '@/components/primitives/Avatar.vue'
 import { supabase } from '@/lib/supabase'
 import { STATION_OPTIONS } from '@/constants/stations'
 import type { ShiftLetter } from '@/types'
+import { usePushNotifications } from '@/composables/usePushNotifications'
 
 /**
  * Self-serve profile modal — the comprehensive "manage my info" surface.
@@ -26,6 +27,21 @@ import type { ShiftLetter } from '@/types'
 
 const auth = useAuthStore()
 const router = useRouter()
+
+const push = usePushNotifications()
+const pushBusyError = ref<string | null>(null)
+
+async function togglePush(event: Event) {
+  pushBusyError.value = null
+  const checkbox = event.target as HTMLInputElement
+  const wantOn = checkbox.checked
+  const result = wantOn ? await push.enable() : await push.disable()
+  if (!result.ok) {
+    pushBusyError.value = result.error
+    // Roll back the checkbox visual to actual subscription state.
+    checkbox.checked = push.isSubscribed.value
+  }
+}
 
 const open = ref(false)
 
@@ -383,6 +399,32 @@ async function signOut() {
           <span>
             <strong>Include me in the Employee Directory</strong>
             <span class="upm__check-sub">Colleagues can find your name, station, shift, and contact info.</span>
+          </span>
+        </label>
+      </section>
+
+      <section v-if="push.isSupported.value" class="upm__section">
+        <Eyebrow>Notifications</Eyebrow>
+        <label class="upm__check">
+          <input
+            type="checkbox"
+            :checked="push.isSubscribed.value"
+            :disabled="push.busy.value || push.permission.value === 'denied'"
+            @change="togglePush"
+          />
+          <span>
+            <strong>Push notifications for new announcements</strong>
+            <span class="upm__check-sub">
+              <template v-if="push.permission.value === 'denied'">
+                Blocked by your browser. Enable notifications for this site in browser settings, then come back here.
+              </template>
+              <template v-else>
+                Get a notification on this device when an admin posts a new announcement. On iPhone, install this site to your home screen first.
+              </template>
+            </span>
+            <span v-if="pushBusyError" class="upm__check-sub" style="color: var(--color-danger-500)">
+              {{ pushBusyError }}
+            </span>
           </span>
         </label>
       </section>
