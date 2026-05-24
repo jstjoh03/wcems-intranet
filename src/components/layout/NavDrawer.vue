@@ -98,6 +98,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Classes', to: '/admin/training', icon: GraduationCap },
   { label: 'Manage Training Library', to: '/admin/training-recordings', icon: Film },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
+  { label: 'Usage', to: '/admin/usage', icon: Activity },
 ]
 
 function jumpTo(item: NavItem) {

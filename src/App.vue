@@ -2,8 +2,13 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
+import { useUsageTracking } from '@/composables/useUsageTracking'
 
 const route = useRoute()
+
+// Fire-and-forget engagement tracking — logs route changes so the
+// /admin/usage page can show real weekly-active + top-route data.
+useUsageTracking()
 
 /* Sign-in lives outside the chrome — no topbar, drawer, footer, or
    quick-links dock — so it reads as a focused gateway, not a "page". */
