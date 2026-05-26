@@ -238,8 +238,17 @@ async function fetchThread(date: string, personKey: string) {
   counts.value = { ...counts.value, [key]: threads.value[key].length }
 }
 
-export function useBirthdayComments(currentUserId: string) {
+export function useBirthdayComments() {
+  const auth = useAuthStore()
   void load()
+
+  /* Read the current user's id live at every call. The previous shape
+     took it as an arg captured at component setup; if auth.appUser
+     hadn't finished loading yet, components captured the fallback
+     'anonymous' string and every insert failed RLS. */
+  function currentId(): string | null {
+    return auth.appUser?.id ?? null
+  }
 
   function getCount(date: string, personKey: string): number {
     return counts.value[makeKey(date, personKey)] ?? 0
@@ -266,8 +275,9 @@ export function useBirthdayComments(currentUserId: string) {
     if (trimmed.length > 500) {
       return { ok: false, error: 'Comments are capped at 500 characters.' }
     }
+    const id = currentId()
+    if (!id) return { ok: false, error: 'Sign in to comment.' }
 
-    const auth = useAuthStore()
     const key = makeKey(date, personKey)
 
     if (auth.usingDevStub) {
@@ -275,7 +285,7 @@ export function useBirthdayComments(currentUserId: string) {
         id: `dev-${crypto.randomUUID()}`,
         birthdayDate: date,
         personKey,
-        userId: currentUserId,
+        userId: id,
         authorName: author.name,
         authorInitials: initials(author.name),
         body: trimmed,
@@ -295,7 +305,7 @@ export function useBirthdayComments(currentUserId: string) {
       .insert({
         birthday_date: date,
         person_key: personKey,
-        user_id: currentUserId,
+        user_id: id,
         body: trimmed,
       })
       .select(

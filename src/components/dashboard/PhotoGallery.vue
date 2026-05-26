@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
   Camera,
@@ -21,9 +21,8 @@ import PhotoDetailModal from './PhotoDetailModal.vue'
 
 const auth = useAuthStore()
 const { photos, remove } = useGallery()
-const currentUserId = computed(() => auth.appUser?.id ?? 'anonymous')
-const reactions = usePhotoReactions(currentUserId.value)
-const comments = usePhotoComments(currentUserId.value)
+const reactions = usePhotoReactions()
+const comments = usePhotoComments()
 
 const uploadOpen = ref(false)
 const activePhoto = ref<GalleryPhoto | null>(null)

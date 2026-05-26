@@ -15,9 +15,8 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuthStore()
-const currentUserId = computed(() => auth.appUser?.id ?? 'anonymous')
-const reactions = usePhotoReactions(currentUserId.value)
-const comments = usePhotoComments(currentUserId.value)
+const reactions = usePhotoReactions()
+const comments = usePhotoComments()
 
 const loadingThread = ref(false)
 

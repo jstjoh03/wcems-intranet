@@ -20,9 +20,8 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const auth = useAuthStore()
-const currentUserId = computed(() => auth.appUser?.id ?? 'anonymous')
-const reactions = useBirthdayReactions(currentUserId.value)
-const comments = useBirthdayComments(currentUserId.value)
+const reactions = useBirthdayReactions()
+const comments = useBirthdayComments()
 
 const loadingThread = ref(false)
 

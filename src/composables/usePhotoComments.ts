@@ -229,8 +229,16 @@ async function fetchThread(photoId: string) {
   counts.value = { ...counts.value, [photoId]: threads.value[photoId].length }
 }
 
-export function usePhotoComments(currentUserId: string) {
+export function usePhotoComments() {
+  const auth = useAuthStore()
   void load()
+
+  /* Read the current user's id live. Previously took as arg captured
+     at component setup; auth.appUser racing with mount caused inserts
+     to fail RLS with the 'anonymous' fallback string. */
+  function currentId(): string | null {
+    return auth.appUser?.id ?? null
+  }
 
   function getCount(photoId: string): number {
     return counts.value[photoId] ?? 0
@@ -255,14 +263,14 @@ export function usePhotoComments(currentUserId: string) {
     if (trimmed.length > 500) {
       return { ok: false, error: 'Comments are capped at 500 characters.' }
     }
-
-    const auth = useAuthStore()
+    const id = currentId()
+    if (!id) return { ok: false, error: 'Sign in to comment.' }
 
     if (auth.usingDevStub) {
       const next: PhotoComment = {
         id: `dev-${crypto.randomUUID()}`,
         photoId,
-        userId: currentUserId,
+        userId: id,
         authorName: author.name,
         authorInitials: initials(author.name),
         body: trimmed,
@@ -279,7 +287,7 @@ export function usePhotoComments(currentUserId: string) {
 
     const { data, error } = await supabase
       .from('photo_comments')
-      .insert({ photo_id: photoId, user_id: currentUserId, body: trimmed })
+      .insert({ photo_id: photoId, user_id: id, body: trimmed })
       .select(
         'id, photo_id, user_id, body, created_at, app_users:app_users!photo_comments_user_id_fkey(full_name, email)',
       )

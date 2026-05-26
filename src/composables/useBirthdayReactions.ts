@@ -139,33 +139,46 @@ function subscribeRealtime() {
   return channel
 }
 
-export function useBirthdayReactions(currentUserId: string) {
+export function useBirthdayReactions() {
+  const auth = useAuthStore()
   void load()
+
+  /* Read the current user's id live at every call. The previous shape
+     took it as an arg captured at component setup; if auth.appUser
+     hadn't finished loading yet, components captured the fallback
+     'anonymous' string and every insert failed RLS. */
+  function currentId(): string | null {
+    return auth.appUser?.id ?? null
+  }
 
   function getCount(isoDate: string, personKey: string): number {
     return state.value[makeKey(isoDate, personKey)]?.length ?? 0
   }
 
   function hasReacted(isoDate: string, personKey: string): boolean {
-    return (
-      state.value[makeKey(isoDate, personKey)]?.includes(currentUserId) ?? false
-    )
+    const id = currentId()
+    if (!id) return false
+    return state.value[makeKey(isoDate, personKey)]?.includes(id) ?? false
   }
 
   async function toggle(isoDate: string, personKey: string) {
+    const id = currentId()
+    if (!id) {
+      console.warn('[birthday-reactions] toggle ignored — not signed in')
+      return
+    }
     const key = makeKey(isoDate, personKey)
     const before = state.value
     const next = { ...state.value }
     const list = next[key] ? [...next[key]] : []
-    const i = list.indexOf(currentUserId)
+    const i = list.indexOf(id)
     const wasReacted = i >= 0
     if (wasReacted) list.splice(i, 1)
-    else list.push(currentUserId)
+    else list.push(id)
     if (list.length === 0) delete next[key]
     else next[key] = list
     state.value = next
 
-    const auth = useAuthStore()
     if (auth.usingDevStub) {
       persistToLocalStorage()
       return
@@ -177,13 +190,13 @@ export function useBirthdayReactions(currentUserId: string) {
           .delete()
           .eq('birthday_date', isoDate)
           .eq('person_key', personKey)
-          .eq('user_id', currentUserId)
+          .eq('user_id', id)
       : await supabase
           .from('birthday_reactions')
           .insert({
             birthday_date: isoDate,
             person_key: personKey,
-            user_id: currentUserId,
+            user_id: id,
           })
     if (error) {
       console.error('[birthday-reactions] toggle failed:', error.message)

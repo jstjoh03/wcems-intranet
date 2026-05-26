@@ -118,30 +118,44 @@ function subscribeRealtime() {
   return channel
 }
 
-export function usePhotoReactions(currentUserId: string) {
+export function usePhotoReactions() {
+  const auth = useAuthStore()
   void load()
+
+  /* Read the current user's id live. Previously took as arg captured
+     at component setup; auth.appUser racing with mount caused inserts
+     to fail RLS with the 'anonymous' fallback string. */
+  function currentId(): string | null {
+    return auth.appUser?.id ?? null
+  }
 
   function getCount(photoId: string): number {
     return state.value[photoId]?.length ?? 0
   }
 
   function hasReacted(photoId: string): boolean {
-    return state.value[photoId]?.includes(currentUserId) ?? false
+    const id = currentId()
+    if (!id) return false
+    return state.value[photoId]?.includes(id) ?? false
   }
 
   async function toggle(photoId: string) {
+    const id = currentId()
+    if (!id) {
+      console.warn('[photo-reactions] toggle ignored — not signed in')
+      return
+    }
     const before = state.value
     const next = { ...state.value }
     const list = next[photoId] ? [...next[photoId]] : []
-    const i = list.indexOf(currentUserId)
+    const i = list.indexOf(id)
     const wasReacted = i >= 0
     if (wasReacted) list.splice(i, 1)
-    else list.push(currentUserId)
+    else list.push(id)
     if (list.length === 0) delete next[photoId]
     else next[photoId] = list
     state.value = next
 
-    const auth = useAuthStore()
     if (auth.usingDevStub) {
       persistToLocalStorage()
       return
@@ -152,10 +166,10 @@ export function usePhotoReactions(currentUserId: string) {
           .from('photo_reactions')
           .delete()
           .eq('photo_id', photoId)
-          .eq('user_id', currentUserId)
+          .eq('user_id', id)
       : await supabase
           .from('photo_reactions')
-          .insert({ photo_id: photoId, user_id: currentUserId })
+          .insert({ photo_id: photoId, user_id: id })
     if (error) {
       console.error('[photo-reactions] toggle failed:', error.message)
       state.value = before

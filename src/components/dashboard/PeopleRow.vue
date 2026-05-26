@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { Cake, Star, Award, Heart, Users, MessageCircle, Edit2 } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
@@ -21,9 +21,8 @@ const { current: spotlight } = useSpotlight()
 
 const spotlightEditOpen = ref(false)
 
-const currentUserId = computed(() => auth.appUser?.id ?? 'anonymous')
-const reactions = useBirthdayReactions(currentUserId.value)
-const comments = useBirthdayComments(currentUserId.value)
+const reactions = useBirthdayReactions()
+const comments = useBirthdayComments()
 
 const activeBirthday = ref<{
   name: string

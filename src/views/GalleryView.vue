@@ -11,9 +11,8 @@ import PhotoDetailModal from '@/components/dashboard/PhotoDetailModal.vue'
 
 const auth = useAuthStore()
 const { photos, remove } = useGallery()
-const currentUserId = computed(() => auth.appUser?.id ?? 'anonymous')
-const reactions = usePhotoReactions(currentUserId.value)
-const comments = usePhotoComments(currentUserId.value)
+const reactions = usePhotoReactions()
+const comments = usePhotoComments()
 
 const uploadOpen = ref(false)
 const activePhoto = ref<GalleryPhoto | null>(null)
