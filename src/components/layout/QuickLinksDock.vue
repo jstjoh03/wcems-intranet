@@ -20,8 +20,7 @@ import { useUserLinkPreferences } from '@/composables/useUserLinkPreferences'
  */
 const auth = useAuthStore()
 const { links } = useQuickLinks()
-const userId = computed(() => auth.appUser?.id ?? 'anonymous')
-const { getPref, togglePin } = useUserLinkPreferences(userId.value)
+const { getPref, togglePin } = useUserLinkPreferences()
 
 const open = ref(false)
 const search = ref('')

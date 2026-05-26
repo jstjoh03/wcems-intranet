@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { UserLinkPref } from '@/types'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
@@ -12,14 +12,20 @@ import { useAuthStore } from '@/stores/auth'
  * across reloads.
  *
  * The composable is a singleton — there's only one current user per
- * session, so we share one ref across all callers and load once.
+ * session, so we share one ref across all callers and load once per
+ * user id. The current user id is read live from the Pinia auth store
+ * inside the composable (NOT taken as an argument from callers); the
+ * previous shape captured a snapshot at component setup which raced
+ * with `auth.appUser` async load and silently broke pinning for any
+ * user whose component mounted before the appUser fetch resolved.
  */
 
 const STORAGE_KEY_PREFIX = 'wcems:user-link-prefs:'
 
 const prefs = ref<Map<string, UserLinkPref>>(new Map())
 const ready = ref(false)
-let loadStarted = false
+/** Tracks which user we've loaded for, so user-switching reloads. */
+let loadedForUserId: string | null = null
 
 function loadFromLocalStorage(userId: string) {
   if (typeof localStorage === 'undefined') return
@@ -43,9 +49,10 @@ function persistToLocalStorage(userId: string) {
   }
 }
 
-async function load(userId: string) {
-  if (loadStarted) return
-  loadStarted = true
+async function loadFor(userId: string) {
+  if (loadedForUserId === userId) return
+  loadedForUserId = userId
+  ready.value = false
 
   const auth = useAuthStore()
 
@@ -73,21 +80,43 @@ async function load(userId: string) {
   }
 
   prefs.value = new Map(
-    (data ?? []).map((r: { link_id: string; pinned: boolean; hidden: boolean; custom_sort: number | null }) => [
-      r.link_id,
-      {
-        linkId: r.link_id,
-        pinned: r.pinned,
-        hidden: r.hidden,
-        customSort: r.custom_sort,
-      },
-    ]),
+    (data ?? []).map(
+      (r: { link_id: string; pinned: boolean; hidden: boolean; custom_sort: number | null }) => [
+        r.link_id,
+        {
+          linkId: r.link_id,
+          pinned: r.pinned,
+          hidden: r.hidden,
+          customSort: r.custom_sort,
+        },
+      ],
+    ),
   )
   ready.value = true
 }
 
-export function useUserLinkPreferences(userId: string) {
-  void load(userId)
+let watcherInstalled = false
+
+export function useUserLinkPreferences() {
+  const auth = useAuthStore()
+
+  /* Install a single module-level watcher that kicks off (or re-runs)
+     the load whenever auth.appUser?.id becomes available. Re-entrant
+     useUserLinkPreferences() calls share it. */
+  if (!watcherInstalled) {
+    watcherInstalled = true
+    watch(
+      () => auth.appUser?.id ?? null,
+      (id) => {
+        if (id) void loadFor(id)
+      },
+      { immediate: true },
+    )
+  }
+
+  function currentId(): string | null {
+    return auth.appUser?.id ?? null
+  }
 
   function getPref(linkId: string): UserLinkPref {
     return (
@@ -101,13 +130,17 @@ export function useUserLinkPreferences(userId: string) {
   }
 
   async function setPref(linkId: string, patch: Partial<UserLinkPref>) {
+    const userId = currentId()
+    if (!userId) {
+      console.warn('[user-link-prefs] setPref ignored — not signed in')
+      return
+    }
     const before = prefs.value
     const merged: UserLinkPref = { ...getPref(linkId), ...patch, linkId }
     const next = new Map(prefs.value)
     next.set(linkId, merged)
     prefs.value = next
 
-    const auth = useAuthStore()
     if (auth.usingDevStub) {
       persistToLocalStorage(userId)
       return
@@ -146,10 +179,11 @@ export function useUserLinkPreferences(userId: string) {
   }
 
   async function reset() {
+    const userId = currentId()
+    if (!userId) return
     const before = prefs.value
     prefs.value = new Map()
 
-    const auth = useAuthStore()
     if (auth.usingDevStub) {
       if (typeof localStorage !== 'undefined') {
         localStorage.removeItem(STORAGE_KEY_PREFIX + userId)
