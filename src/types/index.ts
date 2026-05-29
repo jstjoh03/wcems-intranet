@@ -34,6 +34,9 @@ export interface AppUser {
    *  the dashboard hero strip. Up to 4 entries; empty falls back to
    *  role-based defaults. */
   featuredQuickLinkIds: string[]
+  /** True once the user taps "Don't show again" on the first-run
+   *  complete-your-profile prompt. Persists across devices. */
+  profilePromptDismissed: boolean
 }
 
 /* ── Stations ──────────────────────────────────────────────────────── */

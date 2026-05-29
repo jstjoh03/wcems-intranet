@@ -40,6 +40,7 @@ const DEV_STUB_USER: AppUser = {
   inDirectory: true,
   photoUrl: null,
   featuredQuickLinkIds: [],
+  profilePromptDismissed: false,
 }
 
 /**
@@ -95,6 +96,7 @@ function deriveAppUserFromSession(supaUser: User): AppUser {
     inDirectory: true,
     photoUrl: null,
     featuredQuickLinkIds: [],
+    profilePromptDismissed: false,
   }
 }
 
@@ -117,6 +119,7 @@ interface AppUserRow {
   photo_url: string | null
   active: boolean
   featured_quick_link_ids: string[] | null
+  profile_prompt_dismissed: boolean | null
 }
 
 function rowToAppUser(row: AppUserRow): AppUser {
@@ -141,6 +144,7 @@ function rowToAppUser(row: AppUserRow): AppUser {
     inDirectory: row.in_directory ?? true,
     photoUrl: row.photo_url,
     featuredQuickLinkIds: row.featured_quick_link_ids ?? [],
+    profilePromptDismissed: row.profile_prompt_dismissed ?? false,
   }
 }
 
@@ -153,7 +157,7 @@ async function fetchAppUserRow(authUserId: string): Promise<AppUserRow | null> {
   const { data, error } = await supabase
     .from('app_users')
     .select(
-      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, photo_url, active, featured_quick_link_ids',
+      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, photo_url, active, featured_quick_link_ids, profile_prompt_dismissed',
     )
     .eq('auth_user_id', authUserId)
     .maybeSingle()
@@ -326,6 +330,21 @@ export const useAuthStore = defineStore('auth', () => {
     await refresh()
   }
 
+  /** Permanently dismiss the first-run "complete your profile" prompt
+   *  ("Don't show again"). Dev-stub mutates in-memory; real session
+   *  calls the dismiss_profile_prompt RPC and re-fetches. */
+  async function dismissProfilePrompt() {
+    if (usingDevStub.value) {
+      if (appUser.value) {
+        appUser.value = { ...appUser.value, profilePromptDismissed: true }
+      }
+      return
+    }
+    const { error } = await supabase.rpc('dismiss_profile_prompt')
+    if (error) throw error
+    await refresh()
+  }
+
   /** Re-fetch the current user's app_users row. Useful after self-edits
    *  (profile updates) or after an admin promotes someone. No-op when no
    *  real session is active. */
@@ -403,6 +422,7 @@ export const useAuthStore = defineStore('auth', () => {
     updateOwnShowBirthday,
     updateOwnPhotoUrl,
     updateOwnFeaturedQuickLinks,
+    dismissProfilePrompt,
     signInWithMicrosoft,
     signOut,
     setRole,
