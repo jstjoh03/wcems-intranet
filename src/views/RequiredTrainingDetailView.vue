@@ -269,9 +269,11 @@ async function onSubmit() {
       return
     }
     /* Auto-download certificate. */
+    const freshCompletion = completionFor(trainingId.value)
     const doc = await generateRequiredTrainingCertificate({
       employeeName: auth.appUser.fullName || auth.appUser.email,
       moduleTitle: training.value.title,
+      verificationId: freshCompletion?.id.slice(0, 8) ?? undefined,
     })
     const safeName = (auth.appUser.fullName || 'employee').replace(/\s+/g, '_')
     const safeTitle = training.value.title.replace(/\s+/g, '_')
@@ -287,12 +289,12 @@ async function onSubmit() {
 /* Re-download a certificate for an already-completed module. */
 async function downloadCertificate() {
   if (!training.value || !auth.appUser) return
+  const completion = completionFor(trainingId.value)
   const doc = await generateRequiredTrainingCertificate({
     employeeName: auth.appUser.fullName || auth.appUser.email,
     moduleTitle: training.value.title,
-    completionDate: completionFor(trainingId.value)?.completedAt
-      ? new Date(completionFor(trainingId.value)!.completedAt!)
-      : undefined,
+    completionDate: completion?.completedAt ? new Date(completion.completedAt) : undefined,
+    verificationId: completion?.id.slice(0, 8) ?? undefined,
   })
   const safeName = (auth.appUser.fullName || 'employee').replace(/\s+/g, '_')
   const safeTitle = training.value.title.replace(/\s+/g, '_')
