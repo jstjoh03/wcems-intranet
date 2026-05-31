@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ShieldCheck, Check, CircleDashed, UserCheck, Download } from 'lucide-vue-next'
+import { ArrowLeft, ShieldCheck, Check, CircleDashed, UserCheck, Download, FileText } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRequiredTraining } from '@/composables/useRequiredTraining'
 import { supabase } from '@/lib/supabase'
 import type { Role, ShiftLetter, RequiredTrainingCompletion } from '@/types'
+import {
+  generateRequiredTrainingSignOffPdf,
+  type SignOffEntry,
+} from '@/lib/requiredTrainingSignOffPdf'
 
 interface Employee {
   id: string
@@ -225,6 +229,56 @@ function downloadRosterCsv() {
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }
+
+/* PDF export including each user's actual signature image inline.
+   This is the audit / archival format — single file, looks official,
+   matches what the old Wix dashboard produced. */
+const pdfBusy = ref(false)
+async function downloadRosterPdf() {
+  if (!training.value || pdfBusy.value) return
+  pdfBusy.value = true
+  try {
+    const t = training.value
+    const audienceParts: string[] = []
+    if (t.audienceRoles.length === 0 && t.audienceShifts.length === 0) {
+      audienceParts.push('All active employees')
+    } else {
+      if (t.audienceRoles.length) audienceParts.push(`Roles: ${t.audienceRoles.join(', ')}`)
+      if (t.audienceShifts.length)
+        audienceParts.push(`Shifts: ${t.audienceShifts.map((s) => s).join(', ')}`)
+    }
+
+    const entries: SignOffEntry[] = rows.value.map((r) => {
+      const c = r.completion
+      const markedByName = c?.markedBy
+        ? roster.value.find((u) => u.id === c.markedBy)?.fullName ?? null
+        : null
+      return {
+        fullName: r.user.fullName,
+        role: r.user.role,
+        shift: r.user.shift,
+        station: r.user.station,
+        status: r.status,
+        signedMethod: c?.signedMethod ?? null,
+        completedAt: c?.completedAt ?? null,
+        signatureDataUrl: c?.signatureData ?? null,
+        markedByName,
+        markedNote: c?.markedNote ?? null,
+      }
+    })
+
+    const doc = await generateRequiredTrainingSignOffPdf({
+      moduleTitle: t.title,
+      moduleDescription: t.description,
+      audienceLabel: audienceParts.join(' · '),
+      entries,
+    })
+    const safeTitle = t.title.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+    doc.save(`WCEMS_Sign-Off_${safeTitle}_${new Date().toISOString().slice(0, 10)}.pdf`)
+  } finally {
+    pdfBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -251,10 +305,21 @@ function downloadRosterCsv() {
             <ShieldCheck :size="22" :stroke-width="1.85" style="color: var(--color-brand-600)" />
             <h1 class="display rtr__title">{{ training.title }}</h1>
           </div>
-          <button type="button" class="rtr__export" @click="downloadRosterCsv">
-            <Download :size="14" :stroke-width="2" />
-            Export sign-off sheet (CSV)
-          </button>
+          <div class="rtr__export-group">
+            <button
+              type="button"
+              class="rtr__export rtr__export--primary"
+              :disabled="pdfBusy"
+              @click="downloadRosterPdf"
+            >
+              <FileText :size="14" :stroke-width="2" />
+              {{ pdfBusy ? 'Generating…' : 'Export sign-off sheet (PDF)' }}
+            </button>
+            <button type="button" class="rtr__export" @click="downloadRosterCsv">
+              <Download :size="14" :stroke-width="2" />
+              CSV
+            </button>
+          </div>
         </div>
         <p v-if="training.description" class="rtr__desc">{{ training.description }}</p>
       </header>
@@ -434,6 +499,12 @@ function downloadRosterCsv() {
   font-size: 13.5px;
   color: var(--color-ink-soft);
 }
+.rtr__export-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .rtr__export {
   display: inline-flex;
   align-items: center;
@@ -446,11 +517,25 @@ function downloadRosterCsv() {
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color 120ms var(--ease-out);
+  transition: border-color 120ms var(--ease-out), background 120ms var(--ease-out);
 }
-.rtr__export:hover {
+.rtr__export:hover:not(:disabled) {
   border-color: var(--color-brand-600);
   color: var(--color-brand-600);
+}
+.rtr__export--primary {
+  background: var(--color-brand-600);
+  color: white;
+  border-color: var(--color-brand-600);
+}
+.rtr__export--primary:hover:not(:disabled) {
+  background: var(--color-brand-700);
+  border-color: var(--color-brand-700);
+  color: white;
+}
+.rtr__export:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .rtr-summary {
