@@ -6,7 +6,7 @@ import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
-import type { AppUser, Role, ShiftLetter } from '@/types'
+import type { AppUser, EmploymentType, Role, ShiftLetter } from '@/types'
 import { formatShortDate } from '@/utils/date'
 import { useTodaysBirthdays } from '@/composables/useTodaysBirthdays'
 
@@ -26,6 +26,7 @@ interface AppUserRow {
   fuel_number: string | null
   date_of_birth: string | null
   show_birthday: boolean
+  employment_type: EmploymentType | null
   active: boolean
 }
 
@@ -42,6 +43,7 @@ interface DraftUser {
   fuelNumber: string
   dateOfBirth: string
   showBirthday: boolean
+  employmentType: EmploymentType
   active: boolean
 }
 
@@ -72,6 +74,7 @@ function rowToUser(r: AppUserRow): AppUser & { active: boolean } {
     fuelNumber: r.fuel_number,
     dateOfBirth: r.date_of_birth,
     showBirthday: r.show_birthday,
+    employmentType: (r.employment_type ?? 'full_time') as EmploymentType,
     active: r.active,
   } as AppUser & { active: boolean }
 }
@@ -104,7 +107,7 @@ async function load() {
   const { data, error: fetchErr } = await supabase
     .from('app_users')
     .select(
-      'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, active',
+      'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, employment_type, active',
     )
     .order('full_name')
   if (fetchErr) {
@@ -116,9 +119,14 @@ async function load() {
   ready.value = true
 }
 
+const employmentFilter = ref<'all' | EmploymentType>('all')
+
 const filtered = computed(() => {
   let list = users.value as Array<AppUser & { active: boolean }>
   if (!showInactive.value) list = list.filter((u) => u.active)
+  if (employmentFilter.value !== 'all') {
+    list = list.filter((u) => u.employmentType === employmentFilter.value)
+  }
   const q = search.value.trim().toLowerCase()
   if (q) {
     list = list.filter(
@@ -129,6 +137,13 @@ const filtered = computed(() => {
   }
   return list
 })
+
+const ftCount = computed(
+  () => users.value.filter((u) => (u as AppUser & { active: boolean }).active && u.employmentType === 'full_time').length,
+)
+const ptCount = computed(
+  () => users.value.filter((u) => (u as AppUser & { active: boolean }).active && u.employmentType === 'part_time').length,
+)
 
 function userToDraft(u: AppUser & { active: boolean }): DraftUser {
   return {
@@ -144,6 +159,7 @@ function userToDraft(u: AppUser & { active: boolean }): DraftUser {
     fuelNumber: u.fuelNumber ?? '',
     dateOfBirth: u.dateOfBirth ?? '',
     showBirthday: u.showBirthday,
+    employmentType: u.employmentType,
     active: u.active,
   }
 }
@@ -181,6 +197,7 @@ async function save() {
               fuelNumber: draft.value!.fuelNumber || null,
               dateOfBirth: draft.value!.dateOfBirth || null,
               showBirthday: draft.value!.showBirthday,
+              employmentType: draft.value!.employmentType,
               active: draft.value!.active,
               initials: computeInitials(draft.value!.fullName || draft.value!.email),
             } as AppUser & { active: boolean })
@@ -201,6 +218,7 @@ async function save() {
       fuel_number: draft.value.fuelNumber || null,
       date_of_birth: draft.value.dateOfBirth || null,
       show_birthday: draft.value.showBirthday,
+      employment_type: draft.value.employmentType,
       active: draft.value.active,
     }
     const { data, error: updErr } = await supabase
@@ -208,7 +226,7 @@ async function save() {
       .update(patch)
       .eq('id', draft.value.id)
       .select(
-        'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, active',
+        'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, employment_type, active',
       )
       .single()
     if (updErr) {
@@ -295,6 +313,32 @@ onMounted(load)
           placeholder="Search by name or email"
           aria-label="Search employees"
         />
+        <div class="me-view__chips" role="tablist" aria-label="Filter by employment type">
+          <button
+            type="button"
+            class="me-view__chip"
+            :class="{ 'me-view__chip--on': employmentFilter === 'all' }"
+            @click="employmentFilter = 'all'"
+          >
+            All <span class="me-view__chip-count">{{ ftCount + ptCount }}</span>
+          </button>
+          <button
+            type="button"
+            class="me-view__chip"
+            :class="{ 'me-view__chip--on': employmentFilter === 'full_time' }"
+            @click="employmentFilter = 'full_time'"
+          >
+            Full-Time <span class="me-view__chip-count">{{ ftCount }}</span>
+          </button>
+          <button
+            type="button"
+            class="me-view__chip"
+            :class="{ 'me-view__chip--on': employmentFilter === 'part_time' }"
+            @click="employmentFilter = 'part_time'"
+          >
+            Part-Time <span class="me-view__chip-count">{{ ptCount }}</span>
+          </button>
+        </div>
         <label class="me-view__toggle">
           <input v-model="showInactive" type="checkbox" />
           <span>Show inactive</span>
@@ -377,6 +421,13 @@ onMounted(load)
             />
           </label>
           <label class="me-form__field">
+            <span class="me-form__label">Employment</span>
+            <select v-model="draft.employmentType" class="me-form__input">
+              <option value="full_time">Full-Time</option>
+              <option value="part_time">Part-Time</option>
+            </select>
+          </label>
+          <label class="me-form__field">
             <span class="me-form__label">Fuel #</span>
             <input v-model="draft.fuelNumber" type="text" class="me-form__input" />
           </label>
@@ -428,6 +479,9 @@ onMounted(load)
               <AppChip :variant="u.role === 'admin' ? 'accent' : 'brand'" class="me-row__role">
                 {{ u.role }}
               </AppChip>
+              <span class="me-row__et" :class="`me-row__et--${u.employmentType}`">
+                {{ u.employmentType === 'full_time' ? 'FT' : 'PT' }}
+              </span>
               <span v-if="!u.active" class="me-row__inactive-chip">Inactive</span>
             </div>
             <div class="me-row__email">{{ u.email }}</div>
@@ -529,6 +583,61 @@ onMounted(load)
   font-size: 12px;
   color: var(--color-ink-soft);
   cursor: pointer;
+}
+.me-view__chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.me-view__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out), background 120ms var(--ease-out);
+}
+.me-view__chip:hover {
+  border-color: var(--color-muted-soft);
+}
+.me-view__chip--on {
+  background: var(--color-brand-600);
+  color: white;
+  border-color: var(--color-brand-600);
+}
+.me-view__chip-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.me-row__et {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface-soft);
+  color: var(--color-ink-soft);
+}
+.me-row__et--full_time {
+  color: oklch(0.4 0.13 250);
+  border-color: oklch(0.85 0.07 250);
+  background: oklch(0.97 0.04 250);
+}
+.me-row__et--part_time {
+  color: oklch(0.45 0.13 75);
+  border-color: oklch(0.85 0.09 75);
+  background: oklch(0.97 0.05 80);
 }
 
 .me-view__empty {

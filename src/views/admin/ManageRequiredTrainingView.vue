@@ -15,7 +15,7 @@ import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRequiredTraining } from '@/composables/useRequiredTraining'
-import type { RequiredTraining, Role, ShiftLetter, VideoSource } from '@/types'
+import type { EmploymentType, RequiredTraining, Role, ShiftLetter, VideoSource } from '@/types'
 
 const auth = useAuthStore()
 const { ready, trainings, completionsFor, saveTraining, deleteTraining } = useRequiredTraining()
@@ -30,6 +30,7 @@ interface Draft {
   requiredBy: string
   audienceRoles: Role[]
   audienceShifts: ShiftLetter[]
+  audienceEmploymentTypes: EmploymentType[]
   attestationStatement: string
   showInLibrary: boolean
   active: boolean
@@ -49,6 +50,7 @@ function blankDraft(): Draft {
     requiredBy: '',
     audienceRoles: [],
     audienceShifts: [],
+    audienceEmploymentTypes: [],
     attestationStatement: DEFAULT_ATTESTATION,
     showInLibrary: true,
     active: true,
@@ -75,6 +77,7 @@ function startEdit(t: RequiredTraining) {
     requiredBy: t.requiredBy ?? '',
     audienceRoles: [...t.audienceRoles],
     audienceShifts: [...t.audienceShifts],
+    audienceEmploymentTypes: [...t.audienceEmploymentTypes],
     attestationStatement: t.attestationStatement || DEFAULT_ATTESTATION,
     showInLibrary: t.showInLibrary,
     active: t.active,
@@ -111,6 +114,7 @@ async function onSave() {
     requiredBy: d.requiredBy ? d.requiredBy : null,
     audienceRoles: d.audienceRoles,
     audienceShifts: d.audienceShifts,
+    audienceEmploymentTypes: d.audienceEmploymentTypes,
     attestationStatement: d.attestationStatement.trim(),
     showInLibrary: d.showInLibrary,
     active: d.active,
@@ -139,6 +143,10 @@ function completionStats(trainingId: string): { signed: number; started: number 
 
 const ROLE_OPTIONS: Role[] = ['crew', 'supervisor', 'admin']
 const SHIFT_OPTIONS: ShiftLetter[] = ['A', 'B', 'C']
+const EMPLOYMENT_OPTIONS: Array<{ value: EmploymentType; label: string }> = [
+  { value: 'full_time', label: 'Full-Time' },
+  { value: 'part_time', label: 'Part-Time' },
+]
 
 function toggleRole(r: Role) {
   if (!draft.value) return
@@ -151,6 +159,16 @@ function toggleShift(s: ShiftLetter) {
   const i = draft.value.audienceShifts.indexOf(s)
   if (i === -1) draft.value.audienceShifts = [...draft.value.audienceShifts, s]
   else draft.value.audienceShifts = draft.value.audienceShifts.filter((x) => x !== s)
+}
+function toggleEmploymentType(e: EmploymentType) {
+  if (!draft.value) return
+  const i = draft.value.audienceEmploymentTypes.indexOf(e)
+  if (i === -1)
+    draft.value.audienceEmploymentTypes = [...draft.value.audienceEmploymentTypes, e]
+  else
+    draft.value.audienceEmploymentTypes = draft.value.audienceEmploymentTypes.filter(
+      (x) => x !== e,
+    )
 }
 
 const orderedTrainings = computed(() =>
@@ -280,10 +298,22 @@ const orderedTrainings = computed(() =>
               >
                 Shift {{ s }}
               </button>
+              <span class="mrt-form__chip-sep">·</span>
+              <button
+                v-for="e in EMPLOYMENT_OPTIONS"
+                :key="e.value"
+                type="button"
+                class="mrt-form__chip"
+                :class="{ 'mrt-form__chip--on': draft.audienceEmploymentTypes.includes(e.value) }"
+                @click="toggleEmploymentType(e.value)"
+              >
+                {{ e.label }}
+              </button>
             </div>
             <span class="mrt-form__hint">
-              No selection = all signed-in employees. Roles AND shifts narrow it (e.g. crew on A
-              shift only).
+              No selection on an axis = "any" for that axis. Selections across axes are AND-ed
+              (e.g. <em>crew</em> + <em>Shift A</em> + <em>Full-Time</em> = A-shift FT crew only).
+              Use the per-person overrides on the roster page for individual exceptions.
             </span>
           </div>
 
@@ -364,8 +394,12 @@ const orderedTrainings = computed(() =>
                 </span>
               </span>
               <span v-if="t.requiredBy">· due {{ new Date(t.requiredBy).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric', timeZone:'UTC' }) }}</span>
-              <span v-if="t.audienceRoles.length || t.audienceShifts.length">
-                · {{ [...t.audienceRoles, ...t.audienceShifts.map(s => 'Shift ' + s)].join(', ') }}
+              <span v-if="t.audienceRoles.length || t.audienceShifts.length || t.audienceEmploymentTypes.length">
+                · {{ [
+                  ...t.audienceRoles,
+                  ...t.audienceShifts.map((s) => 'Shift ' + s),
+                  ...t.audienceEmploymentTypes.map((e) => e === 'full_time' ? 'Full-Time' : 'Part-Time'),
+                ].join(', ') }}
               </span>
             </div>
           </div>

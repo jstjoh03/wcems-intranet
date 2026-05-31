@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ShieldCheck, Check, CircleDashed, UserCheck, Download, FileText } from 'lucide-vue-next'
+import { ArrowLeft, ShieldCheck, Check, CircleDashed, UserCheck, Download, FileText, X } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRequiredTraining } from '@/composables/useRequiredTraining'
 import { supabase } from '@/lib/supabase'
-import type { Role, ShiftLetter, RequiredTrainingCompletion } from '@/types'
+import type { EmploymentType, Role, ShiftLetter, RequiredTrainingCompletion } from '@/types'
 import {
   generateRequiredTrainingSignOffPdf,
   type SignOffEntry,
@@ -19,12 +19,22 @@ interface Employee {
   role: Role
   shift: ShiftLetter | null
   station: string | null
+  employmentType: EmploymentType
 }
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, trainingById, completionsFor, adminMarkComplete } = useRequiredTraining()
+const {
+  ready,
+  trainingById,
+  completionsFor,
+  adminMarkComplete,
+  matchesAudienceFilterForUser,
+  isRequiredForUser,
+  getOverride,
+  setOverride,
+} = useRequiredTraining()
 
 const trainingId = computed(() => String(route.params.id))
 const training = computed(() => trainingById(trainingId.value))
@@ -39,7 +49,7 @@ async function loadRoster() {
   rosterError.value = null
   const { data, error } = await supabase
     .from('app_users')
-    .select('id, full_name, role, shift, station, active')
+    .select('id, full_name, role, shift, station, employment_type, active')
     .eq('active', true)
     .order('full_name')
   if (error) {
@@ -51,6 +61,7 @@ async function loadRoster() {
       role: r.role,
       shift: r.shift,
       station: r.station,
+      employmentType: (r.employment_type ?? 'full_time') as EmploymentType,
     }))
   }
   rosterLoading.value = false
@@ -60,26 +71,38 @@ onMounted(() => {
   if (auth.isAdmin) void loadRoster()
 })
 
-/* Filter the roster to people who are in this module's audience. */
+/* Audience = role × shift × employment_type filter, then per-user
+   overrides applied on top. The roster view shows EVERYONE in the
+   effective audience (after overrides) PLUS anyone outside the
+   audience who has a force-include override, so admins can see and
+   manage those exceptions. The default-vs-override state per row is
+   surfaced by the per-row toggle column. */
 const audience = computed<Employee[]>(() => {
   const t = training.value
   if (!t) return []
-  return roster.value.filter((e) => {
-    const roleOk = t.audienceRoles.length === 0 || t.audienceRoles.includes(e.role)
-    const shiftOk =
-      t.audienceShifts.length === 0 ||
-      (e.shift !== null && t.audienceShifts.includes(e.shift))
-    return roleOk && shiftOk
-  })
+  return roster.value.filter((e) =>
+    isRequiredForUser(t, {
+      id: e.id,
+      role: e.role,
+      shift: e.shift,
+      employmentType: e.employmentType,
+    }),
+  )
 })
 
 interface RosterRow {
   user: Employee
   completion: RequiredTrainingCompletion | null
   status: 'signed' | 'in_progress' | 'not_started'
+  /** "auto" = follows the audience filter (no override on file);
+   *  "force_include" / "force_exclude" = an override row exists.
+   *  Drives the 3-state Required? toggle. */
+  requirement: 'auto_in' | 'force_include' | 'force_exclude'
 }
 
 const rows = computed<RosterRow[]>(() => {
+  const t = training.value
+  if (!t) return []
   const completions = completionsFor(trainingId.value)
   return audience.value.map((u) => {
     const c = completions.find((x) => x.userId === u.id) ?? null
@@ -88,9 +111,63 @@ const rows = computed<RosterRow[]>(() => {
         ? 'signed'
         : 'in_progress'
       : 'not_started'
-    return { user: u, completion: c, status }
+    const override = getOverride(trainingId.value, u.id)
+    const matchesFilter = matchesAudienceFilterForUser(t, {
+      role: u.role,
+      shift: u.shift,
+      employmentType: u.employmentType,
+    })
+    let requirement: RosterRow['requirement'] = 'auto_in'
+    if (override) {
+      requirement = override.included ? 'force_include' : 'force_exclude'
+    } else if (matchesFilter) {
+      requirement = 'auto_in'
+    }
+    return { user: u, completion: c, status, requirement }
   })
 })
+
+/* Also surface people who DON'T currently match (so admin can toggle
+   them ON via override). Shown in a separate "Outside audience"
+   section when the admin enables the broader view. */
+const outsideAudience = computed<Employee[]>(() => {
+  const t = training.value
+  if (!t) return []
+  const audienceIds = new Set(audience.value.map((e) => e.id))
+  return roster.value.filter((e) => !audienceIds.has(e.id))
+})
+
+const showOutside = ref(false)
+
+async function onToggleRequirement(row: RosterRow) {
+  /* Cycle: auto_in → force_exclude → force_include → auto_in */
+  const t = training.value
+  if (!t) return
+  const matchesFilter = matchesAudienceFilterForUser(t, {
+    role: row.user.role,
+    shift: row.user.shift,
+    employmentType: row.user.employmentType,
+  })
+  let next: boolean | null = null
+  if (row.requirement === 'auto_in') {
+    /* Currently auto-in (matches filter, no override) → set force-exclude. */
+    next = false
+  } else if (row.requirement === 'force_exclude') {
+    /* Force-exclude → flip to force-include (admin explicitly wants
+       them in). */
+    next = true
+  } else {
+    /* Force-include → clear override; if they still match the filter
+       they go back to auto_in, otherwise they fall out of audience. */
+    next = matchesFilter ? null : null
+  }
+  await setOverride(trainingId.value, row.user.id, next)
+}
+
+/* "Include this person" button for the Outside-audience list. */
+async function addToAudience(employee: Employee) {
+  await setOverride(trainingId.value, employee.id, true)
+}
 
 const summary = computed(() => {
   const signed = rows.value.filter((r) => r.status === 'signed').length
@@ -240,12 +317,22 @@ async function downloadRosterPdf() {
   try {
     const t = training.value
     const audienceParts: string[] = []
-    if (t.audienceRoles.length === 0 && t.audienceShifts.length === 0) {
+    if (
+      t.audienceRoles.length === 0 &&
+      t.audienceShifts.length === 0 &&
+      t.audienceEmploymentTypes.length === 0
+    ) {
       audienceParts.push('All active employees')
     } else {
       if (t.audienceRoles.length) audienceParts.push(`Roles: ${t.audienceRoles.join(', ')}`)
       if (t.audienceShifts.length)
-        audienceParts.push(`Shifts: ${t.audienceShifts.map((s) => s).join(', ')}`)
+        audienceParts.push(`Shifts: ${t.audienceShifts.join(', ')}`)
+      if (t.audienceEmploymentTypes.length)
+        audienceParts.push(
+          `Employment: ${t.audienceEmploymentTypes
+            .map((e) => (e === 'full_time' ? 'Full-Time' : 'Part-Time'))
+            .join(', ')}`,
+        )
     }
 
     const entries: SignOffEntry[] = rows.value.map((r) => {
@@ -400,6 +487,8 @@ async function downloadRosterPdf() {
             <th>Name</th>
             <th class="rtr-table__small">Shift</th>
             <th class="rtr-table__small">Role</th>
+            <th class="rtr-table__small">FT/PT</th>
+            <th class="rtr-table__req">Required?</th>
             <th>Status</th>
             <th class="rtr-table__actions"></th>
           </tr>
@@ -409,6 +498,40 @@ async function downloadRosterPdf() {
             <td>{{ r.user.fullName }}</td>
             <td class="rtr-table__small">{{ r.user.shift ?? '—' }}</td>
             <td class="rtr-table__small">{{ r.user.role }}</td>
+            <td class="rtr-table__small">
+              {{ r.user.employmentType === 'full_time' ? 'FT' : 'PT' }}
+            </td>
+            <td class="rtr-table__req">
+              <button
+                type="button"
+                class="rtr-req"
+                :class="`rtr-req--${r.requirement}`"
+                :title="
+                  r.requirement === 'force_include'
+                    ? 'Force-included — click to remove from this training'
+                    : r.requirement === 'force_exclude'
+                      ? 'Excluded — click to put them back in'
+                      : 'Matches the audience filter — click to exclude this person'
+                "
+                @click="onToggleRequirement(r)"
+              >
+                <Check
+                  v-if="r.requirement === 'auto_in' || r.requirement === 'force_include'"
+                  :size="13"
+                  :stroke-width="2.5"
+                />
+                <X v-else :size="13" :stroke-width="2.5" />
+                <span class="rtr-req__label">
+                  {{
+                    r.requirement === 'force_include'
+                      ? 'Yes · override'
+                      : r.requirement === 'force_exclude'
+                        ? 'No · override'
+                        : 'Yes'
+                  }}
+                </span>
+              </button>
+            </td>
             <td>
               <span v-if="r.status === 'signed'" class="rtr-chip rtr-chip--signed">
                 <Check :size="11" :stroke-width="2.5" />
@@ -425,7 +548,7 @@ async function downloadRosterPdf() {
             </td>
             <td class="rtr-table__actions">
               <button
-                v-if="r.status !== 'signed'"
+                v-if="r.status !== 'signed' && r.requirement !== 'force_exclude'"
                 type="button"
                 class="rtr-mark"
                 :disabled="markingId === r.user.id"
@@ -438,6 +561,35 @@ async function downloadRosterPdf() {
           </tr>
         </tbody>
       </table>
+
+      <!-- Outside-audience section — opt-in expand so admin can add
+           individuals who fall outside role/shift/employment filter. -->
+      <div v-if="outsideAudience.length" class="rtr-outside">
+        <button
+          type="button"
+          class="rtr-outside__toggle"
+          @click="showOutside = !showOutside"
+        >
+          {{ showOutside ? 'Hide' : `Show` }} other employees ({{ outsideAudience.length }})
+          <span class="rtr-outside__hint">— outside the audience filter; click + to require for a specific person</span>
+        </button>
+        <ul v-if="showOutside" class="rtr-outside__list">
+          <li
+            v-for="emp in outsideAudience"
+            :key="emp.id"
+            class="rtr-outside__item"
+          >
+            <span class="rtr-outside__name">{{ emp.fullName }}</span>
+            <span class="rtr-outside__meta">
+              {{ emp.role }} · {{ emp.shift ?? '—' }} ·
+              {{ emp.employmentType === 'full_time' ? 'FT' : 'PT' }}
+            </span>
+            <button type="button" class="rtr-outside__add" @click="addToAudience(emp)">
+              + Require for this person
+            </button>
+          </li>
+        </ul>
+      </div>
     </template>
   </div>
 </template>
@@ -729,5 +881,109 @@ async function downloadRosterPdf() {
 .rtr-mark:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.rtr-table__req {
+  width: 130px;
+}
+.rtr-req {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out);
+}
+.rtr-req:hover {
+  border-color: var(--color-muted-soft);
+}
+.rtr-req--auto_in {
+  color: var(--color-success-500);
+  background: #f0f8f3;
+  border-color: #c6e4d2;
+}
+.rtr-req--force_include {
+  color: var(--color-brand-700);
+  background: var(--color-brand-50);
+  border-color: var(--color-brand-100);
+}
+.rtr-req--force_exclude {
+  color: var(--color-danger-500);
+  background: oklch(0.97 0.04 20);
+  border-color: oklch(0.85 0.07 20);
+}
+
+/* Outside-audience disclosure */
+.rtr-outside {
+  margin-top: 18px;
+  border-top: 1px dashed var(--color-line);
+  padding-top: 14px;
+}
+.rtr-outside__toggle {
+  background: transparent;
+  border: none;
+  color: var(--color-brand-600);
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 0;
+}
+.rtr-outside__toggle:hover {
+  text-decoration: underline;
+}
+.rtr-outside__hint {
+  color: var(--color-muted);
+  font-weight: 400;
+  margin-left: 6px;
+}
+.rtr-outside__list {
+  list-style: none;
+  margin: 10px 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rtr-outside__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface-soft);
+  font-size: 13px;
+}
+.rtr-outside__name {
+  flex: 1;
+  font-weight: 600;
+}
+.rtr-outside__meta {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.rtr-outside__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-brand-600);
+  border: 1px solid var(--color-line);
+  cursor: pointer;
+}
+.rtr-outside__add:hover {
+  border-color: var(--color-brand-600);
+  background: var(--color-brand-50);
 }
 </style>

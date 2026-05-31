@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User } from '@supabase/supabase-js'
-import type { AppUser, Role, ShiftLetter } from '@/types'
+import type { AppUser, EmploymentType, Role, ShiftLetter } from '@/types'
 import { supabase } from '@/lib/supabase'
 
 /**
@@ -31,6 +31,7 @@ const DEV_STUB_USER: AppUser = {
   initials: 'JS',
   role: 'admin',
   title: 'Paramedic',
+  employmentType: 'full_time',
   shift: 'C',
   station: 'S202',
   fuelNumber: '30988',
@@ -87,6 +88,7 @@ function deriveAppUserFromSession(supaUser: User): AppUser {
     initials: computeInitials(fullName || email),
     role,
     title: null,
+    employmentType: 'full_time',
     shift: null,
     station: null,
     fuelNumber: null,
@@ -109,6 +111,7 @@ interface AppUserRow {
   full_name: string
   role: Role
   title: string | null
+  employment_type: EmploymentType | null
   shift: ShiftLetter | null
   station: string | null
   fuel_number: string | null
@@ -132,6 +135,7 @@ function rowToAppUser(row: AppUserRow): AppUser {
     initials: computeInitials(row.full_name || row.email),
     role: row.role,
     title: row.title,
+    employmentType: row.employment_type ?? 'full_time',
     shift: row.shift,
     station: row.station,
     fuelNumber: row.fuel_number,
@@ -157,7 +161,7 @@ async function fetchAppUserRow(authUserId: string): Promise<AppUserRow | null> {
   const { data, error } = await supabase
     .from('app_users')
     .select(
-      'id, auth_user_id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, photo_url, active, featured_quick_link_ids, profile_prompt_dismissed',
+      'id, auth_user_id, email, first_name, last_name, full_name, role, title, employment_type, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, photo_url, active, featured_quick_link_ids, profile_prompt_dismissed',
     )
     .eq('auth_user_id', authUserId)
     .maybeSingle()

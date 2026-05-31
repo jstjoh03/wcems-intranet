@@ -4,6 +4,7 @@
 
 export type Role = 'crew' | 'supervisor' | 'admin'
 export type ShiftLetter = 'A' | 'B' | 'C'
+export type EmploymentType = 'full_time' | 'part_time'
 
 export interface AppUser {
   id: string
@@ -15,6 +16,10 @@ export interface AppUser {
   role: Role
   /** Free-text credential / job title (Paramedic, EMT, Operations Director, …). */
   title: string | null
+  /** Employment classification — admin-only; separates FT from PT
+   *  staff for audience filtering on Required Training, roster
+   *  grouping, and Paycom imports. */
+  employmentType: EmploymentType
   shift: ShiftLetter | null
   station: string | null
   fuelNumber: string | null
@@ -56,6 +61,7 @@ export interface RequiredTraining {
   /** Empty array = open to everyone. Non-empty narrows. */
   audienceRoles: Role[]
   audienceShifts: ShiftLetter[]
+  audienceEmploymentTypes: EmploymentType[]
   attestationStatement: string
   /** Reserved for v1.1 quiz UI. */
   quiz: unknown | null
@@ -67,6 +73,15 @@ export interface RequiredTraining {
   createdBy: string | null
   createdAt: string
   updatedAt: string
+}
+
+export interface RequiredTrainingOverride {
+  id: string
+  requiredTrainingId: string
+  userId: string
+  /** true = force-include even if not in audience filter;
+   *  false = force-exclude even if in audience filter. */
+  included: boolean
 }
 
 export interface RequiredTrainingCompletion {

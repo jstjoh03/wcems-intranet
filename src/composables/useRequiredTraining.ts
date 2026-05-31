@@ -2,8 +2,10 @@ import { ref, computed } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import type {
+  EmploymentType,
   RequiredTraining,
   RequiredTrainingCompletion,
+  RequiredTrainingOverride,
   Role,
   ShiftLetter,
   VideoSource,
@@ -27,6 +29,7 @@ interface TrainingRow {
   required_by: string | null
   audience_roles: string[] | null
   audience_shifts: string[] | null
+  audience_employment_types: string[] | null
   attestation_statement: string
   quiz: unknown | null
   show_in_library: boolean
@@ -64,6 +67,7 @@ function trainingFromRow(r: TrainingRow): RequiredTraining {
     requiredBy: r.required_by,
     audienceRoles: (r.audience_roles ?? []) as Role[],
     audienceShifts: (r.audience_shifts ?? []) as ShiftLetter[],
+    audienceEmploymentTypes: (r.audience_employment_types ?? []) as EmploymentType[],
     attestationStatement: r.attestation_statement,
     quiz: r.quiz,
     showInLibrary: r.show_in_library,
@@ -93,16 +97,35 @@ function completionFromRow(r: CompletionRow): RequiredTrainingCompletion {
   }
 }
 
+interface OverrideRow {
+  id: string
+  required_training_id: string
+  user_id: string
+  included: boolean
+}
+
+function overrideFromRow(r: OverrideRow): RequiredTrainingOverride {
+  return {
+    id: r.id,
+    requiredTrainingId: r.required_training_id,
+    userId: r.user_id,
+    included: r.included,
+  }
+}
+
 const trainings = ref<RequiredTraining[]>([])
 const completions = ref<RequiredTrainingCompletion[]>([])
+const overrides = ref<RequiredTrainingOverride[]>([])
 const ready = ref(false)
 let loadStarted = false
 
 const TRAINING_COLUMNS =
-  'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, attestation_statement, quiz, show_in_library, active, created_by, created_at, updated_at'
+  'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, audience_employment_types, attestation_statement, quiz, show_in_library, active, created_by, created_at, updated_at'
 
 const COMPLETION_COLUMNS =
   'id, required_training_id, user_id, started_at, completed_at, signature_data, signed_method, marked_by, marked_note, quiz_score, attestation_signed, certificate_storage_path, created_at, updated_at'
+
+const OVERRIDE_COLUMNS = 'id, required_training_id, user_id, included'
 
 async function load() {
   if (loadStarted) return
@@ -114,7 +137,7 @@ async function load() {
     return
   }
 
-  const [tRes, cRes] = await Promise.all([
+  const [tRes, cRes, oRes] = await Promise.all([
     supabase
       .from('required_trainings')
       .select(TRAINING_COLUMNS)
@@ -122,11 +145,16 @@ async function load() {
     supabase
       .from('required_training_completions')
       .select(COMPLETION_COLUMNS),
+    supabase
+      .from('required_training_user_overrides')
+      .select(OVERRIDE_COLUMNS),
   ])
   if (tRes.error) console.error('[required-training] modules load:', tRes.error.message)
   if (cRes.error) console.error('[required-training] completions load:', cRes.error.message)
+  if (oRes.error) console.error('[required-training] overrides load:', oRes.error.message)
   trainings.value = (tRes.data ?? []).map((r) => trainingFromRow(r as TrainingRow))
   completions.value = (cRes.data ?? []).map((r) => completionFromRow(r as CompletionRow))
+  overrides.value = (oRes.data ?? []).map((r) => overrideFromRow(r as OverrideRow))
   ready.value = true
 }
 
@@ -140,6 +168,7 @@ export interface SaveTrainingInput {
   requiredBy: string | null
   audienceRoles: Role[]
   audienceShifts: ShiftLetter[]
+  audienceEmploymentTypes: EmploymentType[]
   attestationStatement: string
   showInLibrary: boolean
   active: boolean
@@ -149,6 +178,61 @@ export function useRequiredTraining() {
   const auth = useAuthStore()
   void load()
 
+  /* Does THIS user fall within the audience filter for THIS module,
+     before per-user overrides? Three-axis intersect (role × shift ×
+     employment_type); empty array on any axis = match-all. */
+  function matchesAudienceFilter(t: RequiredTraining, userId: string): boolean {
+    // We need the user's role / shift / employmentType. For the signed-in
+    // user we read from the auth store; for other users (admin roster
+    // view) the caller passes their app_users row separately via
+    // matchesAudienceFilterForUser below.
+    if (auth.appUser?.id !== userId) {
+      // Caller should use matchesAudienceFilterForUser with explicit
+      // user fields; this path only handles the signed-in user.
+      return false
+    }
+    const u = auth.appUser
+    const roleOk = t.audienceRoles.length === 0 || t.audienceRoles.includes(u.role)
+    const shiftOk =
+      t.audienceShifts.length === 0 ||
+      (u.shift !== null && t.audienceShifts.includes(u.shift))
+    const etOk =
+      t.audienceEmploymentTypes.length === 0 ||
+      t.audienceEmploymentTypes.includes(u.employmentType)
+    return roleOk && shiftOk && etOk
+  }
+
+  /* Audience filter check for an arbitrary user (used by the admin
+     roster view, where we have the user's role/shift/etc. from a
+     separate app_users query rather than auth.appUser). */
+  function matchesAudienceFilterForUser(
+    t: RequiredTraining,
+    user: { role: Role; shift: ShiftLetter | null; employmentType: EmploymentType },
+  ): boolean {
+    const roleOk = t.audienceRoles.length === 0 || t.audienceRoles.includes(user.role)
+    const shiftOk =
+      t.audienceShifts.length === 0 ||
+      (user.shift !== null && t.audienceShifts.includes(user.shift))
+    const etOk =
+      t.audienceEmploymentTypes.length === 0 ||
+      t.audienceEmploymentTypes.includes(user.employmentType)
+    return roleOk && shiftOk && etOk
+  }
+
+  /* Final required-for-this-user check: audience filter result, with
+     a per-user override row overriding it (true = force-include,
+     false = force-exclude). */
+  function isRequiredForUser(
+    t: RequiredTraining,
+    user: { id: string; role: Role; shift: ShiftLetter | null; employmentType: EmploymentType },
+  ): boolean {
+    const override = overrides.value.find(
+      (o) => o.requiredTrainingId === t.id && o.userId === user.id,
+    )
+    if (override) return override.included
+    return matchesAudienceFilterForUser(t, user)
+  }
+
   /* Filter to the modules this user is in the audience for. Admins see
      every active module on the crew list too, but the banner / status
      pills are still computed against their own completion record. */
@@ -157,13 +241,63 @@ export function useRequiredTraining() {
     if (!u) return []
     return trainings.value.filter((t) => {
       if (!t.active) return false
-      const roleOk = t.audienceRoles.length === 0 || t.audienceRoles.includes(u.role)
-      const shiftOk =
-        t.audienceShifts.length === 0 ||
-        (u.shift !== null && t.audienceShifts.includes(u.shift))
-      return roleOk && shiftOk
+      const userShape = {
+        id: u.id,
+        role: u.role,
+        shift: u.shift,
+        employmentType: u.employmentType,
+      }
+      return isRequiredForUser(t, userShape)
     })
   })
+
+  /* Per-training override for a specific user. Null = no override on
+     file (audience filter decides). */
+  function getOverride(trainingId: string, userId: string): RequiredTrainingOverride | null {
+    return (
+      overrides.value.find(
+        (o) => o.requiredTrainingId === trainingId && o.userId === userId,
+      ) ?? null
+    )
+  }
+
+  /* Set / clear a per-user override. Pass `included` to set it,
+     pass `null` to clear (revert to audience filter). */
+  async function setOverride(
+    trainingId: string,
+    userId: string,
+    included: boolean | null,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (auth.usingDevStub) return { ok: true }
+    const existing = getOverride(trainingId, userId)
+    if (included === null) {
+      if (!existing) return { ok: true }
+      const { error } = await supabase
+        .from('required_training_user_overrides')
+        .delete()
+        .eq('id', existing.id)
+      if (error) return { ok: false, error: error.message }
+      overrides.value = overrides.value.filter((o) => o.id !== existing.id)
+      return { ok: true }
+    }
+    const { data, error } = await supabase
+      .from('required_training_user_overrides')
+      .upsert(
+        {
+          required_training_id: trainingId,
+          user_id: userId,
+          included,
+          created_by: auth.appUser?.id ?? null,
+        },
+        { onConflict: 'required_training_id,user_id' },
+      )
+      .select(OVERRIDE_COLUMNS)
+      .single()
+    if (error) return { ok: false, error: error.message }
+    const row = overrideFromRow(data as OverrideRow)
+    overrides.value = [...overrides.value.filter((o) => o.id !== row.id), row]
+    return { ok: true }
+  }
 
   function completionFor(trainingId: string, userId?: string): RequiredTrainingCompletion | null {
     const uid = userId ?? auth.appUser?.id
@@ -308,6 +442,7 @@ export function useRequiredTraining() {
       required_by: input.requiredBy,
       audience_roles: input.audienceRoles,
       audience_shifts: input.audienceShifts,
+      audience_employment_types: input.audienceEmploymentTypes,
       attestation_statement: input.attestationStatement,
       show_in_library: input.showInLibrary,
       active: input.active,
@@ -355,6 +490,7 @@ export function useRequiredTraining() {
     ready,
     trainings,
     completions,
+    overrides,
     activeForUser,
     outstandingCount,
     completionFor,
@@ -366,5 +502,10 @@ export function useRequiredTraining() {
     adminMarkComplete,
     saveTraining,
     deleteTraining,
+    matchesAudienceFilter,
+    matchesAudienceFilterForUser,
+    isRequiredForUser,
+    getOverride,
+    setOverride,
   }
 }

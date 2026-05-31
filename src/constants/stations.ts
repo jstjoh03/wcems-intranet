@@ -20,7 +20,11 @@ export const STATION_OPTIONS = [
   'Medic 271',
   'Medic 281',
   'EMS Admin',
-  'Part-Time',
 ] as const
+
+/* 'Part-Time' used to live here as a stand-in for PT employees with
+   no fixed station. As of migration 0048 PT is its own column
+   (app_users.employment_type), so station means *physical location*
+   only and PT folks have station=NULL + employment_type='part_time'. */
 
 export type StationOption = (typeof STATION_OPTIONS)[number]
