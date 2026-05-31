@@ -29,6 +29,7 @@ interface TrainingRow {
   audience_shifts: string[] | null
   attestation_statement: string
   quiz: unknown | null
+  show_in_library: boolean
   active: boolean
   created_by: string | null
   created_at: string
@@ -65,6 +66,7 @@ function trainingFromRow(r: TrainingRow): RequiredTraining {
     audienceShifts: (r.audience_shifts ?? []) as ShiftLetter[],
     attestationStatement: r.attestation_statement,
     quiz: r.quiz,
+    showInLibrary: r.show_in_library,
     active: r.active,
     createdBy: r.created_by,
     createdAt: r.created_at,
@@ -97,7 +99,7 @@ const ready = ref(false)
 let loadStarted = false
 
 const TRAINING_COLUMNS =
-  'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, attestation_statement, quiz, active, created_by, created_at, updated_at'
+  'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, attestation_statement, quiz, show_in_library, active, created_by, created_at, updated_at'
 
 const COMPLETION_COLUMNS =
   'id, required_training_id, user_id, started_at, completed_at, signature_data, signed_method, marked_by, marked_note, quiz_score, attestation_signed, certificate_storage_path, created_at, updated_at'
@@ -139,6 +141,7 @@ export interface SaveTrainingInput {
   audienceRoles: Role[]
   audienceShifts: ShiftLetter[]
   attestationStatement: string
+  showInLibrary: boolean
   active: boolean
 }
 
@@ -306,6 +309,7 @@ export function useRequiredTraining() {
       audience_roles: input.audienceRoles,
       audience_shifts: input.audienceShifts,
       attestation_statement: input.attestationStatement,
+      show_in_library: input.showInLibrary,
       active: input.active,
     }
     if (input.id) {

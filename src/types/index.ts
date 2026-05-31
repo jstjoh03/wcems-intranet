@@ -59,6 +59,10 @@ export interface RequiredTraining {
   attestationStatement: string
   /** Reserved for v1.1 quiz UI. */
   quiz: unknown | null
+  /** When true, this required-training entry is also surfaced in the
+   *  /training/recordings library (with a "Required" tag and a click
+   *  that routes to the compliance flow). */
+  showInLibrary: boolean
   active: boolean
   createdBy: string | null
   createdAt: string

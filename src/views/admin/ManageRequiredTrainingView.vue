@@ -31,6 +31,7 @@ interface Draft {
   audienceRoles: Role[]
   audienceShifts: ShiftLetter[]
   attestationStatement: string
+  showInLibrary: boolean
   active: boolean
 }
 
@@ -49,6 +50,7 @@ function blankDraft(): Draft {
     audienceRoles: [],
     audienceShifts: [],
     attestationStatement: DEFAULT_ATTESTATION,
+    showInLibrary: true,
     active: true,
   }
 }
@@ -74,6 +76,7 @@ function startEdit(t: RequiredTraining) {
     audienceRoles: [...t.audienceRoles],
     audienceShifts: [...t.audienceShifts],
     attestationStatement: t.attestationStatement || DEFAULT_ATTESTATION,
+    showInLibrary: t.showInLibrary,
     active: t.active,
   }
   error.value = null
@@ -103,6 +106,7 @@ async function onSave() {
     audienceRoles: d.audienceRoles,
     audienceShifts: d.audienceShifts,
     attestationStatement: d.attestationStatement.trim(),
+    showInLibrary: d.showInLibrary,
     active: d.active,
   })
   saving.value = false
@@ -287,6 +291,20 @@ const orderedTrainings = computed(() =>
                 class="mrt-form__input"
               />
               <span class="mrt-form__hint">One bullet per line. Defaults provided.</span>
+            </label>
+          </div>
+
+          <div class="mrt-form__row">
+            <label class="mrt-form__check">
+              <input v-model="draft.showInLibrary" type="checkbox" />
+              <span>
+                <strong>Also show in Training Library</strong>
+                <span class="mrt-form__check-sub">
+                  Cross-lists this module in <code>/training/recordings</code> with a Required
+                  tag, so crew can find it via the same browse / search UI as other reference
+                  videos. The video stays accessible even after everyone's completed it.
+                </span>
+              </span>
             </label>
           </div>
 

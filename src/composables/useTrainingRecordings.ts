@@ -53,6 +53,11 @@ export interface TrainingRecording {
   visibleToRoles: string[]
   viewCount: number
   active: boolean
+  /** When set, this entry is actually a cross-listed required-training
+   *  module. The library renders a Required badge for it and the card
+   *  click routes to /training/required/<id> (compliance flow) rather
+   *  than opening the player modal. Undefined for normal recordings. */
+  requiredTrainingId?: string | null
 }
 
 interface TrainingRecordingRow {

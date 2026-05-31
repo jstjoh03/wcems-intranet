@@ -10,11 +10,77 @@ import {
   type TrainingRecording,
   type SortKey,
 } from '@/composables/useTrainingRecordings'
-import { resolveThumbnail } from '@/lib/videoSource'
+import { useRequiredTraining } from '@/composables/useRequiredTraining'
+import { resolveThumbnail, youTubeThumbnailUrl } from '@/lib/videoSource'
+import { useAuthStore } from '@/stores/auth'
+import type { RequiredTraining } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
-const { visibleRecordings, categories, loading, ready } = useTrainingRecordings()
+const auth = useAuthStore()
+const { visibleRecordings, categories: baseCategories, loading, ready } = useTrainingRecordings()
+const { trainings: requiredTrainings } = useRequiredTraining()
+
+/* Cross-listed required-training entries — converted on the fly into
+   the same TrainingRecording shape so the existing search / filter /
+   sort logic doesn't need to know they're a different table. The
+   click handler branches on `requiredTrainingId` and routes them to
+   the compliance flow instead of opening the player modal. */
+function audienceMatches(t: RequiredTraining): boolean {
+  const u = auth.appUser
+  if (!u) return false
+  const roleOk = t.audienceRoles.length === 0 || t.audienceRoles.includes(u.role)
+  const shiftOk =
+    t.audienceShifts.length === 0 ||
+    (u.shift !== null && t.audienceShifts.includes(u.shift))
+  return roleOk && shiftOk
+}
+
+function requiredAsRecording(t: RequiredTraining): TrainingRecording {
+  let thumb: string | null = null
+  if (t.videoSource === 'youtube') thumb = youTubeThumbnailUrl(t.videoRef)
+  return {
+    id: `req-${t.id}`,
+    title: t.title,
+    description: t.description || null,
+    instructor: null,
+    recordedAt: t.createdAt.slice(0, 10),
+    createdAt: t.createdAt,
+    durationMinutes: t.durationSeconds ? Math.round(t.durationSeconds / 60) : null,
+    category: 'Annual / Required',
+    tags: ['Required'],
+    thumbnailUrl: thumb,
+    videoSource: t.videoSource,
+    videoRef: t.videoRef,
+    visibleToRoles:
+      t.audienceRoles.length > 0 ? t.audienceRoles : ['crew', 'supervisor', 'admin'],
+    viewCount: 0,
+    active: true,
+    requiredTrainingId: t.id,
+  }
+}
+
+const requiredLibraryItems = computed<TrainingRecording[]>(() =>
+  requiredTrainings.value
+    .filter((t) => t.active && t.showInLibrary && audienceMatches(t))
+    .map(requiredAsRecording),
+)
+
+const libraryItems = computed<TrainingRecording[]>(() => [
+  ...visibleRecordings.value,
+  ...requiredLibraryItems.value,
+])
+
+/* Merge the chip-bar categories so the 'Annual / Required' chip
+   appears as soon as any cross-listed required-training row exists,
+   even when there are no recordings in that category yet. */
+const categories = computed<string[]>(() => {
+  const set = new Set<string>(baseCategories.value)
+  for (const r of requiredLibraryItems.value) {
+    if (r.category) set.add(r.category)
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b))
+})
 
 const search = ref('')
 const activeCategory = ref<string | null>(null)
@@ -39,12 +105,20 @@ const RECENTLY_ADDED_LIMIT = 6
    the loaded list because the user might land before recordings have
    finished loading. */
 watch(
-  [() => route.query.play, visibleRecordings],
+  [() => route.query.play, libraryItems],
   ([id, list]) => {
     if (!id || typeof id !== 'string') return
     if (activeRecording.value?.id === id) return
     const hit = list.find((r) => r.id === id)
-    if (hit) activeRecording.value = hit
+    if (!hit) return
+    /* Required-training entries deep-link to the compliance flow
+       rather than opening the player modal here. */
+    if (hit.requiredTrainingId) {
+      void router.replace({ query: {} })
+      void router.push(`/training/required/${hit.requiredTrainingId}`)
+      return
+    }
+    activeRecording.value = hit
   },
   { immediate: true },
 )
@@ -57,7 +131,7 @@ watch(
      the visible slice, not the global library. */
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  const base = visibleRecordings.value.filter((r) => {
+  const base = libraryItems.value.filter((r) => {
     if (activeCategory.value && r.category !== activeCategory.value) return false
     if (!q) return true
     return (
@@ -79,8 +153,8 @@ const filtered = computed(() => {
    is "what's new", so user sort would defeat it. */
 const recentlyAdded = computed(() => {
   if (activeCategory.value || search.value.trim()) return null
-  if (visibleRecordings.value.length === 0) return null
-  return [...visibleRecordings.value]
+  if (libraryItems.value.length === 0) return null
+  return [...libraryItems.value]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, RECENTLY_ADDED_LIMIT)
 })
@@ -120,6 +194,13 @@ function formatRecordedAt(iso: string | null) {
 }
 
 function open(r: TrainingRecording) {
+  /* Cross-listed required-training entries: route to the compliance
+     flow (anti-skip video + signature + certificate) instead of the
+     plain player modal so the watch is recorded against the user. */
+  if (r.requiredTrainingId) {
+    void router.push(`/training/required/${r.requiredTrainingId}`)
+    return
+  }
   activeRecording.value = r
   /* Reflect the open recording in the URL so it's shareable / refreshable
      without losing context. router.replace (not push) so the back button
