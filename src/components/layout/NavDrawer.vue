@@ -21,6 +21,7 @@ import {
   Film,
   Contact,
   ChevronDown,
+  ShieldCheck,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -85,6 +86,7 @@ const pages: NavItem[] = [
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
   { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },
   { label: 'Training Library', to: '/training/recordings', icon: Film },
+  { label: 'Required Training', to: '/training/required', icon: ShieldCheck },
   { label: 'Employee Directory', to: '/directory', icon: Contact },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
   { label: 'Admin Staff', to: '/admin-staff', icon: Building2 },
@@ -97,6 +99,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Call Volume', to: '/admin/call-volume', icon: BarChart3 },
   { label: 'Manage Classes', to: '/admin/training', icon: GraduationCap },
   { label: 'Manage Training Library', to: '/admin/training-recordings', icon: Film },
+  { label: 'Manage Required Training', to: '/admin/required-training', icon: ShieldCheck },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
   { label: 'Usage', to: '/admin/usage', icon: Activity },
 ]

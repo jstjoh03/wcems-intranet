@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Hero from '@/components/dashboard/Hero.vue'
 import PushNotificationsBanner from '@/components/dashboard/PushNotificationsBanner.vue'
+import RequiredTrainingBanner from '@/components/dashboard/RequiredTrainingBanner.vue'
 import FeaturedQuickLinks from '@/components/dashboard/FeaturedQuickLinks.vue'
 import StationDirectory from '@/components/dashboard/StationDirectory.vue'
 import NewsletterCard from '@/components/dashboard/NewsletterCard.vue'
@@ -15,6 +16,7 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
   <div class="dash">
     <Hero />
 
+    <RequiredTrainingBanner />
     <PushNotificationsBanner />
 
     <!-- Horizontal gold accent rule — same gradient treatment as the

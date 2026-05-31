@@ -39,6 +39,49 @@ export interface AppUser {
   profilePromptDismissed: boolean
 }
 
+/* ── Required Training ─────────────────────────────────────────────
+   Compliance training: admin posts a video that crew MUST watch and
+   attest to. */
+
+export type VideoSource = 'youtube' | 'cloudflare_stream' | 'direct' | 'sharepoint'
+
+export interface RequiredTraining {
+  id: string
+  title: string
+  description: string
+  videoSource: VideoSource
+  videoRef: string
+  durationSeconds: number | null
+  requiredBy: string | null
+  /** Empty array = open to everyone. Non-empty narrows. */
+  audienceRoles: Role[]
+  audienceShifts: ShiftLetter[]
+  attestationStatement: string
+  /** Reserved for v1.1 quiz UI. */
+  quiz: unknown | null
+  active: boolean
+  createdBy: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface RequiredTrainingCompletion {
+  id: string
+  requiredTrainingId: string
+  userId: string
+  startedAt: string
+  completedAt: string | null
+  signatureData: string | null
+  signedMethod: 'self' | 'admin_marked'
+  markedBy: string | null
+  markedNote: string | null
+  quizScore: number | null
+  attestationSigned: boolean
+  certificateStoragePath: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 /* ── Stations ──────────────────────────────────────────────────────── */
 export interface Station {
   id: string

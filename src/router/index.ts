@@ -97,6 +97,28 @@ const routes: RouteRecordRaw[] = [
     meta: { adminOnly: true },
   },
   {
+    path: '/training/required',
+    name: 'required-training',
+    component: () => import('@/views/RequiredTrainingView.vue'),
+  },
+  {
+    path: '/training/required/:id',
+    name: 'required-training-detail',
+    component: () => import('@/views/RequiredTrainingDetailView.vue'),
+  },
+  {
+    path: '/admin/required-training',
+    name: 'admin-required-training',
+    component: () => import('@/views/admin/ManageRequiredTrainingView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
+    path: '/admin/required-training/:id',
+    name: 'admin-required-training-roster',
+    component: () => import('@/views/admin/RequiredTrainingRosterView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),
