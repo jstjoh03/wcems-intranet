@@ -185,9 +185,20 @@ export const useAuthStore = defineStore('auth', () => {
       /* First pass — hydrate from the JWT claims so the UI has something
          to render while the app_users SELECT round-trips. The second pass
          overwrites with the canonical row (role, shift, station, fuel-#)
-         once it lands. */
-      appUser.value = deriveAppUserFromSession(supaUser)
+         once it lands.
+
+         IMPORTANT: only run the JWT-derive when we have NOTHING to show
+         yet. supabase.auth.onAuthStateChange fires on every token
+         refresh / tab-focus event too, and re-running the JWT-derive on
+         those events momentarily reverts station/shift/photo/
+         profile_prompt_dismissed to their fallback values, which
+         flashes user-visible UI (the complete-your-profile modal in
+         particular). Token refreshes for the same signed-in user just
+         silently re-fetch the row and slot the result in. */
       usingDevStub.value = false
+      if (appUser.value === null) {
+        appUser.value = deriveAppUserFromSession(supaUser)
+      }
       const row = await fetchAppUserRow(supaUser.id)
       if (row) appUser.value = rowToAppUser(row)
     } else if (import.meta.env.DEV) {
