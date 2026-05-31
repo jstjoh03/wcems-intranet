@@ -182,13 +182,34 @@ type FilterKey = 'all' | 'outstanding' | 'signed'
 const filter = ref<FilterKey>('outstanding')
 const shiftFilter = ref<'all' | ShiftLetter>('all')
 const visibleRows = computed(() => {
-  return rows.value.filter((r) => {
-    if (filter.value === 'outstanding' && r.status === 'signed') return false
-    if (filter.value === 'signed' && r.status !== 'signed') return false
-    if (shiftFilter.value !== 'all' && r.user.shift !== shiftFilter.value) return false
-    return true
-  })
+  return rows.value
+    .filter((r) => {
+      if (filter.value === 'outstanding' && r.status === 'signed') return false
+      if (filter.value === 'signed' && r.status !== 'signed') return false
+      if (shiftFilter.value !== 'all' && r.user.shift !== shiftFilter.value) return false
+      return true
+    })
+    /* FT first, then PT, alphabetical within each group. The template
+       splits this into two grouped <tbody> sections, but pre-sorting
+       here keeps any consumers that flatten back into a single list
+       (e.g. exports) in the right order too. */
+    .sort((a, b) => {
+      if (a.user.employmentType !== b.user.employmentType) {
+        return a.user.employmentType === 'full_time' ? -1 : 1
+      }
+      return a.user.fullName.localeCompare(b.user.fullName)
+    })
 })
+
+/* Split the visible rows into FT / PT groups for the two-section
+   table render. Both arrays are already in alphabetical order via
+   visibleRows above. */
+const ftRows = computed(() =>
+  visibleRows.value.filter((r) => r.user.employmentType === 'full_time'),
+)
+const ptRows = computed(() =>
+  visibleRows.value.filter((r) => r.user.employmentType === 'part_time'),
+)
 
 const markingId = ref<string | null>(null)
 const markNote = ref('')
@@ -493,14 +514,93 @@ async function downloadRosterPdf() {
             <th class="rtr-table__actions"></th>
           </tr>
         </thead>
-        <tbody>
-          <tr v-for="r in visibleRows" :key="r.user.id" :class="`rtr-row--${r.status}`">
+
+        <!-- Full-Time section -->
+        <tbody v-if="ftRows.length">
+          <tr class="rtr-table__group">
+            <td colspan="7">
+              <span class="rtr-table__group-label">Full-Time</span>
+              <span class="rtr-table__group-count">{{ ftRows.length }}</span>
+            </td>
+          </tr>
+          <tr v-for="r in ftRows" :key="r.user.id" :class="`rtr-row--${r.status}`">
             <td>{{ r.user.fullName }}</td>
             <td class="rtr-table__small">{{ r.user.shift ?? '—' }}</td>
             <td class="rtr-table__small">{{ r.user.role }}</td>
-            <td class="rtr-table__small">
-              {{ r.user.employmentType === 'full_time' ? 'FT' : 'PT' }}
+            <td class="rtr-table__small">FT</td>
+            <td class="rtr-table__req">
+              <button
+                type="button"
+                class="rtr-req"
+                :class="`rtr-req--${r.requirement}`"
+                :title="
+                  r.requirement === 'force_include'
+                    ? 'Force-included — click to remove from this training'
+                    : r.requirement === 'force_exclude'
+                      ? 'Excluded — click to put them back in'
+                      : 'Matches the audience filter — click to exclude this person'
+                "
+                @click="onToggleRequirement(r)"
+              >
+                <Check
+                  v-if="r.requirement === 'auto_in' || r.requirement === 'force_include'"
+                  :size="13"
+                  :stroke-width="2.5"
+                />
+                <X v-else :size="13" :stroke-width="2.5" />
+                <span class="rtr-req__label">
+                  {{
+                    r.requirement === 'force_include'
+                      ? 'Yes · override'
+                      : r.requirement === 'force_exclude'
+                        ? 'No · override'
+                        : 'Yes'
+                  }}
+                </span>
+              </button>
             </td>
+            <td>
+              <span v-if="r.status === 'signed'" class="rtr-chip rtr-chip--signed">
+                <Check :size="11" :stroke-width="2.5" />
+                {{ r.completion?.signedMethod === 'admin_marked' ? 'Admin-marked' : 'Signed' }}
+                <span class="rtr-chip__date">· {{ formatDate(r.completion?.completedAt ?? null) }}</span>
+              </span>
+              <span v-else-if="r.status === 'in_progress'" class="rtr-chip rtr-chip--in_progress">
+                <CircleDashed :size="11" :stroke-width="2" />
+                In progress
+              </span>
+              <span v-else class="rtr-chip rtr-chip--not_started">
+                Not started
+              </span>
+            </td>
+            <td class="rtr-table__actions">
+              <button
+                v-if="r.status !== 'signed' && r.requirement !== 'force_exclude'"
+                type="button"
+                class="rtr-mark"
+                :disabled="markingId === r.user.id"
+                @click="onMark(r)"
+              >
+                <UserCheck :size="12" :stroke-width="2" />
+                {{ markingId === r.user.id ? 'Marking…' : 'Mark complete' }}
+              </button>
+            </td>
+          </tr>
+        </tbody>
+
+        <!-- Part-Time section -->
+        <tbody v-if="ptRows.length">
+          <tr class="rtr-table__group rtr-table__group--pt">
+            <td colspan="7">
+              <span class="rtr-table__group-label">Part-Time</span>
+              <span class="rtr-table__group-count">{{ ptRows.length }}</span>
+            </td>
+          </tr>
+          <tr v-for="r in ptRows" :key="r.user.id" :class="`rtr-row--${r.status}`">
+            <td>{{ r.user.fullName }}</td>
+            <td class="rtr-table__small">{{ r.user.shift ?? '—' }}</td>
+            <td class="rtr-table__small">{{ r.user.role }}</td>
+            <td class="rtr-table__small">PT</td>
             <td class="rtr-table__req">
               <button
                 type="button"
@@ -827,6 +927,36 @@ async function downloadRosterPdf() {
   width: 1%;
   text-align: right;
 }
+
+/* FT / PT group section headers inside the table */
+.rtr-table__group td {
+  background: var(--color-surface-soft);
+  border-bottom: 1px solid var(--color-line);
+  padding: 8px 12px;
+}
+.rtr-table__group-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: oklch(0.4 0.13 250);
+}
+.rtr-table__group--pt .rtr-table__group-label {
+  color: oklch(0.45 0.13 75);
+}
+.rtr-table__group-count {
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--color-muted);
+  padding: 1px 7px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+}
+
 .rtr-row--signed {
   color: var(--color-muted);
 }
