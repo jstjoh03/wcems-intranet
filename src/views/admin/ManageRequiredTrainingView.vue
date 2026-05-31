@@ -92,9 +92,15 @@ async function onSave() {
   saving.value = true
   error.value = null
   const d = draft.value
-  const durationSeconds = d.durationMinutes.trim()
-    ? Math.max(0, Math.round(Number(d.durationMinutes) * 60))
-    : null
+  /* <input type="number"> v-model can hand us a number (not the string
+     we declared in the Draft interface) once the user actually types
+     into it, so coerce defensively before any string ops. */
+  const durationRaw = String(d.durationMinutes ?? '').trim()
+  const durationNum = durationRaw ? Number(durationRaw) : NaN
+  const durationSeconds =
+    Number.isFinite(durationNum) && durationNum > 0
+      ? Math.round(durationNum * 60)
+      : null
   const result = await saveTraining({
     id: d.id,
     title: d.title.trim(),
