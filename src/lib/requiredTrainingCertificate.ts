@@ -36,16 +36,23 @@ function makeCursiveSig(name: string, w = 280, h = 46): string {
   if (!ctx) return ''
   ctx.scale(2, 2)
   ctx.clearRect(0, 0, w, h)
-  ctx.textBaseline = 'middle'
+  /* Anchor at the alphabetic baseline near the BOTTOM of the canvas so
+     when the image is placed with its bottom edge on the signature
+     line, the strokes sit right on the line (descenders cross it
+     slightly, which is what real ink looks like). The middle-baseline
+     used to leave the cursive floating an inch above the line. */
+  ctx.textBaseline = 'alphabetic'
   ctx.fillStyle = `rgb(${NAVY.join(',')})`
   const fonts = 'Brush Script MT, Segoe Script, Comic Sans MS, cursive'
-  let sz = Math.round(h * 0.6)
+  let sz = Math.round(h * 0.78)
   ctx.font = `italic ${sz}px ${fonts}`
   while (ctx.measureText(name).width > w - 8 && sz > 10) {
     sz -= 1
     ctx.font = `italic ${sz}px ${fonts}`
   }
-  ctx.fillText(name, 4, h / 2 + 2)
+  /* y = h - 6 puts the baseline 6pt above the canvas bottom; descenders
+     have room within those 6pt without getting clipped. */
+  ctx.fillText(name, 4, h - 6)
   return c.toDataURL('image/png')
 }
 
@@ -191,7 +198,10 @@ export async function generateRequiredTrainingCertificate(
     const lx = startX + i * (colW + 10)
     const cx = lx + colW / 2
     const img = makeCursiveSig(s.name, colW, sigImgH)
-    if (img) doc.addImage(img, 'PNG', lx, sigLineY - sigImgH - 2, colW, sigImgH)
+    /* Bottom of the canvas now equals the baseline, so place the image
+       with its bottom on the signature line (with a 1pt overlap so
+       descenders cross the line naturally). */
+    if (img) doc.addImage(img, 'PNG', lx, sigLineY - sigImgH + 1, colW, sigImgH)
     doc.line(lx, sigLineY, lx + colW, sigLineY)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8.5)

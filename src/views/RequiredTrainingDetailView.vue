@@ -81,6 +81,9 @@ function onTimeUpdate() {
 
 function onSeeking() {
   if (!videoEl.value) return
+  /* Already-completed users can scrub freely — they've earned a
+     re-watch without the anti-skip leash. */
+  if (alreadyComplete.value) return
   if (videoEl.value.currentTime > maxWatched.value + 2) {
     videoEl.value.currentTime = maxWatched.value
   }
@@ -157,7 +160,8 @@ async function initYouTube(videoIdOrUrl: string) {
     const cur = ytPlayer.getCurrentTime()
     const dur = ytPlayer.getDuration()
     if (dur && !videoDuration.value) videoDuration.value = dur
-    if (cur > maxWatched.value + 2) {
+    /* Free scrubbing on re-watch — same rule as the MP4 path. */
+    if (!alreadyComplete.value && cur > maxWatched.value + 2) {
       ytPlayer.seekTo(maxWatched.value)
     } else if (cur > maxWatched.value) {
       maxWatched.value = cur
@@ -355,12 +359,17 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
         </div>
       </AppCard>
 
-      <!-- Video -->
-      <AppCard v-if="!alreadyComplete && !justSubmitted" class="rtd__video-card">
+      <!-- Video — always visible (except when just-submitted, where the
+           celebration card takes over). Already-complete users get free
+           scrubbing for re-watch; first-time users get anti-skip. -->
+      <AppCard v-if="!justSubmitted" class="rtd__video-card">
         <div class="rtd__video-label">
-          <Eyebrow>Training video</Eyebrow>
-          <span class="rtd__lock" :class="{ 'rtd__lock--unlocked': videoComplete }">
-            <template v-if="videoComplete">
+          <Eyebrow>{{ alreadyComplete ? 'Re-watch · training video' : 'Training video' }}</Eyebrow>
+          <span class="rtd__lock" :class="{ 'rtd__lock--unlocked': videoComplete || alreadyComplete }">
+            <template v-if="alreadyComplete">
+              <Check :size="12" :stroke-width="2.5" /> Completed
+            </template>
+            <template v-else-if="videoComplete">
               <Check :size="12" :stroke-width="2.5" /> Video complete
             </template>
             <template v-else>
@@ -391,25 +400,33 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
         </div>
 
         <div class="rtd__progress">
-          <div class="rtd__progress-row">
-            <span class="rtd__progress-label">Watch progress</span>
-            <span class="rtd__progress-pct">{{ pct }}%</span>
-          </div>
-          <div class="rtd__progress-track">
-            <div
-              class="rtd__progress-fill"
-              :class="{ 'rtd__progress-fill--done': videoComplete }"
-              :style="{ width: pct + '%' }"
-            />
-          </div>
-          <p class="rtd__progress-note">
-            <template v-if="isYoutube">
-              YouTube player &middot; If you scrub ahead, the player will snap back to your last watched point.
-            </template>
-            <template v-else>
-              Skipping ahead is disabled. The attestation form unlocks when you finish.
-            </template>
-          </p>
+          <template v-if="alreadyComplete">
+            <p class="rtd__progress-note rtd__progress-note--done">
+              <Check :size="12" :stroke-width="2.5" />
+              You've already completed and signed this training. Scrub freely.
+            </p>
+          </template>
+          <template v-else>
+            <div class="rtd__progress-row">
+              <span class="rtd__progress-label">Watch progress</span>
+              <span class="rtd__progress-pct">{{ pct }}%</span>
+            </div>
+            <div class="rtd__progress-track">
+              <div
+                class="rtd__progress-fill"
+                :class="{ 'rtd__progress-fill--done': videoComplete }"
+                :style="{ width: pct + '%' }"
+              />
+            </div>
+            <p class="rtd__progress-note">
+              <template v-if="isYoutube">
+                YouTube player &middot; If you scrub ahead, the player will snap back to your last watched point.
+              </template>
+              <template v-else>
+                Skipping ahead is disabled. The attestation form unlocks when you finish.
+              </template>
+            </p>
+          </template>
         </div>
       </AppCard>
 
@@ -637,6 +654,15 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
   margin-top: 6px;
   font-size: 11px;
   color: var(--color-muted);
+}
+.rtd__progress-note--done {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-success-500);
+  font-weight: 600;
 }
 
 /* Attestation card */
