@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ShieldCheck, Check, CircleDashed, UserCheck } from 'lucide-vue-next'
+import { ArrowLeft, ShieldCheck, Check, CircleDashed, UserCheck, Download } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -133,6 +133,98 @@ function formatDate(iso: string | null): string {
 function back() {
   router.push('/admin/required-training')
 }
+
+/* CSV export of the FULL roster (ignores active filter chips so you
+   always get the complete sign-off sheet). Field order matches what
+   payroll / Paycom / HR typically want when importing compliance. */
+function csvEscape(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return ''
+  const s = String(v)
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+function downloadRosterCsv() {
+  if (!training.value) return
+  const t = training.value
+  const generated = new Date()
+  const generatedStr = generated.toLocaleString('en-US')
+  const safeTitle = t.title.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+  const fileName = `WCEMS_Required-Training_${safeTitle}_${generated.toISOString().slice(0, 10)}.csv`
+
+  /* Pre-header rows so an Excel-opening user immediately knows what
+     they're looking at. Real header row is the 4th. */
+  const lines: string[] = []
+  lines.push(`Required Training Sign-Off Sheet`)
+  lines.push(`Module,${csvEscape(t.title)}`)
+  lines.push(`Generated,${csvEscape(generatedStr)}`)
+  lines.push('')
+  lines.push(
+    [
+      'Name',
+      'Role',
+      'Shift',
+      'Station',
+      'Status',
+      'Completed Date',
+      'Sign-off Method',
+      'Marked By (Admin)',
+      'Note',
+    ].join(','),
+  )
+
+  /* Always export the entire audience — admin can filter in Excel. */
+  for (const r of rows.value) {
+    const c = r.completion
+    const statusLabel =
+      r.status === 'signed'
+        ? c?.signedMethod === 'admin_marked'
+          ? 'Admin-marked complete'
+          : 'Signed'
+        : r.status === 'in_progress'
+          ? 'In progress'
+          : 'Not started'
+    const completedDate = c?.completedAt
+      ? new Date(c.completedAt).toLocaleString('en-US')
+      : ''
+    const signedMethod = c
+      ? c.signedMethod === 'self'
+        ? 'Self-attested'
+        : 'Admin-marked'
+      : ''
+    const markedByName = c?.markedBy
+      ? roster.value.find((u) => u.id === c.markedBy)?.fullName ?? '(unknown admin)'
+      : ''
+    const note = c?.markedNote ?? ''
+    lines.push(
+      [
+        csvEscape(r.user.fullName),
+        csvEscape(r.user.role),
+        csvEscape(r.user.shift ?? ''),
+        csvEscape(r.user.station ?? ''),
+        csvEscape(statusLabel),
+        csvEscape(completedDate),
+        csvEscape(signedMethod),
+        csvEscape(markedByName),
+        csvEscape(note),
+      ].join(','),
+    )
+  }
+
+  /* Prepend a UTF-8 BOM so Excel auto-detects encoding (otherwise
+     accented names render as garbage on Windows). */
+  const blob = new Blob(['﻿' + lines.join('\r\n')], {
+    type: 'text/csv;charset=utf-8;',
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <template>
@@ -154,9 +246,15 @@ function back() {
 
     <template v-else>
       <header class="rtr__header">
-        <div class="flex items-center gap-2">
-          <ShieldCheck :size="22" :stroke-width="1.85" style="color: var(--color-brand-600)" />
-          <h1 class="display rtr__title">{{ training.title }}</h1>
+        <div class="rtr__header-row">
+          <div class="flex items-center gap-2">
+            <ShieldCheck :size="22" :stroke-width="1.85" style="color: var(--color-brand-600)" />
+            <h1 class="display rtr__title">{{ training.title }}</h1>
+          </div>
+          <button type="button" class="rtr__export" @click="downloadRosterCsv">
+            <Download :size="14" :stroke-width="2" />
+            Export sign-off sheet (CSV)
+          </button>
         </div>
         <p v-if="training.description" class="rtr__desc">{{ training.description }}</p>
       </header>
@@ -320,6 +418,13 @@ function back() {
 .rtr__header {
   margin-bottom: 14px;
 }
+.rtr__header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .rtr__title {
   font-size: 24px;
   letter-spacing: -0.01em;
@@ -328,6 +433,24 @@ function back() {
   margin-top: 6px;
   font-size: 13.5px;
   color: var(--color-ink-soft);
+}
+.rtr__export {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms var(--ease-out);
+}
+.rtr__export:hover {
+  border-color: var(--color-brand-600);
+  color: var(--color-brand-600);
 }
 
 .rtr-summary {

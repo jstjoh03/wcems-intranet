@@ -575,8 +575,19 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
 .rtd__yt-wrap {
   position: relative;
   width: 100%;
-  /* 16:9 aspect ratio */
-  padding-top: 56.25%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+/* YT.Player replaces our placeholder <div> with an <iframe> that lives
+   outside Vue's scoped-style attribute, so a plain selector can't
+   reach it. `:deep()` lets the rule cross into the injected iframe. */
+.rtd__yt-wrap :deep(iframe) {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
 }
 .rtd__yt-iframe {
   position: absolute;
