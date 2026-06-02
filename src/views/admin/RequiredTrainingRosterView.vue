@@ -1096,4 +1096,136 @@ async function downloadRosterPdf() {
   border-color: var(--color-brand-600);
   background: var(--color-brand-50);
 }
+
+/* ── Mobile: collapse the wide roster table into stacked cards ────────
+   The 7-column layout (name / shift / role / FT-PT / required / status
+   / mark) doesn't fit on a phone. Below 768px we reflow each row into a
+   2-row grid card: name + status pill on top, meta strip + required
+   toggle + mark button on the bottom. FT/PT is hidden because the
+   section header (Full-Time / Part-Time) already conveys it. */
+@media (max-width: 767px) {
+  .rtr-filters__group {
+    width: 100%;
+  }
+
+  .rtr-table {
+    /* Block out of table layout entirely so we can grid each row. */
+    display: block;
+  }
+  .rtr-table thead {
+    display: none;
+  }
+  .rtr-table tbody {
+    display: block;
+  }
+  .rtr-table tr {
+    display: block;
+  }
+  .rtr-table td {
+    display: block;
+    padding: 0;
+    border: none;
+  }
+
+  /* FT / PT group section header — render as a small banded label
+     above its cards rather than a table-row strip. */
+  .rtr-table__group {
+    margin: 14px 0 6px;
+    background: transparent !important;
+  }
+  .rtr-table__group td {
+    padding: 0;
+    background: transparent;
+    border: none;
+  }
+
+  /* Data rows become individual cards. */
+  .rtr-table tbody tr:not(.rtr-table__group) {
+    display: grid;
+    grid-template-columns: auto auto 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 8px 10px;
+    align-items: center;
+    margin-bottom: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--color-line);
+    border-radius: 10px;
+    background: var(--color-surface);
+  }
+
+  /* td #1 — name spans the top-left up to (but not including) status. */
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(1) {
+    grid-column: 1 / 4;
+    grid-row: 1;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+  /* td #6 — status chip lands top-right. */
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(6) {
+    grid-column: 4;
+    grid-row: 1;
+    justify-self: end;
+    text-align: right;
+  }
+
+  /* td #2/#3 — shift + role pill into the meta strip on row 2. */
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(2),
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(3) {
+    grid-row: 2;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-muted);
+    text-transform: capitalize;
+    width: auto;
+  }
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(2) {
+    grid-column: 1;
+  }
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(3) {
+    grid-column: 2;
+  }
+  /* td #4 — FT/PT hidden; section header conveys it. */
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(4) {
+    display: none;
+  }
+  /* td #5 — required toggle. */
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(5) {
+    grid-column: 3;
+    grid-row: 2;
+    justify-self: end;
+    width: auto;
+  }
+  /* td #7 — mark-complete button. */
+  .rtr-table tbody tr:not(.rtr-table__group) td:nth-child(7) {
+    grid-column: 4;
+    grid-row: 2;
+    justify-self: end;
+    width: auto;
+    text-align: right;
+  }
+
+  /* Tighten the required toggle so "Yes · override" doesn't wrap. */
+  .rtr-req {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  .rtr-req__label {
+    white-space: nowrap;
+  }
+
+  /* Status chip date span gets squeezed — show date on its own line. */
+  .rtr-chip__date {
+    display: block;
+    margin: 2px 0 0 0;
+    font-size: 10.5px;
+  }
+
+  /* Mark button: compact on phones. */
+  .rtr-mark {
+    padding: 5px 9px;
+    font-size: 11.5px;
+    white-space: nowrap;
+  }
+}
 </style>

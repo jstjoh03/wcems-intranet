@@ -223,14 +223,18 @@ function initials(name: string) {
 .spotlight__art {
   position: relative;
   width: 100%;
-  height: 168px;
+  /* Tall enough on mobile to show a portrait headshot without cropping
+     the face. Most spotlight photos are framed with the subject in the
+     upper portion, so anchor to the top-third (25%) instead of center
+     when there's a real image. */
+  height: 260px;
   background: linear-gradient(
     135deg,
     var(--color-accent-500) 0%,
     var(--color-accent-700) 100%
   );
   background-size: cover;
-  background-position: center;
+  background-position: center 25%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -240,7 +244,7 @@ function initials(name: string) {
   .spotlight__art {
     width: 42%;
     height: auto;
-    min-height: 200px;
+    min-height: 240px;
   }
 }
 .spotlight__art-icon {
