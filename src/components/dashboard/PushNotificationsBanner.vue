@@ -28,6 +28,9 @@ const errorText = ref<string | null>(null)
 
 const visible = computed(() => {
   if (!auth.appUser || auth.usingDevStub) return false
+  /* No push on shared station kiosks — the next crew to sign in would
+     inherit the subscription. */
+  if (auth.isKiosk) return false
   if (!isSupported.value) return false
   if (permission.value === 'denied') return false
   if (isSubscribed.value) return false

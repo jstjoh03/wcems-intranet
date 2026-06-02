@@ -127,6 +127,7 @@ async function onRemove(id: string) {
 
           <div class="bday-modal__actions">
             <button
+              v-if="!auth.isKiosk"
               type="button"
               class="bday-modal__heart"
               :class="{ 'bday-modal__heart--reacted': reacted }"
@@ -141,6 +142,10 @@ async function onRemove(id: string) {
               <Heart :size="16" :fill="reacted ? 'currentColor' : 'none'" />
               <span>{{ reactionCount > 0 ? reactionCount : 'Send love' }}</span>
             </button>
+            <div v-else-if="reactionCount > 0" class="bday-modal__heart bday-modal__heart--readonly">
+              <Heart :size="16" :fill="reactionCount > 0 ? 'currentColor' : 'none'" />
+              <span>{{ reactionCount }}</span>
+            </div>
             <div class="bday-modal__count">
               <MessageCircle :size="14" :stroke-width="1.85" />
               <span>{{ commentCount }} {{ commentCount === 1 ? 'comment' : 'comments' }}</span>
@@ -295,6 +300,10 @@ async function onRemove(id: string) {
 .bday-modal__heart--reacted:hover {
   color: var(--color-danger-500);
   border-color: var(--color-danger-500);
+}
+.bday-modal__heart--readonly {
+  cursor: default;
+  color: var(--color-muted);
 }
 .bday-modal__count {
   display: inline-flex;

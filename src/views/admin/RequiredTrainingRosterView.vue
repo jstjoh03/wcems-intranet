@@ -51,6 +51,7 @@ async function loadRoster() {
     .from('app_users')
     .select('id, full_name, role, shift, station, employment_type, active')
     .eq('active', true)
+    .eq('account_type', 'person')
     .order('full_name')
   if (error) {
     rosterError.value = error.message

@@ -56,6 +56,9 @@ const visible = computed(
     settled.value &&
     auth.ready &&
     !!u.value &&
+    /* Never nudge kiosk accounts to fill out a "profile" — they're
+       shared station mailboxes, not people. */
+    !auth.isKiosk &&
     !u.value.profilePromptDismissed &&
     !snoozed.value &&
     isIncomplete.value,

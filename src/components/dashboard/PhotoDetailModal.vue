@@ -63,7 +63,7 @@ function onEsc(e: KeyboardEvent) {
 }
 
 function onToggleHeart() {
-  if (!props.photo) return
+  if (!props.photo || auth.isKiosk) return
   void reactions.toggle(props.photo.id)
 }
 

@@ -40,7 +40,7 @@ const submitting = ref(false)
 const listEl = ref<HTMLElement | null>(null)
 
 const canSubmit = computed(
-  () => text.value.trim().length > 0 && !submitting.value && !props.disabled,
+  () => text.value.trim().length > 0 && !submitting.value && !props.disabled && !auth.isKiosk,
 )
 
 const sorted = computed(() =>
@@ -73,6 +73,8 @@ function formatTime(iso: string) {
 }
 
 function canDelete(c: ThreadComment) {
+  /* Kiosks can never moderate. */
+  if (auth.isKiosk) return false
   return auth.isAdmin || auth.appUser?.id === c.userId
 }
 
@@ -125,7 +127,10 @@ function onKey(e: KeyboardEvent) {
       </div>
     </div>
 
-    <form class="thread__compose" @submit.prevent="submit">
+    <div v-if="auth.isKiosk" class="thread__kiosk-notice">
+      Comments are disabled on station accounts. Sign in with your personal account to post.
+    </div>
+    <form v-else class="thread__compose" @submit.prevent="submit">
       <input
         v-model="text"
         type="text"
@@ -288,5 +293,16 @@ function onKey(e: KeyboardEvent) {
 .thread__send:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.thread__kiosk-notice {
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--color-muted);
+  background: var(--color-surface-soft);
+  border: 1px dashed var(--color-line);
+  border-radius: 8px;
+  text-align: center;
 }
 </style>

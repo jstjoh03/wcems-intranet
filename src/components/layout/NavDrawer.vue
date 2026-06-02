@@ -262,7 +262,13 @@ function openProfile() {
       <!-- Whole row opens the profile modal; the sign-out icon escapes
            the row click via @click.stop so the existing quick sign-out
            gesture keeps working. -->
-      <button type="button" class="drawer__user" @click="openProfile">
+      <button
+        type="button"
+        class="drawer__user"
+        :class="{ 'drawer__user--kiosk': auth.isKiosk }"
+        :disabled="auth.isKiosk"
+        @click="auth.isKiosk ? null : openProfile()"
+      >
         <Avatar
           :photo-url="auth.appUser?.photoUrl ?? null"
           :initials="auth.appUser?.initials ?? '?'"
@@ -273,7 +279,9 @@ function openProfile() {
           <div class="display text-[14.5px] truncate" style="color: var(--color-ink)">
             {{ auth.appUser?.fullName }}
           </div>
-          <div class="drawer__user-hint">View profile</div>
+          <div class="drawer__user-hint">
+            {{ auth.isKiosk ? 'Station kiosk · read-only' : 'View profile' }}
+          </div>
         </div>
         <span
           class="drawer__signout"

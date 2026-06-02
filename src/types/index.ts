@@ -5,6 +5,10 @@
 export type Role = 'crew' | 'supervisor' | 'admin'
 export type ShiftLetter = 'A' | 'B' | 'C'
 export type EmploymentType = 'full_time' | 'part_time'
+/** Distinguishes a real human account from a shared station/rig
+ *  mailbox kiosk (medic###@…, s###@…). Kiosks get read-only
+ *  treatment — see migration 0051. */
+export type AccountType = 'person' | 'kiosk'
 
 export interface AppUser {
   id: string
@@ -20,6 +24,10 @@ export interface AppUser {
    *  staff for audience filtering on Required Training, roster
    *  grouping, and Paycom imports. */
   employmentType: EmploymentType
+  /** 'kiosk' for rig/station shared mailboxes — read-only experience.
+   *  See migration 0051. Admin-only; auto-tagged on first sign-in for
+   *  emails matching ^medic\d+@ or ^s\d+@. */
+  accountType: AccountType
   shift: ShiftLetter | null
   station: string | null
   fuelNumber: string | null

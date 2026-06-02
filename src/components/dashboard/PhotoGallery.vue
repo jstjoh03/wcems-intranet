@@ -84,6 +84,7 @@ function onToggleHeart(p: GalleryPhoto, e: MouseEvent) {
   /* Stop the cell tap from also opening the detail modal — users
      tapping the heart just want to react, not dive in. */
   e.stopPropagation()
+  if (auth.isKiosk) return
   void reactions.toggle(p.id)
 }
 </script>

@@ -141,6 +141,7 @@ function initials(name: string) {
             </div>
             <div class="birthdays__actions">
               <button
+                v-if="!auth.isKiosk"
                 type="button"
                 class="birthdays__heart"
                 :class="{ 'birthdays__heart--reacted': reactions.hasReacted(isoDate, b.personKey) }"

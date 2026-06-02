@@ -179,6 +179,10 @@ function close() {
 }
 
 function onWindowOpen() {
+  /* Kiosk accounts (rig / station mailboxes) don't have an individual
+     profile to edit — silently ignore the open request. The opener
+     buttons should already be hidden, but this is the last-line gate. */
+  if (auth.isKiosk) return
   fieldError.value = null
   open.value = true
 }

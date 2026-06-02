@@ -40,6 +40,7 @@ function openPhoto(p: GalleryPhoto) {
 }
 function onToggleHeart(p: GalleryPhoto, e: MouseEvent) {
   e.stopPropagation()
+  if (auth.isKiosk) return
   void reactions.toggle(p.id)
 }
 </script>

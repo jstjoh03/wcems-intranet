@@ -22,6 +22,14 @@ const firstName = computed(() => auth.appUser?.firstName ?? '')
 const fullName = computed(() => auth.appUser?.fullName ?? '')
 const fuelNumber = computed(() => auth.appUser?.fuelNumber ?? null)
 const photoUrl = computed(() => auth.appUser?.photoUrl ?? null)
+/* Kiosks (medic###@, s###@) show a slim read-only panel — no profile
+   editor, no station/shift selector, no fuel #. The display name is the
+   rig/station identifier so the next medic on shift knows which mailbox
+   they're signed into. */
+const isKiosk = computed(() => auth.isKiosk)
+const triggerLabel = computed(() =>
+  isKiosk.value ? fullName.value || 'Station kiosk' : firstName.value,
+)
 
 /* Station list is shared with the profile modal via @/constants/stations
    so renames only happen in one place. */
@@ -146,7 +154,8 @@ function openProfile() {
     >
       <Avatar :photo-url="photoUrl" :initials="initials" size="sm" tone="on-dark" />
       <span class="user-dropdown__meta hidden sm:flex">
-        <span class="user-dropdown__name">{{ firstName }}</span>
+        <span class="user-dropdown__name">{{ triggerLabel }}</span>
+        <span v-if="isKiosk" class="user-dropdown__kiosk-tag">Station kiosk</span>
       </span>
       <ChevronDown :size="13" class="user-dropdown__chev" />
     </button>
@@ -159,9 +168,29 @@ function openProfile() {
             <div class="display text-[16px] truncate" style="color: var(--color-ink)">
               {{ fullName }}
             </div>
+            <div v-if="isKiosk" class="user-dropdown__kiosk-banner">
+              Station kiosk — read-only access
+            </div>
           </div>
         </header>
 
+        <!-- Kiosk view: simplified panel. No profile editor, no shift /
+             station / fuel reveal — those are tied to a specific human. -->
+        <template v-if="isKiosk">
+          <div class="user-dropdown__divider" />
+          <p class="user-dropdown__kiosk-note">
+            You're signed in with a shared station mailbox. Reactions,
+            comments, and profile editing are disabled. Sign in with your
+            personal account to participate.
+          </p>
+          <div class="user-dropdown__divider" />
+          <button class="user-dropdown__item" @click="signOut">
+            <LogOut :size="14" :stroke-width="1.85" />
+            Sign out
+          </button>
+        </template>
+
+        <template v-else>
         <div class="user-dropdown__divider" />
 
         <!-- Shift / Station — both editable from a closed dropdown of
@@ -236,6 +265,7 @@ function openProfile() {
           <LogOut :size="14" :stroke-width="1.85" />
           Sign out
         </button>
+        </template>
       </div>
     </Transition>
   </div>
@@ -546,5 +576,40 @@ function openProfile() {
 .user-dropdown-fade-leave-to {
   opacity: 0;
   transform: translateY(-4px);
+}
+
+/* Kiosk-mode badge in the trigger meta column (right of avatar). */
+.user-dropdown__kiosk-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-accent-on-dark);
+  margin-top: 2px;
+}
+
+/* Inline banner inside the panel header. */
+.user-dropdown__kiosk-banner {
+  margin-top: 4px;
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+  background: oklch(0.97 0.05 86);
+  border: 1px solid oklch(0.85 0.09 86);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* Explainer paragraph in the kiosk-mode panel. */
+.user-dropdown__kiosk-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--color-muted);
+  padding: 8px 4px;
+  margin: 0;
 }
 </style>

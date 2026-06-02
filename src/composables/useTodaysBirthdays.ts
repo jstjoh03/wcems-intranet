@@ -85,6 +85,7 @@ async function fetchFromDb() {
     .select('id, full_name, role, title, station, date_of_birth, show_birthday, active')
     .eq('active', true)
     .eq('show_birthday', true)
+    .eq('account_type', 'person')
     .not('date_of_birth', 'is', null)
   if (error) {
     console.error('[birthdays] load failed:', error.message)

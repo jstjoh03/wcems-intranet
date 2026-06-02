@@ -136,7 +136,7 @@ const featured = computed<FeaturedTile[]>(() => {
     </ul>
 
     <button
-      v-if="auth.appUser"
+      v-if="auth.appUser && !auth.isKiosk"
       type="button"
       class="fql__edit"
       aria-label="Customize featured shortcuts"

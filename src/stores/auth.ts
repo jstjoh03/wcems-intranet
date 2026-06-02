@@ -1,7 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { User } from '@supabase/supabase-js'
-import type { AppUser, EmploymentType, Role, ShiftLetter } from '@/types'
+import type {
+  AccountType,
+  AppUser,
+  EmploymentType,
+  Role,
+  ShiftLetter,
+} from '@/types'
 import { supabase } from '@/lib/supabase'
 
 /**
@@ -32,6 +38,7 @@ const DEV_STUB_USER: AppUser = {
   role: 'admin',
   title: 'Paramedic',
   employmentType: 'full_time',
+  accountType: 'person',
   shift: 'C',
   station: 'S202',
   fuelNumber: '30988',
@@ -89,6 +96,10 @@ function deriveAppUserFromSession(supaUser: User): AppUser {
     role,
     title: null,
     employmentType: 'full_time',
+    /* Default to 'person' on the JWT-derive first pass. The DB row
+       fetch overwrites with the canonical value (so a rig email lands
+       as kiosk once fetchAppUserRow completes). */
+    accountType: 'person',
     shift: null,
     station: null,
     fuelNumber: null,
@@ -112,6 +123,7 @@ interface AppUserRow {
   role: Role
   title: string | null
   employment_type: EmploymentType | null
+  account_type: AccountType | null
   shift: ShiftLetter | null
   station: string | null
   fuel_number: string | null
@@ -136,6 +148,7 @@ function rowToAppUser(row: AppUserRow): AppUser {
     role: row.role,
     title: row.title,
     employmentType: row.employment_type ?? 'full_time',
+    accountType: row.account_type ?? 'person',
     shift: row.shift,
     station: row.station,
     fuelNumber: row.fuel_number,
@@ -161,7 +174,7 @@ async function fetchAppUserRow(authUserId: string): Promise<AppUserRow | null> {
   const { data, error } = await supabase
     .from('app_users')
     .select(
-      'id, auth_user_id, email, first_name, last_name, full_name, role, title, employment_type, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, photo_url, active, featured_quick_link_ids, profile_prompt_dismissed',
+      'id, auth_user_id, email, first_name, last_name, full_name, role, title, employment_type, account_type, shift, station, fuel_number, date_of_birth, show_birthday, phone, in_directory, photo_url, active, featured_quick_link_ids, profile_prompt_dismissed',
     )
     .eq('auth_user_id', authUserId)
     .maybeSingle()
@@ -183,6 +196,9 @@ export const useAuthStore = defineStore('auth', () => {
     () => role.value === 'supervisor' || role.value === 'admin',
   )
   const isAuthenticated = computed(() => appUser.value !== null)
+  /* Convenience flag for hiding write UI (reactions/comments/profile
+     editor/push subscribe/etc.) on shared rig/station accounts. */
+  const isKiosk = computed(() => appUser.value?.accountType === 'kiosk')
 
   async function applySession(supaUser: User | null) {
     if (supaUser) {
@@ -428,6 +444,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     isSupervisor,
     isAuthenticated,
+    isKiosk,
     init,
     refresh,
     updateOwnStation,

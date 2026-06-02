@@ -6,7 +6,13 @@ import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
-import type { AppUser, EmploymentType, Role, ShiftLetter } from '@/types'
+import type {
+  AccountType,
+  AppUser,
+  EmploymentType,
+  Role,
+  ShiftLetter,
+} from '@/types'
 import { formatShortDate } from '@/utils/date'
 import { useTodaysBirthdays } from '@/composables/useTodaysBirthdays'
 
@@ -27,6 +33,7 @@ interface AppUserRow {
   date_of_birth: string | null
   show_birthday: boolean
   employment_type: EmploymentType | null
+  account_type: AccountType | null
   active: boolean
 }
 
@@ -44,6 +51,7 @@ interface DraftUser {
   dateOfBirth: string
   showBirthday: boolean
   employmentType: EmploymentType
+  accountType: AccountType
   active: boolean
 }
 
@@ -75,6 +83,7 @@ function rowToUser(r: AppUserRow): AppUser & { active: boolean } {
     dateOfBirth: r.date_of_birth,
     showBirthday: r.show_birthday,
     employmentType: (r.employment_type ?? 'full_time') as EmploymentType,
+    accountType: (r.account_type ?? 'person') as AccountType,
     active: r.active,
   } as AppUser & { active: boolean }
 }
@@ -107,7 +116,7 @@ async function load() {
   const { data, error: fetchErr } = await supabase
     .from('app_users')
     .select(
-      'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, employment_type, active',
+      'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, employment_type, account_type, active',
     )
     .order('full_name')
   if (fetchErr) {
@@ -160,6 +169,7 @@ function userToDraft(u: AppUser & { active: boolean }): DraftUser {
     dateOfBirth: u.dateOfBirth ?? '',
     showBirthday: u.showBirthday,
     employmentType: u.employmentType,
+    accountType: u.accountType,
     active: u.active,
   }
 }
@@ -198,6 +208,7 @@ async function save() {
               dateOfBirth: draft.value!.dateOfBirth || null,
               showBirthday: draft.value!.showBirthday,
               employmentType: draft.value!.employmentType,
+              accountType: draft.value!.accountType,
               active: draft.value!.active,
               initials: computeInitials(draft.value!.fullName || draft.value!.email),
             } as AppUser & { active: boolean })
@@ -219,6 +230,7 @@ async function save() {
       date_of_birth: draft.value.dateOfBirth || null,
       show_birthday: draft.value.showBirthday,
       employment_type: draft.value.employmentType,
+      account_type: draft.value.accountType,
       active: draft.value.active,
     }
     const { data, error: updErr } = await supabase
@@ -226,7 +238,7 @@ async function save() {
       .update(patch)
       .eq('id', draft.value.id)
       .select(
-        'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, employment_type, active',
+        'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, employment_type, account_type, active',
       )
       .single()
     if (updErr) {
@@ -428,6 +440,13 @@ onMounted(load)
             </select>
           </label>
           <label class="me-form__field">
+            <span class="me-form__label">Account type</span>
+            <select v-model="draft.accountType" class="me-form__input">
+              <option value="person">Person (default)</option>
+              <option value="kiosk">Station kiosk (rig / station mailbox)</option>
+            </select>
+          </label>
+          <label class="me-form__field">
             <span class="me-form__label">Fuel #</span>
             <input v-model="draft.fuelNumber" type="text" class="me-form__input" />
           </label>
@@ -479,9 +498,14 @@ onMounted(load)
               <AppChip :variant="u.role === 'admin' ? 'accent' : 'brand'" class="me-row__role">
                 {{ u.role }}
               </AppChip>
-              <span class="me-row__et" :class="`me-row__et--${u.employmentType}`">
+              <span
+                v-if="u.accountType === 'person'"
+                class="me-row__et"
+                :class="`me-row__et--${u.employmentType}`"
+              >
                 {{ u.employmentType === 'full_time' ? 'FT' : 'PT' }}
               </span>
+              <span v-else class="me-row__kiosk-chip">Station kiosk</span>
               <span v-if="!u.active" class="me-row__inactive-chip">Inactive</span>
             </div>
             <div class="me-row__email">{{ u.email }}</div>
@@ -633,6 +657,19 @@ onMounted(load)
   color: oklch(0.4 0.13 250);
   border-color: oklch(0.85 0.07 250);
   background: oklch(0.97 0.04 250);
+}
+.me-row__kiosk-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+  background: oklch(0.97 0.05 86);
+  border: 1px solid oklch(0.85 0.09 86);
+  border-radius: 999px;
 }
 .me-row__et--part_time {
   color: oklch(0.45 0.13 75);
