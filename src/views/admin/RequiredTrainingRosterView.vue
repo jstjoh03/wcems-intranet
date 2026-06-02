@@ -337,25 +337,9 @@ async function downloadRosterPdf() {
   pdfBusy.value = true
   try {
     const t = training.value
-    const audienceParts: string[] = []
-    if (
-      t.audienceRoles.length === 0 &&
-      t.audienceShifts.length === 0 &&
-      t.audienceEmploymentTypes.length === 0
-    ) {
-      audienceParts.push('All active employees')
-    } else {
-      if (t.audienceRoles.length) audienceParts.push(`Roles: ${t.audienceRoles.join(', ')}`)
-      if (t.audienceShifts.length)
-        audienceParts.push(`Shifts: ${t.audienceShifts.join(', ')}`)
-      if (t.audienceEmploymentTypes.length)
-        audienceParts.push(
-          `Employment: ${t.audienceEmploymentTypes
-            .map((e) => (e === 'full_time' ? 'Full-Time' : 'Part-Time'))
-            .join(', ')}`,
-        )
-    }
-
+    /* Pass the full audience (rows.value, not the chip-filtered
+       visibleRows) — the PDF is the compliance record, so it must
+       show everyone regardless of which chip the admin had toggled. */
     const entries: SignOffEntry[] = rows.value.map((r) => {
       const c = r.completion
       const markedByName = c?.markedBy
@@ -363,22 +347,17 @@ async function downloadRosterPdf() {
         : null
       return {
         fullName: r.user.fullName,
-        role: r.user.role,
-        shift: r.user.shift,
-        station: r.user.station,
+        employmentType: r.user.employmentType,
         status: r.status,
         signedMethod: c?.signedMethod ?? null,
         completedAt: c?.completedAt ?? null,
         signatureDataUrl: c?.signatureData ?? null,
         markedByName,
-        markedNote: c?.markedNote ?? null,
       }
     })
 
     const doc = await generateRequiredTrainingSignOffPdf({
       moduleTitle: t.title,
-      moduleDescription: t.description,
-      audienceLabel: audienceParts.join(' · '),
       entries,
     })
     const safeTitle = t.title.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
