@@ -149,6 +149,12 @@ function fillColor(filled: number, total: number) {
           <div class="training__body">
             <div class="training__row-title display">{{ t.title }}</div>
             <div class="training__meta">
+              <span
+                v-if="t.source === 'lecture'"
+                class="training__chip training__chip--lecture"
+              >
+                CE Lecture
+              </span>
               <span v-if="t.time" class="training__chip">
                 <Clock :size="11" :stroke-width="2" />
                 {{ t.time }}
@@ -162,7 +168,10 @@ function fillColor(filled: number, total: number) {
                 {{ t.instructor }}
               </span>
             </div>
-            <div v-if="t.source === 'wix' && t.total > 0" class="training__seats">
+            <div
+              v-if="(t.source === 'wix' || t.source === 'lecture') && t.total > 0"
+              class="training__seats"
+            >
               <div class="training__seats-label">
                 <span>Registered</span>
                 <span
@@ -184,8 +193,8 @@ function fillColor(filled: number, total: number) {
             </div>
           </div>
           <a
-            v-if="t.source === 'wix'"
-            :href="REGISTER_URL"
+            v-if="t.source === 'wix' || (t.source === 'lecture' && t.registrationUrl)"
+            :href="t.registrationUrl || REGISTER_URL"
             target="_blank"
             rel="noopener noreferrer"
             class="training__register"
@@ -379,6 +388,13 @@ function fillColor(filled: number, total: number) {
 }
 .training__chip svg {
   color: var(--color-muted);
+}
+.training__chip--lecture {
+  background: oklch(0.94 0.075 86.8);
+  border-color: oklch(0.85 0.085 86.8);
+  color: oklch(0.4 0.085 60);
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .training__seats {

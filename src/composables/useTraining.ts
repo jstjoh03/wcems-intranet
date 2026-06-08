@@ -30,7 +30,11 @@ export interface TrainingEvent {
   total: number
   location: string
   instructor: string
-  source: 'wix' | 'calendar'
+  source: 'wix' | 'calendar' | 'lecture'
+  /** Per-event registration URL. Wix events fall back to the global
+   *  internal-education portal; lectures carry their own training-PWA
+   *  registration link; calendar-only events have none. */
+  registrationUrl: string | null
 }
 
 interface TrainingSessionRow {
@@ -42,7 +46,8 @@ interface TrainingSessionRow {
   remaining_capacity: number
   location: string
   instructor: string
-  source: 'wix' | 'calendar'
+  source: 'wix' | 'calendar' | 'lecture'
+  registration_url: string | null
   synced_at: string
 }
 
@@ -85,6 +90,7 @@ function rowToEvent(r: TrainingSessionRow): TrainingEvent {
       location: r.location,
       instructor: r.instructor,
       source: r.source,
+      registrationUrl: r.registration_url,
     }
   }
   const [, y, mo, d, hh, mm] = parts
@@ -105,6 +111,7 @@ function rowToEvent(r: TrainingSessionRow): TrainingEvent {
     location: r.location,
     instructor: r.instructor,
     source: r.source,
+    registrationUrl: r.registration_url,
   }
 }
 
@@ -115,7 +122,7 @@ async function loadEvents() {
   const { data, error } = await supabase
     .from('training_sessions')
     .select(
-      'id, service_id, title, local_start, total_capacity, remaining_capacity, location, instructor, source, synced_at',
+      'id, service_id, title, local_start, total_capacity, remaining_capacity, location, instructor, source, registration_url, synced_at',
     )
     .gte('local_start', `${todayIso}T00:00:00`)
     .order('local_start', { ascending: true })
