@@ -1,0 +1,273 @@
+import jsPDF from 'jspdf'
+
+/**
+ * Auto-generated PDF certificate for policy acknowledgement.
+ *
+ * Mirrors `requiredTrainingCertificate.ts` — same navy/gold frame,
+ * WCEMS patch, command-staff cursive signatures — but the body copy
+ * says "has read and acknowledged the policy" rather than "completed
+ * the required training module."
+ *
+ * Returns the jsPDF instance. Caller decides whether to .save() or
+ * use the data URL.
+ */
+
+const NAVY: [number, number, number] = [15, 26, 51]
+const NAVY_DEEP: [number, number, number] = [9, 17, 34]
+const INK: [number, number, number] = [25, 35, 60]
+const INK_SOFT: [number, number, number] = [71, 85, 105]
+const MUTED: [number, number, number] = [120, 130, 150]
+const PALE: [number, number, number] = [185, 195, 215]
+const GOLD: [number, number, number] = [201, 167, 92]
+const GOLD_SOFT: [number, number, number] = [225, 205, 152]
+const PAPER: [number, number, number] = [253, 252, 248]
+
+interface SigDef {
+  name: string
+  title: string
+}
+
+const COMMAND_STAFF_SIGS: SigDef[] = [
+  { name: 'Rhonda Getschman', title: 'Chief / EMS Director' },
+  { name: 'Heather Fojt', title: 'Assistant Chief' },
+  { name: 'Aaron Buzzard, MD', title: 'Medical Director' },
+]
+
+function makeCursiveSig(name: string, w = 280, h = 56): string {
+  const c = document.createElement('canvas')
+  c.width = w * 2
+  c.height = h * 2
+  const ctx = c.getContext('2d')
+  if (!ctx) return ''
+  ctx.scale(2, 2)
+  ctx.clearRect(0, 0, w, h)
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = `rgb(${NAVY.join(',')})`
+  const fonts = 'Brush Script MT, Segoe Script, Lucida Handwriting, Comic Sans MS, cursive'
+  let sz = Math.round(h * 0.78)
+  ctx.font = `italic ${sz}px ${fonts}`
+  while (ctx.measureText(name).width > w - 12 && sz > 12) {
+    sz -= 1
+    ctx.font = `italic ${sz}px ${fonts}`
+  }
+  ctx.fillText(name, 6, h - 10)
+  return c.toDataURL('image/png')
+}
+
+async function loadImageAsBase64(url: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      const ctx = c.getContext('2d')
+      if (!ctx) {
+        resolve(null)
+        return
+      }
+      ctx.drawImage(img, 0, 0)
+      resolve(c.toDataURL('image/png'))
+    }
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
+
+export interface PolicyCertificateInput {
+  employeeName: string
+  policyTitle: string
+  policyVersion: number
+  completionDate?: Date
+  logoUrl?: string
+  verificationId?: string
+}
+
+export async function generatePolicyAcknowledgementCertificate(
+  input: PolicyCertificateInput,
+): Promise<jsPDF> {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' })
+  const W = doc.internal.pageSize.getWidth()
+  const H = doc.internal.pageSize.getHeight()
+
+  const now = input.completionDate ?? new Date()
+  const dateStr = now.toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+
+  /* Frame */
+  doc.setFillColor(...NAVY)
+  doc.rect(0, 0, W, H, 'F')
+  doc.setFillColor(...PAPER)
+  doc.rect(14, 14, W - 28, H - 28, 'F')
+  doc.setDrawColor(...GOLD)
+  doc.setLineWidth(0.6)
+  doc.rect(24, 24, W - 48, H - 48)
+  doc.setLineWidth(1.5)
+  const cornerLen = 18
+  doc.line(34, 38, 34 + cornerLen, 38)
+  doc.line(34, 38, 34, 38 + cornerLen)
+  doc.line(W - 34, 38, W - 34 - cornerLen, 38)
+  doc.line(W - 34, 38, W - 34, 38 + cornerLen)
+  doc.line(34, H - 38, 34 + cornerLen, H - 38)
+  doc.line(34, H - 38, 34, H - 38 - cornerLen)
+  doc.line(W - 34, H - 38, W - 34 - cornerLen, H - 38)
+  doc.line(W - 34, H - 38, W - 34, H - 38 - cornerLen)
+
+  /* Header band */
+  const headerY = 56
+  const headerH = 56
+  doc.setFillColor(...NAVY_DEEP)
+  doc.rect(60, headerY, W - 120, headerH, 'F')
+  doc.setDrawColor(...GOLD)
+  doc.setLineWidth(0.5)
+  doc.line(60, headerY, W - 60, headerY)
+  doc.line(60, headerY + headerH, W - 60, headerY + headerH)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(13)
+  doc.setTextColor(...GOLD)
+  doc.text('WALLER COUNTY EMERGENCY MEDICAL SERVICES', W / 2, headerY + 22, {
+    align: 'center',
+  })
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9.5)
+  doc.setTextColor(225, 225, 235)
+  doc.text('Office of the Chief / Policy Administration', W / 2, headerY + 40, {
+    align: 'center',
+  })
+
+  /* Patch */
+  const logoUrl =
+    input.logoUrl ??
+    (typeof window !== 'undefined' ? `${window.location.origin}/wcems-patch.png` : null)
+  if (logoUrl) {
+    const logoB64 = await loadImageAsBase64(logoUrl)
+    if (logoB64) {
+      const lSize = 64
+      doc.addImage(logoB64, 'PNG', W / 2 - lSize / 2, headerY + headerH + 14, lSize, lSize)
+    }
+  }
+
+  /* Title */
+  const titleY = 230
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(34)
+  doc.setTextColor(...NAVY)
+  doc.text('Policy Acknowledgement', W / 2, titleY, { align: 'center' })
+
+  doc.setFillColor(...GOLD)
+  const dotSize = 1.8
+  ;[-12, 0, 12].forEach((dx) => {
+    doc.circle(W / 2 + dx, titleY + 14, dotSize, 'F')
+  })
+
+  /* Presented-to label */
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.setTextColor(...MUTED)
+  doc.text('THIS CERTIFIES THAT', W / 2, titleY + 36, { align: 'center', charSpace: 2 })
+
+  /* Recipient name */
+  const nameY = titleY + 78
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(30)
+  doc.setTextColor(...NAVY)
+  doc.text(input.employeeName, W / 2, nameY, { align: 'center' })
+
+  const nameWidth = Math.max(180, doc.getTextWidth(input.employeeName) + 60)
+  doc.setDrawColor(...GOLD)
+  doc.setLineWidth(1.2)
+  doc.line(W / 2 - nameWidth / 2, nameY + 8, W / 2 + nameWidth / 2, nameY + 8)
+  doc.setLineWidth(0.4)
+  doc.line(W / 2 - nameWidth / 2, nameY + 12, W / 2 + nameWidth / 2, nameY + 12)
+
+  /* Body */
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(12)
+  doc.setTextColor(...INK_SOFT)
+  doc.text('has read and acknowledged the policy', W / 2, nameY + 40, { align: 'center' })
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(17)
+  doc.setTextColor(...INK)
+  doc.text(input.policyTitle, W / 2, nameY + 68, { align: 'center' })
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(11)
+  doc.setTextColor(...INK_SOFT)
+  doc.text(
+    'and attests they understand its contents and know where to find it on the intranet.',
+    W / 2,
+    nameY + 92,
+    { align: 'center' },
+  )
+
+  /* Signature block */
+  const sigBottomY = H - 90
+  const sigImgH = 48
+  const colW = 200
+  const gapW = 28
+  const totalW = colW * 3 + gapW * 2
+  const startX = W / 2 - totalW / 2
+
+  COMMAND_STAFF_SIGS.forEach((s, i) => {
+    const lx = startX + i * (colW + gapW)
+    const cx = lx + colW / 2
+
+    const imgBottom = sigBottomY - 4
+    const img = makeCursiveSig(s.name, colW, sigImgH)
+    if (img) doc.addImage(img, 'PNG', lx, imgBottom - sigImgH, colW, sigImgH)
+
+    doc.setDrawColor(...GOLD_SOFT)
+    doc.setLineWidth(0.5)
+    doc.line(lx, sigBottomY, lx + colW, sigBottomY)
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8.5)
+    doc.setTextColor(...MUTED)
+    doc.text(s.title.toUpperCase(), cx, sigBottomY + 14, { align: 'center', charSpace: 0.6 })
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(10)
+    doc.setTextColor(...NAVY)
+    doc.text(s.name, cx, sigBottomY + 28, { align: 'center' })
+  })
+
+  /* Date footer */
+  const dateY = H - 44
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  doc.setTextColor(...INK_SOFT)
+  const dateText = `Acknowledged ${dateStr} · Policy v${input.policyVersion}`
+  const dateW = doc.getTextWidth(dateText)
+  const flourishLen = 28
+  const flourishGap = 10
+  doc.setDrawColor(...GOLD)
+  doc.setLineWidth(0.5)
+  doc.line(
+    W / 2 - dateW / 2 - flourishGap - flourishLen,
+    dateY - 3,
+    W / 2 - dateW / 2 - flourishGap,
+    dateY - 3,
+  )
+  doc.line(
+    W / 2 + dateW / 2 + flourishGap,
+    dateY - 3,
+    W / 2 + dateW / 2 + flourishGap + flourishLen,
+    dateY - 3,
+  )
+  doc.text(dateText, W / 2, dateY, { align: 'center' })
+
+  if (input.verificationId) {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(...PALE)
+    doc.text(`Verification ID: ${input.verificationId}`, W - 44, H - 30, { align: 'right' })
+  }
+
+  return doc
+}

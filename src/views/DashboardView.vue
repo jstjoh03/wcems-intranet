@@ -2,6 +2,7 @@
 import Hero from '@/components/dashboard/Hero.vue'
 import PushNotificationsBanner from '@/components/dashboard/PushNotificationsBanner.vue'
 import RequiredTrainingBanner from '@/components/dashboard/RequiredTrainingBanner.vue'
+import PoliciesBanner from '@/components/dashboard/PoliciesBanner.vue'
 import FeaturedQuickLinks from '@/components/dashboard/FeaturedQuickLinks.vue'
 import StationDirectory from '@/components/dashboard/StationDirectory.vue'
 import NewsletterCard from '@/components/dashboard/NewsletterCard.vue'
@@ -17,6 +18,7 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
     <Hero />
 
     <RequiredTrainingBanner />
+    <PoliciesBanner />
     <PushNotificationsBanner />
 
     <!-- Horizontal gold accent rule — same gradient treatment as the

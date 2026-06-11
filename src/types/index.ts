@@ -109,6 +109,61 @@ export interface RequiredTrainingCompletion {
   updatedAt: string
 }
 
+/* ── Policies ─────────────────────────────────────────────────────
+   Document-based acknowledgement system (HCID policy, future
+   handbook, HR policies, etc.). Mirrors Required Training's
+   audience-filter pattern but content is a PDF and the user signs
+   three attestation checkboxes after scrolling to the end. See
+   migration 0053. */
+
+export type PolicyCategory = 'clinical' | 'operational' | 'hr' | 'general'
+export type PolicyReviewCycle = 'annual' | 'biennial' | 'as_needed'
+
+export interface Policy {
+  id: string
+  title: string
+  summary: string
+  category: PolicyCategory
+  /** Path within the `policy-documents` Supabase Storage bucket.
+   *  Null until admin uploads a PDF for this policy. */
+  documentStoragePath: string | null
+  documentFilename: string | null
+  /** Bumps on every replace-document admin action. Crew see
+   *  re-prompt when their latest acknowledgement is for a prior
+   *  version. */
+  version: number
+  effectiveDate: string | null
+  reviewCycle: PolicyReviewCycle
+  audienceRoles: Role[]
+  audienceShifts: ShiftLetter[]
+  audienceEmploymentTypes: EmploymentType[]
+  attestationStatement: string
+  active: boolean
+  createdBy: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PolicyAcknowledgement {
+  id: string
+  policyId: string
+  userId: string
+  policyVersionAtSigning: number
+  acknowledgedAt: string
+  signatureData: string | null
+  signedMethod: 'self' | 'admin_marked'
+  markedBy: string | null
+  markedNote: string | null
+}
+
+export interface PolicyOverride {
+  id: string
+  policyId: string
+  userId: string
+  /** true = force-include, false = force-exclude. Wins over audience filter. */
+  included: boolean
+}
+
 /* ── Stations ──────────────────────────────────────────────────────── */
 export interface Station {
   id: string

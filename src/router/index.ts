@@ -119,6 +119,28 @@ const routes: RouteRecordRaw[] = [
     meta: { adminOnly: true },
   },
   {
+    path: '/policies',
+    name: 'policies',
+    component: () => import('@/views/PoliciesView.vue'),
+  },
+  {
+    path: '/policies/:id',
+    name: 'policy-detail',
+    component: () => import('@/views/PolicyDetailView.vue'),
+  },
+  {
+    path: '/admin/policies',
+    name: 'admin-policies',
+    component: () => import('@/views/admin/ManagePoliciesView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
+    path: '/admin/policies/:id',
+    name: 'admin-policy-roster',
+    component: () => import('@/views/admin/PolicyRosterView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),
