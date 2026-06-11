@@ -114,31 +114,31 @@ const doneGroups = computed(() => groupByCategory(done.value))
         </h2>
         <template v-for="g in outstandingGroups" :key="g.category">
           <div class="pol__group-label">{{ CATEGORY_LABEL[g.category] }}</div>
-          <AppCard
+          <RouterLink
             v-for="r in g.rows"
             :key="r.id"
-            class="pol-row"
-            :class="`pol-row--${r.status}`"
-            :as="RouterLink"
             :to="`/policies/${r.id}`"
+            class="pol-row-link"
           >
-            <div class="pol-row__icon">
-              <AlertTriangle
-                v-if="r.status === 'stale'"
-                :size="18"
-                :stroke-width="1.85"
-              />
-              <FileText v-else :size="18" :stroke-width="1.85" />
-            </div>
-            <div class="pol-row__body">
-              <div class="pol-row__title display">{{ r.title }}</div>
-              <p v-if="r.summary" class="pol-row__summary">{{ r.summary }}</p>
-              <div class="pol-row__meta">
-                <span class="pol-row__chip">{{ r.statusLabel }}</span>
+            <AppCard class="pol-row" :class="`pol-row--${r.status}`">
+              <div class="pol-row__icon">
+                <AlertTriangle
+                  v-if="r.status === 'stale'"
+                  :size="18"
+                  :stroke-width="1.85"
+                />
+                <FileText v-else :size="18" :stroke-width="1.85" />
               </div>
-            </div>
-            <ChevronRight :size="16" :stroke-width="1.85" class="pol-row__chev" />
-          </AppCard>
+              <div class="pol-row__body">
+                <div class="pol-row__title display">{{ r.title }}</div>
+                <p v-if="r.summary" class="pol-row__summary">{{ r.summary }}</p>
+                <div class="pol-row__meta">
+                  <span class="pol-row__chip">{{ r.statusLabel }}</span>
+                </div>
+              </div>
+              <ChevronRight :size="16" :stroke-width="1.85" class="pol-row__chev" />
+            </AppCard>
+          </RouterLink>
         </template>
       </section>
 
@@ -148,27 +148,28 @@ const doneGroups = computed(() => groupByCategory(done.value))
         </h2>
         <template v-for="g in doneGroups" :key="g.category">
           <div class="pol__group-label">{{ CATEGORY_LABEL[g.category] }}</div>
-          <AppCard
+          <RouterLink
             v-for="r in g.rows"
             :key="r.id"
-            class="pol-row pol-row--acknowledged"
-            :as="RouterLink"
             :to="`/policies/${r.id}`"
+            class="pol-row-link"
           >
-            <div class="pol-row__icon pol-row__icon--done">
-              <Check :size="16" :stroke-width="2.4" />
-            </div>
-            <div class="pol-row__body">
-              <div class="pol-row__title display">{{ r.title }}</div>
-              <div class="pol-row__meta">
-                <span class="pol-row__chip pol-row__chip--ack">
-                  <Clock :size="11" :stroke-width="2" />
-                  Acknowledged {{ formatDate(r.acknowledgedAt) }}
-                </span>
+            <AppCard class="pol-row pol-row--acknowledged">
+              <div class="pol-row__icon pol-row__icon--done">
+                <Check :size="16" :stroke-width="2.4" />
               </div>
-            </div>
-            <ChevronRight :size="16" :stroke-width="1.85" class="pol-row__chev" />
-          </AppCard>
+              <div class="pol-row__body">
+                <div class="pol-row__title display">{{ r.title }}</div>
+                <div class="pol-row__meta">
+                  <span class="pol-row__chip pol-row__chip--ack">
+                    <Clock :size="11" :stroke-width="2" />
+                    Acknowledged {{ formatDate(r.acknowledgedAt) }}
+                  </span>
+                </div>
+              </div>
+              <ChevronRight :size="16" :stroke-width="1.85" class="pol-row__chev" />
+            </AppCard>
+          </RouterLink>
         </template>
       </section>
     </template>
@@ -238,18 +239,23 @@ const doneGroups = computed(() => groupByCategory(done.value))
   margin: 14px 0 6px;
 }
 
+/* The whole row is a RouterLink; strip default link chrome and let
+   the inner AppCard do the visual work. */
+.pol-row-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
 .pol-row {
   display: flex !important;
   align-items: flex-start;
   gap: 12px;
   padding: 14px !important;
   margin-bottom: 8px;
-  text-decoration: none;
-  color: inherit;
   cursor: pointer;
   transition: border-color 120ms var(--ease-out), background 120ms var(--ease-out);
 }
-.pol-row:hover {
+.pol-row-link:hover .pol-row {
   border-color: var(--color-brand-600);
 }
 .pol-row__icon {
