@@ -8,12 +8,18 @@ import {
   AlertTriangle,
   UserCheck,
   X,
+  Download,
 } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePolicies } from '@/composables/usePolicies'
 import { supabase } from '@/lib/supabase'
+import {
+  generateRequiredTrainingSignOffPdf,
+  DEFAULT_POLICY_LABELS,
+  type SignOffEntry,
+} from '@/lib/requiredTrainingSignOffPdf'
 import type {
   EmploymentType,
   PolicyAcknowledgement,
@@ -224,6 +230,137 @@ function formatDate(iso: string | null): string {
 function back() {
   router.push('/admin/policies')
 }
+
+/* CSV export of the full audience (ignores chip filters). Includes
+   the policy version each user signed against so the spreadsheet
+   can sort by stale-vs-current acknowledgements. */
+function csvEscape(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return ''
+  const s = String(v)
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+function downloadRosterCsv() {
+  if (!policy.value) return
+  const p = policy.value
+  const generated = new Date()
+  const generatedStr = generated.toLocaleString('en-US')
+  const safeTitle = p.title.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+  const fileName = `WCEMS_Policy_Acknowledgement_${safeTitle}_${generated.toISOString().slice(0, 10)}.csv`
+
+  const lines: string[] = []
+  lines.push(`Policy Acknowledgement Sign-Off Sheet`)
+  lines.push(`Policy,${csvEscape(p.title)}`)
+  lines.push(`Current Version,v${p.version}`)
+  lines.push(`Generated,${csvEscape(generatedStr)}`)
+  lines.push('')
+  lines.push(
+    [
+      'Name',
+      'Role',
+      'Shift',
+      'Station',
+      'Status',
+      'Acknowledged Date',
+      'Acknowledged Version',
+      'Sign-off Method',
+      'Marked By (Admin)',
+      'Note',
+    ].join(','),
+  )
+
+  for (const r of rows.value) {
+    const a = r.ack
+    const statusLabel =
+      r.status === 'signed'
+        ? a?.signedMethod === 'admin_marked'
+          ? 'Admin-marked acknowledged'
+          : 'Signed'
+        : r.status === 'stale'
+          ? `Stale (signed v${a?.policyVersionAtSigning ?? '?'})`
+          : 'Not signed'
+    const ackDate = a?.acknowledgedAt
+      ? new Date(a.acknowledgedAt).toLocaleString('en-US')
+      : ''
+    const ackVersion = a?.policyVersionAtSigning != null ? `v${a.policyVersionAtSigning}` : ''
+    const signedMethod = a ? (a.signedMethod === 'self' ? 'Self-attested' : 'Admin-marked') : ''
+    const markedByName = a?.markedBy
+      ? roster.value.find((u) => u.id === a.markedBy)?.fullName ?? '(unknown admin)'
+      : ''
+    const note = a?.markedNote ?? ''
+    lines.push(
+      [
+        csvEscape(r.user.fullName),
+        csvEscape(r.user.role),
+        csvEscape(r.user.shift ?? ''),
+        csvEscape(r.user.station ?? ''),
+        csvEscape(statusLabel),
+        csvEscape(ackDate),
+        csvEscape(ackVersion),
+        csvEscape(signedMethod),
+        csvEscape(markedByName),
+        csvEscape(note),
+      ].join(','),
+    )
+  }
+
+  const blob = new Blob(['﻿' + lines.join('\r\n')], {
+    type: 'text/csv;charset=utf-8;',
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+/* PDF sign-off sheet with embedded signature images. Reuses the same
+   compact one-row-per-person layout as the required-training export,
+   parameterized with policy-flavored labels. Stale acks count as
+   "not signed" against the current version (a previous-version
+   signature in the doc would be misleading). */
+const pdfBusy = ref(false)
+async function downloadRosterPdf() {
+  if (!policy.value || pdfBusy.value) return
+  pdfBusy.value = true
+  try {
+    const p = policy.value
+    const entries: SignOffEntry[] = rows.value.map((r) => {
+      const a = r.ack
+      /* Only count current-version acks as "signed" in the PDF. Stale
+         and never-signed both render as "—" in the signature column. */
+      const isCurrent = r.status === 'signed'
+      const markedByName = a?.markedBy
+        ? roster.value.find((u) => u.id === a.markedBy)?.fullName ?? null
+        : null
+      return {
+        fullName: r.user.fullName,
+        employmentType: r.user.employmentType,
+        status: isCurrent ? 'signed' : 'not_started',
+        signedMethod: isCurrent ? a?.signedMethod ?? null : null,
+        completedAt: isCurrent ? a?.acknowledgedAt ?? null : null,
+        signatureDataUrl: isCurrent ? a?.signatureData ?? null : null,
+        markedByName: isCurrent ? markedByName : null,
+      }
+    })
+
+    const doc = await generateRequiredTrainingSignOffPdf({
+      moduleTitle: `${p.title} (v${p.version})`,
+      entries,
+      labels: DEFAULT_POLICY_LABELS,
+    })
+    const safeTitle = p.title.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+    doc.save(
+      `WCEMS_Policy_Sign-Off_${safeTitle}_${new Date().toISOString().slice(0, 10)}.pdf`,
+    )
+  } finally {
+    pdfBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -253,6 +390,21 @@ function back() {
               style="color: var(--color-brand-600)"
             />
             <h1 class="display prv__title">{{ policy.title }}</h1>
+          </div>
+          <div class="prv__export-group">
+            <button
+              type="button"
+              class="prv__export prv__export--primary"
+              :disabled="pdfBusy"
+              @click="downloadRosterPdf"
+            >
+              <FileText :size="14" :stroke-width="2" />
+              {{ pdfBusy ? 'Generating…' : 'Export sign-off sheet (PDF)' }}
+            </button>
+            <button type="button" class="prv__export" @click="downloadRosterCsv">
+              <Download :size="14" :stroke-width="2" />
+              CSV
+            </button>
           </div>
         </div>
         <div class="prv__meta-row">
@@ -593,6 +745,46 @@ function back() {
 .prv__title {
   font-size: 24px;
   letter-spacing: -0.01em;
+}
+.prv__export-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.prv__export {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 120ms var(--ease-out),
+    background 120ms var(--ease-out);
+}
+.prv__export:hover:not(:disabled) {
+  border-color: var(--color-brand-600);
+  color: var(--color-brand-600);
+}
+.prv__export--primary {
+  background: var(--color-brand-600);
+  color: white;
+  border-color: var(--color-brand-600);
+}
+.prv__export--primary:hover:not(:disabled) {
+  background: var(--color-brand-700);
+  border-color: var(--color-brand-700);
+  color: white;
+}
+.prv__export:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 .prv__meta-row {
   margin-top: 6px;

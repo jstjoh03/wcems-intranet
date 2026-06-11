@@ -38,10 +38,33 @@ export interface SignOffEntry {
   markedByName: string | null
 }
 
+export interface SignOffLabels {
+  /** Top navy banner text — shown on every page. */
+  headerTitle: string
+  /** Column header above the signature timestamp column. */
+  dateColumnHeader: string
+  /** Verb used in "X of Y <verb> (Z%)" subtitle. */
+  completedVerb: string
+}
+
+export const DEFAULT_TRAINING_LABELS: SignOffLabels = {
+  headerTitle: 'WCEMS · REQUIRED TRAINING SIGN-OFF',
+  dateColumnHeader: 'COMPLETION DATE',
+  completedVerb: 'completed',
+}
+
+export const DEFAULT_POLICY_LABELS: SignOffLabels = {
+  headerTitle: 'WCEMS · POLICY ACKNOWLEDGEMENT SIGN-OFF',
+  dateColumnHeader: 'ACKNOWLEDGED ON',
+  completedVerb: 'acknowledged',
+}
+
 export interface SignOffPdfInput {
   moduleTitle: string
   generatedAt?: Date
   entries: SignOffEntry[]
+  /** Optional label overrides. Defaults to training labels for back-compat. */
+  labels?: SignOffLabels
 }
 
 function formatDate(d: Date | string | null | undefined): string {
@@ -104,6 +127,8 @@ export async function generateRequiredTrainingSignOffPdf(
   const ROW_H = 36
   const SIG_H = 28 // image height inside the signature column
 
+  const labels = input.labels ?? DEFAULT_TRAINING_LABELS
+
   /* ── Page header — slim navy band ────────────────────────────────── */
   function drawHeader() {
     doc.setFillColor(...NAVY)
@@ -111,7 +136,7 @@ export async function generateRequiredTrainingSignOffPdf(
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
     doc.setTextColor(255, 255, 255)
-    doc.text('WCEMS · REQUIRED TRAINING SIGN-OFF', MARGIN_X, 22)
+    doc.text(labels.headerTitle, MARGIN_X, 22)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8.5)
     doc.setTextColor(...GOLD)
@@ -131,7 +156,7 @@ export async function generateRequiredTrainingSignOffPdf(
     doc.setFontSize(9)
     doc.setTextColor(...MUTED)
     doc.text(
-      `${signedCount} of ${totalCount} completed (${pct}%)  ·  Generated ${generatedStr}`,
+      `${signedCount} of ${totalCount} ${labels.completedVerb} (${pct}%)  ·  Generated ${generatedStr}`,
       MARGIN_X,
       y,
     )
@@ -146,7 +171,7 @@ export async function generateRequiredTrainingSignOffPdf(
     doc.setTextColor(...MUTED)
     doc.text('NAME', COL_NAME_X + 2, y)
     doc.text('SIGNATURE', COL_SIG_X + 2, y)
-    doc.text('COMPLETION DATE', COL_DATE_X + 2, y)
+    doc.text(labels.dateColumnHeader, COL_DATE_X + 2, y)
     doc.setDrawColor(...LINE)
     doc.setLineWidth(0.5)
     doc.line(MARGIN_X, y + 4, MARGIN_X + CONTENT_W, y + 4)
@@ -282,7 +307,7 @@ export async function generateRequiredTrainingSignOffPdf(
     doc.setTextColor(...MUTED)
     doc.text(`Page ${i} of ${pageCount}`, W - MARGIN_X, H - 20, { align: 'right' })
     doc.text(
-      `${signedCount} of ${totalCount} completed`,
+      `${signedCount} of ${totalCount} ${labels.completedVerb}`,
       MARGIN_X,
       H - 20,
     )
