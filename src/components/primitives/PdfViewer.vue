@@ -50,8 +50,19 @@ const progressPct = computed(() => {
 })
 
 let observer: IntersectionObserver | null = null
-let lastPageEl: HTMLElement | null = null
 let pageObserver: IntersectionObserver | null = null
+
+/* Idempotent — multiple detection paths (sentinel observer + scroll
+   listener) all funnel through this so only the first one to land
+   actually emits and tears down. */
+function markReachedEnd() {
+  if (reachedEnd.value) return
+  reachedEnd.value = true
+  highestPageSeen.value = pageCount.value
+  emit('reached-end')
+  observer?.disconnect()
+  observer = null
+}
 
 async function renderPdf() {
   if (!pagesEl.value) return
@@ -102,29 +113,51 @@ async function renderPdf() {
       pageElements.push(wrap)
     }
 
-    /* Watch the last page's bottom edge — when it enters the viewport
-       fully, the user has scrolled through everything. */
-    lastPageEl = pageElements[pageElements.length - 1] ?? null
-    if (lastPageEl && containerEl.value) {
+    /* Sentinel at the very bottom of the scroll area. Threshold 0
+       fires the moment ANY pixel of the sentinel is visible. The
+       previous approach observed the last page with threshold 0.5,
+       which silently fails for users whose last page is taller than
+       their viewport — 50% of that page is never visible at once.
+       Bit Perry Tong in production with the HCID policy. */
+    if (containerEl.value) {
+      const sentinel = document.createElement('div')
+      sentinel.className = 'pdfv__sentinel'
+      sentinel.style.height = '1px'
+      sentinel.style.width = '100%'
+      sentinel.setAttribute('aria-hidden', 'true')
+      pagesEl.value.appendChild(sentinel)
+
       observer = new IntersectionObserver(
         ([entry]) => {
           if (entry?.isIntersecting) {
-            reachedEnd.value = true
-            highestPageSeen.value = pageCount.value
-            emit('reached-end')
-            observer?.disconnect()
-            observer = null
+            markReachedEnd()
           }
         },
-        {
-          root: containerEl.value,
-          /* Trigger when at least 50% of the last page is visible —
-             feels more like "they got to the end" than waiting for
-             the absolute bottom edge. */
-          threshold: 0.5,
-        },
+        { root: containerEl.value, threshold: 0 },
       )
-      observer.observe(lastPageEl)
+      observer.observe(sentinel)
+    }
+
+    /* Defensive scroll fallback. If the IntersectionObserver doesn't
+       fire for any reason (Safari quirk, layout race, etc.), a simple
+       scroll-position check still unlocks. Tolerance of 24px handles
+       fractional-pixel and touch-momentum landing positions. */
+    if (containerEl.value) {
+      const el = containerEl.value
+      const onScroll = () => {
+        if (reachedEnd.value) {
+          el.removeEventListener('scroll', onScroll)
+          return
+        }
+        if (el.scrollHeight - (el.scrollTop + el.clientHeight) <= 24) {
+          markReachedEnd()
+          el.removeEventListener('scroll', onScroll)
+        }
+      }
+      el.addEventListener('scroll', onScroll, { passive: true })
+      /* Also run once on attach in case the doc already fits without
+         any scrolling required (very short PDFs). */
+      onScroll()
     }
 
     /* Independent observer for progress hint — fires on every page
