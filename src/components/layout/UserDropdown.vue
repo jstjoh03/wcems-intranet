@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check, User as UserIcon } from 'lucide-vue-next'
 import { useCodeReveal } from '@/composables/useCodeReveal'
 import Avatar from '@/components/primitives/Avatar.vue'
-import { STATION_OPTIONS } from '@/constants/stations'
+import { useStationOptions } from '@/composables/useStationOptions'
 import type { ShiftLetter } from '@/types'
 
 const auth = useAuthStore()
@@ -31,8 +31,10 @@ const triggerLabel = computed(() =>
   isKiosk.value ? fullName.value || 'Station kiosk' : firstName.value,
 )
 
-/* Station list is shared with the profile modal via @/constants/stations
-   so renames only happen in one place. */
+/* Station list = static extras (S201/S202/EMS Admin) + active medic
+   units from the stations table via useStationOptions. Admin adds a
+   new station on /admin/stations → it shows up here automatically. */
+const { options: stationOptions } = useStationOptions()
 const SHIFT_OPTIONS: ShiftLetter[] = ['A', 'B', 'C']
 
 /* Local refs synced to the auth store. We `watch` rather than computed
@@ -218,7 +220,7 @@ function openProfile() {
               @change="saveStation"
             >
               <option value="">— set</option>
-              <option v-for="s in STATION_OPTIONS" :key="s" :value="s">{{ s }}</option>
+              <option v-for="s in stationOptions" :key="s" :value="s">{{ s }}</option>
             </select>
             <div v-if="stationError" class="user-dropdown__stat-error">{{ stationError }}</div>
           </div>

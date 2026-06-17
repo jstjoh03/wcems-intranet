@@ -1,30 +1,23 @@
 /**
- * Closed list of station values exposed to users in self-edit selects
- * (user dropdown + profile modal). Centralized so renames flow to every
- * surface in one place — the previous duplicated arrays got out of sync
- * the first time we renamed FLOAT/PRN.
+ * "Extras" — assignment options that don't live in the `stations`
+ * table. The Medic units (Medic 206, 211, 221, etc.) are admin-
+ * editable on /admin/stations and surface via the `useStationOptions`
+ * composable; this file keeps the buildings and admin tags.
+ *
+ * If an admin adds a new Medic unit on /admin/stations it appears in
+ * the self-edit dropdown automatically — no code change needed.
  *
  * The DB column is plain text so legacy/admin-only values can still
- * exist on rows (e.g. an admin types something custom via
- * /admin/employees); the self-edit pickers just won't offer them as
- * options.
+ * exist on rows (an admin can type something custom via
+ * /admin/employees); the self-edit pickers just won't offer them.
  */
-export const STATION_OPTIONS = [
-  'S201',
-  'S202',
-  'Medic 206',
-  'Medic 211',
-  'Medic 221',
-  'Medic 231',
-  'Medic 242',
-  'Medic 271',
-  'Medic 281',
-  'EMS Admin',
-] as const
 
-/* 'Part-Time' used to live here as a stand-in for PT employees with
-   no fixed station. As of migration 0048 PT is its own column
-   (app_users.employment_type), so station means *physical location*
-   only and PT folks have station=NULL + employment_type='part_time'. */
+/** Render above the live medic units (physical station buildings). */
+export const STATION_EXTRAS_TOP = ['S201', 'S202'] as const
 
-export type StationOption = (typeof STATION_OPTIONS)[number]
+/** Render after the live medic units (non-mobile assignments). */
+export const STATION_EXTRAS_BOTTOM = ['EMS Admin'] as const
+
+export type StationExtra =
+  | (typeof STATION_EXTRAS_TOP)[number]
+  | (typeof STATION_EXTRAS_BOTTOM)[number]

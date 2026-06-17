@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import Avatar from '@/components/primitives/Avatar.vue'
 import { supabase } from '@/lib/supabase'
-import { STATION_OPTIONS } from '@/constants/stations'
+import { useStationOptions } from '@/composables/useStationOptions'
 import type { ShiftLetter } from '@/types'
 import { usePushNotifications } from '@/composables/usePushNotifications'
 
@@ -45,8 +45,10 @@ async function togglePush(event: Event) {
 
 const open = ref(false)
 
-/* STATION_OPTIONS imported from @/constants/stations so it stays in
-   sync with the user dropdown's quick-edit selects. */
+/* Station list = static extras (S201/S202/EMS Admin) + active medic
+   units from the stations table via useStationOptions. Shared with
+   the user-dropdown quick-edit selects via the same composable. */
+const { options: stationOptions } = useStationOptions()
 const SHIFT_OPTIONS: ShiftLetter[] = ['A', 'B', 'C']
 
 /* Local state mirrors the auth store. Watchers keep these in sync when
@@ -353,7 +355,7 @@ async function signOut() {
             <span class="upm__label">Station</span>
             <select v-model="stationLocal" class="upm__input" @change="saveStation">
               <option value="">— None —</option>
-              <option v-for="s in STATION_OPTIONS" :key="s" :value="s">{{ s }}</option>
+              <option v-for="s in stationOptions" :key="s" :value="s">{{ s }}</option>
             </select>
           </label>
           <label class="upm__field">
