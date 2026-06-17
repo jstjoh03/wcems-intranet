@@ -239,11 +239,15 @@ export interface CodeChange {
 
 /* ── Admin staff + on-call + holidays ──────────────────────────────── */
 export interface AdminStaff {
+  id: string
   title: string
   name: string
   email: string | null
   phone: string | null
   notes: string | null
+  /** Lower numbers render first. Renumbered 0..N-1 on every reorder. */
+  sortOrder: number
+  active: boolean
 }
 
 export interface OnCallEntry {

@@ -141,6 +141,12 @@ const routes: RouteRecordRaw[] = [
     meta: { adminOnly: true },
   },
   {
+    path: '/admin/admin-staff',
+    name: 'admin-admin-staff',
+    component: () => import('@/views/admin/ManageAdminStaffView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),

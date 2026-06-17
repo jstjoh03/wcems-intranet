@@ -2,7 +2,11 @@
 import { Phone, Mail, Building2 } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
-import staff from '@/data/admin-staff.json'
+import { useAdminStaff } from '@/composables/useAdminStaff'
+
+/* Crew see the active subset, sorted by sort_order — admin edits on
+   /admin/admin-staff propagate here via realtime. */
+const { activeStaff: staff, ready } = useAdminStaff()
 </script>
 
 <template>
@@ -17,8 +21,13 @@ import staff from '@/data/admin-staff.json'
       </p>
     </header>
 
-    <div class="admin-staff__list">
-      <AppCard v-for="s in staff" :key="s.title + s.name" class="admin-staff__card">
+    <div v-if="!ready" class="admin-staff__empty">Loading…</div>
+    <div v-else-if="!staff.length" class="admin-staff__empty">
+      No admin staff entries yet.
+    </div>
+
+    <div v-else class="admin-staff__list">
+      <AppCard v-for="s in staff" :key="s.id" class="admin-staff__card">
         <Eyebrow>{{ s.title }}</Eyebrow>
         <h3 class="admin-staff__name display">{{ s.name }}</h3>
         <div class="admin-staff__contact">
@@ -61,6 +70,16 @@ import staff from '@/data/admin-staff.json'
   margin-top: 4px;
   font-size: 13px;
   color: var(--color-muted);
+}
+
+.admin-staff__empty {
+  margin-top: 24px;
+  padding: 28px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--color-muted);
+  border: 1px dashed var(--color-line);
+  border-radius: 12px;
 }
 
 .admin-staff__list {

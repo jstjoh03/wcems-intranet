@@ -103,6 +103,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Training Library', to: '/admin/training-recordings', icon: Film },
   { label: 'Manage Required Training', to: '/admin/required-training', icon: ShieldCheck },
   { label: 'Manage Policies', to: '/admin/policies', icon: FileText },
+  { label: 'Manage Admin Staff', to: '/admin/admin-staff', icon: Building2 },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
   { label: 'Usage', to: '/admin/usage', icon: Activity },
 ]
