@@ -29,12 +29,6 @@ const greetingText = computed(() =>
   isBirthday.value ? 'Happy birthday' : greeting.value,
 )
 
-const SHIFT_CYCLE = ['B', 'C', 'A'] as const
-const nextShift = computed(() => {
-  const idx = SHIFT_CYCLE.indexOf(current.value.shift as (typeof SHIFT_CYCLE)[number])
-  return idx === -1 ? '—' : SHIFT_CYCLE[(idx + 1) % 3]
-})
-
 const subline = computed(
   () => `${current.value.shift}-Shift holds the county today — day ${current.value.day} of the rotation.`,
 )
@@ -65,22 +59,12 @@ const upcomingCount = computed(() => events.value.length)
             <b>{{ current.shift }}</b>
             <span class="hero__duty-lbl">On duty</span>
           </div>
-          <div class="hero__duty-sep" aria-hidden="true"></div>
-          <div class="hero__duty-item">
-            <b>{{ current.day }}<span class="hero__duty-dim">/2</span></b>
-            <span class="hero__duty-lbl">Shift day</span>
-          </div>
-          <div class="hero__duty-sep" aria-hidden="true"></div>
-          <div class="hero__duty-item">
-            <b>{{ nextShift }}</b>
-            <span class="hero__duty-lbl">Up next</span>
-          </div>
           <template v-if="trainingReady && upcomingCount > 0">
             <div class="hero__duty-sep" aria-hidden="true"></div>
-            <div class="hero__duty-item">
+            <RouterLink to="/training" class="hero__duty-item hero__duty-link">
               <b class="hero__duty-gold">{{ upcomingCount }}</b>
-              <span class="hero__duty-lbl">Upcoming {{ upcomingCount === 1 ? 'class' : 'classes' }}</span>
-            </div>
+              <span class="hero__duty-lbl">Upcoming {{ upcomingCount === 1 ? 'class' : 'classes' }} <span class="hero__duty-arrow">→</span></span>
+            </RouterLink>
           </template>
         </div>
       </div>
@@ -176,9 +160,22 @@ const upcomingCount = computed(() => events.value.length)
   line-height: 1;
   color: white;
 }
-.hero__duty-dim {
-  font-size: 20px;
-  color: oklch(0.6 0.04 250);
+.hero__duty-link {
+  text-decoration: none;
+  border-radius: 8px;
+  margin: -6px -10px;
+  padding: 6px 10px;
+  transition: background 140ms var(--ease-out);
+}
+.hero__duty-link:hover {
+  background: oklch(1 0 0 / 0.07);
+}
+.hero__duty-arrow {
+  opacity: 0;
+  transition: opacity 140ms var(--ease-out);
+}
+.hero__duty-link:hover .hero__duty-arrow {
+  opacity: 1;
 }
 .hero__duty-gold {
   color: var(--color-accent-on-dark) !important;

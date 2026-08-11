@@ -6,7 +6,6 @@ import {
   MapPin,
   GraduationCap,
   Bell,
-  Camera,
   Users,
   X,
   LogOut,
@@ -18,7 +17,6 @@ import {
   Settings,
   LayoutGrid,
   Home,
-  Newspaper,
   Film,
   Contact,
   ChevronDown,
@@ -79,8 +77,7 @@ const sections: NavItem[] = [
   { id: 'people', label: 'People', icon: Users, hash: '#people' },
   { id: 'stations', label: 'Stations', icon: MapPin, hash: '#stations' },
   { id: 'training', label: 'Upcoming Classes', icon: GraduationCap, hash: '#training' },
-  { id: 'photos', label: 'Around the County', icon: Camera, hash: '#photos' },
-  { id: 'newsletter', label: 'Newsletter', icon: Newspaper, hash: '#newsletter' },
+  { id: 'library', label: 'Training Library', icon: Film, hash: '#library' },
 ]
 
 const pages: NavItem[] = [

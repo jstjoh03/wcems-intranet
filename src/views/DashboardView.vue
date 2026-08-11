@@ -5,11 +5,11 @@ import RequiredTrainingBanner from '@/components/dashboard/RequiredTrainingBanne
 import PoliciesBanner from '@/components/dashboard/PoliciesBanner.vue'
 import FeaturedQuickLinks from '@/components/dashboard/FeaturedQuickLinks.vue'
 import StationDirectory from '@/components/dashboard/StationDirectory.vue'
-import NewsletterCard from '@/components/dashboard/NewsletterCard.vue'
 import UpcomingTrainingCard from '@/components/dashboard/UpcomingTrainingCard.vue'
 import AnnouncementsCard from '@/components/dashboard/AnnouncementsCard.vue'
 import CallVolumeTile from '@/components/dashboard/CallVolumeTile.vue'
-import PhotoGallery from '@/components/dashboard/PhotoGallery.vue'
+import ComplianceCard from '@/components/dashboard/ComplianceCard.vue'
+import TrainingLibraryCard from '@/components/dashboard/TrainingLibraryCard.vue'
 import PeopleRow from '@/components/dashboard/PeopleRow.vue'
 </script>
 
@@ -31,10 +31,10 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
     <FeaturedQuickLinks />
 
     <!--
-      Quick Links lives in a floating dock (AppShell) so the dashboard
-      can lead with editorial content. Main column: Announcements →
-      People → Stations. Sidebar: Upcoming Classes, Call Volume.
-      Newsletter sits full-width near the bottom with the photo gallery.
+      Main column: Announcements → People → Stations. Rail: personal
+      compliance status (mockup v2), Upcoming Classes, Call Volume.
+      Latest Training Library recordings sit full-width at the bottom
+      (replaced the unused photo gallery + newsletter slots).
     -->
     <div class="dash__grid">
       <div class="dash__main">
@@ -50,6 +50,9 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
       </div>
 
       <aside class="dash__aside">
+        <div class="reveal" style="animation-delay: 90ms">
+          <ComplianceCard />
+        </div>
         <div id="training" class="reveal" style="animation-delay: 100ms">
           <UpcomingTrainingCard />
         </div>
@@ -59,9 +62,8 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
       </aside>
     </div>
 
-      <PhotoGallery />
-      <div id="newsletter" class="reveal dash__newsletter" style="animation-delay: 80ms">
-        <NewsletterCard />
+      <div id="library" class="reveal" style="animation-delay: 80ms">
+        <TrainingLibraryCard />
       </div>
     </div>
   </div>
@@ -102,10 +104,4 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
   gap: 24px;
 }
 
-/* Breathing room between Around-the-County and the newsletter — without
-   it the photo gallery's bottom edge butts right up against the
-   newsletter hero, which felt cramped. */
-.dash__newsletter {
-  margin-top: 48px;
-}
 </style>
