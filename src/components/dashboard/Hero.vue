@@ -30,7 +30,7 @@ const greetingText = computed(() =>
 )
 
 const subline = computed(
-  () => `${current.value.shift}-Shift holds the county today — day ${current.value.day} of the rotation.`,
+  () => `${current.value.shift}-Shift holds the county today.`,
 )
 
 const upcomingCount = computed(() => events.value.length)
@@ -57,7 +57,7 @@ const upcomingCount = computed(() => events.value.length)
         <div class="hero__dutyline">
           <div class="hero__duty-item">
             <b>{{ current.shift }}</b>
-            <span class="hero__duty-lbl">On duty</span>
+            <span class="hero__duty-lbl">Shift · Day {{ current.day }}</span>
           </div>
           <template v-if="trainingReady && upcomingCount > 0">
             <div class="hero__duty-sep" aria-hidden="true"></div>
