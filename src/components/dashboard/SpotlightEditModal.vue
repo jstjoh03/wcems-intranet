@@ -20,6 +20,7 @@ const personName = ref('')
 const role = ref('')
 const tenure = ref('')
 const blurb = ref('')
+const story = ref('')
 const photo = ref<File | null>(null)
 const photoInput = ref<HTMLInputElement | null>(null)
 const photoPreview = ref<string | null>(null)
@@ -40,6 +41,7 @@ watch(
       role.value = current.value?.role ?? ''
       tenure.value = current.value?.tenure ?? ''
       blurb.value = current.value?.blurb ?? ''
+      story.value = current.value?.story ?? ''
       photo.value = null
       removeExistingPhoto.value = false
       if (photoPreview.value) URL.revokeObjectURL(photoPreview.value)
@@ -101,6 +103,7 @@ async function submit() {
     role: role.value,
     tenure: tenure.value,
     blurb: blurb.value,
+    story: story.value,
     photo: photo.value,
     removeExistingPhoto: removeExistingPhoto.value,
   })
@@ -193,6 +196,16 @@ async function removePublished() {
                 class="spotlight-modal__textarea"
               />
               <span class="spotlight-modal__hint">{{ blurb.length }} / 280</span>
+            </label>
+
+            <label class="spotlight-modal__field">
+              <span class="spotlight-modal__label">Full story (optional)</span>
+              <textarea
+                v-model="story"
+                rows="8"
+                placeholder="The whole write-up — patient encounters, background, the details that wouldn't fit in the blurb. Shown behind 'Read the full story' with a congratulations thread. Blank lines start new paragraphs."
+                class="spotlight-modal__textarea"
+              />
             </label>
 
             <div class="spotlight-modal__field">

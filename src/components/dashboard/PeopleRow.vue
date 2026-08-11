@@ -10,8 +10,11 @@ import { useBirthdayReactions } from '@/composables/useBirthdayReactions'
 import { useBirthdayComments } from '@/composables/useBirthdayComments'
 import { useTodaysBirthdays } from '@/composables/useTodaysBirthdays'
 import { useSpotlight } from '@/composables/useSpotlight'
+import { useQuickLinks } from '@/composables/useQuickLinks'
+import { computed } from 'vue'
 import BirthdayCommentsModal from './BirthdayCommentsModal.vue'
 import SpotlightEditModal from './SpotlightEditModal.vue'
+import SpotlightDetailModal from './SpotlightDetailModal.vue'
 
 const auth = useAuthStore()
 const { isoDate } = useGreeting()
@@ -20,6 +23,15 @@ const { birthdays } = useTodaysBirthdays()
 const { current: spotlight } = useSpotlight()
 
 const spotlightEditOpen = ref(false)
+const spotlightDetailOpen = ref(false)
+
+/* Kudos form (supervisor's Jotform, admin-curated in quick links) —
+   surfaced under the spotlight to keep recognition submissions coming. */
+const { links: quickLinks } = useQuickLinks()
+const SHOUTOUT_FALLBACK = 'https://form.jotform.com/261249366820056'
+const shoutoutUrl = computed(
+  () => quickLinks.value.find((l) => l.label === 'Employee Shoutout')?.url ?? SHOUTOUT_FALLBACK,
+)
 
 const reactions = useBirthdayReactions()
 const comments = useBirthdayComments()
@@ -93,6 +105,14 @@ function initials(name: string) {
             </div>
             <h3 class="spotlight__name display">{{ spotlight.personName }}</h3>
             <p v-if="spotlight.blurb" class="spotlight__blurb">"{{ spotlight.blurb }}"</p>
+            <button
+              v-if="spotlight.story"
+              type="button"
+              class="spotlight__story-link"
+              @click="spotlightDetailOpen = true"
+            >
+              Read the full story →
+            </button>
           </template>
           <template v-else>
             <div class="spotlight__role">Recognition</div>
@@ -109,6 +129,13 @@ function initials(name: string) {
               + Choose a spotlight
             </button>
           </template>
+
+          <!-- Kudos pipeline: the spotlight is fed by shoutouts, so the
+               ask lives right where the recognition is displayed. -->
+          <a class="spotlight__kudos" :href="shoutoutUrl" target="_blank" rel="noopener">
+            <Star :size="12" :stroke-width="2" />
+            Seen a teammate go above and beyond? Send a shoutout →
+          </a>
         </div>
       </AppCard>
 
@@ -189,6 +216,12 @@ function initials(name: string) {
       :birthday-date="isoDate"
       :person-key="activeBirthday?.personKey ?? ''"
       @close="activeBirthday = null"
+    />
+
+    <SpotlightDetailModal
+      :spotlight="spotlightDetailOpen ? spotlight : null"
+      :shoutout-url="shoutoutUrl"
+      @close="spotlightDetailOpen = false"
     />
 
     <SpotlightEditModal
@@ -450,5 +483,42 @@ function initials(name: string) {
   letter-spacing: 0.02em;
   min-width: 0.7em;
   text-align: center;
+}
+.spotlight__story-link {
+  margin-top: 10px;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-brand-600);
+  transition: color 120ms var(--ease-out);
+}
+.spotlight__story-link:hover {
+  color: var(--color-accent-700);
+}
+
+.spotlight__kudos {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-line-soft);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-muted);
+  text-decoration: none;
+  transition: color 120ms var(--ease-out);
+}
+.spotlight__kudos:hover {
+  color: var(--color-accent-700);
+}
+.spotlight__kudos svg {
+  color: var(--color-accent-600);
+  flex-shrink: 0;
 }
 </style>

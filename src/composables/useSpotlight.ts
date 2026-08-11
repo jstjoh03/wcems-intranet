@@ -22,6 +22,8 @@ export interface Spotlight {
   role: string
   tenure: string
   blurb: string
+  /** Long-form write-up shown in the "Read the full story" view. */
+  story: string
   /** Storage path inside `spotlight-photos` bucket — null in dev stub */
   photoPath: string | null
   /** Resolved public URL — data URL in dev-stub, public URL in real session */
@@ -36,6 +38,7 @@ interface SpotlightRow {
   role: string
   tenure: string
   blurb: string
+  story: string | null
   photo_path: string | null
   published_at: string
   published_by: string | null
@@ -63,6 +66,7 @@ function rowToSpotlight(r: SpotlightRow): Spotlight {
     role: r.role ?? '',
     tenure: r.tenure ?? '',
     blurb: r.blurb ?? '',
+    story: r.story ?? '',
     photoPath: r.photo_path,
     photoUrl: photoPublicUrl(r.photo_path),
     publishedAt: r.published_at,
@@ -111,6 +115,7 @@ async function load() {
         role: stub.role,
         tenure: stub.tenure,
         blurb: stub.blurb,
+        story: '',
         photoPath: null,
         photoUrl: null,
         publishedAt: new Date().toISOString(),
@@ -125,7 +130,7 @@ async function load() {
 
   const { data, error } = await supabase
     .from('spotlights')
-    .select('id, person_name, role, tenure, blurb, photo_path, published_at, published_by')
+    .select('id, person_name, role, tenure, blurb, story, photo_path, published_at, published_by')
     .eq('active', true)
     .order('published_at', { ascending: false })
     .limit(1)
@@ -157,6 +162,7 @@ export function useSpotlight() {
     role: string
     tenure: string
     blurb: string
+    story: string
     photo: File | null
     /** True if admin clicked "Remove photo" — clears the existing path. */
     removeExistingPhoto?: boolean
@@ -166,6 +172,7 @@ export function useSpotlight() {
     const role = input.role.trim()
     const tenure = input.tenure.trim()
     const blurb = input.blurb.trim()
+    const story = input.story.trim()
 
     const auth = useAuthStore()
 
@@ -194,6 +201,7 @@ export function useSpotlight() {
         role,
         tenure,
         blurb,
+        story,
         photoPath: null,
         photoUrl,
         publishedAt: new Date().toISOString(),
@@ -245,11 +253,12 @@ export function useSpotlight() {
         role,
         tenure,
         blurb,
+        story,
         photo_path: photoPath,
         published_by: auth.appUser?.id ?? null,
         active: true,
       })
-      .select('id, person_name, role, tenure, blurb, photo_path, published_at, published_by')
+      .select('id, person_name, role, tenure, blurb, story, photo_path, published_at, published_by')
       .single()
     if (insErr) return { ok: false, error: `Save failed: ${insErr.message}` }
 
