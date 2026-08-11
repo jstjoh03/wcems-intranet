@@ -18,7 +18,10 @@ import peopleData from '@/data/people.json'
 
 export interface Spotlight {
   id: string
+  /** Rendered display string — one name, or "A & B" / "A, B & C". */
   personName: string
+  /** Individual roster names — the comment-push recipients. */
+  personNames: string[]
   role: string
   tenure: string
   blurb: string
@@ -35,6 +38,7 @@ export interface Spotlight {
 interface SpotlightRow {
   id: string
   person_name: string
+  person_names: string[] | null
   role: string
   tenure: string
   blurb: string
@@ -63,6 +67,7 @@ function rowToSpotlight(r: SpotlightRow): Spotlight {
   return {
     id: r.id,
     personName: r.person_name,
+    personNames: r.person_names?.length ? r.person_names : r.person_name ? [r.person_name] : [],
     role: r.role ?? '',
     tenure: r.tenure ?? '',
     blurb: r.blurb ?? '',
@@ -72,6 +77,12 @@ function rowToSpotlight(r: SpotlightRow): Spotlight {
     publishedAt: r.published_at,
     publishedBy: r.published_by,
   }
+}
+
+/** "A" / "A & B" / "A, B & C" */
+export function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? ''
+  return `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}`
 }
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -112,6 +123,7 @@ async function load() {
       current.value = {
         id: 'dev-stub',
         personName: stub.name,
+        personNames: [stub.name],
         role: stub.role,
         tenure: stub.tenure,
         blurb: stub.blurb,
@@ -130,7 +142,7 @@ async function load() {
 
   const { data, error } = await supabase
     .from('spotlights')
-    .select('id, person_name, role, tenure, blurb, story, photo_path, published_at, published_by')
+    .select('id, person_name, person_names, role, tenure, blurb, story, photo_path, published_at, published_by')
     .eq('active', true)
     .order('published_at', { ascending: false })
     .limit(1)
@@ -158,7 +170,7 @@ export function useSpotlight() {
   void load()
 
   async function publish(input: {
-    personName: string
+    personNames: string[]
     role: string
     tenure: string
     blurb: string
@@ -167,8 +179,9 @@ export function useSpotlight() {
     /** True if admin clicked "Remove photo" — clears the existing path. */
     removeExistingPhoto?: boolean
   }): Promise<{ ok: true } | { ok: false; error: string }> {
-    const personName = input.personName.trim()
-    if (!personName) return { ok: false, error: 'Name is required.' }
+    const personNames = input.personNames.map((n) => n.trim()).filter(Boolean)
+    if (personNames.length === 0) return { ok: false, error: 'Pick at least one employee.' }
+    const personName = joinNames(personNames)
     const role = input.role.trim()
     const tenure = input.tenure.trim()
     const blurb = input.blurb.trim()
@@ -198,6 +211,7 @@ export function useSpotlight() {
       current.value = {
         id: 'dev-stub',
         personName,
+        personNames,
         role,
         tenure,
         blurb,
@@ -250,6 +264,7 @@ export function useSpotlight() {
       .from('spotlights')
       .insert({
         person_name: personName,
+        person_names: personNames,
         role,
         tenure,
         blurb,
@@ -258,7 +273,7 @@ export function useSpotlight() {
         published_by: auth.appUser?.id ?? null,
         active: true,
       })
-      .select('id, person_name, role, tenure, blurb, story, photo_path, published_at, published_by')
+      .select('id, person_name, person_names, role, tenure, blurb, story, photo_path, published_at, published_by')
       .single()
     if (insErr) return { ok: false, error: `Save failed: ${insErr.message}` }
 

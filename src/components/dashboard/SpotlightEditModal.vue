@@ -41,23 +41,37 @@ async function loadRoster() {
   }))
 }
 
-/* Prefill the role from the picked person's title when role is empty. */
-function onPickPerson() {
-  if (role.value.trim()) return
-  const picked = roster.value.find((r) => r.fullName === personName.value)
-  if (picked?.title) role.value = picked.title
+/* Add the picked person as a chip; first pick prefills the role from
+   their title when role is still empty. */
+function addPicked() {
+  const name = picker.value
+  picker.value = ''
+  if (!name || selectedNames.value.includes(name)) return
+  selectedNames.value = [...selectedNames.value, name]
+  if (selectedNames.value.length === 1 && !role.value.trim()) {
+    const picked = roster.value.find((r) => r.fullName === name)
+    if (picked?.title) role.value = picked.title
+  }
+}
+function removeName(name: string) {
+  selectedNames.value = selectedNames.value.filter((n) => n !== name)
 }
 
-/* If the current spotlight predates the dropdown (freeform name not on
-   the roster), keep it selectable so editing doesn't clobber it. */
+/* Roster names not yet selected; legacy freeform names on the current
+   spotlight stay pickable so editing doesn't clobber them. */
 const nameOptions = computed(() => {
   const names = roster.value.map((r) => r.fullName)
-  const cur = current.value?.personName
-  if (cur && !names.includes(cur)) return [cur, ...names]
-  return names
+  for (const cur of current.value?.personNames ?? []) {
+    if (!names.includes(cur)) names.unshift(cur)
+  }
+  return names.filter((n) => !selectedNames.value.includes(n))
 })
 
-const personName = ref('')
+const selectedNames = ref<string[]>([])
+const picker = ref('')
+/* Free-text fallback (dev-stub / roster load failure) — comma-separate
+   for multiple people. */
+const freeText = ref('')
 const role = ref('')
 const tenure = ref('')
 const blurb = ref('')
@@ -78,7 +92,13 @@ watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      personName.value = current.value?.personName ?? ''
+      selectedNames.value = current.value?.personNames?.length
+        ? [...current.value.personNames]
+        : current.value?.personName
+          ? [current.value.personName]
+          : []
+      freeText.value = selectedNames.value.join(', ')
+      picker.value = ''
       role.value = current.value?.role ?? ''
       tenure.value = current.value?.tenure ?? ''
       blurb.value = current.value?.blurb ?? ''
@@ -134,14 +154,17 @@ function dropExistingPhoto() {
 }
 
 async function submit() {
-  if (!personName.value.trim()) {
-    error.value = 'Name is required.'
+  const names = roster.value.length || selectedNames.value.length
+    ? selectedNames.value
+    : freeText.value.split(',').map((n) => n.trim()).filter(Boolean)
+  if (names.length === 0) {
+    error.value = 'Pick at least one employee.'
     return
   }
   error.value = null
   submitting.value = true
   const result = await publish({
-    personName: personName.value,
+    personNames: names,
     role: role.value,
     tenure: tenure.value,
     blurb: blurb.value,
@@ -193,28 +216,42 @@ async function removePublished() {
           </header>
 
           <form class="spotlight-modal__form" @submit.prevent="submit">
-            <label class="spotlight-modal__field">
-              <span class="spotlight-modal__label">Name</span>
+            <div class="spotlight-modal__field">
+              <span class="spotlight-modal__label">Who's being recognized?</span>
+              <div v-if="selectedNames.length" class="spotlight-modal__chips">
+                <span v-for="n in selectedNames" :key="n" class="spotlight-modal__chip">
+                  {{ n }}
+                  <button
+                    type="button"
+                    class="spotlight-modal__chip-x"
+                    :aria-label="`Remove ${n}`"
+                    @click="removeName(n)"
+                  >×</button>
+                </span>
+              </div>
               <select
-                v-if="nameOptions.length"
-                v-model="personName"
-                required
+                v-if="nameOptions.length || roster.length"
+                v-model="picker"
                 class="spotlight-modal__input"
-                @change="onPickPerson"
+                @change="addPicked"
               >
-                <option value="" disabled>Pick an employee…</option>
+                <option value="" disabled>
+                  {{ selectedNames.length ? 'Add another person…' : 'Pick an employee…' }}
+                </option>
                 <option v-for="n in nameOptions" :key="n" :value="n">{{ n }}</option>
               </select>
               <input
                 v-else
-                v-model="personName"
+                v-model="freeText"
                 type="text"
-                required
-                maxlength="80"
-                placeholder="Justin St John"
+                maxlength="200"
+                placeholder="Justin St John, Brianna Smith"
                 class="spotlight-modal__input"
               />
-            </label>
+              <span class="spotlight-modal__hint">
+                Multiple people show as "A, B &amp; C" and each gets notified on comments.
+              </span>
+            </div>
 
             <div class="spotlight-modal__row">
               <label class="spotlight-modal__field">
@@ -348,7 +385,7 @@ async function removePublished() {
                 <button
                   type="submit"
                   class="spotlight-modal__primary"
-                  :disabled="submitting || !personName.trim()"
+                  :disabled="submitting || (selectedNames.length === 0 && !freeText.trim())"
                 >
                   {{ submitting ? 'Publishing…' : current ? 'Update' : 'Publish' }}
                 </button>
@@ -679,5 +716,39 @@ async function removePublished() {
 .spotlight-modal-leave-to .spotlight-modal {
   transform: translateY(16px);
   opacity: 0;
+}
+.spotlight-modal__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.spotlight-modal__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 11px;
+  border-radius: 999px;
+  background: var(--color-brand-900);
+  color: var(--color-accent-on-dark);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.spotlight-modal__chip-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: oklch(1 0 0 / 0.12);
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+}
+.spotlight-modal__chip-x:hover {
+  background: oklch(1 0 0 / 0.25);
 }
 </style>

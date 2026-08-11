@@ -89,38 +89,46 @@ Deno.serve(async (req: Request) => {
     .maybeSingle()
   const authorName = author?.full_name ? firstName(author.full_name) : 'A teammate'
 
-  // Resolve the recipient
-  let targetId: string | null = null
+  // Resolve the recipient(s) — spotlights can recognize several people
+  // at once (person_names[]); every subject except the commenter gets
+  // their own push.
+  const targetIds: string[] = []
   if (p.kind === 'spotlight' && p.spotlight_id) {
     const { data: spot } = await supabase
       .from('spotlights')
-      .select('person_name')
+      .select('person_name, person_names')
       .eq('id', p.spotlight_id)
       .maybeSingle()
-    if (spot?.person_name) {
+    const names: string[] = spot?.person_names?.length
+      ? spot.person_names
+      : spot?.person_name
+        ? [spot.person_name]
+        : []
+    for (const name of names) {
       const { data: match } = await supabase
         .from('app_users')
         .select('id')
-        .ilike('full_name', spot.person_name.trim())
+        .ilike('full_name', name.trim())
         .limit(1)
         .maybeSingle()
-      targetId = match?.id ?? null
+      if (match?.id && !targetIds.includes(match.id)) targetIds.push(match.id)
     }
   } else if (p.kind === 'birthday' && p.person_key) {
     const { data: users } = await supabase
       .from('app_users')
       .select('id, full_name')
       .eq('active', true)
-    targetId = (users ?? []).find((u: { full_name: string }) => slugify(u.full_name) === p.person_key)?.id ?? null
+    const hit = (users ?? []).find((u: { full_name: string }) => slugify(u.full_name) === p.person_key)
+    if (hit) targetIds.push(hit.id)
   }
 
-  if (!targetId) return done({ sent: 0, reason: 'no matching recipient' })
-  if (targetId === p.user_id) return done({ sent: 0, reason: 'self-comment' })
+  const recipients = targetIds.filter((id) => id !== p.user_id)
+  if (recipients.length === 0) return done({ sent: 0, reason: 'no matching recipient' })
 
   const { data: subs, error: subErr } = await supabase
     .from('push_subscriptions')
     .select('id, endpoint, p256dh, auth')
-    .eq('user_id', targetId)
+    .in('user_id', recipients)
   if (subErr) return new Response('Subscriptions query failed', { status: 500 })
   const subscriptions = (subs ?? []) as SubscriptionRow[]
   if (subscriptions.length === 0) return done({ sent: 0, reason: 'recipient has no push subscriptions' })
