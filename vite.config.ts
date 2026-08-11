@@ -41,6 +41,10 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // Protocols section assets: the vendored pdfjs viewer and the
+        // reference PDFs/images are fetched on demand, not precached
+        // (mirrors the standalone protocols app's SW strategy).
+        globIgnores: ['pdfjs/**', 'protocols/**', '**/WongBaker.png', '**/Patch - Final.png'],
       },
     }),
   ],

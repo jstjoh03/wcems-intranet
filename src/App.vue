@@ -10,9 +10,12 @@ const route = useRoute()
 // /admin/usage page can show real weekly-active + top-route data.
 useUsageTracking()
 
-/* Sign-in lives outside the chrome — no topbar, drawer, footer, or
-   quick-links dock — so it reads as a focused gateway, not a "page". */
-const useShell = computed(() => route.meta.public !== true)
+/* Sign-in and chromeless sections (the absorbed protocols app — a
+   self-contained full-viewport dark UI with its own header) live
+   outside the chrome — no topbar, drawer, footer, or dock. */
+const useShell = computed(
+  () => route.meta.public !== true && route.meta.chromeless !== true,
+)
 </script>
 
 <template>

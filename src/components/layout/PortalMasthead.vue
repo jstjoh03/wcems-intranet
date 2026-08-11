@@ -54,7 +54,7 @@ const ADMIN_CHILDREN: NavChild[] = [
 const nav = computed<NavItem[]>(() => [
   { label: 'Home', to: '/', match: 'exact-home' },
   { label: 'Directory', to: '/directory', match: '/directory' },
-  { label: 'Protocols', url: 'https://protocols.wallercountyems.com' },
+  { label: 'Protocols', to: '/protocols', match: '/protocols' },
   {
     label: 'Training',
     match: '/training',

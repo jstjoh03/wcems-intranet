@@ -1,0 +1,27 @@
+/* ═══════════════════════════════════════════════════════════════════
+   PROTOCOLS SECTION THEME
+   Custom properties the ported protocols views/components reference
+   (they were written against the standalone protocols app's :root).
+   Variables only — the old app's resets and body styles stay behind;
+   the portal's own base styles apply. Names don't collide with the
+   portal tokens (--color-*), so :root scope is safe.
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+  --navy: #0a1628;
+  --navy-mid: #132240;
+  --navy-light: #1e3a5f;
+  --gold: #c9a84c;
+  --gold-light: #e2c97e;
+  --gold-dim: #a07c30;
+  --white: #ffffff;
+  --off-white: #f4f6f9;
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.35);
+  --surface: #132240;
+  --surface-raised: #1e3a5f;
+  --border: rgba(201, 168, 76, 0.2);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}

@@ -146,6 +146,34 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/admin/ManageAdminStaffView.vue'),
     meta: { adminOnly: true },
   },
+  /* ── Protocols section (absorbed standalone app) ─────────────────
+     Chromeless: these views are a self-contained full-viewport dark
+     app (own header, 100dvh scroll) — the portal chrome stays out of
+     the way, same as /signin. Auth guard still applies. */
+  {
+    path: '/protocols',
+    name: 'protocols',
+    component: () => import('@/views/protocols/ProtocolsHomeView.vue'),
+    meta: { chromeless: true },
+  },
+  {
+    path: '/protocols/protocol/:id',
+    name: 'protocols-protocol',
+    component: () => import('@/views/protocols/ProtocolView.vue'),
+    meta: { chromeless: true },
+  },
+  {
+    path: '/protocols/medication/:id',
+    name: 'protocols-medication',
+    component: () => import('@/views/protocols/MedicationView.vue'),
+    meta: { chromeless: true },
+  },
+  {
+    path: '/admin/protocols',
+    name: 'admin-protocols',
+    component: () => import('@/views/protocols/ManageProtocolsView.vue'),
+    meta: { adminOnly: true, chromeless: true },
+  },
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',

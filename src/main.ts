@@ -4,6 +4,7 @@ import App from './App.vue'
 import { router } from './router'
 import { useAuthStore } from './stores/auth'
 import './assets/main.css'
+import './assets/protocols-theme.css'
 
 /**
  * Resolve the auth session BEFORE mount + first navigation. Without
