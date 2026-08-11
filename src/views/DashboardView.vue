@@ -14,17 +14,16 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
 </script>
 
 <template>
-  <div class="dash">
+  <!-- Single root so the route <Transition> in App.vue can animate it.
+       Hero renders full-bleed (navy band with its own gold seam);
+       everything else lives inside the padded .dash container. -->
+  <div>
     <Hero />
 
+    <div class="dash">
     <RequiredTrainingBanner />
     <PoliciesBanner />
     <PushNotificationsBanner />
-
-    <!-- Horizontal gold accent rule — same gradient treatment as the
-         supply portal's section dividers. Sits between the hero greeting
-         and the featured shortcuts so they read as separate beats. -->
-    <hr class="dash__rule" aria-hidden="true" />
 
     <!-- Four most-used shortcuts (role-aware: crew sees Outlook /
          Shoutout / Supply / Protocols, supervisors swap in Responder360
@@ -60,9 +59,10 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
       </aside>
     </div>
 
-    <PhotoGallery />
-    <div id="newsletter" class="reveal dash__newsletter" style="animation-delay: 80ms">
-      <NewsletterCard />
+      <PhotoGallery />
+      <div id="newsletter" class="reveal dash__newsletter" style="animation-delay: 80ms">
+        <NewsletterCard />
+      </div>
     </div>
   </div>
 </template>
@@ -100,22 +100,6 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
   display: flex;
   flex-direction: column;
   gap: 24px;
-}
-
-/* Horizontal gold gradient rule — fades in from transparent, holds the
-   gold tone in the middle, fades back out. Same recipe as the hero's
-   vertical divider, ported to horizontal. */
-.dash__rule {
-  border: 0;
-  height: 1px;
-  margin: 24px 0 28px;
-  background: linear-gradient(
-    to right,
-    transparent 0%,
-    oklch(0.734 0.114 86.8 / 0.45) 25%,
-    oklch(0.734 0.114 86.8 / 0.45) 75%,
-    transparent 100%
-  );
 }
 
 /* Breathing room between Around-the-County and the newsletter — without

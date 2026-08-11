@@ -2,17 +2,21 @@
 import { computed } from 'vue'
 import { Cake } from 'lucide-vue-next'
 import { useGreeting } from '@/composables/useGreeting'
+import { useShift } from '@/composables/useShift'
+import { useTraining } from '@/composables/useTraining'
 import { useAuthStore } from '@/stores/auth'
-import Eyebrow from '@/components/primitives/Eyebrow.vue'
-import ShiftPill from '@/components/primitives/ShiftPill.vue'
-
-const auth = useAuthStore()
-const { greeting, todayStr, isoDate } = useGreeting()
 
 /**
- * True when today's MM-DD (in Central Time) matches the user's DOB MM-DD.
- * Note: Feb-29 birthdays only fire on actual leap years — acceptable v1.
+ * Navy hero band (approved portal mockup v2): serif greeting over the
+ * lit-surface navy gradient, with the duty line — on-duty shift, shift
+ * day, next shift up, and upcoming-class count — replacing the old
+ * on-canvas greeting + shift pill.
  */
+const auth = useAuthStore()
+const { greeting, todayStr, isoDate } = useGreeting()
+const { current } = useShift()
+const { events, ready: trainingReady } = useTraining()
+
 const isBirthday = computed(() => {
   const dob = auth.appUser?.dateOfBirth
   if (!dob) return false
@@ -24,75 +28,186 @@ const isBirthday = computed(() => {
 const greetingText = computed(() =>
   isBirthday.value ? 'Happy birthday' : greeting.value,
 )
+
+const SHIFT_CYCLE = ['B', 'C', 'A'] as const
+const nextShift = computed(() => {
+  const idx = SHIFT_CYCLE.indexOf(current.value.shift as (typeof SHIFT_CYCLE)[number])
+  return idx === -1 ? '—' : SHIFT_CYCLE[(idx + 1) % 3]
+})
+
+const subline = computed(
+  () => `${current.value.shift}-Shift holds the county today — day ${current.value.day} of the rotation.`,
+)
+
+const upcomingCount = computed(() => events.value.length)
 </script>
 
 <template>
   <header class="hero reveal">
-    <div class="hero__main">
-      <Eyebrow>{{ todayStr }}</Eyebrow>
-      <h1 class="hero__title display" :class="{ 'hero__title--birthday': isBirthday }">
-        {{ greetingText }}<template v-if="auth.appUser?.firstName">,
-          <em class="hero__name italic">{{ auth.appUser.firstName }}</em></template>{{ isBirthday ? '!' : '.' }}
-        <Cake
-          v-if="isBirthday"
-          :size="32"
-          :stroke-width="1.5"
-          class="hero__cake"
-          aria-hidden="true"
-        />
-      </h1>
-      <div class="hero__pill">
-        <ShiftPill />
+    <div class="hero__wrap">
+      <div class="hero__main">
+        <div class="hero__eyebrow">{{ todayStr }} · Hempstead, TX</div>
+        <h1 class="hero__title display" :class="{ 'hero__title--birthday': isBirthday }">
+          {{ greetingText }}<template v-if="auth.appUser?.firstName">,
+            <em class="hero__name italic">{{ auth.appUser.firstName }}</em></template>{{ isBirthday ? '!' : '.' }}
+          <Cake
+            v-if="isBirthday"
+            :size="32"
+            :stroke-width="1.5"
+            class="hero__cake"
+            aria-hidden="true"
+          />
+        </h1>
+        <p class="hero__sub">{{ subline }}</p>
+
+        <div class="hero__dutyline">
+          <div class="hero__duty-item">
+            <b>{{ current.shift }}</b>
+            <span class="hero__duty-lbl">On duty</span>
+          </div>
+          <div class="hero__duty-sep" aria-hidden="true"></div>
+          <div class="hero__duty-item">
+            <b>{{ current.day }}<span class="hero__duty-dim">/2</span></b>
+            <span class="hero__duty-lbl">Shift day</span>
+          </div>
+          <div class="hero__duty-sep" aria-hidden="true"></div>
+          <div class="hero__duty-item">
+            <b>{{ nextShift }}</b>
+            <span class="hero__duty-lbl">Up next</span>
+          </div>
+          <template v-if="trainingReady && upcomingCount > 0">
+            <div class="hero__duty-sep" aria-hidden="true"></div>
+            <div class="hero__duty-item">
+              <b class="hero__duty-gold">{{ upcomingCount }}</b>
+              <span class="hero__duty-lbl">Upcoming {{ upcomingCount === 1 ? 'class' : 'classes' }}</span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div class="hero__patch patch-in" aria-hidden="true">
+        <span class="hero__patch-halo" />
+        <img src="/wcems-patch.png" alt="WCEMS patch" width="150" height="150" />
       </div>
     </div>
-
-    <div class="hero__patch patch-in" aria-hidden="true">
-      <span class="hero__patch-halo" />
-      <img src="/wcems-patch.png" alt="WCEMS patch" width="140" height="140" />
-    </div>
+    <div class="hero__goldseam" aria-hidden="true"></div>
   </header>
 </template>
 
 <style scoped>
+/* Full-bleed navy band with the "lit surface" treatment: three soft
+   radial highlights over a 135° brand gradient. */
 .hero {
+  background:
+    radial-gradient(ellipse 90% 70% at 15% 0%, oklch(0.4 0.13 250 / 0.55), transparent 60%),
+    radial-gradient(ellipse 70% 60% at 85% 100%, oklch(0.32 0.12 250 / 0.5), transparent 60%),
+    radial-gradient(ellipse 50% 45% at 70% 20%, oklch(0.45 0.12 250 / 0.28), transparent 65%),
+    linear-gradient(135deg, var(--color-brand-700), var(--color-brand-900));
+}
+.hero__wrap {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 16px 34px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 28px;
-  margin-bottom: 32px;
   min-width: 0;
 }
+@media (min-width: 768px) {
+  .hero__wrap {
+    padding: 52px 40px 44px;
+  }
+}
+
 .hero__main {
   flex: 1;
   min-width: 0;
 }
+.hero__eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-accent-on-dark);
+  opacity: 0.88;
+}
 .hero__title {
-  font-size: 40px;
+  font-size: 38px;
   letter-spacing: -0.01em;
   line-height: 1.05;
-  color: var(--color-ink);
-  margin-top: 8px;
+  color: white;
+  margin-top: 10px;
 }
 @media (min-width: 768px) {
   .hero__title {
-    font-size: 52px;
+    font-size: 50px;
   }
 }
 .hero__name {
-  color: var(--color-brand-600);
+  color: var(--color-accent-on-dark);
 }
-.hero__pill {
-  margin-top: 18px;
+.hero__sub {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: oklch(0.8 0.03 250);
+  max-width: 560px;
 }
 
-/* ── Birthday flourish ───────────────────────────────────────────────
-   Inline cake icon next to the greeting when it's the user's birthday.
-   Restrained — gentle gold + soft pulse — not a confetti party. */
+/* ── duty line ──────────────────────────────────────────────────── */
+.hero__dutyline {
+  margin-top: 26px;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  flex-wrap: wrap;
+  row-gap: 18px;
+}
+.hero__duty-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.hero__duty-item b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 32px;
+  line-height: 1;
+  color: white;
+}
+.hero__duty-dim {
+  font-size: 20px;
+  color: oklch(0.6 0.04 250);
+}
+.hero__duty-gold {
+  color: var(--color-accent-on-dark) !important;
+}
+.hero__duty-lbl {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: oklch(0.66 0.035 250);
+}
+.hero__duty-sep {
+  width: 1px;
+  align-self: stretch;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    oklch(0.734 0.114 86.8 / 0.4) 30%,
+    oklch(0.734 0.114 86.8 / 0.4) 70%,
+    transparent
+  );
+}
+
+/* ── birthday flourish ─────────────────────────────────────────── */
 .hero__cake {
   display: inline-block;
   vertical-align: -0.18em;
   margin-left: 0.18em;
-  color: var(--color-accent-600);
+  color: var(--color-accent-on-dark);
   filter: drop-shadow(0 0 6px oklch(0.734 0.114 86.8 / 0.35));
   animation: cake-pulse 3.4s var(--ease-in-out) infinite;
 }
@@ -101,16 +216,13 @@ const greetingText = computed(() =>
   40% { transform: rotate(-4deg) scale(1.04); }
   60% { transform: rotate(4deg) scale(1.04); }
 }
-.hero__title--birthday .hero__name {
-  color: var(--color-accent-700);
-}
 
+/* ── patch ─────────────────────────────────────────────────────── */
 .hero__patch {
   position: relative;
-  display: none;
   flex-shrink: 0;
-  width: 140px;
-  height: 140px;
+  width: 150px;
+  height: 150px;
   display: none;
 }
 @media (min-width: 1024px) {
@@ -124,30 +236,38 @@ const greetingText = computed(() =>
   height: 100%;
   object-fit: contain;
   z-index: 1;
-  /* Stacked drop-shadows: tight contact + soft elevation */
   filter:
-    drop-shadow(0 1px 1px oklch(0.18 0.015 260 / 0.18))
-    drop-shadow(0 4px 8px oklch(0.18 0.015 260 / 0.12))
-    drop-shadow(0 12px 24px oklch(0.18 0.015 260 / 0.08));
+    drop-shadow(0 1px 1px oklch(0.1 0.03 250 / 0.5))
+    drop-shadow(0 8px 20px oklch(0.08 0.03 250 / 0.45));
   transition: transform 400ms var(--ease-out);
 }
 .hero__patch:hover img {
   transform: translateY(-2px);
 }
-
-/* Subtle radial gold halo behind the patch — gives the shield depth and
-   echoes the gold accent line without colored fill on the surface */
 .hero__patch-halo {
   position: absolute;
-  inset: -22px;
+  inset: -24px;
   border-radius: 50%;
   background: radial-gradient(
     circle at center,
-    oklch(0.734 0.114 86.8 / 0.18) 0%,
-    oklch(0.734 0.114 86.8 / 0.06) 38%,
+    oklch(0.734 0.114 86.8 / 0.22) 0%,
+    oklch(0.734 0.114 86.8 / 0.07) 40%,
     transparent 68%
   );
   z-index: 0;
   pointer-events: none;
+}
+
+/* feathered gold seam along the band's bottom edge */
+.hero__goldseam {
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(200, 164, 77, 0.55) 18%,
+    #e8cb72 50%,
+    rgba(200, 164, 77, 0.55) 82%,
+    transparent
+  );
 }
 </style>
