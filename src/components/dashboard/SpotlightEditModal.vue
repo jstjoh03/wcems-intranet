@@ -3,6 +3,7 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { X, Upload, Image as ImageIcon, Trash2 } from 'lucide-vue-next'
 import { useSpotlight } from '@/composables/useSpotlight'
 import { useAuthStore } from '@/stores/auth'
+import { supabase } from '@/lib/supabase'
 
 const auth = useAuthStore()
 const fileSizeHint = computed(() =>
@@ -15,6 +16,46 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const { current, publish, clear } = useSpotlight()
+
+/* Roster for the name dropdown — pulled straight from app_users (not
+   the directory composable, which excludes people who opted out of the
+   directory) so the pick always matches a roster name and the comment
+   push notification can resolve its recipient. Falls back to a free
+   text input in dev-stub or if the query fails. */
+const roster = ref<Array<{ fullName: string; title: string | null }>>([])
+async function loadRoster() {
+  if (auth.usingDevStub) return
+  const { data, error: rosterErr } = await supabase
+    .from('app_users')
+    .select('full_name, title')
+    .eq('active', true)
+    .eq('account_type', 'person')
+    .order('full_name')
+  if (rosterErr) {
+    console.warn('[spotlight] roster load failed, using free-text name:', rosterErr.message)
+    return
+  }
+  roster.value = (data ?? []).map((r: { full_name: string; title: string | null }) => ({
+    fullName: r.full_name,
+    title: r.title,
+  }))
+}
+
+/* Prefill the role from the picked person's title when role is empty. */
+function onPickPerson() {
+  if (role.value.trim()) return
+  const picked = roster.value.find((r) => r.fullName === personName.value)
+  if (picked?.title) role.value = picked.title
+}
+
+/* If the current spotlight predates the dropdown (freeform name not on
+   the roster), keep it selectable so editing doesn't clobber it. */
+const nameOptions = computed(() => {
+  const names = roster.value.map((r) => r.fullName)
+  const cur = current.value?.personName
+  if (cur && !names.includes(cur)) return [cur, ...names]
+  return names
+})
 
 const personName = ref('')
 const role = ref('')
@@ -44,6 +85,7 @@ watch(
       story.value = current.value?.story ?? ''
       photo.value = null
       removeExistingPhoto.value = false
+      void loadRoster()
       if (photoPreview.value) URL.revokeObjectURL(photoPreview.value)
       photoPreview.value = null
       error.value = null
@@ -153,12 +195,23 @@ async function removePublished() {
           <form class="spotlight-modal__form" @submit.prevent="submit">
             <label class="spotlight-modal__field">
               <span class="spotlight-modal__label">Name</span>
+              <select
+                v-if="nameOptions.length"
+                v-model="personName"
+                required
+                class="spotlight-modal__input"
+                @change="onPickPerson"
+              >
+                <option value="" disabled>Pick an employee…</option>
+                <option v-for="n in nameOptions" :key="n" :value="n">{{ n }}</option>
+              </select>
               <input
+                v-else
                 v-model="personName"
                 type="text"
                 required
                 maxlength="80"
-                placeholder="Justin St. John"
+                placeholder="Justin St John"
                 class="spotlight-modal__input"
               />
             </label>
