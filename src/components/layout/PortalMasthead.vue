@@ -62,6 +62,13 @@ const nav = computed<NavItem[]>(() => [
       { label: 'Upcoming Classes', to: '/training' },
       { label: 'Training Library', to: '/training/recordings' },
       { label: 'Required Training', to: '/training/required' },
+      /* Same route adapts per viewer: full pipeline board for
+         supervisors/editors/FTOs, own progress for crew. Label follows
+         role; FTO crew still get the board when they land. */
+      {
+        label: auth.isSupervisor ? 'Clinical Development' : 'My Progress',
+        to: '/clinical-development',
+      },
     ],
   },
   { label: 'Policies', to: '/policies', match: '/policies' },

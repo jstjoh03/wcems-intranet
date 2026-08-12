@@ -151,6 +151,14 @@ const routes: RouteRecordRaw[] = [
     name: 'mih-referral',
     component: () => import('@/views/MihReferralView.vue'),
   },
+  /* Adaptive: full board for supervisors/editors/FTOs, own "My
+     Progress" for everyone else. RLS mirrors the split server-side,
+     so no route-level role gate is needed. */
+  {
+    path: '/clinical-development',
+    name: 'clinical-development',
+    component: () => import('@/views/ClinicalDevelopmentView.vue'),
+  },
   /* ── Protocols section (absorbed standalone app) ─────────────────
      Chromeless: these views are a self-contained full-viewport dark
      app (own header, 100dvh scroll) — the portal chrome stays out of

@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   BookOpen,
   HeartHandshake,
+  TrendingUp,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -81,7 +82,7 @@ const sections: NavItem[] = [
   { id: 'library', label: 'Training Library', icon: Film, hash: '#library' },
 ]
 
-const pages: NavItem[] = [
+const pages = computed<NavItem[]>(() => [
   { label: 'Home', to: '/', icon: Home },
   { label: 'Protocols', to: '/protocols', icon: BookOpen },
   { label: 'MIH Patient Referral', to: '/mih-referral', icon: HeartHandshake },
@@ -89,12 +90,19 @@ const pages: NavItem[] = [
   { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },
   { label: 'Training Library', to: '/training/recordings', icon: Film },
   { label: 'Required Training', to: '/training/required', icon: ShieldCheck },
+  /* Adaptive route: board for supervisors/editors/FTOs, own progress
+     for crew — the label just follows role. */
+  {
+    label: auth.isSupervisor ? 'Clinical Development' : 'My Progress',
+    to: '/clinical-development',
+    icon: TrendingUp,
+  },
   { label: 'Policies', to: '/policies', icon: FileText },
   { label: 'Employee Directory', to: '/directory', icon: Contact },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
   { label: 'Admin Staff', to: '/admin-staff', icon: Building2 },
   { label: 'HR Hub', to: '/', icon: Briefcase, badge: 'Soon' },
-]
+])
 const adminPages: NavItem[] = [
   { label: 'Manage Employees', to: '/admin/employees', icon: Users },
   { label: 'Manage Stations', to: '/admin/stations', icon: Settings },
