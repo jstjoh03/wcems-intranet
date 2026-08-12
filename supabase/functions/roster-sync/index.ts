@@ -75,6 +75,8 @@ interface ListPerson {
   shift: string | null
   station: string | null
   mobile: string | null
+  txLicenseNumber: string | null
+  txLicenseExp: string | null
 }
 
 function norm(name: string): string {
@@ -173,6 +175,8 @@ async function fetchListPeople(token: string): Promise<ListPerson[]> {
         shift: pick(f, 'Shift'),
         station: pick(f, 'Station'),
         mobile: pick(f, 'Mobile'),
+        txLicenseNumber: pick(f, 'TXLicenseNumber'),
+        txLicenseExp: pick(f, 'TXLicenseExp'),
       })
     }
     url = data['@odata.nextLink']
@@ -310,6 +314,59 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // ── Leg 1b: pipeline_records cert/license identity ─────────────────
+    /* The Clinical Development pipeline lives in pipeline_records. This
+       leg keeps ONLY its cert/license identity columns fresh from the
+       List (HR edit-once chain): cert_level, tx_license_number,
+       tx_license_expires_at. Phase/gate/pending columns are portal-owned
+       and NEVER touched here. Blank List values are left alone (no
+       null-outs). Matched people without a record get a minimal row so
+       new hires appear on the board automatically. */
+    const { data: pipeRows, error: perr } = await supabase
+      .from('pipeline_records')
+      .select('id, user_id, cert_level, tx_license_number, tx_license_expires_at')
+    if (perr) throw new Error(`pipeline_records: ${perr.message}`)
+    const pipeByUser = new Map((pipeRows ?? []).map((r) => [r.user_id, r]))
+
+    const toDate = (v: string | null) => (v ? v.slice(0, 10) : null)
+    const pipeline = { updates: [] as Array<Record<string, unknown>>, inserts: [] as Array<Record<string, unknown>>, matched: 0 }
+    for (const u of users ?? []) {
+      const n = norm(u.full_name ?? `${u.first_name} ${u.last_name}`)
+      const match = byNorm.get(n)
+      if (!match || !u.active) continue
+      pipeline.matched++
+      const fresh = {
+        cert_level: match.certLevel,
+        tx_license_number: match.txLicenseNumber,
+        tx_license_expires_at: toDate(match.txLicenseExp),
+      }
+      const existing = pipeByUser.get(u.id)
+      if (!existing) {
+        pipeline.inserts.push({ user_id: u.id, name: u.full_name, ...fresh })
+        continue
+      }
+      const patch: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(fresh)) {
+        if (v != null && (existing as Record<string, unknown>)[k] !== v) patch[k] = v
+      }
+      if (Object.keys(patch).length) {
+        pipeline.updates.push({ id: existing.id, name: u.full_name, ...patch })
+      }
+    }
+
+    if (apply) {
+      for (const up of pipeline.updates) {
+        const { id, name, ...patch } = up
+        const { error } = await supabase.from('pipeline_records').update(patch).eq('id', id)
+        if (error) throw new Error(`pipeline update ${name}: ${error.message}`)
+      }
+      for (const ins of pipeline.inserts) {
+        const { name: _n, ...row } = ins
+        const { error } = await supabase.from('pipeline_records').insert(row)
+        if (error) throw new Error(`pipeline insert ${_n}: ${error.message}`)
+      }
+    }
+
     // ── Leg 2: uniforms employees ──────────────────────────────────────
     const uniUrl = env.get('UNIFORMS_URL')
     const uniKey = env.get('UNIFORMS_SERVICE_KEY')
@@ -363,7 +420,7 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(
-      JSON.stringify({ ok: true, applied: apply, listCount: people.length, intranet, uniforms }, null, 2),
+      JSON.stringify({ ok: true, applied: apply, listCount: people.length, intranet, pipeline, uniforms }, null, 2),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     )
   } catch (err) {
