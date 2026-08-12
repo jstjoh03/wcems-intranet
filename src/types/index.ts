@@ -329,3 +329,70 @@ export interface TrainingEvent {
   location: string
 }
 
+
+/* ── Clinical Development pipeline ─────────────────────────────────── */
+
+/** FTEP ladder position. P3 is reachable as a phase value but progress
+ *  math uses the 5-rung ladder (P3/FTO is a flag track, not a rung). */
+export type PipelinePhase = 'NEOP' | 'FTR' | 'P1' | 'P2' | 'P3' | 'FinalRelease'
+
+/** Which credentialing transition a gate row belongs to. */
+export type PipelineTransition = 'NEOP' | 'P1C_P1' | 'P1_P2' | 'P2_P3' | 'AEMT'
+
+export type GateStatus = 'pending' | 'complete' | 'na'
+
+export interface PipelineRecord {
+  id: string
+  userId: string
+  clearedPhase: PipelinePhase | null
+  workingPhase: PipelinePhase | null
+  workingStartedAt: string | null
+  workingTargetAt: string | null
+  /** Awaiting-clearance cohort — renders as a dashed "ghost" row. */
+  pending: boolean
+  pipActive: boolean
+  pipStartedAt: string | null
+  pipReason: string | null
+  inP3Process: boolean
+  inAemtUpgrade: boolean
+  /** Credential badge (P1C, P1, P2, FTO, ADV, EMT…). */
+  level: string | null
+  isFto: boolean
+  ftoName: string | null
+  certLevel: string | null
+  txLicenseNumber: string | null
+  txLicenseExpiresAt: string | null
+  txJurisprudenceAt: string | null
+  bloodbornePathogenAt: string | null
+  opIqGrantedAt: string | null
+  narcSafeGrantedAt: string | null
+  estP2ReadyAt: string | null
+  coverageNote: string | null
+  blockerNote: string | null
+  notes: string | null
+  updatedAt: string
+}
+
+export interface PipelineGateProgress {
+  id: string
+  recordId: string
+  transition: PipelineTransition
+  gateKey: string
+  status: GateStatus
+  value: string | null
+  completedAt: string | null
+  completedByName: string | null
+  note: string | null
+}
+
+/** Pipeline record joined with roster identity for the board. */
+export interface PipelinePerson {
+  record: PipelineRecord
+  userId: string
+  fullName: string
+  shift: ShiftLetter | string | null
+  station: string | null
+  title: string | null
+  photoUrl: string | null
+  active: boolean
+}
