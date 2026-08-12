@@ -66,6 +66,7 @@ const nav = computed<NavItem[]>(() => [
   },
   { label: 'Policies', to: '/policies', match: '/policies' },
   { label: 'Hospitals', to: '/hospitals', match: '/hospitals' },
+  { label: 'MIH Referral', to: '/mih-referral', match: '/mih-referral' },
   { label: 'Uniforms', url: 'https://uniforms.wallercountyems.com' },
   {
     label: 'Systems',

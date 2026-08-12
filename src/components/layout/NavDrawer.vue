@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ShieldCheck,
   BookOpen,
+  HeartHandshake,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -83,6 +84,7 @@ const sections: NavItem[] = [
 const pages: NavItem[] = [
   { label: 'Home', to: '/', icon: Home },
   { label: 'Protocols', to: '/protocols', icon: BookOpen },
+  { label: 'MIH Patient Referral', to: '/mih-referral', icon: HeartHandshake },
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
   { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },
   { label: 'Training Library', to: '/training/recordings', icon: Film },

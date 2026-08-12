@@ -146,6 +146,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/admin/ManageAdminStaffView.vue'),
     meta: { adminOnly: true },
   },
+  {
+    path: '/mih-referral',
+    name: 'mih-referral',
+    component: () => import('@/views/MihReferralView.vue'),
+  },
   /* ── Protocols section (absorbed standalone app) ─────────────────
      Chromeless: these views are a self-contained full-viewport dark
      app (own header, 100dvh scroll) — the portal chrome stays out of

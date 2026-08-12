@@ -9,6 +9,7 @@ import UpcomingTrainingCard from '@/components/dashboard/UpcomingTrainingCard.vu
 import AnnouncementsCard from '@/components/dashboard/AnnouncementsCard.vue'
 import CallVolumeTile from '@/components/dashboard/CallVolumeTile.vue'
 import ComplianceCard from '@/components/dashboard/ComplianceCard.vue'
+import MihReferralCard from '@/components/dashboard/MihReferralCard.vue'
 import TrainingLibraryCard from '@/components/dashboard/TrainingLibraryCard.vue'
 import PeopleRow from '@/components/dashboard/PeopleRow.vue'
 </script>
@@ -52,6 +53,9 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
       <aside class="dash__aside">
         <div class="reveal" style="animation-delay: 90ms">
           <ComplianceCard />
+        </div>
+        <div class="reveal" style="animation-delay: 95ms">
+          <MihReferralCard />
         </div>
         <div id="training" class="reveal" style="animation-delay: 100ms">
           <UpcomingTrainingCard />
