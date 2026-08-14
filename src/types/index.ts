@@ -336,8 +336,9 @@ export interface TrainingEvent {
  *  math uses the 5-rung ladder (P3/FTO is a flag track, not a rung). */
 export type PipelinePhase = 'NEOP' | 'FTR' | 'P1' | 'P2' | 'P3' | 'FinalRelease'
 
-/** Which credentialing transition a gate row belongs to. */
-export type PipelineTransition = 'NEOP' | 'P1C_P1' | 'P1_P2' | 'P2_P3' | 'AEMT'
+/** Which credentialing transition a gate row belongs to. P1_P2_LEGACY
+ *  is the pre-FTEP-rebuild requirement set for P1s already mid-track. */
+export type PipelineTransition = 'NEOP' | 'P1C_P1' | 'P1_P2' | 'P1_P2_LEGACY' | 'P2_P3' | 'AEMT'
 
 export type GateStatus = 'pending' | 'complete' | 'na'
 
@@ -355,6 +356,9 @@ export interface PipelineRecord {
   pipReason: string | null
   inP3Process: boolean
   inAemtUpgrade: boolean
+  /** Pre-FTEP-rebuild P1→P2 requirements (call evals instead of
+   *  DORs/ICRs). Set per person; new-program folks stay false. */
+  legacyTrack: boolean
   /** Credential badge (P1C, P1, P2, FTO, ADV, EMT…). */
   level: string | null
   isFto: boolean
@@ -364,6 +368,10 @@ export interface PipelineRecord {
   txLicenseExpiresAt: string | null
   txJurisprudenceAt: string | null
   bloodbornePathogenAt: string | null
+  /** Access is a held/not-held fact; the grant DATE is optional
+   *  detail (credentialed staff predate date-keeping). */
+  opIqAccess: boolean
+  narcSafeAccess: boolean
   opIqGrantedAt: string | null
   narcSafeGrantedAt: string | null
   estP2ReadyAt: string | null
@@ -395,4 +403,27 @@ export interface PipelinePerson {
   title: string | null
   photoUrl: string | null
   active: boolean
+}
+
+/** Recurrence model for tracked compliance items. */
+export type RequirementCycle = 'annual' | 'per_cert_cycle' | 'certification' | 'one_time'
+
+export interface PipelineRequirement {
+  id: string
+  name: string
+  cycle: RequirementCycle
+  active: boolean
+  sort: number
+  notes: string | null
+}
+
+export interface PipelineRequirementCompletion {
+  id: string
+  requirementId: string
+  userId: string
+  completedAt: string
+  /** Card classes carry the card's own expiration. */
+  expiresAt: string | null
+  source: string
+  note: string | null
 }

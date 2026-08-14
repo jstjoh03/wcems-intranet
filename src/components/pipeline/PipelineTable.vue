@@ -22,7 +22,11 @@ defineProps<{
   people: PipelinePerson[]
 }>()
 
-const { gatesFor } = usePipeline()
+const emit = defineEmits<{
+  (e: 'edit', person: PipelinePerson): void
+}>()
+
+const { gatesFor, canEdit } = usePipeline()
 
 const openId = ref<string | null>(null)
 function toggle(id: string) {
@@ -100,7 +104,16 @@ function meta(p: PipelinePerson): string {
             </td>
             <td class="pt__mono">{{ fmtShort(p.record.workingTargetAt) }}</td>
             <td class="pt__fto">{{ p.record.ftoName || (p.record.isFto ? 'Is FTO' : '—') }}</td>
-            <td><span class="pt__chev" :class="{ 'pt__chev--open': openId === p.userId }">▶</span></td>
+            <td class="pt__rowend">
+              <button
+                v-if="canEdit"
+                type="button"
+                class="pt__editbtn"
+                title="Edit record, gates & compliance"
+                @click.stop="emit('edit', p)"
+              >Edit</button>
+              <span class="pt__chev" :class="{ 'pt__chev--open': openId === p.userId }">▶</span>
+            </td>
           </tr>
           <tr v-if="openId === p.userId" class="pt__detail">
             <td colspan="8">
@@ -275,6 +288,25 @@ function meta(p: PipelinePerson): string {
 }
 .pt__fto {
   white-space: nowrap;
+}
+.pt__rowend {
+  white-space: nowrap;
+}
+.pt__editbtn {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 12px;
+  margin-right: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-brand-600);
+  background: var(--color-surface);
+  color: var(--color-brand-600);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.pt__editbtn:hover {
+  background: var(--color-brand-600);
+  color: white;
 }
 .pt__chev {
   display: inline-block;

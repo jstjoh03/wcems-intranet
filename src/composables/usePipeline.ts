@@ -7,7 +7,10 @@ import type {
   PipelinePerson,
   PipelinePhase,
   PipelineRecord,
+  PipelineRequirement,
+  PipelineRequirementCompletion,
   PipelineTransition,
+  RequirementCycle,
 } from '@/types'
 import { PHASE_LADDER } from '@/constants/pipelineGates'
 
@@ -40,6 +43,7 @@ interface RecordRow {
   pip_reason: string | null
   in_p3_process: boolean
   in_aemt_upgrade: boolean
+  legacy_track: boolean
   level: string | null
   is_fto: boolean
   fto_name: string | null
@@ -48,6 +52,8 @@ interface RecordRow {
   tx_license_expires_at: string | null
   tx_jurisprudence_at: string | null
   bloodborne_pathogen_at: string | null
+  op_iq_access: boolean
+  narc_safe_access: boolean
   op_iq_granted_at: string | null
   narc_safe_granted_at: string | null
   est_p2_ready_at: string | null
@@ -81,9 +87,10 @@ interface GateRow {
 
 const RECORD_SELECT =
   'id, user_id, cleared_phase, working_phase, working_started_at, working_target_at, ' +
-  'pending, pip_active, pip_started_at, pip_reason, in_p3_process, in_aemt_upgrade, ' +
+  'pending, pip_active, pip_started_at, pip_reason, in_p3_process, in_aemt_upgrade, legacy_track, ' +
   'level, is_fto, fto_name, cert_level, tx_license_number, tx_license_expires_at, ' +
-  'tx_jurisprudence_at, bloodborne_pathogen_at, op_iq_granted_at, narc_safe_granted_at, ' +
+  'tx_jurisprudence_at, bloodborne_pathogen_at, op_iq_access, narc_safe_access, ' +
+  'op_iq_granted_at, narc_safe_granted_at, ' +
   'est_p2_ready_at, coverage_note, blocker_note, notes, updated_at, ' +
   'person:app_users!pipeline_records_user_id_fkey(id, full_name, shift, station, title, photo_url, active, account_type)'
 
@@ -105,6 +112,7 @@ function rowToRecord(r: RecordRow): PipelineRecord {
     pipReason: r.pip_reason,
     inP3Process: r.in_p3_process,
     inAemtUpgrade: r.in_aemt_upgrade,
+    legacyTrack: r.legacy_track,
     level: r.level,
     isFto: r.is_fto,
     ftoName: r.fto_name,
@@ -113,6 +121,8 @@ function rowToRecord(r: RecordRow): PipelineRecord {
     txLicenseExpiresAt: r.tx_license_expires_at,
     txJurisprudenceAt: r.tx_jurisprudence_at,
     bloodbornePathogenAt: r.bloodborne_pathogen_at,
+    opIqAccess: r.op_iq_access,
+    narcSafeAccess: r.narc_safe_access,
     opIqGrantedAt: r.op_iq_granted_at,
     narcSafeGrantedAt: r.narc_safe_granted_at,
     estP2ReadyAt: r.est_p2_ready_at,
@@ -140,6 +150,8 @@ function rowToGate(r: GateRow): PipelineGateProgress {
 const people = ref<PipelinePerson[]>([])
 const gates = ref<PipelineGateProgress[]>([])
 const editorIds = ref<string[]>([])
+const requirements = ref<PipelineRequirement[]>([])
+const completions = ref<PipelineRequirementCompletion[]>([])
 const loading = ref(false)
 const errorMessage = ref<string | null>(null)
 const lastFetchedAt = ref<Date | null>(null)
@@ -164,6 +176,7 @@ function seedDevFixture() {
     pipReason: null,
     inP3Process: false,
     inAemtUpgrade: false,
+    legacyTrack: false,
     level: null,
     isFto: false,
     ftoName: null,
@@ -172,6 +185,8 @@ function seedDevFixture() {
     txLicenseExpiresAt: null,
     txJurisprudenceAt: null,
     bloodbornePathogenAt: null,
+    opIqAccess: false,
+    narcSafeAccess: false,
     opIqGrantedAt: null,
     narcSafeGrantedAt: null,
     estP2ReadyAt: null,
@@ -200,8 +215,10 @@ function seedDevFixture() {
     mk('dev-1', 'Thomas Kim', 'C', '271', {
       clearedPhase: 'P1', workingPhase: 'P2', workingStartedAt: '2026-06-26',
       workingTargetAt: '2026-07-31', level: 'P1', certLevel: 'EMT-P',
-      txLicenseExpiresAt: '2027-08-31', opIqGrantedAt: '2026-06-26',
-      narcSafeGrantedAt: '2026-06-26', coverageNote: 'HIGH – full truck with no P2-cap',
+      legacyTrack: true, txLicenseExpiresAt: '2027-08-31',
+      opIqAccess: true, opIqGrantedAt: '2026-06-26',
+      narcSafeAccess: true, narcSafeGrantedAt: '2026-06-26',
+      coverageNote: 'HIGH – full truck with no P2-cap',
     }),
     mk('dev-2', 'Brianna Smith', null, null, {
       pending: true, workingPhase: 'NEOP', workingStartedAt: '2026-08-17',
@@ -227,12 +244,19 @@ function seedDevFixture() {
 async function loadAll() {
   loading.value = true
   errorMessage.value = null
-  const [recRes, gateRes, edRes] = await Promise.all([
+  const [recRes, gateRes, edRes, reqRes, compRes] = await Promise.all([
     supabase.from('pipeline_records').select(RECORD_SELECT),
     supabase.from('pipeline_gate_progress').select(GATE_SELECT),
     supabase.from('pipeline_editors').select('user_id'),
+    supabase
+      .from('pipeline_requirements')
+      .select('id, name, cycle, active, sort, notes')
+      .order('sort'),
+    supabase
+      .from('pipeline_requirement_completions')
+      .select('id, requirement_id, user_id, completed_at, expires_at, source, note'),
   ])
-  const err = recRes.error ?? gateRes.error ?? edRes.error
+  const err = recRes.error ?? gateRes.error ?? edRes.error ?? reqRes.error ?? compRes.error
   if (err) {
     console.error('[pipeline] load failed:', err.message)
     errorMessage.value = err.message
@@ -254,6 +278,23 @@ async function loadAll() {
     .sort((a, b) => a.fullName.localeCompare(b.fullName))
   gates.value = ((gateRes.data ?? []) as unknown as GateRow[]).map(rowToGate)
   editorIds.value = (edRes.data ?? []).map((e) => e.user_id as string)
+  requirements.value = (reqRes.data ?? []).map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+    cycle: r.cycle as RequirementCycle,
+    active: r.active as boolean,
+    sort: r.sort as number,
+    notes: (r.notes ?? null) as string | null,
+  }))
+  completions.value = (compRes.data ?? []).map((c) => ({
+    id: c.id as string,
+    requirementId: c.requirement_id as string,
+    userId: c.user_id as string,
+    completedAt: c.completed_at as string,
+    expiresAt: (c.expires_at ?? null) as string | null,
+    source: c.source as string,
+    note: (c.note ?? null) as string | null,
+  }))
   lastFetchedAt.value = new Date()
   loading.value = false
 }
@@ -291,11 +332,14 @@ function recordPatch(input: SaveRecordInput): Record<string, unknown> {
     pipReason: 'pip_reason',
     inP3Process: 'in_p3_process',
     inAemtUpgrade: 'in_aemt_upgrade',
+    legacyTrack: 'legacy_track',
     level: 'level',
     isFto: 'is_fto',
     ftoName: 'fto_name',
     txJurisprudenceAt: 'tx_jurisprudence_at',
     bloodbornePathogenAt: 'bloodborne_pathogen_at',
+    opIqAccess: 'op_iq_access',
+    narcSafeAccess: 'narc_safe_access',
     opIqGrantedAt: 'op_iq_granted_at',
     narcSafeGrantedAt: 'narc_safe_granted_at',
     estP2ReadyAt: 'est_p2_ready_at',
@@ -440,6 +484,54 @@ export function usePipeline() {
     })
   }
 
+  function completionsFor(userId: string): PipelineRequirementCompletion[] {
+    return completions.value.filter((c) => c.userId === userId)
+  }
+
+  async function addCompletion(input: {
+    requirementId: string
+    userId: string
+    completedAt: string
+    expiresAt?: string | null
+    source?: string
+    note?: string | null
+  }) {
+    if (!isLive) return
+    const { error } = await supabase.from('pipeline_requirement_completions').insert({
+      requirement_id: input.requirementId,
+      user_id: input.userId,
+      completed_at: input.completedAt,
+      expires_at: input.expiresAt ?? null,
+      source: input.source ?? 'manual',
+      note: input.note ?? null,
+    })
+    if (error) throw error
+    await loadAll()
+  }
+
+  async function removeCompletion(id: string) {
+    if (!isLive) return
+    const { error } = await supabase.from('pipeline_requirement_completions').delete().eq('id', id)
+    if (error) throw error
+    await loadAll()
+  }
+
+  async function addRequirement(name: string, cycle: RequirementCycle) {
+    if (!isLive) return
+    const { error } = await supabase
+      .from('pipeline_requirements')
+      .insert({ name, cycle, sort: 200 })
+    if (error) throw error
+    await loadAll()
+  }
+
+  async function setRequirementActive(id: string, active: boolean) {
+    if (!isLive) return
+    const { error } = await supabase.from('pipeline_requirements').update({ active }).eq('id', id)
+    if (error) throw error
+    await loadAll()
+  }
+
   async function addEditor(userId: string) {
     if (!isLive) return
     const { error } = await supabase.from('pipeline_editors').insert({ user_id: userId })
@@ -458,6 +550,8 @@ export function usePipeline() {
     people,
     gates,
     editorIds,
+    requirements,
+    completions,
     loading,
     ready,
     errorMessage,
@@ -465,12 +559,17 @@ export function usePipeline() {
     canViewBoard,
     myRecord,
     gatesFor,
+    completionsFor,
     refresh,
     saveRecord,
     setGate,
     clearGate,
     startOnboarding,
     promote,
+    addCompletion,
+    removeCompletion,
+    addRequirement,
+    setRequirementActive,
     addEditor,
     removeEditor,
   }

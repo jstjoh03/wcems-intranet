@@ -62,6 +62,9 @@ const SUFFIX_TOKENS = new Set(['m', 'd', 'md', 'do', 'jr', 'sr', 'ii', 'iii', 'i
    the intranet but do not order uniforms. */
 const INTRANET_EXCLUDED = new Set(['BOD'])
 const UNIFORMS_EXCLUDED = new Set(['BOD', 'Vol', 'Doc'])
+/* Medical director's credentials aren't tracked in Clinical
+   Development (Justin, 2026-08-14). */
+const PIPELINE_EXCLUDED = new Set(['BOD', 'Doc'])
 /* Admin staff who don't order uniforms (Justin, 2026-08-06). Normalized names. */
 const UNIFORMS_SKIP_PEOPLE = new Set(['erica adams', 'tori bell'])
 
@@ -333,7 +336,7 @@ Deno.serve(async (req: Request) => {
     for (const u of users ?? []) {
       const n = norm(u.full_name ?? `${u.first_name} ${u.last_name}`)
       const match = byNorm.get(n)
-      if (!match || !u.active) continue
+      if (!match || !u.active || PIPELINE_EXCLUDED.has(match.category)) continue
       pipeline.matched++
       const fresh = {
         cert_level: match.certLevel,

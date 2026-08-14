@@ -3,6 +3,8 @@ import type {
   PipelineGateProgress,
   PipelinePhase,
   PipelineRecord,
+  PipelineRequirement,
+  PipelineRequirementCompletion,
   PipelineTransition,
 } from '@/types'
 
@@ -90,6 +92,22 @@ export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
     petitionChain: ['Supervisor', 'CDO', 'Asst Chief'],
     includesAccess: true,
   },
+  /* Pre-rebuild requirement set for P1s already mid-track when the new
+     FTEP program landed — call evals are narrative, not numerically
+     graded, so the gate is a count, and there are no DORs/ICRs/oral
+     board. Flagged per person via pipeline_records.legacy_track. */
+  P1_P2_LEGACY: {
+    transition: 'P1_P2_LEGACY',
+    label: 'P1 → P2 (legacy program)',
+    toLabel: 'P2',
+    gates: [
+      metric('call_evals', 'Call evaluations', '10 required, narrative format'),
+      exam('mega_code', 'Mega code'),
+      exam('protocol_test', 'Protocol test'),
+    ],
+    petitionChain: [],
+    includesAccess: true,
+  },
   P2_P3: {
     transition: 'P2_P3',
     label: 'P2 → P3 (FTO track)',
@@ -140,7 +158,7 @@ export function activeTransitionFor(r: PipelineRecord): PipelineTransition | nul
   if (r.inAemtUpgrade) return 'AEMT'
   if (r.inP3Process) return 'P2_P3'
   if (!r.workingPhase) return null
-  if (r.workingPhase === 'P2') return 'P1_P2'
+  if (r.workingPhase === 'P2') return r.legacyTrack ? 'P1_P2_LEGACY' : 'P1_P2'
   if (r.workingPhase === 'P3') return 'P2_P3'
   return 'P1C_P1'
 }
@@ -180,13 +198,15 @@ export function gateItemsFor(r: PipelineRecord, rows: PipelineGateProgress[]): G
   })
 
   if (def.includesAccess) {
+    /* Access is the held/not-held boolean; a grant date is optional
+       detail shown when known. */
     items.push(
       {
         key: 'op_iq',
         label: 'Operative IQ access',
         kind: 'access',
-        status: r.opIqGrantedAt ? 'complete' : 'pending',
-        value: r.opIqGrantedAt,
+        status: r.opIqAccess || r.opIqGrantedAt ? 'complete' : 'pending',
+        value: r.opIqGrantedAt ?? (r.opIqAccess ? 'held' : null),
         completedAt: r.opIqGrantedAt,
         completedByName: null,
       },
@@ -194,8 +214,8 @@ export function gateItemsFor(r: PipelineRecord, rows: PipelineGateProgress[]): G
         key: 'narc_safe',
         label: 'NarcSafe',
         kind: 'access',
-        status: r.narcSafeGrantedAt ? 'complete' : 'pending',
-        value: r.narcSafeGrantedAt,
+        status: r.narcSafeAccess || r.narcSafeGrantedAt ? 'complete' : 'pending',
+        value: r.narcSafeGrantedAt ?? (r.narcSafeAccess ? 'held' : null),
         completedAt: r.narcSafeGrantedAt,
         completedByName: null,
       },
@@ -303,6 +323,72 @@ export function warningChips(r: PipelineRecord, today = new Date()): WarningChip
   const tgt = daysUntil(r.workingTargetAt, today)
   if (r.workingPhase && tgt !== null && tgt < 0) chips.push({ text: `+${-tgt}d over`, severity: 'bad' })
   return chips
+}
+
+/* ── Compliance due logic ──────────────────────────────────────────── */
+
+/** TX jurisprudence is required once per 4-year licensure cycle. The
+ *  current cycle runs from (license expiry − 4 yr) to expiry, so a
+ *  completion OLDER than the cycle start no longer counts — that's the
+ *  signal to reassign it in the LMS. Unknown license expiry → can't
+ *  compute a cycle; treat a recorded completion as good. */
+export function jurisprudenceDue(r: PipelineRecord): boolean {
+  if (!r.txJurisprudenceAt) return true
+  if (!r.txLicenseExpiresAt) return false
+  const cycleStart = new Date(`${r.txLicenseExpiresAt}T00:00:00`)
+  cycleStart.setFullYear(cycleStart.getFullYear() - 4)
+  return new Date(`${r.txJurisprudenceAt}T00:00:00`).getTime() < cycleStart.getTime()
+}
+
+export interface RequirementStatus {
+  state: 'ok' | 'expiring' | 'due'
+  /** When action is needed (expiry / recompute date), if known. */
+  dueAt: string | null
+  latest: PipelineRequirementCompletion | null
+}
+
+/** Due-ness of one requirement for one person.
+ *  annual         — due 365 days after the last completion
+ *  per_cert_cycle — completion must fall inside the current 4-yr
+ *                   licensure cycle (same rule as jurisprudence)
+ *  certification  — the completion's own expires_at governs; expiring
+ *                   = within 60 days
+ *  one_time       — any completion ever satisfies it */
+export function requirementStatus(
+  req: PipelineRequirement,
+  completions: PipelineRequirementCompletion[],
+  record: PipelineRecord | null,
+  today = new Date(),
+): RequirementStatus {
+  const mine = completions
+    .filter((c) => c.requirementId === req.id)
+    .sort((a, b) => b.completedAt.localeCompare(a.completedAt))
+  const latest = mine[0] ?? null
+  if (!latest) return { state: 'due', dueAt: null, latest: null }
+
+  const day = 86_400_000
+  if (req.cycle === 'one_time') return { state: 'ok', dueAt: null, latest }
+
+  if (req.cycle === 'annual') {
+    const due = new Date(`${latest.completedAt}T00:00:00`)
+    due.setFullYear(due.getFullYear() + 1)
+    const dueAt = due.toISOString().slice(0, 10)
+    const days = Math.ceil((due.getTime() - today.getTime()) / day)
+    return { state: days < 0 ? 'due' : days <= 60 ? 'expiring' : 'ok', dueAt, latest }
+  }
+
+  if (req.cycle === 'certification') {
+    if (!latest.expiresAt) return { state: 'ok', dueAt: null, latest }
+    const days = Math.ceil((new Date(`${latest.expiresAt}T00:00:00`).getTime() - today.getTime()) / day)
+    return { state: days < 0 ? 'due' : days <= 60 ? 'expiring' : 'ok', dueAt: latest.expiresAt, latest }
+  }
+
+  /* per_cert_cycle */
+  if (!record?.txLicenseExpiresAt) return { state: 'ok', dueAt: null, latest }
+  const cycleStart = new Date(`${record.txLicenseExpiresAt}T00:00:00`)
+  cycleStart.setFullYear(cycleStart.getFullYear() - 4)
+  const inCycle = new Date(`${latest.completedAt}T00:00:00`).getTime() >= cycleStart.getTime()
+  return { state: inCycle ? 'ok' : 'due', dueAt: record.txLicenseExpiresAt, latest }
 }
 
 /** Badge class key from the credential level ("EMT - FTO?" → neutral). */

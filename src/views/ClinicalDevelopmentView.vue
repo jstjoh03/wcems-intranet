@@ -15,6 +15,8 @@ import PipelineStatStrip, { type StatTile } from '@/components/pipeline/Pipeline
 import PipelineFilterBar, { type PipelineFilters } from '@/components/pipeline/PipelineFilterBar.vue'
 import PipelineTable from '@/components/pipeline/PipelineTable.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
+import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
+import PipelineActionCenter from '@/components/pipeline/PipelineActionCenter.vue'
 
 /**
  * Clinical Development — the live FTEP pipeline.
@@ -128,6 +130,18 @@ const sorted = computed(() =>
     const key = (p: PipelinePerson) => (inPipe(p) ? 0 : p.record.pending ? 1 : 2)
     return key(a) - key(b) || a.fullName.localeCompare(b.fullName)
   }),
+)
+
+/* ── Person edit modal ──────────────────────────────────────────────── */
+
+const editingPerson = ref<PipelinePerson | null>(null)
+
+/** Keep the modal's person fresh across realtime reloads (people array
+ *  is replaced wholesale on every refetch). */
+const editingPersonLive = computed(() =>
+  editingPerson.value
+    ? (people.value.find((p) => p.userId === editingPerson.value!.userId) ?? editingPerson.value)
+    : null,
 )
 
 /* ── Start onboarding dialog ────────────────────────────────────────── */
@@ -270,6 +284,9 @@ const myPhaseText = computed(() => {
       <div v-if="!ready" class="cd__empty">Loading the pipeline…</div>
       <div v-else-if="errorMessage" class="cd__empty">{{ errorMessage }}</div>
       <template v-else>
+        <div v-if="canEdit" class="cd__actioncenter reveal" style="animation-delay: 40ms">
+          <PipelineActionCenter :people="people" @open="(p) => (editingPerson = p)" />
+        </div>
         <div class="reveal" style="animation-delay: 60ms">
           <PipelineStatStrip :tiles="tiles" :active="activeStat" @toggle="toggleStat" />
         </div>
@@ -283,13 +300,19 @@ const myPhaseText = computed(() => {
           />
         </div>
         <div class="reveal" style="animation-delay: 140ms">
-          <PipelineTable :people="sorted" />
+          <PipelineTable :people="sorted" @edit="(p) => (editingPerson = p)" />
         </div>
         <p class="cd__footnote">
           Gate items with a dashed circle aren't tracked yet — they fill in as documentation is
           entered. Licenses and cert levels update automatically from the HR roster.
         </p>
       </template>
+
+      <PipelinePersonModal
+        v-if="editingPersonLive"
+        :person="editingPersonLive"
+        @close="editingPerson = null"
+      />
 
       <!-- Start onboarding dialog -->
       <div v-if="showOnboard" class="cd__overlay" @click.self="showOnboard = false">
@@ -399,6 +422,9 @@ const myPhaseText = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.cd__actioncenter {
+  margin-bottom: 18px;
 }
 .cd__filters {
   margin: 18px 0 14px;
