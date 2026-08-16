@@ -982,7 +982,7 @@ input[type='file'] { display: none; }
 /* ================= PRINT ================= */
 @media print {
   .bm { display: block; background: #fff; min-height: 0; }
-  .side, .cap, .printbar { display: none !important; }
+  .side, .cap, .printbar, .slottoggle { display: none !important; }
   .stage { padding: 0; background: #fff; display: block; }
   .cards { display: block; gap: 0; }
   .stack { display: block; }
