@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Plus, Bell, Edit2, X, Upload, Archive, ArchiveRestore } from 'lucide-vue-next'
+import { Plus, Edit2, X, Upload, Archive, ArchiveRestore } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -54,6 +54,13 @@ const visibleAnnouncements = computed(() => {
   }
   return announcements.value
 })
+
+/* Admins get a slim one-liner when nothing is posted (the + New button
+   stays in reach without a big empty box); the dashboard hides the
+   card entirely for crew in that state. */
+const compact = computed(
+  () => auth.isAdmin && visibleAnnouncements.value.length === 0 && !composing.value,
+)
 
 /* Image-size cap kept consistent with the training-recording thumbnail
    uploader. Most invitation flyers are ~1-3 MB; 5 MB gives headroom
@@ -216,8 +223,8 @@ const submitLabel = computed(() => {
 </script>
 
 <template>
-  <AppCard class="announcements-card">
-    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+  <AppCard class="announcements-card" :class="{ 'announcements-card--compact': compact }">
+    <div class="flex items-center justify-between flex-wrap gap-2" :class="compact ? 'mb-0' : 'mb-4'">
       <Eyebrow>Announcements</Eyebrow>
       <span class="announcements-card__head-actions">
         <button
@@ -307,17 +314,11 @@ const submitLabel = computed(() => {
       </div>
     </form>
 
-    <!-- Empty state -->
-    <div v-if="visibleAnnouncements.length === 0 && !composing" class="announcements-card__empty">
-      <Bell :size="20" :stroke-width="1.5" class="announcements-card__empty-icon" />
-      <div class="announcements-card__empty-title">No current announcements</div>
-      <p v-if="auth.isAdmin" class="announcements-card__empty-sub">
-        Tap <strong>+ New</strong> to post an update for the team.
-      </p>
-      <p v-else class="announcements-card__empty-sub">
-        Updates from operations, protocols, and education will appear here.
-      </p>
-    </div>
+    <!-- Empty state. Crew never sees this (the dashboard hides the card
+         for them when nothing is posted); admins get one quiet line. -->
+    <p v-if="visibleAnnouncements.length === 0 && !composing" class="announcements-card__quiet">
+      Nothing posted — crews won't see this section until you post.
+    </p>
 
     <!-- List -->
     <div v-else-if="visibleAnnouncements.length > 0" class="space-y-3">
@@ -598,24 +599,13 @@ const submitLabel = computed(() => {
   gap: 6px;
 }
 
-.announcements-card__empty {
-  text-align: center;
-  padding: 12px 8px 4px;
+.announcements-card--compact {
+  padding: 14px 18px;
 }
-.announcements-card__empty-icon {
-  color: var(--color-muted-soft);
-  margin: 0 auto 8px;
-}
-.announcements-card__empty-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--color-ink-soft);
-}
-.announcements-card__empty-sub {
-  margin-top: 6px;
+.announcements-card__quiet {
+  margin-top: 4px;
   font-size: 12px;
-  color: var(--color-muted);
-  line-height: 1.5;
+  color: var(--color-muted-soft);
 }
 
 .announcements-card__row {

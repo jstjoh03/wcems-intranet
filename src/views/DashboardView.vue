@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useAuthStore } from '@/stores/auth'
+import { useAnnouncements } from '@/composables/useAnnouncements'
 import Hero from '@/components/dashboard/Hero.vue'
 import PushNotificationsBanner from '@/components/dashboard/PushNotificationsBanner.vue'
 import RequiredTrainingBanner from '@/components/dashboard/RequiredTrainingBanner.vue'
@@ -13,6 +16,15 @@ import MihReferralCard from '@/components/dashboard/MihReferralCard.vue'
 import MobileQuickStrips from '@/components/dashboard/MobileQuickStrips.vue'
 import TrainingLibraryCard from '@/components/dashboard/TrainingLibraryCard.vue'
 import PeopleRow from '@/components/dashboard/PeopleRow.vue'
+
+/* Announcements sits out entirely for crew when nothing is posted —
+   admin adoption is still ramping up, so most days it'd just be an
+   empty box. Admins always get it (compact) so + New stays in reach. */
+const auth = useAuthStore()
+const { announcements } = useAnnouncements()
+const showAnnouncements = computed(
+  () => auth.isAdmin || announcements.value.some((a) => a.active),
+)
 </script>
 
 <template>
@@ -29,7 +41,7 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
 
     <!-- Phones get the MIH entry + compliance status as slim strips up
          top; the full rail cards below are desktop-only. -->
-    <div class="lg:hidden">
+    <div class="lg:hidden mb-6">
       <MobileQuickStrips />
     </div>
 
@@ -46,7 +58,7 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
     -->
     <div class="dash__grid">
       <div class="dash__main">
-        <div id="announcements" class="reveal" style="animation-delay: 80ms">
+        <div v-if="showAnnouncements" id="announcements" class="reveal" style="animation-delay: 80ms">
           <AnnouncementsCard />
         </div>
         <div class="reveal" style="animation-delay: 110ms">
