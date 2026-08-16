@@ -61,14 +61,30 @@ async function g(token: string, url: string): Promise<any> {
   return res.json()
 }
 
-/** The folder may sit at the mailbox top level or under Inbox. */
+/** Walk the folder tree (two levels deep) with tolerant name matching —
+ *  the folder can live under Inbox, at top level, or under another
+ *  folder, and Outlook names sometimes carry stray whitespace. */
 async function findFolder(token: string): Promise<string> {
   const base = `https://graph.microsoft.com/v1.0/users/${MAILBOX}`
-  const enc = FOLDER.replace(/'/g, "''")
-  const top = await g(token, `${base}/mailFolders?$filter=displayName eq '${enc}'`)
-  if (top.value?.length) return top.value[0].id
-  const sub = await g(token, `${base}/mailFolders/inbox/childFolders?$filter=displayName eq '${enc}'`)
-  if (sub.value?.length) return sub.value[0].id
+  const want = FOLDER.trim().toLowerCase()
+  const hit = (list: any[]) =>
+    (list ?? []).find((f: any) => String(f.displayName ?? '').trim().toLowerCase() === want)
+
+  const top = await g(token, `${base}/mailFolders?$top=100`)
+  const t = hit(top.value)
+  if (t) return t.id
+  for (const f of top.value ?? []) {
+    if (!f.childFolderCount) continue
+    const kids = await g(token, `${base}/mailFolders/${f.id}/childFolders?$top=100`)
+    const k = hit(kids.value)
+    if (k) return k.id
+    for (const kid of kids.value ?? []) {
+      if (!kid.childFolderCount) continue
+      const grand = await g(token, `${base}/mailFolders/${kid.id}/childFolders?$top=100`)
+      const gk = hit(grand.value)
+      if (gk) return gk.id
+    }
+  }
   throw new Error(`Mail folder "${FOLDER}" not found in ${MAILBOX}`)
 }
 
