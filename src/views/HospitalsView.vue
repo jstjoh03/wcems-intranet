@@ -126,11 +126,20 @@ async function saveCode(h: Hospital, field: 'er' | 'ems_room', newValue: string)
   const patch: Partial<Hospital> = {
     [field === 'er' ? 'erDoorCode' : 'emsRoomCode']: newValue,
   }
+  /* Entering a real code retires the "Ring bell" flag — a hospital
+     that hands out a code no longer wants the doorbell treatment. */
+  if (h.noDoorCode && newValue.trim()) patch.noDoorCode = false
   try {
     await hospitalsStore.update(h.id, patch)
   } catch (err) {
     console.error('[HospitalsView] save failed:', (err as Error).message)
   }
+}
+
+/* Ring bell only while there's genuinely no code — a stored code always
+   wins, even if the no_door_code flag was left set by an older edit. */
+function ringBell(h: Hospital): boolean {
+  return h.noDoorCode && !h.erDoorCode
 }
 
 function lastChanged(h: Hospital) {
@@ -283,7 +292,7 @@ const traumaShort = (t: TraumaLevel) => {
           </button>
 
           <span class="hosp-row__quick">
-            <span v-if="h.noDoorCode" class="hosp-row__bell">
+            <span v-if="ringBell(h)" class="hosp-row__bell">
               <BellRing :size="12" :stroke-width="1.85" /> Ring bell
             </span>
             <template v-else-if="h.erDoorCode">
@@ -342,12 +351,10 @@ const traumaShort = (t: TraumaLevel) => {
                 @save="(v) => saveCode(h, 'er', v)"
                 @cancel="cancelEdit"
               />
-              <template v-else-if="h.noDoorCode">
-                <span class="hosp-row__bell">
+              <template v-else>
+                <span v-if="ringBell(h)" class="hosp-row__bell">
                   <BellRing :size="11" :stroke-width="1.85" /> Ring bell
                 </span>
-              </template>
-              <template v-else>
                 <button
                   v-if="h.erDoorCode && !reveal(h.id, 'er').revealed.value"
                   type="button"
@@ -381,7 +388,7 @@ const traumaShort = (t: TraumaLevel) => {
             </div>
 
             <!-- EMS room (only when applicable) -->
-            <div v-if="!h.noDoorCode" class="hosp-row__code-line">
+            <div v-if="!ringBell(h)" class="hosp-row__code-line">
               <span class="hosp-row__code-key"><Lock :size="10" :stroke-width="2" /> EMS room</span>
               <CodeEditor
                 v-if="editing && editing.id === h.id && editing.field === 'ems_room'"
