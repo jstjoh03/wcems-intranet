@@ -854,8 +854,11 @@ input[type='file'] { display: none; }
   padding-top: 0.28in;
   padding-bottom: 6px;
 }
-.card--slotted.front .idblk {
-  min-height: 0.36in;
+/* The taller header's 0.13in comes out of the photo (still 4:5), NOT
+   the name/title block — the title and level must stay visible. */
+.card--slotted.front .photo {
+  width: 1.08in;
+  height: 1.35in;
 }
 .card--slotted.back .inner {
   padding-top: 0.32in;
