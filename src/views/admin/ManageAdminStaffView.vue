@@ -16,6 +16,7 @@ import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAdminStaff } from '@/composables/useAdminStaff'
+import { formatPhoneInput } from '@/utils/phone'
 import type { AdminStaff } from '@/types'
 
 const auth = useAuthStore()
@@ -185,6 +186,7 @@ const ordered = computed(() =>
                 type="tel"
                 placeholder="(832) 555-0123"
                 class="mas-form__input"
+                @input="draft.phone = formatPhoneInput(draft.phone)"
               />
             </label>
           </div>

@@ -14,6 +14,7 @@ import type {
   ShiftLetter,
 } from '@/types'
 import { formatShortDate } from '@/utils/date'
+import { formatPhoneInput } from '@/utils/phone'
 import { useTodaysBirthdays } from '@/composables/useTodaysBirthdays'
 
 const auth = useAuthStore()
@@ -201,6 +202,7 @@ async function save() {
         u.id === draft.value!.id
           ? ({
               ...u,
+              email: draft.value!.email.trim(),
               firstName: draft.value!.firstName,
               lastName: draft.value!.lastName,
               fullName: draft.value!.fullName,
@@ -224,6 +226,7 @@ async function save() {
     }
 
     const patch = {
+      email: draft.value.email.trim(),
       first_name: draft.value.firstName,
       last_name: draft.value.lastName,
       full_name: draft.value.fullName,
@@ -368,8 +371,13 @@ onMounted(load)
         <Eyebrow class="mb-3">Edit employee</Eyebrow>
         <form class="me-form__grid" @submit.prevent="save">
           <label class="me-form__field me-form__field--wide">
-            <span class="me-form__label">Email (read-only)</span>
-            <input :value="draft.email" type="email" class="me-form__input" disabled />
+            <span class="me-form__label">Email</span>
+            <input v-model="draft.email" type="email" class="me-form__input" />
+            <span class="me-form__hint">
+              For anyone who hasn't signed in yet, this must match their Microsoft
+              sign-in email — it's how their account links on first login. After
+              that it's contact info only.
+            </span>
           </label>
 
           <label class="me-form__field">
@@ -458,7 +466,13 @@ onMounted(load)
           </label>
           <label class="me-form__field">
             <span class="me-form__label">Phone (directory)</span>
-            <input v-model="draft.phone" type="tel" class="me-form__input" placeholder="(979) 555-0123" />
+            <input
+              v-model="draft.phone"
+              type="tel"
+              class="me-form__input"
+              placeholder="(979) 555-0123"
+              @input="draft.phone = formatPhoneInput(draft.phone)"
+            />
           </label>
 
           <label class="me-form__field">
@@ -731,6 +745,11 @@ onMounted(load)
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-muted);
+}
+.me-form__hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--color-muted-soft);
 }
 .me-form__input {
   font-family: var(--font-sans);

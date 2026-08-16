@@ -5,6 +5,7 @@ import { RouterLink } from 'vue-router'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import AppCard from '@/components/primitives/AppCard.vue'
 import { useAuthStore } from '@/stores/auth'
+import { formatPhoneInput } from '@/utils/phone'
 import { useStationsStore } from '@/stores/stations'
 import type { Station } from '@/types'
 
@@ -171,7 +172,13 @@ async function remove(s: Station) {
           </label>
           <label class="ms-form__field">
             <span class="ms-form__label">Phone</span>
-            <input v-model="draft.phone" type="text" class="ms-form__input" placeholder="(979) 000-0000" />
+            <input
+              v-model="draft.phone"
+              type="tel"
+              class="ms-form__input"
+              placeholder="(979) 000-0000"
+              @input="draft.phone = formatPhoneInput(draft.phone)"
+            />
           </label>
           <label class="ms-form__field ms-form__field--wide">
             <span class="ms-form__label">Map URL</span>

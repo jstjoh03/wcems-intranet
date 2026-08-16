@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import Avatar from '@/components/primitives/Avatar.vue'
 import { supabase } from '@/lib/supabase'
+import { formatPhoneInput } from '@/utils/phone'
 import { useStationOptions } from '@/composables/useStationOptions'
 import type { ShiftLetter } from '@/types'
 import { usePushNotifications } from '@/composables/usePushNotifications'
@@ -379,6 +380,7 @@ async function signOut() {
             maxlength="30"
             placeholder="(979) 555-0123"
             class="upm__input"
+            @input="phoneLocal = formatPhoneInput(phoneLocal)"
             @blur="savePhone"
             @keydown.enter.prevent="savePhone"
           />
