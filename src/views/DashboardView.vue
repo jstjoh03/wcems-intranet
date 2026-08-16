@@ -10,6 +10,7 @@ import AnnouncementsCard from '@/components/dashboard/AnnouncementsCard.vue'
 import CallVolumeTile from '@/components/dashboard/CallVolumeTile.vue'
 import ComplianceCard from '@/components/dashboard/ComplianceCard.vue'
 import MihReferralCard from '@/components/dashboard/MihReferralCard.vue'
+import MobileQuickStrips from '@/components/dashboard/MobileQuickStrips.vue'
 import TrainingLibraryCard from '@/components/dashboard/TrainingLibraryCard.vue'
 import PeopleRow from '@/components/dashboard/PeopleRow.vue'
 </script>
@@ -25,6 +26,12 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
     <RequiredTrainingBanner />
     <PoliciesBanner />
     <PushNotificationsBanner />
+
+    <!-- Phones get the MIH entry + compliance status as slim strips up
+         top; the full rail cards below are desktop-only. -->
+    <div class="lg:hidden">
+      <MobileQuickStrips />
+    </div>
 
     <!-- Four most-used shortcuts (role-aware: crew sees Outlook /
          Shoutout / Supply / Protocols, supervisors swap in Responder360
@@ -51,10 +58,10 @@ import PeopleRow from '@/components/dashboard/PeopleRow.vue'
       </div>
 
       <aside class="dash__aside">
-        <div class="reveal" style="animation-delay: 90ms">
+        <div class="reveal hidden lg:block" style="animation-delay: 90ms">
           <ComplianceCard />
         </div>
-        <div class="reveal" style="animation-delay: 95ms">
+        <div class="reveal hidden lg:block" style="animation-delay: 95ms">
           <MihReferralCard />
         </div>
         <div id="training" class="reveal" style="animation-delay: 100ms">

@@ -25,8 +25,10 @@ import {
   HeartHandshake,
   TrendingUp,
   IdCard,
+  ExternalLink,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import { useQuickLinks } from '@/composables/useQuickLinks'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import Avatar from '@/components/primitives/Avatar.vue'
 
@@ -35,6 +37,9 @@ const emit = defineEmits<{ close: [] }>()
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+/* Same catalog the desktop Systems dropdown shows — ESO, Aladtec,
+   Paycom, and the rest, admin-managed via Manage Quick Links. */
+const { links: systemLinks } = useQuickLinks()
 
 /* "On this page" anchors only make sense on the dashboard — every
    other route has its own content and no #section hashes. */
@@ -255,6 +260,23 @@ function openProfile() {
         </div>
       </section>
 
+      <section v-if="systemLinks.length" class="mt-6">
+        <Eyebrow class="px-2 mb-2">Systems</Eyebrow>
+        <div class="space-y-0.5">
+          <a
+            v-for="l in systemLinks"
+            :key="l.id"
+            :href="l.url"
+            target="_blank"
+            rel="noopener"
+            class="nav-item"
+          >
+            <ExternalLink :size="16" :stroke-width="1.85" class="nav-item__icon" />
+            <span>{{ l.label }}</span>
+          </a>
+        </div>
+      </section>
+
       <section v-if="auth.isAdmin" class="mt-6">
         <Eyebrow class="px-2 mb-2">Admin</Eyebrow>
         <div class="space-y-0.5">
@@ -457,6 +479,10 @@ function openProfile() {
   text-align: left;
   border: none;
   background: transparent;
+  /* External system entries render as <a>; keep them visually
+     identical to the router buttons. */
+  text-decoration: none;
+  box-sizing: border-box;
   transition: background 120ms var(--ease-out), color 120ms var(--ease-out);
 }
 .nav-item:hover {
