@@ -27,8 +27,8 @@ export default defineConfig({
       filename: 'sw.ts',
       includeAssets: ['favicon.svg', 'wcems-patch.png'],
       manifest: {
-        name: 'Waller County EMS Intranet',
-        short_name: 'WCEMS Intranet',
+        name: 'WCEMS Employee Portal',
+        short_name: 'WCEMS Portal',
         description: 'Employee portal for Waller County EMS',
         theme_color: '#0F1A33',
         background_color: '#FAFAF7',

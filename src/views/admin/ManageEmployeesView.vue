@@ -30,6 +30,7 @@ interface AppUserRow {
   shift: ShiftLetter | null
   station: string | null
   fuel_number: string | null
+  phone: string | null
   date_of_birth: string | null
   show_birthday: boolean
   employment_type: EmploymentType | null
@@ -48,6 +49,7 @@ interface DraftUser {
   shift: ShiftLetter | null
   station: string
   fuelNumber: string
+  phone: string
   dateOfBirth: string
   showBirthday: boolean
   employmentType: EmploymentType
@@ -80,6 +82,7 @@ function rowToUser(r: AppUserRow): AppUser & { active: boolean } {
     shift: r.shift,
     station: r.station,
     fuelNumber: r.fuel_number,
+    phone: r.phone,
     dateOfBirth: r.date_of_birth,
     showBirthday: r.show_birthday,
     employmentType: (r.employment_type ?? 'full_time') as EmploymentType,
@@ -116,7 +119,7 @@ async function load() {
   const { data, error: fetchErr } = await supabase
     .from('app_users')
     .select(
-      'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, employment_type, account_type, active',
+      'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, phone, date_of_birth, show_birthday, employment_type, account_type, active',
     )
     .order('full_name')
   if (fetchErr) {
@@ -166,6 +169,7 @@ function userToDraft(u: AppUser & { active: boolean }): DraftUser {
     shift: u.shift,
     station: u.station ?? '',
     fuelNumber: u.fuelNumber ?? '',
+    phone: u.phone ?? '',
     dateOfBirth: u.dateOfBirth ?? '',
     showBirthday: u.showBirthday,
     employmentType: u.employmentType,
@@ -205,6 +209,7 @@ async function save() {
               shift: draft.value!.shift,
               station: draft.value!.station || null,
               fuelNumber: draft.value!.fuelNumber || null,
+              phone: draft.value!.phone.trim() || null,
               dateOfBirth: draft.value!.dateOfBirth || null,
               showBirthday: draft.value!.showBirthday,
               employmentType: draft.value!.employmentType,
@@ -227,6 +232,7 @@ async function save() {
       shift: draft.value.shift,
       station: draft.value.station || null,
       fuel_number: draft.value.fuelNumber || null,
+      phone: draft.value.phone.trim() || null,
       date_of_birth: draft.value.dateOfBirth || null,
       show_birthday: draft.value.showBirthday,
       employment_type: draft.value.employmentType,
@@ -238,7 +244,7 @@ async function save() {
       .update(patch)
       .eq('id', draft.value.id)
       .select(
-        'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, date_of_birth, show_birthday, employment_type, account_type, active',
+        'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, phone, date_of_birth, show_birthday, employment_type, account_type, active',
       )
       .single()
     if (updErr) {
@@ -270,7 +276,7 @@ async function toggleActive(u: AppUser & { active: boolean }) {
     .update({ active: !u.active })
     .eq('id', u.id)
     .select(
-      'id, email, first_name, last_name, full_name, role, shift, station, fuel_number, date_of_birth, show_birthday, active',
+      'id, email, first_name, last_name, full_name, role, title, shift, station, fuel_number, phone, date_of_birth, show_birthday, employment_type, account_type, active',
     )
     .single()
   if (updErr) {
@@ -449,6 +455,10 @@ onMounted(load)
           <label class="me-form__field">
             <span class="me-form__label">Fuel #</span>
             <input v-model="draft.fuelNumber" type="text" class="me-form__input" />
+          </label>
+          <label class="me-form__field">
+            <span class="me-form__label">Phone (directory)</span>
+            <input v-model="draft.phone" type="tel" class="me-form__input" placeholder="(979) 555-0123" />
           </label>
 
           <label class="me-form__field">
