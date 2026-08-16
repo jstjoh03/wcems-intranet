@@ -1013,6 +1013,15 @@ input[type='file'] { display: none; }
   body.only-back .stack.f {
     display: none !important;
   }
+  /* A page break belongs only BETWEEN cards. The back card is always
+     last, and in front-only mode the front card is last — without
+     these, the trailing break manufactures a blank page and the print
+     dialog defaults to printing it. */
+  .stack.b .card,
+  body.only-front .stack.f .card {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
   @page {
     size: 2.125in 3.37in;
     margin: 0;
