@@ -943,7 +943,19 @@ input[type='file'] { display: none; }
   .stage { padding: 0; background: #fff; display: block; }
   .cards { display: block; gap: 0; }
   .stack { display: block; }
-  .card { box-shadow: none; border-radius: 0; margin: 0; page-break-after: always; break-after: page; }
+  .card {
+    box-shadow: none;
+    border-radius: 0;
+    margin: 0;
+    page-break-after: always;
+    break-after: page;
+    /* Bleed: render ~3% oversized so artwork runs past the card edge
+       and the Badgy inks to its physical limit. The Badgy 100 always
+       keeps a hairline white border (hardware); this keeps it as thin
+       and even as the printer allows. */
+    transform: scale(1.03);
+    transform-origin: center center;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
