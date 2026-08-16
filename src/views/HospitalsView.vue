@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { MapPin, Hospital as HospitalIcon, BellRing, Edit2, Lock, Eye, EyeOff, Search, Settings, X } from 'lucide-vue-next'
+import { MapPin, Hospital as HospitalIcon, BellRing, Edit2, Lock, Eye, EyeOff, Search, Settings, X, ChevronRight } from 'lucide-vue-next'
 import { RouterLink } from 'vue-router'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
@@ -101,6 +101,13 @@ const filtered = computed(() => {
   }
   return list
 })
+
+// ── Row expansion ────────────────────────────────────────────────────
+const openId = ref<string | null>(null)
+function toggleRow(id: string) {
+  openId.value = openId.value === id ? null : id
+  if (editing.value && editing.value.id !== openId.value) editing.value = null
+}
 
 // ── Inline code editing ─────────────────────────────────────────────
 type EditTarget = { id: string; field: 'er' | 'ems_room' } | null
@@ -254,47 +261,81 @@ const traumaShort = (t: TraumaLevel) => {
     </div>
 
     <div class="hosp-view__list">
-      <AppCard v-for="h in filtered" :key="h.id" class="hosp-card">
-        <!-- Two-column body: info on left, codes on right -->
-        <div class="hosp-card__body">
-          <div class="hosp-card__info">
-            <header class="hosp-card__head">
-              <h3 class="hosp-card__name display">{{ h.name }}</h3>
-              <AppChip :variant="traumaVariant(h.trauma)" class="hosp-card__trauma">
-                {{ traumaShort(h.trauma) }}
-              </AppChip>
-            </header>
-            <a :href="h.mapUrl" target="_blank" rel="noopener noreferrer" class="hosp-card__map">
-              <MapPin :size="11" :stroke-width="1.85" />
-              {{ h.address }}
-            </a>
+      <AppCard
+        v-for="h in filtered"
+        :key="h.id"
+        class="hosp-row"
+        :class="{ 'hosp-row--open': openId === h.id }"
+      >
+        <!-- Collapsed row: name + trauma badge + the ER code, right here. -->
+        <div class="hosp-row__head">
+          <button type="button" class="hosp-row__toggle" @click="toggleRow(h.id)">
+            <ChevronRight
+              :size="15"
+              :stroke-width="2"
+              class="hosp-row__chev"
+              :class="{ 'hosp-row__chev--open': openId === h.id }"
+            />
+            <span class="hosp-row__name display">{{ h.name }}</span>
+            <AppChip :variant="traumaVariant(h.trauma)" class="hosp-row__trauma">
+              {{ traumaShort(h.trauma) }}
+            </AppChip>
+          </button>
 
-            <div class="hosp-card__caps">
-              <AppChip v-if="h.stroke !== 'N'" variant="brand">
-                Stroke · {{ h.stroke }}
-              </AppChip>
-              <AppChip v-if="h.pciCapable" variant="brand">PCI</AppChip>
-              <AppChip v-if="h.maternalLevel" variant="default">
-                Maternal · {{ h.maternalLevel.replace(/^Level /, '') }}
-              </AppChip>
-              <AppChip v-if="h.nicuLevel" variant="default">
-                NICU · {{ h.nicuLevel.replace(/^Level /, '') }}
-              </AppChip>
-              <AppChip v-if="h.isPediatric" variant="accent">Pediatric</AppChip>
-            </div>
+          <span class="hosp-row__quick">
+            <span v-if="h.noDoorCode" class="hosp-row__bell">
+              <BellRing :size="12" :stroke-width="1.85" /> Ring bell
+            </span>
+            <template v-else-if="h.erDoorCode">
+              <button
+                v-if="!reveal(h.id, 'er').revealed.value"
+                type="button"
+                class="hosp-row__code-cta"
+                @click="reveal(h.id, 'er').reveal"
+              >
+                <Eye :size="14" :stroke-width="2" /> ER code
+              </button>
+              <button
+                v-else
+                type="button"
+                class="hosp-row__code-revealed"
+                title="Tap to hide"
+                @click="reveal(h.id, 'er').hide"
+              >
+                <span class="font-mono hosp-row__code-value">{{ h.erDoorCode }}</span>
+                <EyeOff :size="13" :stroke-width="2" class="hosp-row__code-eye" />
+                <span class="hosp-row__code-progress" :style="{ width: reveal(h.id, 'er').progressPct.value }" />
+              </button>
+            </template>
+            <span v-else class="hosp-row__nocode">no code</span>
+          </span>
+        </div>
+
+        <!-- Expanded: capabilities, address, both code rows w/ editing, notes. -->
+        <div v-if="openId === h.id" class="hosp-row__detail">
+          <div class="hosp-row__caps">
+            <AppChip v-if="h.stroke !== 'N'" variant="brand">
+              Stroke · {{ h.stroke }}
+            </AppChip>
+            <AppChip v-if="h.pciCapable" variant="brand">PCI</AppChip>
+            <AppChip v-if="h.maternalLevel" variant="default">
+              Maternal · {{ h.maternalLevel.replace(/^Level /, '') }}
+            </AppChip>
+            <AppChip v-if="h.nicuLevel" variant="default">
+              NICU · {{ h.nicuLevel.replace(/^Level /, '') }}
+            </AppChip>
+            <AppChip v-if="h.isPediatric" variant="accent">Pediatric</AppChip>
           </div>
 
-          <!-- Door-code control panel — visually dominant -->
-          <aside class="hosp-card__codes">
-            <div class="hosp-card__codes-label">
-              <Lock :size="11" :stroke-width="2" />
-              Door codes
-            </div>
+          <a :href="h.mapUrl" target="_blank" rel="noopener noreferrer" class="hosp-row__map">
+            <MapPin :size="11" :stroke-width="1.85" />
+            {{ h.address }}
+          </a>
 
+          <div class="hosp-row__codes">
             <!-- ER door -->
-            <div class="hosp-card__code-row">
-              <span class="hosp-card__code-key">ER door</span>
-
+            <div class="hosp-row__code-line">
+              <span class="hosp-row__code-key"><Lock :size="10" :stroke-width="2" /> ER door</span>
               <CodeEditor
                 v-if="editing && editing.id === h.id && editing.field === 'er'"
                 :initial-value="h.erDoorCode"
@@ -302,124 +343,96 @@ const traumaShort = (t: TraumaLevel) => {
                 @cancel="cancelEdit"
               />
               <template v-else-if="h.noDoorCode">
-                <span class="hosp-card__bell">
+                <span class="hosp-row__bell">
                   <BellRing :size="11" :stroke-width="1.85" /> Ring bell
                 </span>
               </template>
-              <template v-else-if="h.erDoorCode">
+              <template v-else>
                 <button
-                  v-if="!reveal(h.id, 'er').revealed.value"
+                  v-if="h.erDoorCode && !reveal(h.id, 'er').revealed.value"
                   type="button"
-                  class="hosp-card__code-cta"
+                  class="hosp-row__code-cta"
                   @click="reveal(h.id, 'er').reveal"
                 >
-                  <Eye :size="18" :stroke-width="2" /> Reveal code
+                  <Eye :size="14" :stroke-width="2" /> Reveal
                 </button>
                 <button
-                  v-else
+                  v-else-if="h.erDoorCode"
                   type="button"
-                  class="hosp-card__code-revealed"
+                  class="hosp-row__code-revealed"
                   title="Tap to hide"
                   @click="reveal(h.id, 'er').hide"
                 >
-                  <Lock :size="18" :stroke-width="2" class="hosp-card__code-lock" />
-                  <span class="font-mono hosp-card__code-value">{{ h.erDoorCode }}</span>
-                  <span class="hosp-card__code-iconbox">
-                    <EyeOff :size="16" :stroke-width="2" class="hosp-card__code-eye" />
-                  </span>
-                  <span class="hosp-card__code-progress" :style="{ width: reveal(h.id, 'er').progressPct.value }" />
+                  <span class="font-mono hosp-row__code-value">{{ h.erDoorCode }}</span>
+                  <EyeOff :size="13" :stroke-width="2" class="hosp-row__code-eye" />
+                  <span class="hosp-row__code-progress" :style="{ width: reveal(h.id, 'er').progressPct.value }" />
                 </button>
                 <button
-                  v-if="!reveal(h.id, 'er').revealed.value"
+                  v-if="!h.erDoorCode || !reveal(h.id, 'er').revealed.value"
                   type="button"
-                  class="hosp-card__edit"
-                  aria-label="Edit ER door code"
+                  class="hosp-row__edit"
+                  :aria-label="h.erDoorCode ? 'Edit ER door code' : 'Add ER door code'"
                   @click="startEdit(h.id, 'er')"
                 >
                   <Edit2 :size="11" :stroke-width="1.85" />
+                  <template v-if="!h.erDoorCode">Add code</template>
                 </button>
-              </template>
-              <template v-else>
-                <button
-                  type="button"
-                  class="hosp-card__code-add"
-                  @click="startEdit(h.id, 'er')"
-                >
-                  <Edit2 :size="10" /> Add code
-                </button>
-                <span class="hosp-card__edit-spacer" aria-hidden="true" />
               </template>
             </div>
 
             <!-- EMS room (only when applicable) -->
-            <div v-if="!h.noDoorCode" class="hosp-card__code-row">
-              <span class="hosp-card__code-key">EMS room</span>
-
+            <div v-if="!h.noDoorCode" class="hosp-row__code-line">
+              <span class="hosp-row__code-key"><Lock :size="10" :stroke-width="2" /> EMS room</span>
               <CodeEditor
                 v-if="editing && editing.id === h.id && editing.field === 'ems_room'"
                 :initial-value="h.emsRoomCode"
                 @save="(v) => saveCode(h, 'ems_room', v)"
                 @cancel="cancelEdit"
               />
-              <template v-else-if="h.emsRoomCode">
+              <template v-else>
                 <button
-                  v-if="!reveal(h.id, 'ems_room').revealed.value"
+                  v-if="h.emsRoomCode && !reveal(h.id, 'ems_room').revealed.value"
                   type="button"
-                  class="hosp-card__code-cta"
+                  class="hosp-row__code-cta"
                   @click="reveal(h.id, 'ems_room').reveal"
                 >
-                  <Eye :size="18" :stroke-width="2" /> Reveal code
+                  <Eye :size="14" :stroke-width="2" /> Reveal
                 </button>
                 <button
-                  v-else
+                  v-else-if="h.emsRoomCode"
                   type="button"
-                  class="hosp-card__code-revealed"
+                  class="hosp-row__code-revealed"
                   title="Tap to hide"
                   @click="reveal(h.id, 'ems_room').hide"
                 >
-                  <Lock :size="18" :stroke-width="2" class="hosp-card__code-lock" />
-                  <span class="font-mono hosp-card__code-value">{{ h.emsRoomCode }}</span>
-                  <span class="hosp-card__code-iconbox">
-                    <EyeOff :size="16" :stroke-width="2" class="hosp-card__code-eye" />
-                  </span>
-                  <span class="hosp-card__code-progress" :style="{ width: reveal(h.id, 'ems_room').progressPct.value }" />
+                  <span class="font-mono hosp-row__code-value">{{ h.emsRoomCode }}</span>
+                  <EyeOff :size="13" :stroke-width="2" class="hosp-row__code-eye" />
+                  <span class="hosp-row__code-progress" :style="{ width: reveal(h.id, 'ems_room').progressPct.value }" />
                 </button>
                 <button
-                  v-if="!reveal(h.id, 'ems_room').revealed.value"
+                  v-if="!h.emsRoomCode || !reveal(h.id, 'ems_room').revealed.value"
                   type="button"
-                  class="hosp-card__edit"
-                  aria-label="Edit EMS room code"
+                  class="hosp-row__edit"
+                  :aria-label="h.emsRoomCode ? 'Edit EMS room code' : 'Add EMS room code'"
                   @click="startEdit(h.id, 'ems_room')"
                 >
                   <Edit2 :size="11" :stroke-width="1.85" />
+                  <template v-if="!h.emsRoomCode">Add code</template>
                 </button>
-              </template>
-              <template v-else>
-                <button
-                  type="button"
-                  class="hosp-card__code-add"
-                  @click="startEdit(h.id, 'ems_room')"
-                >
-                  <Edit2 :size="10" /> Add code
-                </button>
-                <span class="hosp-card__edit-spacer" aria-hidden="true" />
               </template>
             </div>
-          </aside>
-        </div>
+          </div>
 
-        <!-- Footer: notes, effective date, edited-by stamp -->
-        <footer class="hosp-card__foot">
-          <div v-if="h.notes" class="hosp-card__notes">{{ h.notes }}</div>
-          <div class="hosp-card__meta">
+          <div v-if="h.notes" class="hosp-row__notes">{{ h.notes }}</div>
+          <div class="hosp-row__meta">
             <span v-if="h.codeEffectiveFrom">
               Effective from {{ formatLongDate(h.codeEffectiveFrom) }}
             </span>
-            <span v-if="lastChanged(h)" class="hosp-card__updated">
+            <span v-if="lastChanged(h)" class="hosp-row__updated">
               Updated by <strong>{{ lastChanged(h)?.by }}</strong> · {{ timeAgo(lastChanged(h)!.at) }}
             </span>
           </div>
-        </footer>
+        </div>
       </AppCard>
     </div>
 
@@ -586,176 +599,90 @@ const traumaShort = (t: TraumaLevel) => {
 }
 
 .hosp-view__list {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-}
-@media (min-width: 1024px) {
-  .hosp-view__list {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.hosp-card {
-  padding: 0;
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Collapsible rows ─────────────────────────────────────────────── */
+.hosp-row {
+  padding: 0;
   overflow: hidden;
 }
-
-/* Body splits into info (flex 1) + codes panel (fixed width on desktop) */
-.hosp-card__body {
-  display: grid;
-  grid-template-columns: 1fr;
-}
-@media (min-width: 640px) {
-  .hosp-card__body {
-    grid-template-columns: 1fr minmax(220px, 260px);
-  }
+.hosp-row--open {
+  box-shadow: var(--shadow-md);
 }
 
-.hosp-card__info {
-  padding: 14px 16px;
+.hosp-row__head {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-.hosp-card__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
   gap: 10px;
+  padding: 8px 12px 8px 8px;
   flex-wrap: wrap;
 }
-.hosp-card__name {
-  font-size: 17px;
-  letter-spacing: -0.01em;
-  color: var(--color-ink);
-  line-height: 1.2;
+.hosp-row__toggle {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
 }
-.hosp-card__trauma {
+.hosp-row__chev {
+  flex-shrink: 0;
+  color: var(--color-muted-soft);
+  transition: transform 140ms var(--ease-out);
+}
+.hosp-row__chev--open {
+  transform: rotate(90deg);
+}
+.hosp-row__name {
+  font-size: 16.5px;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  line-height: 1.15;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hosp-row__trauma {
   flex-shrink: 0;
 }
 
-.hosp-card__map {
+.hosp-row__quick {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12.5px;
-  color: var(--color-muted);
-  text-decoration: none;
-  line-height: 1.4;
+  margin-left: auto;
 }
-.hosp-card__map:hover {
-  color: var(--color-brand-600);
-  text-decoration: underline;
-}
-
-.hosp-card__caps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-/* Codes panel — elevated treatment with a thin gold accent rule
-   instead of a colored fill. White surface, hairline divider, and
-   strong type hierarchy do the work. */
-.hosp-card__codes {
-  position: relative;
-  background: var(--color-surface);
-  padding: 14px 16px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-/* Mobile: gold rule across the top of the codes block */
-.hosp-card__codes::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 16px;
-  right: 16px;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    oklch(0.734 0.114 86.8 / 0.55) 18%,
-    oklch(0.734 0.114 86.8 / 0.55) 82%,
-    transparent 100%
-  );
-}
-
-@media (min-width: 640px) {
-  /* Desktop: gold rule runs vertically as the column divider */
-  .hosp-card__codes::before {
-    top: 14px;
-    bottom: 14px;
-    left: 0;
-    right: auto;
-    height: auto;
-    width: 1px;
-    background: linear-gradient(
-      to bottom,
-      transparent 0%,
-      oklch(0.734 0.114 86.8 / 0.55) 30%,
-      oklch(0.734 0.114 86.8 / 0.55) 70%,
-      transparent 100%
-    );
-  }
-}
-
-.hosp-card__codes-label {
+.hosp-row__bell {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-}
-
-/* Grid so the label + button + edit pencil share the same column tracks
-   on every row. `1fr` for the button column rather than `minmax(0,
-   1fr)` so the button column can't shrink below its content size and
-   force "Reveal code" to wrap. */
-.hosp-card__code-row {
-  display: grid;
-  grid-template-columns: 72px 1fr auto;
-  align-items: center;
-  gap: 8px;
-}
-.hosp-card__code-key {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--color-ink-soft);
-}
-
-.hosp-card__bell {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-size: 12px;
-  font-weight: 500;
-  color: var(--color-ink-soft);
-  font-style: italic;
+  font-weight: 600;
+  color: var(--color-brand-700);
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.hosp-row__nocode {
+  font-size: 11.5px;
+  color: var(--color-muted-soft);
+  padding: 6px 10px;
 }
 
-.hosp-card__code-cta {
+.hosp-row__code-cta,
+.hosp-row__code-revealed {
   position: relative;
-  flex: 1;
-  min-width: 110px;
-  height: 32px;
+  height: 30px;
+  min-width: 96px;
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: 7px;
   border: 1px solid color-mix(in oklch, var(--color-accent-on-dark) 48%, transparent);
   background: linear-gradient(
     180deg,
@@ -766,109 +693,43 @@ const traumaShort = (t: TraumaLevel) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 7px;
   font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  text-transform: none;
-  white-space: nowrap;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
-    0 3px 8px rgba(0, 0, 0, 0.14);
-  cursor: pointer;
-  transition:
-    transform 180ms ease,
-    box-shadow 180ms ease,
-    border-color 180ms ease;
-}
-.hosp-card__code-cta:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in oklch, var(--color-accent-on-dark) 70%, transparent);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 5px 12px rgba(0, 0, 0, 0.18),
-    0 0 14px color-mix(in oklch, var(--color-accent-on-dark) 22%, transparent);
-}
-.hosp-card__code-cta:active {
-  transform: translateY(0) scale(0.98);
-  box-shadow:
-    inset 0 2px 6px rgba(0, 0, 0, 0.32),
-    0 2px 6px rgba(0, 0, 0, 0.16);
-}
-.hosp-card__code-cta svg {
-  width: 13px;
-  height: 13px;
-  color: var(--color-accent-on-dark);
-  flex-shrink: 0;
-}
-
-.hosp-card__code-revealed {
-  position: relative;
-  flex: 1;
-  min-width: 110px;
-  height: 32px;
-  white-space: nowrap;
-  padding: 0 12px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in oklch, var(--color-accent-on-dark) 48%, transparent);
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklch, var(--color-brand-800) 88%, white 10%),
-    color-mix(in oklch, var(--color-brand-800) 96%, black 4%)
-  );
-  color: white;
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
   cursor: pointer;
   overflow: hidden;
+  white-space: nowrap;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
     inset 0 -1px 0 rgba(0, 0, 0, 0.25),
-    0 3px 8px rgba(0, 0, 0, 0.14);
-  transition: transform 180ms ease;
+    0 2px 6px rgba(0, 0, 0, 0.12);
+  transition: transform 160ms ease, box-shadow 160ms ease;
 }
-.hosp-card__code-revealed:hover {
+.hosp-row__code-cta:hover,
+.hosp-row__code-revealed:hover {
   transform: translateY(-1px);
 }
-.hosp-card__code-revealed svg.hosp-card__code-lock {
-  width: 13px;
-  height: 13px;
-}
-.hosp-card__code-lock {
-  flex-shrink: 0;
+.hosp-row__code-cta svg {
   color: var(--color-accent-on-dark);
-}
-.hosp-card__code-iconbox {
   flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  display: grid;
-  place-items: center;
-  background: rgba(255, 255, 255, 0.08);
 }
-.hosp-card__code-iconbox svg {
-  width: 12px;
-  height: 12px;
+.hosp-row__code-revealed {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  justify-content: space-between;
 }
-.hosp-card__code-eye {
-  color: rgba(255, 255, 255, 0.78);
-}
-.hosp-card__code-value {
+.hosp-row__code-value {
   flex: 1;
   text-align: center;
 }
-.hosp-card__code-progress {
-  /* Drains from full → 0 over the 20s reveal window. At full it sits like
-     a static gold border-bottom; the drain is the auto-hide countdown. */
+.hosp-row__code-eye {
+  color: rgba(255, 255, 255, 0.78);
+  flex-shrink: 0;
+}
+.hosp-row__code-progress {
   position: absolute;
   bottom: 0;
   left: 0;
@@ -878,76 +739,98 @@ const traumaShort = (t: TraumaLevel) => {
   pointer-events: none;
 }
 
-.hosp-card__edit {
-  flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.hosp-card__edit:hover {
-  border-color: var(--color-line);
-  color: var(--color-brand-700);
-  background: var(--color-surface);
-}
-
-.hosp-card__edit-spacer {
-  flex-shrink: 0;
-  width: 26px;
-  height: 26px;
-}
-
-.hosp-card__code-add {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 6px 12px;
-  background: transparent;
-  border: none;
-  color: var(--color-muted);
-  font-size: 11.5px;
-  cursor: pointer;
-  transition: color 120ms var(--ease-out);
-}
-.hosp-card__code-add:hover {
-  color: var(--color-brand-600);
-}
-
-.hosp-card__foot {
-  padding: 8px 16px 12px;
+/* ── Expanded detail ──────────────────────────────────────────────── */
+.hosp-row__detail {
+  padding: 12px 14px 12px 31px;
   border-top: 1px solid var(--color-line-soft);
+  background: var(--color-surface-soft);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
 }
-.hosp-card__notes {
-  font-size: 12px;
-  color: var(--color-ink-soft);
-  font-style: italic;
-}
-.hosp-card__meta {
-  font-size: 10.5px;
-  color: var(--color-muted);
+.hosp-row__caps {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hosp-row__map {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-brand-600);
+  text-decoration: none;
+}
+.hosp-row__map:hover {
+  text-decoration: underline;
+}
+.hosp-row__codes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hosp-row__code-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
 }
-.hosp-card__updated strong {
-  font-weight: 600;
+.hosp-row__code-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 84px;
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.hosp-row__edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px;
+  background: transparent;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: all 120ms var(--ease-out);
+}
+.hosp-row__edit:hover {
+  color: var(--color-brand-600);
+  background: var(--color-surface);
+}
+.hosp-row__notes {
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--color-ink-soft);
+  padding: 8px 10px;
+  border-left: 3px solid var(--color-accent-600);
+  background: var(--color-surface);
+  border-radius: 0 8px 8px 0;
+}
+.hosp-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 10.5px;
+  color: var(--color-muted);
+}
+.hosp-row__updated {
+  margin-left: auto;
 }
 
 .hosp-view__empty {
+  padding: 40px 0;
   text-align: center;
-  padding: 48px 16px;
-  color: var(--color-muted);
+  font-size: 13.5px;
+  color: var(--color-muted-soft);
 }
 </style>
