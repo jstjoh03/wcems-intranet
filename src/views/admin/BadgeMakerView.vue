@@ -78,6 +78,9 @@ const agency = reactive({
   backStyle: 'light',
   medDir: 'A. Buzzard, MD',
   addr: 'Waller County EMS\n1134 Austin Street, Hempstead, TX 77445\n(979) 826-6063',
+  /* Slot-punched card stock: keep the top-center punch zone free of
+     artwork on both sides. Turn off once unpunched cards arrive. */
+  slotted: false,
 })
 
 const roster = ref<RosterRow[]>([{ id: null, data: blank() }])
@@ -146,7 +149,7 @@ async function load() {
     return
   }
   const [aRes, pRes] = await Promise.all([
-    supabase.from('badge_agency').select('accent, back_style, med_dir, addr').eq('id', true).maybeSingle(),
+    supabase.from('badge_agency').select('accent, back_style, med_dir, addr, slotted').eq('id', true).maybeSingle(),
     supabase.from('badge_people').select('id, data').order('created_at'),
   ])
   if (aRes.data) {
@@ -154,6 +157,7 @@ async function load() {
     agency.backStyle = aRes.data.back_style
     agency.medDir = aRes.data.med_dir
     agency.addr = aRes.data.addr
+    agency.slotted = aRes.data.slotted ?? false
   }
   if (pRes.data?.length) {
     roster.value = pRes.data.map((r) => ({ id: r.id as string, data: { ...blank(), ...(r.data as BadgePerson) } }))
@@ -203,6 +207,7 @@ watch(agency, () => {
       back_style: agency.backStyle,
       med_dir: agency.medDir,
       addr: agency.addr,
+      slotted: agency.slotted,
     })
     saveState.value = error ? 'error' : 'saved'
     if (error) console.error('[badge-maker] agency save failed:', error.message)
@@ -527,10 +532,14 @@ onMounted(() => {
         <button @click="printAs('only-back')">Print back</button>
         <button class="ghost" @click="printAs(null)">Print both</button>
       </div>
+      <label class="slottoggle">
+        <input v-model="agency.slotted" type="checkbox" />
+        <span>Slot-punched cards — keep the punch zone clear</span>
+      </label>
 
       <div class="cards">
         <div class="stack f">
-          <div class="card front" :class="{ 'accent-stripe': agency.accent === 'stripe' }">
+          <div class="card front" :class="{ 'accent-stripe': agency.accent === 'stripe', 'card--slotted': agency.slotted }">
             <div class="head navyfill">
               <img src="/badge-crest.png" alt="" />
               <div class="wm">
@@ -575,7 +584,7 @@ onMounted(() => {
         </div>
 
         <div class="stack b">
-          <div class="card back" :class="{ light: agency.backStyle === 'light', navyfill: agency.backStyle === 'navy' }">
+          <div class="card back" :class="{ light: agency.backStyle === 'light', navyfill: agency.backStyle === 'navy', 'card--slotted': agency.slotted }">
             <div class="goldcap"></div>
             <div class="inner">
               <div class="eyebrow">Credential Record</div>
@@ -786,6 +795,22 @@ button.danger:hover { background: #4a1620; border-color: #7e2230; }
 input[type='file'] { display: none; }
 
 /* ================= CARDS ================= */
+.slottoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: -12px 0 0;
+  font-size: 11px;
+  color: var(--ui-dim);
+  cursor: pointer;
+}
+.slottoggle input {
+  accent-color: var(--gold);
+}
+.slottoggle:hover {
+  color: #fff;
+}
+
 .cards { display: flex; gap: 30px; flex-wrap: wrap; justify-content: center; }
 .stack { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .cap { font-family: 'Geist Mono', monospace; font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ui-dim); }
@@ -820,6 +845,21 @@ input[type='file'] { display: none; }
 }
 
 .head { padding: 8px 10px 7px; display: flex; align-items: center; gap: 8px; border-bottom: 2px solid var(--rule); }
+/* Slot-punched stock: the punch is a ~14×3mm slot centered ~4-6mm from
+   the top. The crest (far left) is horizontally clear; the wordmark
+   drops below the punch line so nothing prints through the hole. */
+.card--slotted.front .head {
+  min-height: 0.58in;
+  align-items: flex-end;
+  padding-top: 0.28in;
+  padding-bottom: 6px;
+}
+.card--slotted.front .idblk {
+  min-height: 0.36in;
+}
+.card--slotted.back .inner {
+  padding-top: 0.32in;
+}
 .head img { width: 30px; height: auto; flex: none; position: relative; z-index: 1; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)); }
 .wm { line-height: 1; position: relative; z-index: 1; }
 .wm .l1 { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 13.5px; letter-spacing: 0.06em; color: #fff; white-space: nowrap; }
