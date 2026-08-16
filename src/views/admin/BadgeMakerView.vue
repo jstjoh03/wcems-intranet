@@ -862,6 +862,21 @@ input[type='file'] { display: none; }
 }
 .card--slotted.back .inner {
   padding-top: 0.32in;
+  padding-bottom: 8px;
+}
+/* Reclaim the punch-zone offset from internal spacing so the bottom
+   crest never falls off the card, even with every credential row. */
+.card--slotted.back .rw {
+  padding: 3.5px 0;
+}
+.card--slotted.back .ret {
+  margin-top: 8px;
+}
+.card--slotted.back .notice {
+  padding: 5px 7px;
+}
+.card--slotted.back .bfoot {
+  margin-top: 6px;
 }
 .head img { width: 30px; height: auto; flex: none; position: relative; z-index: 1; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)); }
 .wm { line-height: 1; position: relative; z-index: 1; }
