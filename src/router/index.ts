@@ -187,6 +187,14 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/protocols/ManageProtocolsView.vue'),
     meta: { adminOnly: true, chromeless: true },
   },
+  /* Badge maker: full-viewport dark tool with its own print CSS —
+     chromeless like the protocols app. */
+  {
+    path: '/admin/badge-maker',
+    name: 'admin-badge-maker',
+    component: () => import('@/views/admin/BadgeMakerView.vue'),
+    meta: { adminOnly: true, chromeless: true },
+  },
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',

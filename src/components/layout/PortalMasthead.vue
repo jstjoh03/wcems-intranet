@@ -48,6 +48,7 @@ const ADMIN_CHILDREN: NavChild[] = [
   { label: 'Manage Policies', to: '/admin/policies' },
   { label: 'Manage Admin Staff', to: '/admin/admin-staff' },
   { label: 'Manage Quick Links', to: '/admin/quick-links' },
+  { label: 'Badge Maker', to: '/admin/badge-maker' },
   { label: 'Usage', to: '/admin/usage' },
 ]
 

@@ -24,6 +24,7 @@ import {
   BookOpen,
   HeartHandshake,
   TrendingUp,
+  IdCard,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -114,6 +115,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Policies', to: '/admin/policies', icon: FileText },
   { label: 'Manage Admin Staff', to: '/admin/admin-staff', icon: Building2 },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
+  { label: 'Badge Maker', to: '/admin/badge-maker', icon: IdCard },
   { label: 'Usage', to: '/admin/usage', icon: Activity },
 ]
 
