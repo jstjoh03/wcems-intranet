@@ -12,8 +12,9 @@
 //   - Match on normalized full name (List "Last, First" vs app "First Last").
 //     The List holds personal emails; apps hold work emails, so name is the
 //     only shared key. Aliases below patch known spelling differences.
-//   - Matched rows: update employment_type only. Shift/station/role are
-//     OWNED BY THE APPS (edited live in-app) and never overwritten.
+//   - Matched rows: update employment_type; fuel # and DOB fill in only
+//     when the app value is blank. Shift/station/role are OWNED BY THE
+//     APPS (edited live in-app) and never overwritten.
 //   - List row with no app match (Category ≠ BOD): INSERT with constructed
 //     work email first.last@wallercountyems.com, role 'crew', active.
 //   - Active person account with no List row: DEACTIVATE (they left WCEMS).
@@ -80,6 +81,8 @@ interface ListPerson {
   mobile: string | null
   txLicenseNumber: string | null
   txLicenseExp: string | null
+  fuelNumber: string | null
+  dob: string | null
 }
 
 function norm(name: string): string {
@@ -180,6 +183,8 @@ async function fetchListPeople(token: string): Promise<ListPerson[]> {
         mobile: pick(f, 'Mobile'),
         txLicenseNumber: pick(f, 'TXLicenseNumber'),
         txLicenseExp: pick(f, 'TXLicenseExp'),
+        fuelNumber: pick(f, 'FuelNumber'),
+        dob: pick(f, 'DOB'),
       })
     }
     url = data['@odata.nextLink']
@@ -253,9 +258,10 @@ Deno.serve(async (req: Request) => {
     })
     const { data: users, error: uerr } = await supabase
       .from('app_users')
-      .select('id, full_name, first_name, last_name, email, active, employment_type, account_type')
+      .select('id, full_name, first_name, last_name, email, active, employment_type, account_type, fuel_number, date_of_birth')
       .eq('account_type', 'person')
     if (uerr) throw new Error(`app_users: ${uerr.message}`)
+    const toDob = (v: string | null) => (v ? v.slice(0, 10) : null)
 
     const intranet = emptyPlan()
     const seenNorms = new Set<string>()
@@ -265,9 +271,15 @@ Deno.serve(async (req: Request) => {
       if (match) {
         seenNorms.add(n)
         intranet.matched++
+        const patch: Record<string, unknown> = {}
         const t = normType(match.ftpt)
-        if (t && u.employment_type !== t) {
-          intranet.updates.push({ id: u.id, name: u.full_name, employment_type: t, was: u.employment_type })
+        if (t && u.employment_type !== t) patch.employment_type = t
+        /* Fuel # + DOB: HR data fills gaps but never overwrites a value
+           someone corrected in-app. */
+        if (!u.fuel_number && match.fuelNumber) patch.fuel_number = match.fuelNumber
+        if (!u.date_of_birth && match.dob) patch.date_of_birth = toDob(match.dob)
+        if (Object.keys(patch).length) {
+          intranet.updates.push({ id: u.id, name: u.full_name, ...patch })
         }
       } else if (u.active && !anyoneNorms.has(n)) {
         intranet.deactivates.push({ id: u.id, name: u.full_name, email: u.email })
@@ -292,6 +304,8 @@ Deno.serve(async (req: Request) => {
         shift: p.shift ?? null,
         station: p.station ?? null,
         phone: p.mobile ?? null,
+        fuel_number: p.fuelNumber ?? null,
+        date_of_birth: p.dob ? p.dob.slice(0, 10) : null,
         active: true,
         account_type: 'person',
       })
@@ -303,8 +317,9 @@ Deno.serve(async (req: Request) => {
 
     if (apply) {
       for (const up of intranet.updates) {
-        const { error } = await supabase.from('app_users').update({ employment_type: up.employment_type }).eq('id', up.id)
-        if (error) throw new Error(`update ${up.name}: ${error.message}`)
+        const { id, name, ...patch } = up
+        const { error } = await supabase.from('app_users').update(patch).eq('id', id)
+        if (error) throw new Error(`update ${name}: ${error.message}`)
       }
       for (const d of intranet.deactivates) {
         const { error } = await supabase.from('app_users').update({ active: false }).eq('id', d.id)

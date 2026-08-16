@@ -46,7 +46,10 @@ const u = computed(() => auth.appUser)
 
 const hasPhoto = computed(() => !!u.value?.photoUrl)
 const hasStation = computed(() => !!u.value?.station)
-const hasShift = computed(() => !!u.value?.shift)
+/* Shift only applies to field staff — office/admin staff (station
+   "EMS Admin") don't ride a rotation, so never require one of them. */
+const isOfficeStaff = computed(() => /admin/i.test(u.value?.station ?? ''))
+const hasShift = computed(() => isOfficeStaff.value || !!u.value?.shift)
 const isIncomplete = computed(() => !hasPhoto.value || !hasStation.value || !hasShift.value)
 
 const firstName = computed(() => u.value?.firstName?.trim() || 'there')
@@ -67,7 +70,10 @@ const visible = computed(
 const items = computed(() => [
   { key: 'photo', label: 'Add a profile photo', sub: 'So teammates recognize you', done: hasPhoto.value, icon: Camera },
   { key: 'station', label: 'Set your station', sub: 'Surfaces the right building info', done: hasStation.value, icon: MapPin },
-  { key: 'shift', label: 'Set your shift', sub: 'A, B, or C', done: hasShift.value, icon: Clock },
+  /* Field staff only — office staff don't ride a shift rotation. */
+  ...(isOfficeStaff.value
+    ? []
+    : [{ key: 'shift', label: 'Set your shift', sub: 'A, B, or C', done: hasShift.value, icon: Clock }]),
 ])
 
 function completeProfile() {

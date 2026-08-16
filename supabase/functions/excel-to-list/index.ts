@@ -77,10 +77,12 @@ function norm(name: string): string {
   return s.toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-/* Excel date serial → ISO yyyy-mm-dd (UTC). */
-function serialToIso(v: unknown): string | null {
+/* Excel date serial → ISO yyyy-mm-dd (UTC). Default floor of 20000
+   (~1954) suits license expirations; DOBs pass a lower floor since
+   staff born in the 1950s sit well below it. */
+function serialToIso(v: unknown, min = 20000): string | null {
   const n = Number(v)
-  if (!isFinite(n) || n < 20000 || n > 80000) return null
+  if (!isFinite(n) || n < min || n > 80000) return null
   const ms = Math.round((n - 25569) * 86400 * 1000)
   return new Date(ms).toISOString().slice(0, 10)
 }
@@ -89,6 +91,7 @@ interface ExcelRow {
   emp: number | null; name: string; norm: string; category: string
   city: string | null; mobile: string | null; email: string | null
   cert: string | null; lic: string | null; exp: string | null; tdl: string | null
+  fuel: string | null; dob: string | null
 }
 
 // @ts-expect-error Deno global
@@ -129,7 +132,10 @@ Deno.serve(async (req: Request) => {
         cert: row[8] ? String(row[8]).trim() : null,
         lic: row[9] != null && row[9] !== '' ? String(row[9]).trim() : null,
         exp: serialToIso(row[10]),
+        fuel: row[11] != null && row[11] !== '' ? String(row[11]).trim() : null,
         tdl: row[12] != null && row[12] !== '' ? String(row[12]).trim() : null,
+        /* Column N has no header on HR's sheet but holds DOB. */
+        dob: serialToIso(row[13], 10000),
       })
     }
 
@@ -148,6 +154,22 @@ Deno.serve(async (req: Request) => {
       if (!(c.displayName in internal)) internal[c.displayName] = c.name
     }
     const K = (d: string) => internal[d] ?? d
+
+    /* Self-healing: create the FuelNumber / DOB columns if the List
+       predates them (added 2026-08-14 so new hires carry both into the
+       apps). New columns get internal name = the name we provide. */
+    if (apply) {
+      const ensure: Array<[string, Record<string, unknown>]> = [
+        ['FuelNumber', { text: {} }],
+        ['DOB', { dateTime: { format: 'dateOnly' } }],
+      ]
+      for (const [name, type] of ensure) {
+        if (internal[name]) continue
+        await g(token, 'POST', `https://graph.microsoft.com/v1.0/sites/${site.id}/lists/${listId}/columns`,
+          { name, ...type })
+        internal[name] = name
+      }
+    }
 
     interface ListRow { id: string; norm: string; emp: number | null; status: string; f: Record<string, unknown> }
     const listRows: ListRow[] = []
@@ -191,7 +213,7 @@ Deno.serve(async (req: Request) => {
         const want: Array<[string, unknown]> = [
           ['Title', e.name], ['Category', e.category || null], ['PersonalEmail', e.email],
           ['Mobile', e.mobile], ['City', e.city], ['CertLevel', e.cert],
-          ['TXLicenseNumber', e.lic], ['TDL', e.tdl],
+          ['TXLicenseNumber', e.lic], ['TDL', e.tdl], ['FuelNumber', e.fuel],
         ]
         if (e.emp && Number(match.f[K('EmpNumber')]) !== e.emp) set[K('EmpNumber')] = e.emp
         for (const [disp, v] of want) {
@@ -211,6 +233,12 @@ Deno.serve(async (req: Request) => {
           const curIso = cur ? String(cur).slice(0, 10) : null
           if (!curIso || e.exp > curIso) set[K('TXLicenseExp')] = e.exp
         }
+        // DOB: Excel wins (date-compare so SP's datetime never loops)
+        if (e.dob) {
+          const cur = match.f[K('DOB')]
+          const curIso = cur ? String(cur).slice(0, 10) : null
+          if (curIso !== e.dob) set[K('DOB')] = e.dob
+        }
         if (Object.keys(set).length) {
           updates.push({ id: match.id, name: e.name, set })
         }
@@ -227,6 +255,8 @@ Deno.serve(async (req: Request) => {
         if (e.lic) set[K('TXLicenseNumber')] = e.lic
         if (e.exp) set[K('TXLicenseExp')] = e.exp
         if (e.tdl) set[K('TDL')] = e.tdl
+        if (e.fuel) set[K('FuelNumber')] = e.fuel
+        if (e.dob) set[K('DOB')] = e.dob
         creates.push({ name: e.name, set })
       }
     }
