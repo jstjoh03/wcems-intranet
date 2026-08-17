@@ -25,7 +25,6 @@ import {
   HeartHandshake,
   TrendingUp,
   IdCard,
-  Camera,
   ExternalLink,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
@@ -105,7 +104,6 @@ const pages = computed<NavItem[]>(() => [
     icon: TrendingUp,
   },
   { label: 'Policies', to: '/policies', icon: FileText },
-  { label: 'Social Media Release', to: '/social-media-release', icon: Camera },
   { label: 'Employee Directory', to: '/directory', icon: Contact },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
   { label: 'Admin Staff', to: '/admin-staff', icon: Building2 },
@@ -120,7 +118,6 @@ const adminPages: NavItem[] = [
   { label: 'Manage Training Library', to: '/admin/training-recordings', icon: Film },
   { label: 'Manage Required Training', to: '/admin/required-training', icon: ShieldCheck },
   { label: 'Manage Policies', to: '/admin/policies', icon: FileText },
-  { label: 'Social Media Releases', to: '/admin/social-media-releases', icon: Camera },
   { label: 'Manage Admin Staff', to: '/admin/admin-staff', icon: Building2 },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
   { label: 'Badge Maker', to: '/admin/badge-maker', icon: IdCard },

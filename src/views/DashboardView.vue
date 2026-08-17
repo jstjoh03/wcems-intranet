@@ -6,7 +6,6 @@ import Hero from '@/components/dashboard/Hero.vue'
 import PushNotificationsBanner from '@/components/dashboard/PushNotificationsBanner.vue'
 import RequiredTrainingBanner from '@/components/dashboard/RequiredTrainingBanner.vue'
 import PoliciesBanner from '@/components/dashboard/PoliciesBanner.vue'
-import SocialMediaReleaseBanner from '@/components/dashboard/SocialMediaReleaseBanner.vue'
 import FeaturedQuickLinks from '@/components/dashboard/FeaturedQuickLinks.vue'
 import StationDirectory from '@/components/dashboard/StationDirectory.vue'
 import UpcomingTrainingCard from '@/components/dashboard/UpcomingTrainingCard.vue'
@@ -38,7 +37,6 @@ const showAnnouncements = computed(
     <div class="dash">
     <RequiredTrainingBanner />
     <PoliciesBanner />
-    <SocialMediaReleaseBanner />
     <PushNotificationsBanner />
 
     <!-- Phones get the MIH entry + compliance status as slim strips up
