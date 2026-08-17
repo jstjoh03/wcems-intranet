@@ -156,6 +156,20 @@ export interface PolicyAcknowledgement {
   markedNote: string | null
 }
 
+/** Standing social-media photo/video authorization — one row per
+ *  person; revising or revoking updates the row in place. */
+export interface SocialMediaRelease {
+  id: string
+  userId: string
+  authorized: boolean
+  restrictions: string
+  signatureData: string | null
+  signedMethod: 'self' | 'admin_marked'
+  markedBy: string | null
+  markedNote: string | null
+  signedAt: string
+}
+
 export interface PolicyOverride {
   id: string
   policyId: string

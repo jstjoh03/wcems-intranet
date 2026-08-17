@@ -147,6 +147,17 @@ const routes: RouteRecordRaw[] = [
     meta: { adminOnly: true },
   },
   {
+    path: '/social-media-release',
+    name: 'social-media-release',
+    component: () => import('@/views/SocialMediaReleaseView.vue'),
+  },
+  {
+    path: '/admin/social-media-releases',
+    name: 'admin-social-media-releases',
+    component: () => import('@/views/admin/SocialMediaRosterView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
     path: '/mih-referral',
     name: 'mih-referral',
     component: () => import('@/views/MihReferralView.vue'),
