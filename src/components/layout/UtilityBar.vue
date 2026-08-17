@@ -14,7 +14,7 @@ import { useQuickLinks } from '@/composables/useQuickLinks'
  * stays editable in-app; SYSTEM_PRIORITY just picks which few earn a
  * permanent slot up here. Everything else is in the Systems menu.
  */
-const SYSTEM_PRIORITY = ['ESO', 'Aladtec', 'Paycom', 'Operative IQ', 'Supply Portal']
+const SYSTEM_PRIORITY = ['ESO', 'Aladtec', 'Lexipol', 'Paycom', 'Operative IQ', 'Supply Portal']
 
 const auth = useAuthStore()
 const router = useRouter()
