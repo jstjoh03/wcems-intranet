@@ -156,6 +156,57 @@ export interface PolicyAcknowledgement {
   markedNote: string | null
 }
 
+/* ── Skills Day (NEOP check-offs) ─────────────────────────────────
+   Evaluator-driven station check-offs: item-level pass/redo with
+   dual signatures. Definitions live in skills_checkoffs (sections
+   jsonb) so the CDO can edit item lists in-app. */
+
+export interface SkillsCheckoffItem {
+  key: string
+  label: string
+}
+
+export interface SkillsCheckoffSection {
+  title: string
+  note?: string
+  items: SkillsCheckoffItem[]
+}
+
+export interface SkillsCheckoff {
+  id: string
+  key: string
+  title: string
+  subtitle: string
+  note: string
+  sections: SkillsCheckoffSection[]
+  sort: number
+  active: boolean
+}
+
+export type SkillItemResult = 'pass' | 'redo'
+
+export interface SkillsRecheck {
+  at: string
+  evaluatorId: string
+  items: string[]
+  candidateSignature: string | null
+  evaluatorSignature: string | null
+}
+
+export interface SkillsEvaluation {
+  id: string
+  checkoffId: string
+  candidateId: string
+  evaluatorId: string
+  evalDate: string
+  items: Record<string, { result: SkillItemResult; comment?: string }>
+  overall: 'pass' | 'remediation'
+  candidateSignature: string | null
+  evaluatorSignature: string | null
+  submittedAt: string
+  rechecks: SkillsRecheck[]
+}
+
 export interface PolicyOverride {
   id: string
   policyId: string

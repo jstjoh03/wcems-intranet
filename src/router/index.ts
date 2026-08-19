@@ -159,6 +159,19 @@ const routes: RouteRecordRaw[] = [
     name: 'clinical-development',
     component: () => import('@/views/ClinicalDevelopmentView.vue'),
   },
+  /* Skills Day: adaptive — station runner + live board for
+     evaluators (admins/supervisors/FTOs/grants), own results for
+     candidates. RLS enforces the write rules server-side. */
+  {
+    path: '/skills',
+    name: 'skills-day',
+    component: () => import('@/views/SkillsDayView.vue'),
+  },
+  {
+    path: '/skills/:checkoffId/:candidateId',
+    name: 'skills-evaluate',
+    component: () => import('@/views/SkillsEvaluateView.vue'),
+  },
   /* ── Protocols section (absorbed standalone app) ─────────────────
      Chromeless: these views are a self-contained full-viewport dark
      app (own header, 100dvh scroll) — the portal chrome stays out of

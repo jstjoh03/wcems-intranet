@@ -70,6 +70,7 @@ const nav = computed<NavItem[]>(() => [
         label: auth.isSupervisor ? 'Clinical Development' : 'My Progress',
         to: '/clinical-development',
       },
+      { label: 'Skills Day', to: '/skills' },
     ],
   },
   { label: 'Policies', to: '/policies', match: '/policies' },

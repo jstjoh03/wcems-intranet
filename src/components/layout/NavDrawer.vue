@@ -103,6 +103,7 @@ const pages = computed<NavItem[]>(() => [
     to: '/clinical-development',
     icon: TrendingUp,
   },
+  { label: 'Skills Day', to: '/skills', icon: ShieldCheck },
   { label: 'Policies', to: '/policies', icon: FileText },
   { label: 'Employee Directory', to: '/directory', icon: Contact },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },
