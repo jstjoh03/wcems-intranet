@@ -199,7 +199,9 @@ export interface SkillsEvaluation {
   candidateId: string
   evaluatorId: string
   evalDate: string
-  items: Record<string, { result: SkillItemResult; comment?: string }>
+  /* label is stamped at submission time so the record (and its PDF)
+     stays complete even if the checkoff definition changes later. */
+  items: Record<string, { result: SkillItemResult; comment?: string; label?: string }>
   overall: 'pass' | 'remediation'
   candidateSignature: string | null
   evaluatorSignature: string | null

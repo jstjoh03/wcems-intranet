@@ -37,7 +37,7 @@ interface EvaluationRow {
   candidate_id: string
   evaluator_id: string
   eval_date: string
-  items: Record<string, { result: SkillItemResult; comment?: string }>
+  items: Record<string, { result: SkillItemResult; comment?: string; label?: string }>
   overall: 'pass' | 'remediation'
   candidate_signature: string | null
   evaluator_signature: string | null
@@ -273,7 +273,7 @@ export function useSkillsDay() {
   async function submitEvaluation(input: {
     checkoffId: string
     candidateId: string
-    items: Record<string, { result: SkillItemResult; comment?: string }>
+    items: Record<string, { result: SkillItemResult; comment?: string; label?: string }>
     candidateSignature: string
     evaluatorSignature: string
   }): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -339,6 +339,7 @@ export function useSkillsDay() {
       const prev = items[key]
       items[key] = {
         result: 'pass',
+        label: prev?.label,
         comment:
           [prev?.comment, input.comments[key]].filter(Boolean).join(' · ') || undefined,
       }

@@ -19,6 +19,14 @@ const SOFT_BG: [number, number, number] = [248, 250, 252]
 const SUCCESS: [number, number, number] = [22, 163, 74]
 const AMBER: [number, number, number] = [180, 120, 30]
 
+/** Shown in the runner's sign step and printed above the signatures on
+ *  the PDF — the signatures attest to this exact statement. */
+export const SKILLS_ATTESTATION =
+  'By signing below, the candidate attests that they personally performed each skill ' +
+  'recorded above, and the evaluator attests that they directly observed and evaluated ' +
+  'each demonstration, that the results recorded are accurate, and that any items marked ' +
+  'for remediation were reviewed with the candidate for second attempt.'
+
 export interface SkillsPacketInput {
   candidateName: string
   checkoffs: SkillsCheckoff[]
@@ -196,6 +204,57 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
       y += 6
     }
 
+    /* Items recorded on this evaluation that the current checkoff
+       definition no longer lists (or that were added ad hoc) — the
+       record must show every skill actually covered at the station. */
+    const definedKeys = new Set(
+      checkoff.sections.flatMap((s) => s.items.map((it) => it.key)),
+    )
+    const extraEntries = Object.entries(e.items).filter(([k]) => !definedKeys.has(k))
+    if (extraEntries.length) {
+      ensureSpace(20 + extraEntries.length * 15, checkoff.title, checkoff.subtitle)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(8.5)
+      doc.setTextColor(...MUTED)
+      doc.text('ADDITIONAL ITEMS EVALUATED AT THIS STATION', MARGIN, y)
+      doc.setDrawColor(...LINE)
+      doc.setLineWidth(0.5)
+      doc.line(MARGIN, y + 4, MARGIN + CONTENT_W, y + 4)
+      y += 15
+      for (const [key, res] of extraEntries) {
+        const label =
+          res.label ??
+          key.replace(/^cw_/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+        const rowH = res.comment ? 26 : 15
+        ensureSpace(rowH, checkoff.title, checkoff.subtitle)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(9.5)
+        doc.setTextColor(...INK)
+        doc.text(label, MARGIN + 14, y)
+        if (res.result === 'pass') {
+          doc.setDrawColor(...SUCCESS)
+          doc.setLineWidth(1.4)
+          doc.line(MARGIN + 1, y - 3, MARGIN + 3.5, y - 0.5)
+          doc.line(MARGIN + 3.5, y - 0.5, MARGIN + 8, y - 6.5)
+        } else {
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(8)
+          doc.setTextColor(...AMBER)
+          doc.text('REDO', MARGIN, y)
+        }
+        if (res.comment) {
+          doc.setFont('helvetica', 'italic')
+          doc.setFontSize(8.5)
+          doc.setTextColor(...INK_SOFT)
+          const lines = doc.splitTextToSize(res.comment, CONTENT_W - 24)
+          doc.text(lines[0] ?? res.comment, MARGIN + 14, y + 10)
+          y += 11
+        }
+        y += 15
+      }
+      y += 6
+    }
+
     /* Recheck log */
     if (e.rechecks.length) {
       ensureSpace(20 + e.rechecks.length * 14, checkoff.title, checkoff.subtitle)
@@ -225,12 +284,25 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
       }
     }
 
-    /* Signatures */
+    /* Attestation + signatures */
     const overall = Object.values(e.items).some((v) => v.result === 'redo')
       ? 'REMEDIATION IN PROGRESS'
       : 'PASS'
-    ensureSpace(120, checkoff.title, checkoff.subtitle)
+    const attestationLines = doc.splitTextToSize(SKILLS_ATTESTATION, CONTENT_W - 20)
+    ensureSpace(160 + attestationLines.length * 11, checkoff.title, checkoff.subtitle)
     y += 8
+
+    doc.setFillColor(...SOFT_BG)
+    doc.rect(MARGIN, y - 10, CONTENT_W, attestationLines.length * 11 + 26, 'F')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(...MUTED)
+    doc.text('ATTESTATION', MARGIN + 10, y + 2)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    doc.setTextColor(...INK_SOFT)
+    doc.text(attestationLines, MARGIN + 10, y + 14, { lineHeightFactor: 1.25 })
+    y += attestationLines.length * 11 + 28
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
     doc.setTextColor(...(overall === 'PASS' ? SUCCESS : AMBER))

@@ -5,6 +5,7 @@ import { ArrowLeft, Check, RotateCcw, ChevronDown, AlertTriangle } from 'lucide-
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSkillsDay } from '@/composables/useSkillsDay'
+import { SKILLS_ATTESTATION } from '@/lib/skillsDayPacketPdf'
 import type { SkillItemResult } from '@/types'
 
 /**
@@ -121,11 +122,12 @@ async function onSubmit() {
   submitError.value = null
   let result: { ok: true } | { ok: false; error: string }
   if (mode.value === 'fresh') {
-    const items: Record<string, { result: SkillItemResult; comment?: string }> = {}
+    const items: Record<string, { result: SkillItemResult; comment?: string; label?: string }> = {}
     for (const it of allItems.value) {
       items[it.key] = {
         result: marks[it.key] ?? 'redo',
         comment: comments[it.key]?.trim() || undefined,
+        label: it.label,
       }
     }
     result = await submitEvaluation({
@@ -335,6 +337,7 @@ function back() {
                 — {{ outstandingKeys.length - clearedCount }} will stay outstanding</span>.
             </template>
           </div>
+          <p class="sev__attestation">{{ SKILLS_ATTESTATION }}</p>
           <div class="sev__pads">
             <div class="sev__pad">
               <div class="sev__pad-label">Candidate — {{ candidate.fullName }}</div>
@@ -694,6 +697,15 @@ function back() {
 .sev__sign-summary {
   font-size: 13px;
   color: var(--color-ink-soft);
+}
+.sev__attestation {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 8px 10px;
 }
 .sev__pads {
   display: grid;
