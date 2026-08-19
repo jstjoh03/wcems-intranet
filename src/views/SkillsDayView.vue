@@ -281,7 +281,7 @@ const myEvaluations = computed(() =>
         <table class="sd__board">
           <thead>
             <tr>
-              <th class="sd__board-name">Candidate</th>
+              <th class="sd__board-name">Trainee</th>
               <th v-for="c in checkoffs" :key="c.id">{{ c.title.replace('Cardiac Monitor (LP15)', 'LP15').replace('Sapphire IV Pump', 'IV Pump') }}</th>
               <th></th>
             </tr>

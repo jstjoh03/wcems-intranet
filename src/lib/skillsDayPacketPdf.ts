@@ -25,10 +25,10 @@ const SOFT_BG: [number, number, number] = [243, 243, 243]
 /** Shown in the runner's sign step and printed above the signatures on
  *  the PDF — the signatures attest to this exact statement. */
 export const SKILLS_ATTESTATION =
-  'By signing below, the candidate attests that they personally performed each skill ' +
+  'By signing below, the trainee attests that they personally performed each skill ' +
   'recorded above, and the evaluator attests that they directly observed and evaluated ' +
   'each demonstration, that the results recorded are accurate, and that any items marked ' +
-  'for remediation were reviewed with the candidate for second attempt.'
+  'for remediation were reviewed with the trainee for second attempt.'
 
 export interface SkillsPacketInput {
   candidateName: string
@@ -162,7 +162,7 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10.5)
   doc.setTextColor(...INK)
-  doc.text(`Candidate: ${input.candidateName}`, MARGIN, y)
+  doc.text(`Trainee: ${input.candidateName}`, MARGIN, y)
   y += 16
   doc.setFontSize(10)
   doc.setTextColor(...INK_SOFT)
@@ -358,7 +358,7 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
     const sigW = (CONTENT_W - 30) / 2
     const sigH = 46
     const sigs: Array<{ label: string; name: string; data: string | null; proxy?: string }> = [
-      { label: 'CANDIDATE', name: input.candidateName, data: e.candidateSignature },
+      { label: 'TRAINEE', name: input.candidateName, data: e.candidateSignature },
       {
         label: 'EVALUATOR',
         name: input.nameFor(e.evaluatorId),

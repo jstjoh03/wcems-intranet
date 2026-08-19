@@ -281,7 +281,7 @@ function back() {
 
     <div v-if="!ready" class="sev__empty">Loading…</div>
     <div v-else-if="!checkoff || !candidate" class="sev__empty">
-      Check-off or candidate not found.
+      Check-off or trainee not found.
     </div>
 
     <template v-else>
@@ -491,7 +491,7 @@ function back() {
 
           <div class="sev__pads">
             <div class="sev__pad">
-              <div class="sev__pad-label">Candidate — {{ candidate.fullName }}</div>
+              <div class="sev__pad-label">Trainee — {{ candidate.fullName }}</div>
               <SignaturePad :height="110" @change="(v: string) => (candidateSig = v || null)" />
             </div>
             <div v-if="!(onBehalf && mode === 'fresh')" class="sev__pad">
