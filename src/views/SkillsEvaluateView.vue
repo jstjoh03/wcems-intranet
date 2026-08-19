@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Check, RotateCcw, ChevronDown, AlertTriangle } from 'lucide-vue-next'
+import { ArrowLeft, Check, RotateCcw, ChevronDown, AlertTriangle, Save } from 'lucide-vue-next'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSkillsDay } from '@/composables/useSkillsDay'
@@ -109,6 +109,92 @@ const evaluatorSig = ref<string | null>(null)
 const submitting = ref(false)
 const submitError = ref<string | null>(null)
 
+/* ── Draft persistence (per device) ─────────────────────────────────
+   Marks and comments auto-save to localStorage on every change so a
+   half-finished check-off survives lunch breaks, phone sleep, and
+   accidental reloads. Restored automatically when the same evaluator
+   reopens the same checkoff+candidate on the same device; cleared on
+   successful submit. */
+const draftKey = computed(
+  () => `wcems-skills-draft:${checkoffId.value}:${candidateId.value}`,
+)
+const draftRestoredAt = ref<string | null>(null)
+const savedFlash = ref(false)
+let flashTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearLocalState() {
+  for (const k of Object.keys(marks)) delete marks[k]
+  for (const k of Object.keys(comments)) delete comments[k]
+  for (const k of Object.keys(commentOpen)) delete commentOpen[k]
+  for (const k of Object.keys(recheckCleared)) delete recheckCleared[k]
+  for (const k of Object.keys(recheckComments)) delete recheckComments[k]
+  candidateSig.value = null
+  evaluatorSig.value = null
+  signing.value = false
+  submitError.value = null
+}
+
+function restoreDraft() {
+  draftRestoredAt.value = null
+  try {
+    const raw = localStorage.getItem(draftKey.value)
+    if (!raw) return
+    const d = JSON.parse(raw)
+    Object.assign(marks, d.marks ?? {})
+    Object.assign(comments, d.comments ?? {})
+    for (const [k, v] of Object.entries(d.comments ?? {})) {
+      if (v) commentOpen[k] = true
+    }
+    Object.assign(recheckCleared, d.recheckCleared ?? {})
+    Object.assign(recheckComments, d.recheckComments ?? {})
+    if (Object.keys(d.marks ?? {}).length || Object.keys(d.recheckCleared ?? {}).length) {
+      draftRestoredAt.value = d.at ?? null
+    }
+  } catch {
+    /* corrupt draft — start clean */
+  }
+}
+
+function saveDraft(flash = false) {
+  try {
+    localStorage.setItem(
+      draftKey.value,
+      JSON.stringify({
+        marks: { ...marks },
+        comments: { ...comments },
+        recheckCleared: { ...recheckCleared },
+        recheckComments: { ...recheckComments },
+        at: new Date().toISOString(),
+      }),
+    )
+  } catch {
+    /* storage full/unavailable — in-memory state still stands */
+  }
+  if (flash) {
+    savedFlash.value = true
+    if (flashTimer) clearTimeout(flashTimer)
+    flashTimer = setTimeout(() => (savedFlash.value = false), 1600)
+  }
+}
+
+watch(
+  [checkoffId, candidateId],
+  () => {
+    clearLocalState()
+    restoreDraft()
+  },
+  { immediate: true },
+)
+watch(
+  [marks, comments, recheckCleared, recheckComments],
+  () => saveDraft(),
+  { deep: true },
+)
+
+function draftTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
 const canSign = computed(() =>
   mode.value === 'fresh' ? allMarked.value : clearedCount.value > 0,
 )
@@ -153,6 +239,11 @@ async function onSubmit() {
     submitError.value = result.error
     return
   }
+  try {
+    localStorage.removeItem(draftKey.value)
+  } catch {
+    /* ignore */
+  }
   router.push('/skills')
 }
 
@@ -192,6 +283,11 @@ function back() {
           </ul>
         </div>
       </header>
+
+      <div v-if="draftRestoredAt && mode !== 'done'" class="sev__draft-note">
+        <Save :size="13" :stroke-width="2" />
+        Unfinished progress restored{{ draftRestoredAt ? ` (saved ${draftTime(draftRestoredAt)})` : '' }} — pick up where you left off.
+      </div>
 
       <!-- Completed, nothing outstanding -->
       <div v-if="mode === 'done'" class="sev__done">
@@ -312,14 +408,25 @@ function back() {
               {{ clearedCount }} / {{ outstandingKeys.length }} cleared
             </template>
           </div>
-          <button
-            type="button"
-            class="sev__continue"
-            :disabled="!canSign"
-            @click="signing = true"
-          >
-            Sign & submit
-          </button>
+          <div class="sev__footer-actions">
+            <button
+              type="button"
+              class="sev__save"
+              :class="{ 'sev__save--flash': savedFlash }"
+              @click="saveDraft(true)"
+            >
+              <template v-if="savedFlash"><Check :size="14" :stroke-width="2.5" /> Saved</template>
+              <template v-else><Save :size="14" :stroke-width="2" /> Save</template>
+            </button>
+            <button
+              type="button"
+              class="sev__continue"
+              :disabled="!canSign"
+              @click="signing = true"
+            >
+              Sign & submit
+            </button>
+          </div>
         </div>
 
         <div v-else class="sev__sign">
@@ -669,6 +776,45 @@ function back() {
   background: oklch(0.96 0.05 60);
   border-radius: 999px;
   padding: 2px 8px;
+}
+.sev__draft-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: oklch(0.97 0.04 250);
+  border: 1px solid oklch(0.86 0.07 250);
+  color: oklch(0.42 0.1 250);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.sev__footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sev__save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--color-ink-soft);
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 120ms var(--ease-out);
+}
+.sev__save--flash {
+  color: oklch(0.42 0.12 150);
+  background: oklch(0.96 0.04 150);
+  border-color: oklch(0.85 0.07 150);
 }
 .sev__continue {
   font-family: var(--font-sans);
