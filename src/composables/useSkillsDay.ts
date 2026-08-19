@@ -41,6 +41,7 @@ interface EvaluationRow {
   overall: 'pass' | 'remediation'
   candidate_signature: string | null
   evaluator_signature: string | null
+  recorded_by: string | null
   submitted_at: string
   rechecks: SkillsRecheck[]
 }
@@ -52,7 +53,7 @@ export interface SkillsCandidate {
 }
 
 const EVAL_COLUMNS =
-  'id, checkoff_id, candidate_id, evaluator_id, eval_date, items, overall, candidate_signature, evaluator_signature, submitted_at, rechecks'
+  'id, checkoff_id, candidate_id, evaluator_id, eval_date, items, overall, candidate_signature, evaluator_signature, recorded_by, submitted_at, rechecks'
 
 function checkoffFromRow(r: CheckoffRow): SkillsCheckoff {
   return {
@@ -78,6 +79,7 @@ function evalFromRow(r: EvaluationRow): SkillsEvaluation {
     overall: r.overall,
     candidateSignature: r.candidate_signature,
     evaluatorSignature: r.evaluator_signature,
+    recordedBy: r.recorded_by,
     submittedAt: r.submitted_at,
     rechecks: r.rechecks ?? [],
   }
@@ -275,7 +277,12 @@ export function useSkillsDay() {
     candidateId: string
     items: Record<string, { result: SkillItemResult; comment?: string; label?: string }>
     candidateSignature: string
-    evaluatorSignature: string
+    /** Absent when recording on another evaluator's behalf. */
+    evaluatorSignature?: string
+    /** app_user id of the instructor who actually ran the station —
+     *  set only when they can't sign personally; the current user is
+     *  stamped as recorded_by. */
+    onBehalfOfId?: string
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     const uid = auth.appUser?.id
     if (!uid) return { ok: false, error: 'Sign in first.' }
@@ -287,12 +294,13 @@ export function useSkillsDay() {
         id: `dev-${input.checkoffId}-${input.candidateId}`,
         checkoff_id: input.checkoffId,
         candidate_id: input.candidateId,
-        evaluator_id: uid,
+        evaluator_id: input.onBehalfOfId ?? uid,
         eval_date: new Date().toISOString().slice(0, 10),
         items: input.items,
         overall,
         candidate_signature: input.candidateSignature,
-        evaluator_signature: input.evaluatorSignature,
+        evaluator_signature: input.onBehalfOfId ? null : (input.evaluatorSignature ?? null),
+        recorded_by: input.onBehalfOfId ? uid : null,
         submitted_at: new Date().toISOString(),
         rechecks: [],
       })
@@ -304,11 +312,12 @@ export function useSkillsDay() {
         {
           checkoff_id: input.checkoffId,
           candidate_id: input.candidateId,
-          evaluator_id: uid,
+          evaluator_id: input.onBehalfOfId ?? uid,
           items: input.items,
           overall,
           candidate_signature: input.candidateSignature,
-          evaluator_signature: input.evaluatorSignature,
+          evaluator_signature: input.onBehalfOfId ? null : (input.evaluatorSignature ?? null),
+          recorded_by: input.onBehalfOfId ? uid : null,
           submitted_at: new Date().toISOString(),
         },
         { onConflict: 'checkoff_id,candidate_id' },
@@ -419,6 +428,7 @@ export function useSkillsDay() {
     evaluatorIds,
     isEvaluator,
     nameFor,
+    peopleNames,
     evaluationFor,
     checkoffById,
     candidateById,

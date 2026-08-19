@@ -311,9 +311,17 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
 
     const sigW = (CONTENT_W - 30) / 2
     const sigH = 46
-    const sigs: Array<{ label: string; name: string; data: string | null }> = [
+    const sigs: Array<{ label: string; name: string; data: string | null; proxy?: string }> = [
       { label: 'CANDIDATE', name: input.candidateName, data: e.candidateSignature },
-      { label: 'EVALUATOR', name: input.nameFor(e.evaluatorId), data: e.evaluatorSignature },
+      {
+        label: 'EVALUATOR',
+        name: input.nameFor(e.evaluatorId),
+        data: e.evaluatorSignature,
+        proxy:
+          !e.evaluatorSignature && e.recordedBy
+            ? `Training verified — recorded on the evaluator's behalf by ${input.nameFor(e.recordedBy)}`
+            : undefined,
+      },
     ]
     sigs.forEach((s, i) => {
       const x = MARGIN + i * (sigW + 30)
@@ -323,6 +331,12 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
         } catch {
           /* corrupted signature data — leave the line blank */
         }
+      } else if (s.proxy) {
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(8.5)
+        doc.setTextColor(...INK_SOFT)
+        const proxyLines = doc.splitTextToSize(s.proxy, sigW - 4)
+        doc.text(proxyLines, x + 2, y + sigH - 18, { lineHeightFactor: 1.3 })
       }
       doc.setDrawColor(...GOLD)
       doc.setLineWidth(0.8)

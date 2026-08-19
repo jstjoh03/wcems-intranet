@@ -27,6 +27,7 @@ const {
   redoKeys,
   submitEvaluation,
   submitRecheck,
+  peopleNames,
 } = useSkillsDay()
 
 const checkoffId = computed(() => String(route.params.checkoffId))
@@ -198,9 +199,25 @@ function draftTime(iso: string): string {
 const canSign = computed(() =>
   mode.value === 'fresh' ? allMarked.value : clearedCount.value > 0,
 )
-const canSubmit = computed(
-  () => !!candidateSig.value && !!evaluatorSig.value && !submitting.value,
+
+/* Proxy sign-off: the instructor who ran the station left before
+   signing in the app. The current user picks who actually evaluated,
+   records the results, and the PDF carries an attestation line in
+   place of the evaluator signature. Fresh evaluations only. */
+const onBehalf = ref(false)
+const onBehalfId = ref<string | null>(null)
+const staffOptions = computed(() =>
+  Object.entries(peopleNames.value)
+    .filter(([id]) => id !== auth.appUser?.id && id !== candidateId.value)
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name)),
 )
+
+const canSubmit = computed(() => {
+  if (!candidateSig.value || submitting.value) return false
+  if (mode.value === 'fresh' && onBehalf.value) return !!onBehalfId.value
+  return !!evaluatorSig.value
+})
 
 async function onSubmit() {
   if (!canSubmit.value || !checkoff.value || !candidate.value) return
@@ -221,7 +238,8 @@ async function onSubmit() {
       candidateId: candidate.value.id,
       items,
       candidateSignature: candidateSig.value!,
-      evaluatorSignature: evaluatorSig.value!,
+      evaluatorSignature: onBehalf.value ? undefined : evaluatorSig.value!,
+      onBehalfOfId: onBehalf.value ? onBehalfId.value! : undefined,
     })
   } else {
     result = await submitRecheck({
@@ -445,12 +463,30 @@ function back() {
             </template>
           </div>
           <p class="sev__attestation">{{ SKILLS_ATTESTATION }}</p>
+
+          <label v-if="mode === 'fresh'" class="sev__proxy-toggle">
+            <input v-model="onBehalf" type="checkbox" />
+            The evaluator who ran this station can't sign — record on their behalf
+          </label>
+          <div v-if="onBehalf && mode === 'fresh'" class="sev__proxy">
+            <label class="sev__proxy-label" for="sev-proxy-who">Who evaluated this station?</label>
+            <select id="sev-proxy-who" v-model="onBehalfId" class="sev__proxy-select">
+              <option :value="null" disabled>Select the instructor…</option>
+              <option v-for="s in staffOptions" :key="s.id" :value="s.id">{{ s.name }}</option>
+            </select>
+            <p class="sev__proxy-note">
+              The record and PDF will show the check-off was recorded by you,
+              {{ auth.appUser?.fullName }}, on the instructor's behalf — no evaluator
+              signature is captured.
+            </p>
+          </div>
+
           <div class="sev__pads">
             <div class="sev__pad">
               <div class="sev__pad-label">Candidate — {{ candidate.fullName }}</div>
               <SignaturePad :height="110" @change="(v: string) => (candidateSig = v || null)" />
             </div>
-            <div class="sev__pad">
+            <div v-if="!(onBehalf && mode === 'fresh')" class="sev__pad">
               <div class="sev__pad-label">Evaluator — {{ auth.appUser?.fullName }}</div>
               <SignaturePad :height="110" @change="(v: string) => (evaluatorSig = v || null)" />
             </div>
@@ -852,6 +888,47 @@ function back() {
   border: 1px solid var(--color-line);
   border-radius: 8px;
   padding: 8px 10px;
+}
+.sev__proxy-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+}
+.sev__proxy-toggle input {
+  accent-color: var(--color-brand-600);
+}
+.sev__proxy {
+  border: 1px solid oklch(0.86 0.07 250);
+  background: oklch(0.97 0.04 250);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sev__proxy-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--color-ink-soft);
+}
+.sev__proxy-select {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: 2px solid var(--color-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.sev__proxy-note {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--color-ink-soft);
 }
 .sev__pads {
   display: grid;

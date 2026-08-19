@@ -205,6 +205,9 @@ export interface SkillsEvaluation {
   overall: 'pass' | 'remediation'
   candidateSignature: string | null
   evaluatorSignature: string | null
+  /** Set when someone recorded the check-off on the evaluator's
+   *  behalf (instructor left before signing in the app). */
+  recordedBy: string | null
   submittedAt: string
   rechecks: SkillsRecheck[]
 }
