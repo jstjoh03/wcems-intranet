@@ -5,6 +5,7 @@ import {
   TRANSITIONS,
   activeTransitionFor,
   gateItemsFor,
+  hasSystemAccess,
   petitionItemsFor,
   jurisprudenceDue,
 } from '@/constants/pipelineGates'
@@ -74,8 +75,10 @@ function fmt(iso: string | null): string {
         <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': !!record.txLicenseExpiresAt }">{{ record.txLicenseExpiresAt ? '✓' : '·' }}</span><span class="pd__fk">TX license expires</span><span class="pd__fv">{{ fmt(record.txLicenseExpiresAt) }}</span></div>
         <div class="pd__fact"><span class="pd__ic" :class="jurisprudenceDue(record) ? 'pd__ic--warn' : 'pd__ic--ok'">{{ jurisprudenceDue(record) ? '!' : '✓' }}</span><span class="pd__fk">TX jurisprudence</span><span class="pd__fv">{{ jurisprudenceDue(record) ? 'due this cycle' : fmt(record.txJurisprudenceAt) }}</span></div>
         <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': !!record.bloodbornePathogenAt }">{{ record.bloodbornePathogenAt ? '✓' : '·' }}</span><span class="pd__fk">Bloodborne pathogens</span><span class="pd__fv">{{ fmt(record.bloodbornePathogenAt) }}</span></div>
-        <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': record.opIqAccess }">{{ record.opIqAccess ? '✓' : '·' }}</span><span class="pd__fk">Operative IQ access</span><span class="pd__fv">{{ record.opIqAccess ? (record.opIqGrantedAt ? fmt(record.opIqGrantedAt) : 'held') : '—' }}</span></div>
-        <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': record.narcSafeAccess }">{{ record.narcSafeAccess ? '✓' : '·' }}</span><span class="pd__fk">NarcSafe access</span><span class="pd__fv">{{ record.narcSafeAccess ? (record.narcSafeGrantedAt ? fmt(record.narcSafeGrantedAt) : 'held') : '—' }}</span></div>
+        <template v-if="hasSystemAccess(record.certLevel)">
+          <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': record.opIqAccess }">{{ record.opIqAccess ? '✓' : '·' }}</span><span class="pd__fk">Operative IQ access</span><span class="pd__fv">{{ record.opIqAccess ? (record.opIqGrantedAt ? fmt(record.opIqGrantedAt) : 'held') : '—' }}</span></div>
+          <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': record.narcSafeAccess }">{{ record.narcSafeAccess ? '✓' : '·' }}</span><span class="pd__fk">NarcSafe access</span><span class="pd__fv">{{ record.narcSafeAccess ? (record.narcSafeGrantedAt ? fmt(record.narcSafeGrantedAt) : 'held') : '—' }}</span></div>
+        </template>
         <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': !!record.workingStartedAt }">{{ record.workingStartedAt ? '✓' : '·' }}</span><span class="pd__fk">Phase started</span><span class="pd__fv">{{ fmt(record.workingStartedAt) }}</span></div>
         <div v-if="record.txLicenseNumber" class="pd__fact"><span class="pd__ic pd__ic--ok">✓</span><span class="pd__fk">TX license #</span><span class="pd__fv">{{ record.txLicenseNumber }}</span></div>
 

@@ -177,6 +177,14 @@ export interface GateItem {
   completedByName: string | null
 }
 
+/** OpIQ and NarcSafe are paramedic-only systems — EMT-B and ADV EMT
+ *  never receive access, so their pipelines must not show or require
+ *  it (Justin, 2026-08-19). */
+export function hasSystemAccess(certLevel: string | null): boolean {
+  if (!certLevel) return true // unknown level: don't silently drop a gate
+  return /emt-p|^lp$/i.test(certLevel.trim())
+}
+
 export function gateItemsFor(r: PipelineRecord, rows: PipelineGateProgress[]): GateItem[] {
   const transition = activeTransitionFor(r)
   if (!transition) return []
@@ -197,7 +205,7 @@ export function gateItemsFor(r: PipelineRecord, rows: PipelineGateProgress[]): G
     }
   })
 
-  if (def.includesAccess) {
+  if (def.includesAccess && hasSystemAccess(r.certLevel)) {
     /* Access is the held/not-held boolean; a grant date is optional
        detail shown when known. */
     items.push(
