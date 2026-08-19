@@ -7,17 +7,20 @@ import type { SkillsCheckoff, SkillsEvaluation } from '@/types'
  * second-attempt recheck log. Each check-off starts on a fresh page so
  * the packet files cleanly (this is the "print then file for each
  * employee" step the Jotform workflow required, reduced to one click).
+ *
+ * Styled as a PRINTABLE BLACK-AND-WHITE document matching the WCEMS
+ * letterhead (grayscale crest + WALLER COUNTY / EMERGENCY MEDICAL
+ * SERVICES / Hempstead, Texas · Established 1996) on every page —
+ * per Justin 2026-08-19, these go straight to the laser printer for
+ * the paper personnel file.
  */
 
-const NAVY: [number, number, number] = [15, 26, 51]
-const INK: [number, number, number] = [25, 35, 60]
-const INK_SOFT: [number, number, number] = [71, 85, 105]
-const MUTED: [number, number, number] = [120, 130, 150]
-const GOLD: [number, number, number] = [201, 167, 92]
-const LINE: [number, number, number] = [226, 232, 240]
-const SOFT_BG: [number, number, number] = [248, 250, 252]
-const SUCCESS: [number, number, number] = [22, 163, 74]
-const AMBER: [number, number, number] = [180, 120, 30]
+const BLACK: [number, number, number] = [20, 20, 20]
+const INK: [number, number, number] = [35, 35, 35]
+const INK_SOFT: [number, number, number] = [85, 85, 85]
+const MUTED: [number, number, number] = [130, 130, 130]
+const LINE: [number, number, number] = [200, 200, 200]
+const SOFT_BG: [number, number, number] = [243, 243, 243]
 
 /** Shown in the runner's sign step and printed above the signatures on
  *  the PDF — the signatures attest to this exact statement. */
@@ -44,70 +47,129 @@ function formatDateTime(iso: string): string {
   })
 }
 
+function formatDateLong(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+/** Fetch the image file's own bytes (no canvas re-encode — keeps the
+ *  pre-optimized PNG small; the crest repeats on every page). */
+async function loadImageAsBase64(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return await new Promise((resolve) => {
+      const fr = new FileReader()
+      fr.onload = () => resolve(String(fr.result))
+      fr.onerror = () => resolve(null)
+      fr.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
+}
+
 export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Promise<jsPDF> {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' })
   const W = doc.internal.pageSize.getWidth()
   const H = doc.internal.pageSize.getHeight()
-  const MARGIN = 48
+  const MARGIN = 52
   const CONTENT_W = W - MARGIN * 2
+
+  /* Grayscale crest, loaded once — jsPDF dedupes identical image data,
+     so repeating it in every page header costs one embed. */
+  const crest = await loadImageAsBase64(`${window.location.origin}/wcems-patch-bw.jpg`)
+  const CREST_W = 40
+  const CREST_H = CREST_W * (280 / 262)
 
   const ordered = [...input.checkoffs].sort((a, b) => a.sort - b.sort)
   const completed = ordered.filter((c) =>
     input.evaluations.some((e) => e.checkoffId === c.id),
   )
 
-  let firstPage = true
+  /* Packet date(s) from the evaluations themselves. */
+  const evalDates = [...new Set(input.evaluations.map((e) => e.evalDate))].sort()
+  const packetDate =
+    evalDates.length === 0
+      ? formatDateLong(new Date().toISOString().slice(0, 10))
+      : evalDates.length === 1
+        ? formatDateLong(evalDates[0])
+        : `${formatDateLong(evalDates[0])} – ${formatDateLong(evalDates[evalDates.length - 1])}`
+
   let y = 0
 
-  function pageHeader(title: string, sub: string) {
-    doc.setFillColor(...NAVY)
-    doc.rect(0, 0, W, 58, 'F')
+  /* ── WCEMS letterhead — every page ─────────────────────────────── */
+  function pageHeader(context: string) {
+    const top = 34
+    if (crest) doc.addImage(crest, 'JPEG', MARGIN, top - 6, CREST_W, CREST_H, 'wcems-crest-bw')
+
+    const tx = MARGIN + CREST_W + 14
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(11)
-    doc.setTextColor(255, 255, 255)
-    doc.text('WCEMS · NEOP SKILLS DAY', MARGIN, 24)
+    doc.setFontSize(15)
+    doc.setTextColor(...BLACK)
+    doc.text('WALLER COUNTY', tx, top + 10, { charSpace: 1.2 })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
-    doc.setTextColor(...GOLD)
-    doc.text(input.candidateName, W - MARGIN, 24, { align: 'right' })
+    doc.setTextColor(...INK)
+    doc.text('EMERGENCY MEDICAL SERVICES', tx, top + 23, { charSpace: 1.6 })
+    doc.setFontSize(7.5)
+    doc.setTextColor(...INK_SOFT)
+    doc.text('Hempstead, Texas   ·   Established 1996', tx, top + 34)
+
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(13)
-    doc.setTextColor(255, 255, 255)
-    doc.text(title, MARGIN, 45)
+    doc.setFontSize(8)
+    doc.setTextColor(...BLACK)
+    doc.text('NEOP SKILLS DAY', W - MARGIN, top + 10, { align: 'right', charSpace: 0.8 })
     doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8.5)
-    doc.setTextColor(...GOLD)
-    doc.text(sub, W - MARGIN, 45, { align: 'right' })
-    doc.setDrawColor(...GOLD)
-    doc.setLineWidth(1.2)
-    doc.line(0, 58, W, 58)
-    y = 80
+    doc.setFontSize(8)
+    doc.setTextColor(...INK_SOFT)
+    doc.text(input.candidateName, W - MARGIN, top + 22, { align: 'right' })
+    if (context) {
+      doc.setFontSize(7.5)
+      doc.text(context, W - MARGIN, top + 33, { align: 'right' })
+    }
+
+    /* Formal double rule under the letterhead */
+    const ruleY = top + CREST_H
+    doc.setDrawColor(...BLACK)
+    doc.setLineWidth(1.4)
+    doc.line(MARGIN, ruleY, W - MARGIN, ruleY)
+    doc.setLineWidth(0.4)
+    doc.line(MARGIN, ruleY + 3, W - MARGIN, ruleY + 3)
+    y = ruleY + 24
   }
 
-  function ensureSpace(needed: number, title: string, sub: string) {
+  function ensureSpace(needed: number, context: string) {
     if (y + needed > H - 46) {
       doc.addPage()
-      pageHeader(title, sub)
+      pageHeader(context)
     }
   }
 
-  /* Cover summary page */
-  pageHeader('Skills Day Packet', 'Competency check-off record')
-  firstPage = false
+  /* ── Cover page ────────────────────────────────────────────────── */
+  pageHeader('Candidate packet')
+  y += 6
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(22)
-  doc.setTextColor(...NAVY)
-  doc.text(input.candidateName, MARGIN, y + 14)
-  y += 34
+  doc.setFontSize(20)
+  doc.setTextColor(...BLACK)
+  doc.text('Skills Competency Check-Off Record', MARGIN, y)
+  y += 22
   doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10.5)
+  doc.setTextColor(...INK)
+  doc.text(`Candidate: ${input.candidateName}`, MARGIN, y)
+  y += 16
   doc.setFontSize(10)
   doc.setTextColor(...INK_SOFT)
-  doc.text(
-    'New Employee Orientation · Skills Competency Check-Offs',
-    MARGIN,
-    y,
-  )
-  y += 24
+  doc.text(`Date: ${packetDate}`, MARGIN, y)
+  y += 14
+  doc.text('New Employee Orientation · Skills Competency Check-Offs', MARGIN, y)
+  y += 26
 
   for (const c of ordered) {
     const e = input.evaluations.find((ev) => ev.checkoffId === c.id)
@@ -126,80 +188,88 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
       doc.setTextColor(...MUTED)
       doc.text('NOT RECORDED', W - MARGIN - 8, y + 4, { align: 'right' })
     } else if (redo > 0) {
-      doc.setTextColor(...AMBER)
+      doc.setTextColor(...BLACK)
       doc.text(`REMEDIATION — ${redo} ITEM${redo === 1 ? '' : 'S'}`, W - MARGIN - 8, y + 4, {
         align: 'right',
       })
     } else {
-      doc.setTextColor(...SUCCESS)
+      doc.setTextColor(...BLACK)
       doc.text('PASS', W - MARGIN - 8, y + 4, { align: 'right' })
     }
     y += 30
   }
 
-  /* One section per completed check-off */
+  /* ── One section per completed check-off ───────────────────────── */
   for (const checkoff of completed) {
     const e = input.evaluations.find((ev) => ev.checkoffId === checkoff.id)!
+    const context = checkoff.title
     doc.addPage()
-    pageHeader(checkoff.title, checkoff.subtitle)
-    void firstPage
+    pageHeader(context)
 
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(14)
+    doc.setTextColor(...BLACK)
+    doc.text(checkoff.title, MARGIN, y)
+    y += 14
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
     doc.setTextColor(...INK_SOFT)
     doc.text(
-      `Evaluator: ${input.nameFor(e.evaluatorId)}   ·   Submitted ${formatDateTime(e.submittedAt)}`,
+      `${checkoff.subtitle ? checkoff.subtitle + '   ·   ' : ''}Evaluator: ${input.nameFor(e.evaluatorId)}   ·   Submitted ${formatDateTime(e.submittedAt)}`,
       MARGIN,
       y,
     )
     y += 18
 
+    function itemRow(label: string, res?: { result: string; comment?: string }) {
+      const comment = res?.comment
+      const rowH = comment ? 26 : 15
+      ensureSpace(rowH, context)
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(9.5)
+      doc.setTextColor(...INK)
+      doc.text(label, MARGIN + 16, y)
+
+      if (!res) {
+        doc.setTextColor(...MUTED)
+        doc.text('—', MARGIN + 3, y)
+      } else if (res.result === 'pass') {
+        doc.setDrawColor(...BLACK)
+        doc.setLineWidth(1.3)
+        doc.line(MARGIN + 2, y - 3, MARGIN + 4.5, y - 0.5)
+        doc.line(MARGIN + 4.5, y - 0.5, MARGIN + 9, y - 6.5)
+      } else {
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(7.5)
+        doc.setTextColor(...BLACK)
+        doc.text('REDO', MARGIN, y)
+      }
+
+      if (comment) {
+        doc.setFont('helvetica', 'italic')
+        doc.setFontSize(8.5)
+        doc.setTextColor(...INK_SOFT)
+        const lines = doc.splitTextToSize(comment, CONTENT_W - 24)
+        doc.text(lines[0] ?? comment, MARGIN + 16, y + 10)
+        y += 11
+      }
+      y += 15
+    }
+
     for (const section of checkoff.sections) {
-      ensureSpace(34, checkoff.title, checkoff.subtitle)
+      ensureSpace(34, context)
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(8.5)
-      doc.setTextColor(...MUTED)
-      doc.text(section.title.toUpperCase(), MARGIN, y)
+      doc.setTextColor(...INK_SOFT)
+      doc.text(section.title.toUpperCase(), MARGIN, y, { charSpace: 0.5 })
       doc.setDrawColor(...LINE)
       doc.setLineWidth(0.5)
       doc.line(MARGIN, y + 4, MARGIN + CONTENT_W, y + 4)
       y += 15
 
       for (const item of section.items) {
-        const res = e.items[item.key]
-        const comment = res?.comment
-        const rowH = comment ? 26 : 15
-        ensureSpace(rowH, checkoff.title, checkoff.subtitle)
-
-        doc.setFont('helvetica', 'normal')
-        doc.setFontSize(9.5)
-        doc.setTextColor(...INK)
-        doc.text(item.label, MARGIN + 14, y)
-
-        if (!res) {
-          doc.setTextColor(...MUTED)
-          doc.text('—', MARGIN + 2, y)
-        } else if (res.result === 'pass') {
-          doc.setDrawColor(...SUCCESS)
-          doc.setLineWidth(1.4)
-          doc.line(MARGIN + 1, y - 3, MARGIN + 3.5, y - 0.5)
-          doc.line(MARGIN + 3.5, y - 0.5, MARGIN + 8, y - 6.5)
-        } else {
-          doc.setFont('helvetica', 'bold')
-          doc.setFontSize(8)
-          doc.setTextColor(...AMBER)
-          doc.text('REDO', MARGIN, y)
-        }
-
-        if (comment) {
-          doc.setFont('helvetica', 'italic')
-          doc.setFontSize(8.5)
-          doc.setTextColor(...INK_SOFT)
-          const lines = doc.splitTextToSize(comment, CONTENT_W - 24)
-          doc.text(lines[0] ?? comment, MARGIN + 14, y + 10)
-          y += 11
-        }
-        y += 15
+        itemRow(item.label, e.items[item.key])
       }
       y += 6
     }
@@ -212,11 +282,11 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
     )
     const extraEntries = Object.entries(e.items).filter(([k]) => !definedKeys.has(k))
     if (extraEntries.length) {
-      ensureSpace(20 + extraEntries.length * 15, checkoff.title, checkoff.subtitle)
+      ensureSpace(20 + extraEntries.length * 15, context)
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(8.5)
-      doc.setTextColor(...MUTED)
-      doc.text('ADDITIONAL ITEMS EVALUATED AT THIS STATION', MARGIN, y)
+      doc.setTextColor(...INK_SOFT)
+      doc.text('ADDITIONAL ITEMS EVALUATED AT THIS STATION', MARGIN, y, { charSpace: 0.5 })
       doc.setDrawColor(...LINE)
       doc.setLineWidth(0.5)
       doc.line(MARGIN, y + 4, MARGIN + CONTENT_W, y + 4)
@@ -225,43 +295,18 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
         const label =
           res.label ??
           key.replace(/^cw_/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-        const rowH = res.comment ? 26 : 15
-        ensureSpace(rowH, checkoff.title, checkoff.subtitle)
-        doc.setFont('helvetica', 'normal')
-        doc.setFontSize(9.5)
-        doc.setTextColor(...INK)
-        doc.text(label, MARGIN + 14, y)
-        if (res.result === 'pass') {
-          doc.setDrawColor(...SUCCESS)
-          doc.setLineWidth(1.4)
-          doc.line(MARGIN + 1, y - 3, MARGIN + 3.5, y - 0.5)
-          doc.line(MARGIN + 3.5, y - 0.5, MARGIN + 8, y - 6.5)
-        } else {
-          doc.setFont('helvetica', 'bold')
-          doc.setFontSize(8)
-          doc.setTextColor(...AMBER)
-          doc.text('REDO', MARGIN, y)
-        }
-        if (res.comment) {
-          doc.setFont('helvetica', 'italic')
-          doc.setFontSize(8.5)
-          doc.setTextColor(...INK_SOFT)
-          const lines = doc.splitTextToSize(res.comment, CONTENT_W - 24)
-          doc.text(lines[0] ?? res.comment, MARGIN + 14, y + 10)
-          y += 11
-        }
-        y += 15
+        itemRow(label, res)
       }
       y += 6
     }
 
     /* Recheck log */
     if (e.rechecks.length) {
-      ensureSpace(20 + e.rechecks.length * 14, checkoff.title, checkoff.subtitle)
+      ensureSpace(20 + e.rechecks.length * 14, context)
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(8.5)
-      doc.setTextColor(...MUTED)
-      doc.text('SECOND ATTEMPTS', MARGIN, y)
+      doc.setTextColor(...INK_SOFT)
+      doc.text('SECOND ATTEMPTS', MARGIN, y, { charSpace: 0.5 })
       doc.setDrawColor(...LINE)
       doc.line(MARGIN, y + 4, MARGIN + CONTENT_W, y + 4)
       y += 15
@@ -276,7 +321,7 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
         const text = `${formatDateTime(r.at)} — ${input.nameFor(r.evaluatorId)} — passed: ${labels.join(', ')}`
         const lines = doc.splitTextToSize(text, CONTENT_W)
         for (const line of lines) {
-          ensureSpace(12, checkoff.title, checkoff.subtitle)
+          ensureSpace(12, context)
           doc.text(line, MARGIN, y)
           y += 12
         }
@@ -289,23 +334,24 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
       ? 'REMEDIATION IN PROGRESS'
       : 'PASS'
     const attestationLines = doc.splitTextToSize(SKILLS_ATTESTATION, CONTENT_W - 20)
-    ensureSpace(160 + attestationLines.length * 11, checkoff.title, checkoff.subtitle)
+    ensureSpace(160 + attestationLines.length * 11, context)
     y += 8
 
-    doc.setFillColor(...SOFT_BG)
-    doc.rect(MARGIN, y - 10, CONTENT_W, attestationLines.length * 11 + 26, 'F')
+    doc.setDrawColor(...LINE)
+    doc.setLineWidth(0.6)
+    doc.rect(MARGIN, y - 10, CONTENT_W, attestationLines.length * 11 + 26)
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
-    doc.setTextColor(...MUTED)
-    doc.text('ATTESTATION', MARGIN + 10, y + 2)
+    doc.setTextColor(...INK_SOFT)
+    doc.text('ATTESTATION', MARGIN + 10, y + 2, { charSpace: 0.5 })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
-    doc.setTextColor(...INK_SOFT)
+    doc.setTextColor(...INK)
     doc.text(attestationLines, MARGIN + 10, y + 14, { lineHeightFactor: 1.25 })
     y += attestationLines.length * 11 + 28
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
-    doc.setTextColor(...(overall === 'PASS' ? SUCCESS : AMBER))
+    doc.setTextColor(...BLACK)
     doc.text(`Overall result: ${overall}`, MARGIN, y)
     y += 12
 
@@ -338,7 +384,7 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
         const proxyLines = doc.splitTextToSize(s.proxy, sigW - 4)
         doc.text(proxyLines, x + 2, y + sigH - 18, { lineHeightFactor: 1.3 })
       }
-      doc.setDrawColor(...GOLD)
+      doc.setDrawColor(...BLACK)
       doc.setLineWidth(0.8)
       doc.line(x, y + sigH + 4, x + sigW, y + sigH + 4)
       doc.setFont('helvetica', 'normal')
@@ -347,14 +393,14 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
       doc.text(s.label, x, y + sigH + 15)
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(9.5)
-      doc.setTextColor(...NAVY)
+      doc.setTextColor(...BLACK)
       doc.text(s.name, x, y + sigH + 27)
     })
     y += sigH + 40
 
     if (e.recordedNote) {
       const noteLines = doc.splitTextToSize(`Note: ${e.recordedNote}`, CONTENT_W)
-      ensureSpace(noteLines.length * 11 + 8, checkoff.title, checkoff.subtitle)
+      ensureSpace(noteLines.length * 11 + 8, context)
       doc.setFont('helvetica', 'italic')
       doc.setFontSize(8.5)
       doc.setTextColor(...INK_SOFT)
@@ -367,6 +413,9 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
   const pageCount = doc.getNumberOfPages()
   for (let i = 1; i <= pageCount; i += 1) {
     doc.setPage(i)
+    doc.setDrawColor(...LINE)
+    doc.setLineWidth(0.4)
+    doc.line(MARGIN, H - 32, W - MARGIN, H - 32)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7.5)
     doc.setTextColor(...MUTED)
