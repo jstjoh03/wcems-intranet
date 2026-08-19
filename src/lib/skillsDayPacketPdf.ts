@@ -152,7 +152,7 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
   }
 
   /* ── Cover page ────────────────────────────────────────────────── */
-  pageHeader('Candidate packet')
+  pageHeader('Trainee')
   y += 6
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(20)
