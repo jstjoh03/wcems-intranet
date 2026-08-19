@@ -380,6 +380,7 @@ const myEvaluations = computed(() =>
 .sd {
   max-width: 880px;
   margin: 0 auto;
+  padding: 24px 16px;
 }
 .sd__header {
   display: flex;

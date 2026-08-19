@@ -372,7 +372,7 @@ function back() {
 .sev {
   max-width: 680px;
   margin: 0 auto;
-  padding-bottom: 120px;
+  padding: 24px 16px 120px;
 }
 .sev__back {
   display: inline-flex;
