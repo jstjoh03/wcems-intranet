@@ -351,6 +351,16 @@ export async function generateSkillsDayPacketPdf(input: SkillsPacketInput): Prom
       doc.text(s.name, x, y + sigH + 27)
     })
     y += sigH + 40
+
+    if (e.recordedNote) {
+      const noteLines = doc.splitTextToSize(`Note: ${e.recordedNote}`, CONTENT_W)
+      ensureSpace(noteLines.length * 11 + 8, checkoff.title, checkoff.subtitle)
+      doc.setFont('helvetica', 'italic')
+      doc.setFontSize(8.5)
+      doc.setTextColor(...INK_SOFT)
+      doc.text(noteLines, MARGIN, y, { lineHeightFactor: 1.3 })
+      y += noteLines.length * 11 + 8
+    }
   }
 
   /* Footer on every page */

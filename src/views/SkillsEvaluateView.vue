@@ -206,6 +206,7 @@ const canSign = computed(() =>
    place of the evaluator signature. Fresh evaluations only. */
 const onBehalf = ref(false)
 const onBehalfId = ref<string | null>(null)
+const onBehalfNote = ref('')
 const staffOptions = computed(() =>
   Object.entries(peopleNames.value)
     .filter(([id]) => id !== auth.appUser?.id && id !== candidateId.value)
@@ -240,6 +241,7 @@ async function onSubmit() {
       candidateSignature: candidateSig.value!,
       evaluatorSignature: onBehalf.value ? undefined : evaluatorSig.value!,
       onBehalfOfId: onBehalf.value ? onBehalfId.value! : undefined,
+      recordedNote: onBehalf.value ? onBehalfNote.value : undefined,
     })
   } else {
     result = await submitRecheck({
@@ -474,10 +476,16 @@ function back() {
               <option :value="null" disabled>Select the instructor…</option>
               <option v-for="s in staffOptions" :key="s.id" :value="s.id">{{ s.name }}</option>
             </select>
+            <textarea
+              v-model="onBehalfNote"
+              class="sev__proxy-comment"
+              rows="2"
+              placeholder="Comment (optional) — e.g. 'Dr. Buzzard taught and evaluated this station 0930–1200; departed before electronic sign-off.'"
+            ></textarea>
             <p class="sev__proxy-note">
               The record and PDF will show the check-off was recorded by you,
               {{ auth.appUser?.fullName }}, on the instructor's behalf — no evaluator
-              signature is captured.
+              signature is captured. Your comment prints on the PDF.
             </p>
           </div>
 
@@ -924,6 +932,22 @@ function back() {
   border: 2px solid var(--color-line);
   border-radius: 8px;
   padding: 8px 10px;
+}
+.sev__proxy-comment {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: 2px solid var(--color-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+.sev__proxy-comment:focus {
+  outline: none;
+  border-color: var(--color-brand-600);
 }
 .sev__proxy-note {
   font-size: 11.5px;

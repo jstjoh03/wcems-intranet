@@ -42,6 +42,7 @@ interface EvaluationRow {
   candidate_signature: string | null
   evaluator_signature: string | null
   recorded_by: string | null
+  recorded_note: string | null
   submitted_at: string
   rechecks: SkillsRecheck[]
 }
@@ -53,7 +54,7 @@ export interface SkillsCandidate {
 }
 
 const EVAL_COLUMNS =
-  'id, checkoff_id, candidate_id, evaluator_id, eval_date, items, overall, candidate_signature, evaluator_signature, recorded_by, submitted_at, rechecks'
+  'id, checkoff_id, candidate_id, evaluator_id, eval_date, items, overall, candidate_signature, evaluator_signature, recorded_by, recorded_note, submitted_at, rechecks'
 
 function checkoffFromRow(r: CheckoffRow): SkillsCheckoff {
   return {
@@ -80,6 +81,7 @@ function evalFromRow(r: EvaluationRow): SkillsEvaluation {
     candidateSignature: r.candidate_signature,
     evaluatorSignature: r.evaluator_signature,
     recordedBy: r.recorded_by,
+    recordedNote: r.recorded_note,
     submittedAt: r.submitted_at,
     rechecks: r.rechecks ?? [],
   }
@@ -283,6 +285,8 @@ export function useSkillsDay() {
      *  set only when they can't sign personally; the current user is
      *  stamped as recorded_by. */
     onBehalfOfId?: string
+    /** Optional context for a proxy sign-off. */
+    recordedNote?: string
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     const uid = auth.appUser?.id
     if (!uid) return { ok: false, error: 'Sign in first.' }
@@ -301,6 +305,7 @@ export function useSkillsDay() {
         candidate_signature: input.candidateSignature,
         evaluator_signature: input.onBehalfOfId ? null : (input.evaluatorSignature ?? null),
         recorded_by: input.onBehalfOfId ? uid : null,
+        recorded_note: input.onBehalfOfId ? (input.recordedNote?.trim() || null) : null,
         submitted_at: new Date().toISOString(),
         rechecks: [],
       })
@@ -318,6 +323,7 @@ export function useSkillsDay() {
           candidate_signature: input.candidateSignature,
           evaluator_signature: input.onBehalfOfId ? null : (input.evaluatorSignature ?? null),
           recorded_by: input.onBehalfOfId ? uid : null,
+          recorded_note: input.onBehalfOfId ? (input.recordedNote?.trim() || null) : null,
           submitted_at: new Date().toISOString(),
         },
         { onConflict: 'checkoff_id,candidate_id' },

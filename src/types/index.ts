@@ -208,6 +208,9 @@ export interface SkillsEvaluation {
   /** Set when someone recorded the check-off on the evaluator's
    *  behalf (instructor left before signing in the app). */
   recordedBy: string | null
+  /** Optional context on a proxy sign-off — why the evaluator
+   *  couldn't sign, when the training happened. */
+  recordedNote: string | null
   submittedAt: string
   rechecks: SkillsRecheck[]
 }
