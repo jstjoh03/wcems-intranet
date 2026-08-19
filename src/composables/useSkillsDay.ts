@@ -130,7 +130,7 @@ async function load() {
         key: 'trauma',
         title: 'Trauma',
         subtitle: 'Morning Rotation · Station 3',
-        note: '',
+        note: 'Relay circuit. Automatic remediation triggers: failure to recognize a life threat · improper tourniquet placement · loss of spinal precautions.',
         sort: 3,
         active: true,
         sections: [

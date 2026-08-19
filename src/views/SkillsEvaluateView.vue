@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Check, RotateCcw, ChevronDown } from 'lucide-vue-next'
+import { ArrowLeft, Check, RotateCcw, ChevronDown, AlertTriangle } from 'lucide-vue-next'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSkillsDay } from '@/composables/useSkillsDay'
@@ -43,6 +43,23 @@ const mode = computed<'fresh' | 'recheck' | 'done'>(() => {
 const allItems = computed(() =>
   (checkoff.value?.sections ?? []).flatMap((s) => s.items),
 )
+
+/* The checkoff note may carry "Automatic remediation triggers: a · b"
+   — split those out into their own warning callout so evaluators see
+   the auto-fail conditions at a glance (in recheck mode too). */
+const noteParts = computed(() => {
+  const note = checkoff.value?.note ?? ''
+  const [format, triggerText] = note.split(/Automatic remediation triggers:\s*/i)
+  return {
+    format: (format ?? '').trim(),
+    triggers: triggerText
+      ? triggerText
+          .split('·')
+          .map((t) => t.replace(/\.\s*$/, '').trim())
+          .filter(Boolean)
+      : [],
+  }
+})
 
 /* ── Fresh evaluation state ─────────────────────────────────────── */
 const marks = reactive<Record<string, SkillItemResult | undefined>>({})
@@ -162,7 +179,16 @@ function back() {
           <span class="sev__cand">{{ candidate.fullName }}</span>
           <span class="sev__eval">Evaluator: {{ auth.appUser?.fullName }}</span>
         </div>
-        <p v-if="checkoff.note && mode === 'fresh'" class="sev__note">{{ checkoff.note }}</p>
+        <p v-if="noteParts.format && mode === 'fresh'" class="sev__note">{{ noteParts.format }}</p>
+        <div v-if="noteParts.triggers.length && mode !== 'done'" class="sev__triggers">
+          <div class="sev__triggers-title">
+            <AlertTriangle :size="13" :stroke-width="2.2" />
+            Automatic remediation triggers
+          </div>
+          <ul class="sev__triggers-list">
+            <li v-for="t in noteParts.triggers" :key="t">{{ t }}</li>
+          </ul>
+        </div>
       </header>
 
       <!-- Completed, nothing outstanding -->
@@ -406,6 +432,42 @@ function back() {
   border: 1px solid var(--color-line);
   border-radius: 8px;
   padding: 8px 10px;
+}
+
+.sev__triggers {
+  margin-top: 10px;
+  border: 1px solid oklch(0.82 0.09 45);
+  background: oklch(0.97 0.03 45);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.sev__triggers-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: oklch(0.42 0.13 45);
+  margin-bottom: 6px;
+}
+.sev__triggers-list {
+  margin: 0;
+  padding-left: 18px;
+  columns: 2;
+  column-gap: 22px;
+}
+.sev__triggers-list li {
+  font-size: 12px;
+  line-height: 1.5;
+  color: oklch(0.35 0.09 45);
+  break-inside: avoid;
+}
+@media (max-width: 560px) {
+  .sev__triggers-list {
+    columns: 1;
+  }
 }
 
 .sev__done {
