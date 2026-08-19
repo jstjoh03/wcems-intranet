@@ -9,6 +9,7 @@ import {
   requirementStatus,
 } from '@/constants/pipelineGates'
 import { usePipeline } from '@/composables/usePipeline'
+import { supabase } from '@/lib/supabase'
 
 /**
  * The CDO's to-do panel: everything that needs scheduling, reassigning,
@@ -34,6 +35,7 @@ const {
   completionsFor,
   addRequirement,
   setRequirementActive,
+  refresh,
 } = usePipeline()
 
 const today = new Date()
@@ -84,6 +86,22 @@ const groups = computed<ActionGroup[]>(() => {
     }
   }
 
+  /* Required certs with NOTHING on file — the level decides what's
+     required (EMTs: BLS/HandTevy/EVOC; medics add ACLS/PALS). Expired
+     cards are already covered by the buckets above; this catches the
+     people who never uploaded the cert to Paycom at all. */
+  const missing: ActionItem[] = []
+  for (const req of requirements.value.filter((r) => r.active && r.requiredLevels.length > 0)) {
+    for (const p of active) {
+      const lvl = p.record.certLevel
+      if (!lvl || !req.requiredLevels.includes(lvl)) continue
+      const st = requirementStatus(req, completionsFor(p.userId), p.record, today)
+      if (!st.latest) {
+        missing.push({ person: p, detail: `${req.name} — no card on file`, severity: 'due' })
+      }
+    }
+  }
+
   const lic: ActionItem[] = active
     .map((p) => ({ p, d: licDays(p) }))
     .filter((x): x is { p: PipelinePerson; d: number } => x.d !== null && x.d <= 90)
@@ -111,6 +129,7 @@ const groups = computed<ActionGroup[]>(() => {
 
   return [
     { key: 'lms', title: 'Reassign in LMS', hint: 'jurisprudence & recurring trainings', items: [...juris, ...lmsItems] },
+    { key: 'missing', title: 'Missing required certs', hint: 'no card on file for their level', items: missing },
     { key: 'cards', title: 'Card classes', hint: 'expiring or lapsed', items: cardItems },
     { key: 'lic', title: 'Licenses', hint: '≤ 90 days or expired', items: lic },
     { key: 'follow', title: 'Follow-ups', hint: 'phase targets passed', items: overdue },
@@ -139,6 +158,77 @@ async function submitRequirement() {
     newReq.busy = false
   }
 }
+
+/* ── Report imports (Paycom cards / EMS1 jurisprudence+BBP) ────────
+   Upload the raw .xlsx; the cert-import edge function parses, matches
+   names, and returns a report. Preview = dry run; Apply writes. */
+
+type ImportMode = 'paycom' | 'ems1'
+const showImports = ref(false)
+const importFiles = reactive<Record<ImportMode, File | null>>({ paycom: null, ems1: null })
+const importBusy = ref(false)
+const importError = ref<string | null>(null)
+const importReport = ref<{ mode: ImportMode; apply: boolean; data: Record<string, unknown> } | null>(null)
+
+function onImportFile(mode: ImportMode, e: Event) {
+  const input = e.target as HTMLInputElement
+  importFiles[mode] = input.files?.[0] ?? null
+  importReport.value = null
+  importError.value = null
+}
+
+async function runImport(mode: ImportMode, apply: boolean) {
+  const file = importFiles[mode]
+  if (!file || importBusy.value) return
+  importBusy.value = true
+  importError.value = null
+  try {
+    const { data: sess } = await supabase.auth.getSession()
+    const token = sess.session?.access_token
+    if (!token) throw new Error('Not signed in.')
+    const base = import.meta.env.VITE_SUPABASE_URL as string
+    const res = await fetch(
+      `${base}/functions/v1/cert-import?mode=${mode}&apply=${apply}`,
+      { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: file },
+    )
+    const data = await res.json()
+    if (!data.ok) throw new Error(String(data.error ?? 'Import failed'))
+    importReport.value = { mode, apply, data }
+    if (apply) await refresh()
+  } catch (e) {
+    importError.value = (e as Error).message
+  } finally {
+    importBusy.value = false
+  }
+}
+
+/** Flatten the report into readable lines, skipping empty lists. */
+const reportLines = computed<string[]>(() => {
+  const r = importReport.value
+  if (!r) return []
+  const d = r.data
+  const out: string[] = []
+  if (r.mode === 'paycom') {
+    out.push(`${d.toImport} card completions ${r.apply ? 'imported' : 'ready to import'}`)
+    for (const [k, v] of Object.entries((d.perRequirement as Record<string, number>) ?? {})) {
+      out.push(`  · ${k}: ${v}`)
+    }
+  } else {
+    out.push(`${d.toUpdate} jurisprudence/BBP dates ${r.apply ? 'written' : 'ready to write'}`)
+  }
+  const lists: [string, string[]][] = [
+    ['Unmatched people', (d.unmatchedPeople as string[]) ?? []],
+    ['DSHS — verify manually', (d.dshsManualVerify as string[]) ?? []],
+    ['DSHS mismatches', (d.dshsMismatch as string[]) ?? []],
+  ]
+  for (const [label, items] of lists) {
+    if (items.length) {
+      out.push(`${label}:`)
+      for (const it of items) out.push(`  · ${it}`)
+    }
+  }
+  return out
+})
 </script>
 
 <template>
@@ -148,6 +238,12 @@ async function submitRequirement() {
       <span class="ac__title">Action Center</span>
       <span class="ac__count" :class="{ 'ac__count--zero': totalCount === 0 }">{{ totalCount }}</span>
       <span class="ac__spacer"></span>
+      <button
+        v-if="canEdit && !collapsed"
+        type="button"
+        class="ac__manage"
+        @click.stop="showImports = !showImports"
+      >{{ showImports ? 'Done' : 'Import reports' }}</button>
       <button
         v-if="canEdit && !collapsed"
         type="button"
@@ -177,6 +273,35 @@ async function submitRequirement() {
           </select>
           <button type="button" class="btn" :disabled="newReq.busy || !newReq.name.trim()" @click="submitRequirement">Add</button>
         </div>
+      </div>
+
+      <!-- Report imports -->
+      <div v-if="showImports && canEdit" class="ac__imports">
+        <div class="ac__imp-row">
+          <div class="ac__imp-copy">
+            <strong>Paycom certifications export</strong>
+            <span>Card classes → completions. Expirations snap to end of month; DSHS rows are compared, never written.</span>
+          </div>
+          <input type="file" accept=".xlsx" @change="onImportFile('paycom', $event)" />
+          <div class="ac__imp-btns">
+            <button type="button" class="btn" :disabled="!importFiles.paycom || importBusy" @click="runImport('paycom', false)">Preview</button>
+            <button type="button" class="btn btn--primary" :disabled="!importFiles.paycom || importBusy" @click="runImport('paycom', true)">Import</button>
+          </div>
+        </div>
+        <div class="ac__imp-row">
+          <div class="ac__imp-copy">
+            <strong>EMS1 jurisprudence / BBP report</strong>
+            <span>Passed courses → jurisprudence and bloodborne pathogen dates. Real dates are never overwritten with older ones.</span>
+          </div>
+          <input type="file" accept=".xlsx" @change="onImportFile('ems1', $event)" />
+          <div class="ac__imp-btns">
+            <button type="button" class="btn" :disabled="!importFiles.ems1 || importBusy" @click="runImport('ems1', false)">Preview</button>
+            <button type="button" class="btn btn--primary" :disabled="!importFiles.ems1 || importBusy" @click="runImport('ems1', true)">Import</button>
+          </div>
+        </div>
+        <div v-if="importBusy" class="ac__imp-status">Working…</div>
+        <div v-if="importError" class="ac__imp-error">{{ importError }}</div>
+        <pre v-if="reportLines.length" class="ac__imp-report">{{ reportLines.join('\n') }}</pre>
       </div>
 
       <p v-if="totalCount === 0" class="ac__empty">Nothing needs your attention — all caught up.</p>
@@ -354,6 +479,74 @@ async function submitRequirement() {
   cursor: pointer;
   padding: 3px 6px;
 }
+.ac__imports {
+  border: 1px solid var(--color-line-soft);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 14px;
+  background: var(--color-surface-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ac__imp-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.ac__imp-copy {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ac__imp-copy strong {
+  font-size: 12.5px;
+  color: var(--color-ink);
+}
+.ac__imp-copy span {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-muted);
+}
+.ac__imp-row input[type='file'] {
+  font-size: 11.5px;
+  max-width: 210px;
+}
+.ac__imp-btns {
+  display: flex;
+  gap: 6px;
+}
+.ac__imp-btns .btn--primary {
+  background: var(--color-brand-800);
+  color: white;
+  border-color: var(--color-brand-800);
+}
+.ac__imp-status {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.ac__imp-error {
+  font-size: 12px;
+  color: oklch(0.5 0.16 30);
+}
+.ac__imp-report {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--color-ink-soft);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
 .ac__catalog {
   border: 1px solid var(--color-line-soft);
   border-radius: 10px;

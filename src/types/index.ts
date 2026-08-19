@@ -468,6 +468,9 @@ export interface PipelineRequirement {
   active: boolean
   sort: number
   notes: string | null
+  /** cert_level values this requirement is REQUIRED for (empty =
+   *  tracked-only, never flagged missing). */
+  requiredLevels: string[]
 }
 
 export interface PipelineRequirementCompletion {

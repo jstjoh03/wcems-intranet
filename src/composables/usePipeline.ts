@@ -250,7 +250,7 @@ async function loadAll() {
     supabase.from('pipeline_editors').select('user_id'),
     supabase
       .from('pipeline_requirements')
-      .select('id, name, cycle, active, sort, notes')
+      .select('id, name, cycle, active, sort, notes, required_levels')
       .order('sort'),
     supabase
       .from('pipeline_requirement_completions')
@@ -285,6 +285,7 @@ async function loadAll() {
     active: r.active as boolean,
     sort: r.sort as number,
     notes: (r.notes ?? null) as string | null,
+    requiredLevels: ((r.required_levels ?? []) as string[]),
   }))
   completions.value = (compRes.data ?? []).map((c) => ({
     id: c.id as string,
