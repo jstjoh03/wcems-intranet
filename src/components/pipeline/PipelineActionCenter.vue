@@ -76,6 +76,13 @@ const groups = computed<ActionGroup[]>(() => {
   for (const req of requirements.value.filter((r) => r.active)) {
     const bucket = req.cycle === 'certification' ? cardItems : lmsItems
     for (const p of active) {
+      /* Level-scoped requirements only nag the levels they apply to —
+         an AEMT's lapsed ACLS card is not agency business. */
+      if (
+        req.requiredLevels.length > 0 &&
+        (!p.record.certLevel || !req.requiredLevels.includes(p.record.certLevel))
+      )
+        continue
       const st = requirementStatus(req, completionsFor(p.userId), p.record, today)
       if (!st.latest) continue
       if (st.state === 'due') {

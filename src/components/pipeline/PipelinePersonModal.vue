@@ -122,8 +122,20 @@ async function doPromote() {
 
 /* ── Compliance ────────────────────────────────────────────────────── */
 
-const activeRequirements = computed(() => requirements.value.filter((r) => r.active))
 const myCompletions = computed(() => completionsFor(props.person.userId))
+
+/* Level-scoped requirements (ACLS/PALS = paramedic-only) only appear
+   for the levels they apply to — unless the person has a completion
+   on file anyway (staff who voluntarily track extra cards). */
+const activeRequirements = computed(() =>
+  requirements.value.filter((r) => {
+    if (!r.active) return false
+    if (r.requiredLevels.length === 0) return true
+    const lvl = record.value.certLevel
+    if (lvl && r.requiredLevels.includes(lvl)) return true
+    return myCompletions.value.some((c) => c.requirementId === r.id)
+  }),
+)
 
 function reqStatus(req: PipelineRequirement) {
   return requirementStatus(req, myCompletions.value, record.value)
