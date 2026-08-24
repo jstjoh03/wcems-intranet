@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronDown, Download, FileText, Check, AlertTriangle } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
+import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
@@ -77,6 +78,15 @@ function startReport(p: PipelinePerson, kind: 'dor' | 'icr') {
 
 function initials(name: string): string {
   return name.split(' ').map((w) => w[0]).slice(0, 2).join('')
+}
+
+/** Whether the Program Guide has a phase ladder for this trainee (the
+ *  stepper's own render guard, mirrored so the wrapper strip doesn't
+ *  draw empty for e.g. an EMT new hire). */
+function hasPhaseLadder(p: PipelinePerson): boolean {
+  const t = activeTransitionFor(p.record)
+  const paramedic = /emt-p|^lp$/i.test(p.record.certLevel ?? '')
+  return ((t === 'NEOP' || t === 'P1C_P1') && paramedic) || t === 'P1_P2'
 }
 
 function fmt(iso: string | null): string {
@@ -241,7 +251,12 @@ async function review(r: FtepReport) {
         <div v-for="p in g.people" :key="p.userId" class="fh__trainee" :class="`fh__trainee--${g.key}`">
           <span class="fh__avatar">{{ initials(p.fullName) }}</span>
           <div class="fh__tc">
-            <div class="fh__tc-name">{{ p.fullName }}</div>
+            <button
+              type="button"
+              class="fh__tc-name fh__tc-name--link"
+              title="Open clinical file"
+              @click="router.push(`/clinical/people/${p.userId}`)"
+            >{{ p.fullName }}</button>
             <div class="fh__tc-sub">
               {{ p.record.certLevel }}
               <template v-if="p.record.workingPhase"> · working {{ p.record.workingPhase }}</template>
@@ -260,7 +275,7 @@ async function review(r: FtepReport) {
             <button type="button" class="fh__actions" @click.stop="toggleMenu(p.userId)">
               Actions <ChevronDown :size="13" :stroke-width="2" />
             </button>
-            <div v-if="openMenu === p.userId" class="fh__menu">
+            <div v-if="openMenu === p.userId" class="fh__menu" @click="openMenu = null">
               <template v-if="g.key === 'legacy'">
                 <button type="button" @click="openLegacyDialog(p)">
                   <FileText :size="13" :stroke-width="2" />
@@ -283,6 +298,9 @@ async function review(r: FtepReport) {
                 Open credentialing file
               </button>
             </div>
+          </div>
+          <div v-if="g.key === 'new' && hasPhaseLadder(p)" class="fh__stepper">
+            <FtepPhaseStepper :person="p" :editable="canEdit" />
           </div>
         </div>
       </template>
@@ -395,6 +413,16 @@ async function review(r: FtepReport) {
 }
 .fh__tc { min-width: 180px; }
 .fh__tc-name { font-size: 14.5px; font-weight: 700; color: var(--color-ink); }
+.fh__tc-name--link {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--font-sans); text-align: left;
+}
+.fh__tc-name--link:hover { color: var(--color-brand-600); text-decoration: underline; text-underline-offset: 3px; }
+.fh__stepper {
+  flex-basis: 100%;
+  border-top: 1px solid var(--color-line-soft);
+  padding-top: 6px;
+}
 .fh__tc-sub { font-size: 11.5px; color: var(--color-muted); margin-top: 1px; }
 .fh__draftnote {
   display: flex; align-items: center; gap: 6px; margin-top: 6px;

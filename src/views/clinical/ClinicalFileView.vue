@@ -3,6 +3,7 @@ import { ref, computed, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Check, Download, Pencil, Plus, Trash2 } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
+import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
 import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
 import { useClinical } from '@/composables/useClinical'
@@ -446,6 +447,9 @@ function fmtDateTime(iso: string): string {
           <div class="cf__card-hd">FTEP records
             <span v-if="ftepTrackFor(person)" class="cf__trackchip" :class="`cf__trackchip--${ftepTrackFor(person)!.key}`">{{ ftepTrackFor(person)!.label }}</span>
             <span style="margin-left:auto;font-size:11.5px;color:var(--color-muted);font-weight:600">auto-computed from submitted reports</span>
+          </div>
+          <div class="cf__stepper">
+            <FtepPhaseStepper :person="person" :editable="canEdit" />
           </div>
           <template v-if="ftepTrackFor(person)?.key === 'rideup'">
             <div class="cf__gate">
@@ -1004,6 +1008,12 @@ function fmtDateTime(iso: string): string {
 .cf__uploader-locknote { font-size: 11.5px; color: var(--color-muted); font-style: italic; }
 .cf__uploader-err { margin-top: 8px; font-size: 12.5px; color: oklch(0.5 0.16 30); }
 .cf__uploader-hint { margin-top: 8px; font-size: 11.5px; line-height: 1.5; color: var(--color-muted); }
+
+.cf__stepper:not(:empty) {
+  padding: 2px 0 8px;
+  border-bottom: 1px solid var(--color-line-soft);
+  margin-bottom: 6px;
+}
 
 .cf__trackchip {
   display: inline-flex;

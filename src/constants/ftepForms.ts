@@ -145,6 +145,33 @@ export const UNIT_OPTIONS = [
   'M211', 'M221', 'M242', 'M281', 'M231', 'M271', 'M272', 'M206',
 ] as const
 
+/** The Program Guide's phase ladders, rendered as the trainee stepper.
+ *  Keys match ftep_phase_progress.phase_key; per-phase FTO assignment
+ *  and start/complete dates live in that table. */
+export interface FtepProgramPhase {
+  key: string
+  no: number
+  label: string
+  hint: string
+}
+
+export const FTEP_PROGRAM_PHASES: Record<'P1C_P1' | 'P1_P2', FtepProgramPhase[]> = {
+  /* P1C → P1 (90-day cap) */
+  P1C_P1: [
+    { key: 'phase0', no: 0, label: 'NEOP Academy', hint: '4 days' },
+    { key: 'phase1', no: 1, label: 'EMT Orientation', hint: '1 tour' },
+    { key: 'phase2', no: 2, label: 'Clinical Integration', hint: '2 tours' },
+    { key: 'phase3', no: 3, label: 'Partner Phase', hint: '4 tours' },
+    { key: 'phase4', no: 4, label: 'Final Evaluation', hint: '1 tour · different FTO' },
+  ],
+  /* P1 → P2 (traditional 36 days / accelerated 10 · 6-month cap) */
+  P1_P2: [
+    { key: 'phase5', no: 5, label: 'P2 Development', hint: 'traditional 36 d · accelerated 10 d' },
+    { key: 'phase6', no: 6, label: 'Ghost Phase', hint: '' },
+    { key: 'phase7', no: 7, label: 'P2 Final Evaluation', hint: '' },
+  ],
+}
+
 export type FtepKind = 'dor' | 'icr'
 
 export function sectionsFor(kind: FtepKind): FtepSection[] {

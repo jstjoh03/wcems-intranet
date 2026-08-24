@@ -152,18 +152,84 @@ export function phaseLabel(phase: PipelinePhase | null): string {
   return phase ? (PHASE_LABELS[phase] ?? phase) : '—'
 }
 
-/** Standard working-phase windows from the FTEP Program Guide, used to
- *  auto-fill the target date when enrolling someone in a phase (always
- *  editable — extensions happen). NEOP ≈ academy + orientation weeks;
- *  FTR / P1 carry the 90-day field-training cap; P2 the traditional
- *  six-month cap; P3 the supervisor-rideout block. */
-export const PHASE_TARGET_DAYS: Partial<Record<PipelinePhase, number>> = {
-  NEOP: 14,
-  FTR: 90,
-  P1: 90,
-  P2: 180,
-  P3: 60,
+/** The enrollment menu — named program tracks instead of raw ladder
+ *  phases (Justin, 2026-08-24: "Field Training Rotation" meant nothing
+ *  to anyone). Each carries the record fields it sets and the standard
+ *  window (days) from the FTEP Program Guide used to auto-fill the
+ *  target date — always editable for extensions. EMT/AEMT new-hire
+ *  FTEP programs aren't written yet; those tracks run the generic
+ *  NEOP gate set until they are. */
+export interface EnrollmentTrack {
+  key: string
+  label: string
+  hint: string
+  days: number
+  patch: {
+    workingPhase?: PipelinePhase
+    legacyTrack?: boolean
+    inP3Process?: boolean
+    inAemtUpgrade?: boolean
+  }
 }
+
+export const ENROLLMENT_TRACKS: EnrollmentTrack[] = [
+  {
+    key: 'neop_medic',
+    label: 'New hire — Paramedic (NEOP · starts the P1C ladder)',
+    hint: 'NEOP Academy ≈ 2 weeks, then P1C → P1 field training',
+    days: 14,
+    patch: { workingPhase: 'NEOP' },
+  },
+  {
+    key: 'neop_emt',
+    label: 'New hire — EMT orientation (NEOP)',
+    hint: 'EMT FTEP program to be built — tracks the NEOP gate set for now',
+    days: 14,
+    patch: { workingPhase: 'NEOP' },
+  },
+  {
+    key: 'neop_aemt',
+    label: 'New hire — AEMT orientation (NEOP)',
+    hint: 'AEMT FTEP program to be built — tracks the NEOP gate set for now',
+    days: 14,
+    patch: { workingPhase: 'NEOP' },
+  },
+  {
+    key: 'p1c_p1',
+    label: 'Paramedic FTEP — P1C → P1 field training',
+    hint: '90-day cap · phases 1–4',
+    days: 90,
+    patch: { workingPhase: 'P1' },
+  },
+  {
+    key: 'p1_p2',
+    label: 'Paramedic FTEP — P1 → P2',
+    hint: 'six-month cap · phases 5–7',
+    days: 180,
+    patch: { workingPhase: 'P2', legacyTrack: false },
+  },
+  {
+    key: 'p1_p2_legacy',
+    label: 'P1 → P2 — legacy program',
+    hint: 'call evaluations via Jotform',
+    days: 180,
+    patch: { workingPhase: 'P2', legacyTrack: true },
+  },
+  {
+    key: 'p2_p3',
+    label: 'P3 ride-up — supervisor rideouts',
+    hint: '4 × 12 hr rideouts + skills check-offs + protocol test',
+    days: 60,
+    patch: { workingPhase: 'P3', inP3Process: true },
+  },
+  {
+    key: 'aemt_upgrade',
+    label: 'AEMT upgrade (EMT → AEMT)',
+    hint: 'skills checklists · medication sign-off · protocol exam',
+    days: 90,
+    patch: { inAemtUpgrade: true },
+  },
+]
 
 /** Which transition a record is actively working, if any. */
 export function activeTransitionFor(r: PipelineRecord): PipelineTransition | null {
@@ -171,6 +237,7 @@ export function activeTransitionFor(r: PipelineRecord): PipelineTransition | nul
   if (r.inAemtUpgrade) return 'AEMT'
   if (r.inP3Process) return 'P2_P3'
   if (!r.workingPhase) return null
+  if (r.workingPhase === 'NEOP') return 'NEOP'
   if (r.workingPhase === 'P2') return r.legacyTrack ? 'P1_P2_LEGACY' : 'P1_P2'
   if (r.workingPhase === 'P3') return 'P2_P3'
   return 'P1C_P1'

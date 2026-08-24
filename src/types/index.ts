@@ -452,6 +452,20 @@ export interface PipelineGateProgress {
   note: string | null
 }
 
+/** One trainee's state for one Program Guide phase — per-phase FTO
+ *  assignment + start/complete dates. Definitions live in
+ *  ftepForms.FTEP_PROGRAM_PHASES. */
+export interface FtepPhaseProgress {
+  id: string
+  recordId: string
+  phaseKey: string
+  ftoUserId: string | null
+  ftoName: string | null
+  startedAt: string | null
+  completedAt: string | null
+  note: string | null
+}
+
 /** Pipeline record joined with roster identity for the board. */
 /* ── FTEP reports (DOR / ICR) ─────────────────────────────────────── */
 export interface FtepReport {

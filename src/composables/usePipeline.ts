@@ -2,6 +2,7 @@ import { ref, computed } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import type {
+  FtepPhaseProgress,
   GateStatus,
   PipelineGateProgress,
   PipelinePerson,
@@ -149,6 +150,7 @@ function rowToGate(r: GateRow): PipelineGateProgress {
 
 const people = ref<PipelinePerson[]>([])
 const gates = ref<PipelineGateProgress[]>([])
+const phaseProgress = ref<FtepPhaseProgress[]>([])
 const editorIds = ref<string[]>([])
 const requirements = ref<PipelineRequirement[]>([])
 const completions = ref<PipelineRequirementCompletion[]>([])
@@ -244,7 +246,7 @@ function seedDevFixture() {
 async function loadAll() {
   loading.value = true
   errorMessage.value = null
-  const [recRes, gateRes, edRes, reqRes, compRes] = await Promise.all([
+  const [recRes, gateRes, edRes, reqRes, compRes, phaseRes] = await Promise.all([
     supabase.from('pipeline_records').select(RECORD_SELECT),
     supabase.from('pipeline_gate_progress').select(GATE_SELECT),
     supabase.from('pipeline_editors').select('user_id'),
@@ -255,8 +257,12 @@ async function loadAll() {
     supabase
       .from('pipeline_requirement_completions')
       .select('id, requirement_id, user_id, completed_at, expires_at, source, note'),
+    supabase
+      .from('ftep_phase_progress')
+      .select('id, record_id, phase_key, fto_user_id, fto_name, started_at, completed_at, note'),
   ])
-  const err = recRes.error ?? gateRes.error ?? edRes.error ?? reqRes.error ?? compRes.error
+  const err =
+    recRes.error ?? gateRes.error ?? edRes.error ?? reqRes.error ?? compRes.error ?? phaseRes.error
   if (err) {
     console.error('[pipeline] load failed:', err.message)
     errorMessage.value = err.message
@@ -296,6 +302,16 @@ async function loadAll() {
     source: c.source as string,
     note: (c.note ?? null) as string | null,
   }))
+  phaseProgress.value = (phaseRes.data ?? []).map((p) => ({
+    id: p.id as string,
+    recordId: p.record_id as string,
+    phaseKey: p.phase_key as string,
+    ftoUserId: (p.fto_user_id ?? null) as string | null,
+    ftoName: (p.fto_name ?? null) as string | null,
+    startedAt: (p.started_at ?? null) as string | null,
+    completedAt: (p.completed_at ?? null) as string | null,
+    note: (p.note ?? null) as string | null,
+  }))
   lastFetchedAt.value = new Date()
   loading.value = false
 }
@@ -314,6 +330,7 @@ function subscribeRealtime() {
     .channel('pipeline')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pipeline_records' }, queueReload)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'pipeline_gate_progress' }, queueReload)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'ftep_phase_progress' }, queueReload)
     .subscribe()
 }
 
@@ -533,6 +550,53 @@ export function usePipeline() {
     await loadAll()
   }
 
+  function phasesFor(recordId: string): FtepPhaseProgress[] {
+    return phaseProgress.value.filter((p) => p.recordId === recordId)
+  }
+
+  /** Upsert one phase's state (FTO assignment, start/complete dates). */
+  async function setPhaseProgress(
+    recordId: string,
+    phaseKey: string,
+    patch: {
+      ftoUserId?: string | null
+      ftoName?: string | null
+      startedAt?: string | null
+      completedAt?: string | null
+      note?: string | null
+    },
+  ) {
+    if (!isLive) return
+    const existing = phaseProgress.value.find(
+      (p) => p.recordId === recordId && p.phaseKey === phaseKey,
+    )
+    const { error } = await supabase.from('ftep_phase_progress').upsert(
+      {
+        record_id: recordId,
+        phase_key: phaseKey,
+        fto_user_id: patch.ftoUserId !== undefined ? patch.ftoUserId : (existing?.ftoUserId ?? null),
+        fto_name: patch.ftoName !== undefined ? patch.ftoName : (existing?.ftoName ?? null),
+        started_at: patch.startedAt !== undefined ? patch.startedAt : (existing?.startedAt ?? null),
+        completed_at: patch.completedAt !== undefined ? patch.completedAt : (existing?.completedAt ?? null),
+        note: patch.note !== undefined ? patch.note : (existing?.note ?? null),
+      },
+      { onConflict: 'record_id,phase_key' },
+    )
+    if (error) throw error
+    await loadAll()
+  }
+
+  async function clearPhaseProgress(recordId: string, phaseKey: string) {
+    if (!isLive) return
+    const { error } = await supabase
+      .from('ftep_phase_progress')
+      .delete()
+      .eq('record_id', recordId)
+      .eq('phase_key', phaseKey)
+    if (error) throw error
+    await loadAll()
+  }
+
   async function addEditor(userId: string) {
     if (!isLive) return
     const { error } = await supabase.from('pipeline_editors').insert({ user_id: userId })
@@ -560,6 +624,9 @@ export function usePipeline() {
     canViewBoard,
     myRecord,
     gatesFor,
+    phasesFor,
+    setPhaseProgress,
+    clearPhaseProgress,
     completionsFor,
     refresh,
     saveRecord,

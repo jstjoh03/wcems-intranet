@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import type { PipelinePerson, PipelinePhase, PipelineRequirement } from '@/types'
 import {
-  PHASE_TARGET_DAYS,
+  ENROLLMENT_TRACKS,
   TRANSITIONS,
   activeTransitionFor,
   badgeKeyFor,
@@ -186,34 +186,36 @@ const juris = computed(() => jurisprudenceStatus(record.value))
 
 /* ── Record section — collapsed + action-driven ────────────────────
    The raw field grid used to render for every employee; now it hides
-   behind "Edit full record" and the common move — starting someone in
-   a phase — is its own button with the target date pre-filled from
-   the FTEP Program Guide's standard windows (Justin, 2026-08-24). */
+   behind "Edit full record" and the common move — enrolling someone
+   in a program track — is its own button with the target date
+   pre-filled from the FTEP Program Guide's standard windows
+   (Justin, 2026-08-24). */
 
 const recordOpen = ref(false)
 const enrollOpen = ref(false)
 
-const ENROLL_PHASES: PipelinePhase[] = ['NEOP', 'FTR', 'P1', 'P2', 'P3']
 const enroll = reactive({
-  phase: '' as PipelinePhase | '',
+  trackKey: '',
   startedAt: new Date().toISOString().slice(0, 10),
   targetAt: '',
   targetTouched: false,
   busy: false,
 })
 
+const enrollTrack = computed(
+  () => ENROLLMENT_TRACKS.find((t) => t.key === enroll.trackKey) ?? null,
+)
+
 function autoTarget(): void {
-  if (enroll.targetTouched || !enroll.phase || !enroll.startedAt) return
-  const days = PHASE_TARGET_DAYS[enroll.phase]
-  if (!days) { enroll.targetAt = ''; return }
+  if (enroll.targetTouched || !enrollTrack.value || !enroll.startedAt) return
   const d = new Date(`${enroll.startedAt}T00:00:00`)
-  d.setDate(d.getDate() + days)
+  d.setDate(d.getDate() + enrollTrack.value.days)
   enroll.targetAt = d.toISOString().slice(0, 10)
 }
-watch(() => [enroll.phase, enroll.startedAt], autoTarget)
+watch(() => [enroll.trackKey, enroll.startedAt], autoTarget)
 
 function openEnroll() {
-  enroll.phase = ''
+  enroll.trackKey = ''
   enroll.startedAt = new Date().toISOString().slice(0, 10)
   enroll.targetAt = ''
   enroll.targetTouched = false
@@ -221,20 +223,24 @@ function openEnroll() {
 }
 
 async function saveEnroll() {
-  if (!enroll.phase || enroll.busy) return
+  const track = enrollTrack.value
+  if (!track || enroll.busy) return
   enroll.busy = true
   busyError.value = null
   try {
     await saveRecord({
       userId: props.person.userId,
-      workingPhase: enroll.phase,
+      ...track.patch,
       workingStartedAt: enroll.startedAt || null,
       workingTargetAt: enroll.targetAt || null,
       pending: false,
     })
     /* Keep the raw form in step so opening it next doesn't show stale
        phase fields. */
-    form.workingPhase = enroll.phase
+    if (track.patch.workingPhase) form.workingPhase = track.patch.workingPhase
+    if (track.patch.legacyTrack !== undefined) form.legacyTrack = track.patch.legacyTrack
+    if (track.patch.inP3Process !== undefined) form.inP3Process = track.patch.inP3Process
+    if (track.patch.inAemtUpgrade !== undefined) form.inAemtUpgrade = track.patch.inAemtUpgrade
     form.workingStartedAt = enroll.startedAt
     form.workingTargetAt = enroll.targetAt
     form.pending = false
@@ -463,15 +469,15 @@ async function saveForm() {
             </button>
           </div>
 
-          <!-- Enroll flow: target date auto-fills from the FTEP
-               Program Guide's standard windows, editable for
-               extensions. -->
+          <!-- Enroll flow: named program tracks; target date auto-fills
+               from the FTEP Program Guide's standard windows, editable
+               for extensions. -->
           <div v-if="enrollOpen && canEdit" class="pm__enroll">
-            <label class="pm__field">
-              <span>New working phase</span>
-              <select v-model="enroll.phase">
+            <label class="pm__field pm__enroll-track">
+              <span>Program track</span>
+              <select v-model="enroll.trackKey">
                 <option value="" disabled>Select…</option>
-                <option v-for="p in ENROLL_PHASES" :key="p" :value="p">{{ phaseLabel(p) }}</option>
+                <option v-for="t in ENROLLMENT_TRACKS" :key="t.key" :value="t.key">{{ t.label }}</option>
               </select>
             </label>
             <label class="pm__field"><span>Start date</span><input v-model="enroll.startedAt" type="date" /></label>
@@ -479,9 +485,10 @@ async function saveForm() {
               <span>Target date <em class="pm__auto">auto from program standard — edit for extensions</em></span>
               <input v-model="enroll.targetAt" type="date" @input="enroll.targetTouched = true" />
             </label>
-            <button type="button" class="btn btn-primary" :disabled="!enroll.phase || enroll.busy" @click="saveEnroll">
+            <button type="button" class="btn btn-primary" :disabled="!enrollTrack || enroll.busy" @click="saveEnroll">
               {{ enroll.busy ? 'Saving…' : 'Enroll' }}
             </button>
+            <span v-if="enrollTrack" class="pm__enroll-hint">{{ enrollTrack.hint }}</span>
           </div>
 
           <div v-if="recordOpen" class="pm__grid">
@@ -761,6 +768,14 @@ async function saveForm() {
   font-weight: 400;
   font-size: 10px;
   color: var(--color-muted-soft);
+}
+.pm__enroll-track {
+  grid-column: 1 / -1;
+}
+.pm__enroll-hint {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--color-muted);
 }
 .pm__grid { margin-top: 12px; }
 .pm__req-add {
