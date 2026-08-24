@@ -7,7 +7,8 @@ import {
   gateItemsFor,
   hasSystemAccess,
   petitionItemsFor,
-  jurisprudenceDue,
+  jurisprudenceStatus,
+  requirementStatus,
 } from '@/constants/pipelineGates'
 import { usePipeline } from '@/composables/usePipeline'
 import PipelineGateRow from './PipelineGateRow.vue'
@@ -24,7 +25,7 @@ const props = defineProps<{
   person: PipelinePerson
 }>()
 
-const { gatesFor } = usePipeline()
+const { gatesFor, requirements, completionsFor } = usePipeline()
 
 const record = computed(() => props.person.record)
 const transition = computed(() => activeTransitionFor(record.value))
@@ -32,6 +33,23 @@ const def = computed(() => (transition.value ? TRANSITIONS[transition.value] : n
 const gateRows = computed(() => gatesFor(record.value.id))
 const items = computed(() => gateItemsFor(record.value, gateRows.value))
 const petitions = computed(() => petitionItemsFor(record.value, gateRows.value))
+
+const juris = computed(() => jurisprudenceStatus(record.value))
+
+/** Per-licensure-cycle catalog items (HEART, sex trafficking, …) that
+ *  apply to this person's level — shown with the same "required
+ *  before <license expiry>" tag the CDO sees, so the employee knows
+ *  the deadline too. */
+const cycleItems = computed(() => {
+  const comps = completionsFor(props.person.userId)
+  return requirements.value
+    .filter((r) => {
+      if (!r.active || r.cycle !== 'per_cert_cycle') return false
+      if (r.requiredLevels.length === 0) return comps.some((c) => c.requirementId === r.id)
+      return !!record.value.certLevel && r.requiredLevels.includes(record.value.certLevel)
+    })
+    .map((r) => ({ req: r, st: requirementStatus(r, comps, record.value) }))
+})
 
 function fmt(iso: string | null): string {
   if (!iso) return '—'
@@ -73,7 +91,24 @@ function fmt(iso: string | null): string {
       <div class="pd__panel">
         <h4 class="pd__h">Compliance &amp; credentials</h4>
         <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': !!record.txLicenseExpiresAt }">{{ record.txLicenseExpiresAt ? '✓' : '·' }}</span><span class="pd__fk">TX license expires</span><span class="pd__fv">{{ fmt(record.txLicenseExpiresAt) }}</span></div>
-        <div class="pd__fact"><span class="pd__ic" :class="jurisprudenceDue(record) ? 'pd__ic--warn' : 'pd__ic--ok'">{{ jurisprudenceDue(record) ? '!' : '✓' }}</span><span class="pd__fk">TX jurisprudence</span><span class="pd__fv">{{ jurisprudenceDue(record) ? 'due this cycle' : fmt(record.txJurisprudenceAt) }}</span></div>
+        <div class="pd__fact">
+          <span class="pd__ic" :class="juris.state === 'ok' ? 'pd__ic--ok' : juris.state === 'due' ? 'pd__ic--warn' : ''">{{ juris.state === 'ok' ? '✓' : juris.state === 'due' ? '!' : '·' }}</span>
+          <span class="pd__fk">TX jurisprudence</span>
+          <span class="pd__fv">
+            <template v-if="juris.state === 'ok'">{{ fmt(record.txJurisprudenceAt) }}</template>
+            <template v-else-if="juris.state === 'due'">DUE — required before {{ juris.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal' }}</template>
+            <template v-else>required before {{ juris.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal' }}</template>
+          </span>
+        </div>
+        <div v-for="ci in cycleItems" :key="ci.req.id" class="pd__fact">
+          <span class="pd__ic" :class="ci.st.state === 'ok' ? 'pd__ic--ok' : ci.st.state === 'due' ? 'pd__ic--warn' : ''">{{ ci.st.state === 'ok' ? '✓' : ci.st.state === 'due' ? '!' : '·' }}</span>
+          <span class="pd__fk">{{ ci.req.name }}</span>
+          <span class="pd__fv">
+            <template v-if="ci.st.state === 'ok'">{{ fmt(ci.st.latest!.completedAt) }}</template>
+            <template v-else-if="ci.st.state === 'due'">DUE — required before {{ ci.st.dueAt ? fmt(ci.st.dueAt) : 'license renewal' }}</template>
+            <template v-else>required before {{ ci.st.dueAt ? fmt(ci.st.dueAt) : 'license renewal' }}</template>
+          </span>
+        </div>
         <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': !!record.bloodbornePathogenAt }">{{ record.bloodbornePathogenAt ? '✓' : '·' }}</span><span class="pd__fk">Bloodborne pathogens</span><span class="pd__fv">{{ fmt(record.bloodbornePathogenAt) }}</span></div>
         <template v-if="hasSystemAccess(record.certLevel)">
           <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': record.opIqAccess }">{{ record.opIqAccess ? '✓' : '·' }}</span><span class="pd__fk">Operative IQ access</span><span class="pd__fv">{{ record.opIqAccess ? (record.opIqGrantedAt ? fmt(record.opIqGrantedAt) : 'held') : '—' }}</span></div>

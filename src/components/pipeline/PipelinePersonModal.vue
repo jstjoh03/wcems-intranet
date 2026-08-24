@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import type { PipelinePerson, PipelinePhase, PipelineRequirement } from '@/types'
 import {
+  PHASE_TARGET_DAYS,
   TRANSITIONS,
   activeTransitionFor,
   badgeKeyFor,
@@ -10,7 +11,7 @@ import {
   petitionItemsFor,
   phaseLabel,
   requirementStatus,
-  jurisprudenceDue,
+  jurisprudenceStatus,
   type GateItem,
 } from '@/constants/pipelineGates'
 import { usePipeline } from '@/composables/usePipeline'
@@ -181,6 +182,70 @@ async function undoCompletion(id: string) {
   }
 }
 
+const juris = computed(() => jurisprudenceStatus(record.value))
+
+/* ── Record section — collapsed + action-driven ────────────────────
+   The raw field grid used to render for every employee; now it hides
+   behind "Edit full record" and the common move — starting someone in
+   a phase — is its own button with the target date pre-filled from
+   the FTEP Program Guide's standard windows (Justin, 2026-08-24). */
+
+const recordOpen = ref(false)
+const enrollOpen = ref(false)
+
+const ENROLL_PHASES: PipelinePhase[] = ['NEOP', 'FTR', 'P1', 'P2', 'P3']
+const enroll = reactive({
+  phase: '' as PipelinePhase | '',
+  startedAt: new Date().toISOString().slice(0, 10),
+  targetAt: '',
+  targetTouched: false,
+  busy: false,
+})
+
+function autoTarget(): void {
+  if (enroll.targetTouched || !enroll.phase || !enroll.startedAt) return
+  const days = PHASE_TARGET_DAYS[enroll.phase]
+  if (!days) { enroll.targetAt = ''; return }
+  const d = new Date(`${enroll.startedAt}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  enroll.targetAt = d.toISOString().slice(0, 10)
+}
+watch(() => [enroll.phase, enroll.startedAt], autoTarget)
+
+function openEnroll() {
+  enroll.phase = ''
+  enroll.startedAt = new Date().toISOString().slice(0, 10)
+  enroll.targetAt = ''
+  enroll.targetTouched = false
+  enrollOpen.value = !enrollOpen.value
+}
+
+async function saveEnroll() {
+  if (!enroll.phase || enroll.busy) return
+  enroll.busy = true
+  busyError.value = null
+  try {
+    await saveRecord({
+      userId: props.person.userId,
+      workingPhase: enroll.phase,
+      workingStartedAt: enroll.startedAt || null,
+      workingTargetAt: enroll.targetAt || null,
+      pending: false,
+    })
+    /* Keep the raw form in step so opening it next doesn't show stale
+       phase fields. */
+    form.workingPhase = enroll.phase
+    form.workingStartedAt = enroll.startedAt
+    form.workingTargetAt = enroll.targetAt
+    form.pending = false
+    enrollOpen.value = false
+  } catch (err) {
+    busyError.value = (err as Error).message
+  } finally {
+    enroll.busy = false
+  }
+}
+
 /* ── Record form ───────────────────────────────────────────────────── */
 
 const PHASES: Array<PipelinePhase | ''> = ['', 'NEOP', 'FTR', 'P1', 'P2', 'P3', 'FinalRelease']
@@ -304,12 +369,17 @@ async function saveForm() {
           <h4 class="pm__h">Compliance &amp; certifications</h4>
           <div
             class="pm__req"
-            :class="{ 'pm__req--due': jurisprudenceDue(record) }"
+            :class="{ 'pm__req--due': juris.state === 'due' }"
           >
             <span class="pm__req-name">TX Jurisprudence <span class="pm__req-cycle">per licensure cycle</span></span>
             <span class="pm__req-latest">{{ fmt(record.txJurisprudenceAt) }}</span>
-            <span class="pm__req-pill" :class="jurisprudenceDue(record) ? 'pm__req-pill--due' : 'pm__req-pill--ok'">
-              {{ jurisprudenceDue(record) ? 'Reassign in LMS' : 'Current cycle ✓' }}
+            <span
+              class="pm__req-pill"
+              :class="juris.state === 'due' ? 'pm__req-pill--due' : juris.state === 'required' ? 'pm__req-pill--tag' : 'pm__req-pill--ok'"
+            >
+              {{ juris.state === 'ok' ? 'Current cycle ✓'
+                : juris.state === 'due' ? `Due — reassign in LMS${juris.requiredBefore ? ` before ${fmt(juris.requiredBefore)}` : ''}`
+                : `Required before ${juris.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal'}` }}
             </span>
           </div>
           <template v-for="req in activeRequirements" :key="req.id">
@@ -338,9 +408,13 @@ async function saveForm() {
                   'pm__req-pill--ok': reqStatus(req).state === 'ok',
                   'pm__req-pill--warn': reqStatus(req).state === 'expiring',
                   'pm__req-pill--due': reqStatus(req).state === 'due',
+                  'pm__req-pill--tag': reqStatus(req).state === 'required',
                 }"
               >
-                {{ reqStatus(req).state === 'ok' ? '✓' : reqStatus(req).state === 'expiring' ? `Expiring ${fmt(reqStatus(req).dueAt)}` : 'Due' }}
+                {{ reqStatus(req).state === 'ok' ? '✓'
+                  : reqStatus(req).state === 'expiring' ? `Expiring ${fmt(reqStatus(req).dueAt)}`
+                  : reqStatus(req).state === 'required' ? `Required before ${reqStatus(req).dueAt ? fmt(reqStatus(req).dueAt) : 'license renewal'}`
+                  : req.cycle === 'per_cert_cycle' && reqStatus(req).dueAt ? `Due before ${fmt(reqStatus(req).dueAt)}` : 'Due' }}
               </span>
               <button
                 v-if="canEdit"
@@ -362,7 +436,55 @@ async function saveForm() {
         <!-- Record -->
         <section class="pm__section">
           <h4 class="pm__h">Record</h4>
-          <div class="pm__grid">
+
+          <!-- Compact summary — the raw field grid stays collapsed -->
+          <div class="pm__recsum">
+            <span v-if="record.workingPhase" class="pm__recfact">
+              <b>Working {{ record.workingPhase }}</b>
+              <template v-if="record.workingStartedAt"> · started {{ fmt(record.workingStartedAt) }}</template>
+              <template v-if="record.workingTargetAt"> · target {{ fmt(record.workingTargetAt) }}</template>
+            </span>
+            <span v-else class="pm__recfact">Not enrolled in a working phase</span>
+            <span v-if="record.clearedPhase" class="pm__recfact">Cleared {{ record.clearedPhase }}</span>
+            <span v-if="record.ftoName" class="pm__recfact">FTO {{ record.ftoName }}</span>
+            <span v-if="record.legacyTrack" class="pm__recflag">Legacy track</span>
+            <span v-if="record.inP3Process" class="pm__recflag">P3 / supervisor</span>
+            <span v-if="record.inAemtUpgrade" class="pm__recflag">AEMT upgrade</span>
+            <span v-if="record.pending" class="pm__recflag">Awaiting clearance</span>
+            <span v-if="record.pipActive" class="pm__recflag pm__recflag--warn">PIP</span>
+          </div>
+
+          <div v-if="canEdit" class="pm__recactions">
+            <button type="button" class="btn" :class="{ 'btn-primary': enrollOpen }" @click="openEnroll">
+              {{ enrollOpen ? 'Cancel enrollment' : 'Enroll in new working phase' }}
+            </button>
+            <button type="button" class="btn" @click="recordOpen = !recordOpen">
+              {{ recordOpen ? 'Hide full record' : 'Edit full record' }}
+            </button>
+          </div>
+
+          <!-- Enroll flow: target date auto-fills from the FTEP
+               Program Guide's standard windows, editable for
+               extensions. -->
+          <div v-if="enrollOpen && canEdit" class="pm__enroll">
+            <label class="pm__field">
+              <span>New working phase</span>
+              <select v-model="enroll.phase">
+                <option value="" disabled>Select…</option>
+                <option v-for="p in ENROLL_PHASES" :key="p" :value="p">{{ phaseLabel(p) }}</option>
+              </select>
+            </label>
+            <label class="pm__field"><span>Start date</span><input v-model="enroll.startedAt" type="date" /></label>
+            <label class="pm__field">
+              <span>Target date <em class="pm__auto">auto from program standard — edit for extensions</em></span>
+              <input v-model="enroll.targetAt" type="date" @input="enroll.targetTouched = true" />
+            </label>
+            <button type="button" class="btn btn-primary" :disabled="!enroll.phase || enroll.busy" @click="saveEnroll">
+              {{ enroll.busy ? 'Saving…' : 'Enroll' }}
+            </button>
+          </div>
+
+          <div v-if="recordOpen" class="pm__grid">
             <label class="pm__field">
               <span>Cleared phase</span>
               <select v-model="form.clearedPhase"><option v-for="p in PHASES" :key="`c${p}`" :value="p">{{ p || '—' }}</option></select>
@@ -379,24 +501,26 @@ async function saveForm() {
             <label class="pm__field"><span>Bloodborne pathogens</span><input v-model="form.bloodbornePathogenAt" type="date" /></label>
             <label class="pm__field"><span>Est. P2-ready</span><input v-model="form.estP2ReadyAt" type="date" /></label>
           </div>
-          <div class="pm__flags">
-            <label><input v-model="form.legacyTrack" type="checkbox" /> Legacy P1→P2 program</label>
-            <label><input v-model="form.pending" type="checkbox" /> Awaiting clearance</label>
-            <label><input v-model="form.inP3Process" type="checkbox" /> P3 / supervisor track</label>
-            <label><input v-model="form.inAemtUpgrade" type="checkbox" /> AEMT upgrade</label>
-            <label><input v-model="form.isFto" type="checkbox" /> Is an FTO</label>
-            <label><input v-model="form.pipActive" type="checkbox" /> PIP active</label>
-          </div>
-          <label v-if="form.pipActive" class="pm__field pm__field--wide"><span>PIP reason</span><input v-model="form.pipReason" type="text" /></label>
-          <label class="pm__field pm__field--wide"><span>Coverage impact</span><input v-model="form.coverageNote" type="text" /></label>
-          <label class="pm__field pm__field--wide"><span>Blocker</span><input v-model="form.blockerNote" type="text" /></label>
-          <label class="pm__field pm__field--wide"><span>Notes</span><textarea v-model="form.notes" rows="2"></textarea></label>
+          <template v-if="recordOpen">
+            <div class="pm__flags">
+              <label><input v-model="form.legacyTrack" type="checkbox" /> Legacy P1→P2 program</label>
+              <label><input v-model="form.pending" type="checkbox" /> Awaiting clearance</label>
+              <label><input v-model="form.inP3Process" type="checkbox" /> P3 / supervisor track</label>
+              <label><input v-model="form.inAemtUpgrade" type="checkbox" /> AEMT upgrade</label>
+              <label><input v-model="form.isFto" type="checkbox" /> Is an FTO</label>
+              <label><input v-model="form.pipActive" type="checkbox" /> PIP active</label>
+            </div>
+            <label v-if="form.pipActive" class="pm__field pm__field--wide"><span>PIP reason</span><input v-model="form.pipReason" type="text" /></label>
+            <label class="pm__field pm__field--wide"><span>Coverage impact</span><input v-model="form.coverageNote" type="text" /></label>
+            <label class="pm__field pm__field--wide"><span>Blocker</span><input v-model="form.blockerNote" type="text" /></label>
+            <label class="pm__field pm__field--wide"><span>Notes</span><textarea v-model="form.notes" rows="2"></textarea></label>
+          </template>
         </section>
       </div>
 
       <footer class="pm__foot">
         <button type="button" class="btn" @click="emit('close')">Close</button>
-        <button type="button" class="btn btn-primary" :disabled="saving || !canEdit" @click="saveForm">
+        <button v-if="recordOpen" type="button" class="btn btn-primary" :disabled="saving || !canEdit" @click="saveForm">
           {{ saving ? 'Saving…' : 'Save record' }}
         </button>
       </footer>
@@ -592,6 +716,53 @@ async function saveForm() {
 .pm__req-pill--ok { background: var(--color-success-50); color: var(--color-success-500); }
 .pm__req-pill--warn { background: var(--color-warning-50); color: oklch(0.5 0.12 75); }
 .pm__req-pill--due { background: var(--color-danger-50); color: var(--color-danger-500); }
+/* Deadline tag — informational, not an alarm. */
+.pm__req-pill--tag { background: var(--color-surface-soft); color: var(--color-ink-soft); border: 1px solid var(--color-line); }
+.pm__recsum {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  font-size: 12.5px;
+  color: var(--color-ink-soft);
+}
+.pm__recfact b { color: var(--color-ink); font-weight: 600; }
+.pm__recflag {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink-soft);
+}
+.pm__recflag--warn { background: var(--color-danger-50); border-color: transparent; color: var(--color-danger-500); }
+.pm__recactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.pm__enroll {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px 14px;
+  align-items: end;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--color-line-soft);
+  border-radius: 10px;
+  background: var(--color-surface-soft);
+}
+.pm__auto {
+  display: block;
+  font-style: normal;
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--color-muted-soft);
+}
+.pm__grid { margin-top: 12px; }
 .pm__req-add {
   font-size: 11.5px;
   font-weight: 600;

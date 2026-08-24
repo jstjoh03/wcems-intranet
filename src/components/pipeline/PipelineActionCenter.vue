@@ -4,7 +4,7 @@ import { ClipboardList } from 'lucide-vue-next'
 import type { PipelinePerson, RequirementCycle } from '@/types'
 import {
   activeTransitionFor,
-  jurisprudenceDue,
+  jurisprudenceStatus,
   openGapCount,
   requirementStatus,
 } from '@/constants/pipelineGates'
@@ -63,14 +63,27 @@ interface ActionGroup {
 const groups = computed<ActionGroup[]>(() => {
   const active = props.people.filter((p) => !p.record.pending)
 
+  /* Only people inside the 6-month due window land here — an
+     out-of-cycle completion earlier in the license just carries a
+     "required before <expiry>" tag on the file instead. */
   const juris: ActionItem[] = active
-    .filter((p) => jurisprudenceDue(p.record))
-    .map((p) => ({ person: p, detail: 'TX jurisprudence not on file for this cycle', severity: 'due' as const }))
+    .map((p) => ({ p, js: jurisprudenceStatus(p.record, today) }))
+    .filter((x) => x.js.state === 'due')
+    .map(({ p, js }) => ({
+      person: p,
+      detail: js.requiredBefore
+        ? `TX jurisprudence — required before ${js.requiredBefore}`
+        : 'TX jurisprudence not on file for this cycle',
+      severity: 'due' as const,
+    }))
 
   /* Requirement engine: annual + per-cycle items → the LMS bucket;
      card classes (certification) → the cards bucket. Items with NO
      completion on file stay quiet until data lands (Paycom import /
-     first LMS entries) — flagging all ~75 people at once is noise. */
+     first LMS entries) — flagging all ~75 people at once is noise.
+     Per-cycle items are the exception: they go due (even with nothing
+     on file) once the 6-month license window opens, and stay quiet
+     as a tag before that. */
   const lmsItems: ActionItem[] = []
   const cardItems: ActionItem[] = []
   for (const req of requirements.value.filter((r) => r.active)) {
@@ -84,6 +97,14 @@ const groups = computed<ActionGroup[]>(() => {
       )
         continue
       const st = requirementStatus(req, completionsFor(p.userId), p.record, today)
+      if (req.cycle === 'per_cert_cycle') {
+        /* Tracked-only per-cycle items (no required levels) stay quiet
+           for people with nothing on file. */
+        if (req.requiredLevels.length === 0 && !st.latest) continue
+        if (st.state === 'due')
+          bucket.push({ person: p, detail: `${req.name} — required before ${st.dueAt ?? 'license renewal'}`, severity: 'due' })
+        continue
+      }
       if (!st.latest) continue
       if (st.state === 'due') {
         bucket.push({ person: p, detail: `${req.name} — expired/due`, severity: 'due' })
@@ -93,12 +114,14 @@ const groups = computed<ActionGroup[]>(() => {
     }
   }
 
-  /* Required certs with NOTHING on file — the level decides what's
-     required (EMTs: BLS/HandTevy/EVOC; medics add ACLS/PALS). Expired
-     cards are already covered by the buckets above; this catches the
-     people who never uploaded the cert to Paycom at all. */
+  /* Required CARD classes with NOTHING on file — the level decides
+     what's required (EMTs: BLS/HandTevy/EVOC; medics add ACLS/PALS).
+     Expired cards are already covered by the buckets above; this
+     catches the people who never uploaded the cert to Paycom at all.
+     Per-cycle items are excluded — they get the deadline-tag
+     treatment, not a missing-card alarm. */
   const missing: ActionItem[] = []
-  for (const req of requirements.value.filter((r) => r.active && r.requiredLevels.length > 0)) {
+  for (const req of requirements.value.filter((r) => r.active && r.cycle === 'certification' && r.requiredLevels.length > 0)) {
     for (const p of active) {
       const lvl = p.record.certLevel
       if (!lvl || !req.requiredLevels.includes(lvl)) continue

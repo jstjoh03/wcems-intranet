@@ -10,7 +10,7 @@ import { useClinicalDocs, FOLDER_LABELS, type ClinicalDocFolder } from '@/compos
 import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import { useSkillsDay } from '@/composables/useSkillsDay'
-import { requirementStatus, activeTransitionFor } from '@/constants/pipelineGates'
+import { requirementStatus, activeTransitionFor, jurisprudenceStatus } from '@/constants/pipelineGates'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
 import type { PipelinePerson, PipelineRequirement } from '@/types'
 
@@ -38,6 +38,7 @@ const {
   removeCompletion,
   requirements,
   ftepTrackFor,
+  manualRideouts,
 } = useClinical()
 
 const skills = useSkillsDay()
@@ -113,6 +114,19 @@ function fmt(iso: string | null): string {
 }
 
 const attention = computed(() => (person.value ? attentionFor(person.value) : []))
+
+/* Rideout credit = submitted rideout DORs, or the number typed into the
+   P2→P3 gate for rideouts completed before the portal (whichever is
+   greater). */
+const rideouts = computed(() => {
+  const p = person.value
+  if (!p) return { dors: 0, manual: 0, count: 0 }
+  const dors = ftep.submittedFor(p.userId, 'dor').length
+  const manual = manualRideouts(p)
+  return { dors, manual, count: Math.max(dors, manual) }
+})
+
+const juris = computed(() => (person.value ? jurisprudenceStatus(person.value.record) : null))
 
 /* ── Credentials tab ─────────────────────────────────────────────── */
 const cardReqs = computed<PipelineRequirement[]>(() =>
@@ -435,11 +449,11 @@ function fmtDateTime(iso: string): string {
           </div>
           <template v-if="ftepTrackFor(person)?.key === 'rideup'">
             <div class="cf__gate">
-              <span class="cf__tick" :class="ftep.submittedFor(person.userId, 'dor').length >= 4 ? 'cf__tick--ok' : 'cf__tick--open'">
-                <Check v-if="ftep.submittedFor(person.userId, 'dor').length >= 4" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+              <span class="cf__tick" :class="rideouts.count >= 4 ? 'cf__tick--ok' : 'cf__tick--open'">
+                <Check v-if="rideouts.count >= 4" :size="12" :stroke-width="2.5" /><template v-else>·</template>
               </span>
-              <span class="cf__gate-l">12-hr supervisor rideouts (DORs)</span>
-              <span class="cf__gate-v">{{ ftep.submittedFor(person.userId, 'dor').length }} of 4 required</span>
+              <span class="cf__gate-l">12-hr supervisor rideouts</span>
+              <span class="cf__gate-v">{{ rideouts.count }} of 4 required<template v-if="rideouts.manual > rideouts.dors"> · {{ rideouts.manual }} recorded manually (pre-portal)</template></span>
             </div>
             <div class="cf__gate">
               <span class="cf__tick cf__tick--open">·</span>
@@ -625,20 +639,25 @@ function fmtDateTime(iso: string): string {
         <div class="cf__sectitle">Per certification cycle</div>
         <div class="cf__card">
           <div class="cf__gate">
-            <span class="cf__tick" :class="person.record.txJurisprudenceAt ? 'cf__tick--ok' : 'cf__tick--open'">
-              <Check v-if="person.record.txJurisprudenceAt" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+            <span class="cf__tick" :class="juris?.state === 'ok' ? 'cf__tick--ok' : 'cf__tick--open'">
+              <Check v-if="juris?.state === 'ok'" :size="12" :stroke-width="2.5" /><template v-else>·</template>
             </span>
             <span class="cf__gate-l">TX EMS Jurisprudence</span>
-            <span class="cf__gate-v">{{ person.record.txJurisprudenceAt ? fmt(person.record.txJurisprudenceAt) : 'not on file' }}<template v-if="person.record.txLicenseExpiresAt"> · cycle ends {{ fmt(person.record.txLicenseExpiresAt) }}</template></span>
+            <span class="cf__gate-v">
+              <template v-if="juris?.state === 'ok'">{{ fmt(person.record.txJurisprudenceAt) }}<template v-if="juris?.requiredBefore"> · cycle ends {{ fmt(juris.requiredBefore) }}</template></template>
+              <b v-else-if="juris?.state === 'due'" class="cf__late">due — required before {{ juris.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal' }}</b>
+              <template v-else>required before {{ juris?.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal' }}</template>
+            </span>
           </div>
           <div v-for="req in cycleReqs" :key="req.id" class="cf__gate">
-            <span class="cf__tick" :class="reqRow(req).st.latest && reqRow(req).st.state === 'ok' ? 'cf__tick--ok' : 'cf__tick--open'">
-              <Check v-if="reqRow(req).st.latest && reqRow(req).st.state === 'ok'" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+            <span class="cf__tick" :class="reqRow(req).st.state === 'ok' ? 'cf__tick--ok' : 'cf__tick--open'">
+              <Check v-if="reqRow(req).st.state === 'ok'" :size="12" :stroke-width="2.5" /><template v-else>·</template>
             </span>
             <span class="cf__gate-l">{{ req.name }}</span>
             <span class="cf__gate-v">
-              <template v-if="reqRow(req).st.latest">{{ fmt(reqRow(req).st.latest!.completedAt) }}</template>
-              <template v-else>due this cycle</template>
+              <template v-if="reqRow(req).st.state === 'ok'">{{ fmt(reqRow(req).st.latest!.completedAt) }}</template>
+              <b v-else-if="reqRow(req).st.state === 'due'" class="cf__late">due — required before {{ reqRow(req).st.dueAt ? fmt(reqRow(req).st.dueAt) : 'license renewal' }}</b>
+              <template v-else>required before {{ reqRow(req).st.dueAt ? fmt(reqRow(req).st.dueAt) : 'license renewal' }}</template>
             </span>
             <button type="button" class="cf__mini" @click="toggleComp(req.id)"><Plus :size="12" :stroke-width="2.5" /> Add</button>
           </div>

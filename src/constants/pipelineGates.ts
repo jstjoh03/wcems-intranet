@@ -152,6 +152,19 @@ export function phaseLabel(phase: PipelinePhase | null): string {
   return phase ? (PHASE_LABELS[phase] ?? phase) : '—'
 }
 
+/** Standard working-phase windows from the FTEP Program Guide, used to
+ *  auto-fill the target date when enrolling someone in a phase (always
+ *  editable — extensions happen). NEOP ≈ academy + orientation weeks;
+ *  FTR / P1 carry the 90-day field-training cap; P2 the traditional
+ *  six-month cap; P3 the supervisor-rideout block. */
+export const PHASE_TARGET_DAYS: Partial<Record<PipelinePhase, number>> = {
+  NEOP: 14,
+  FTR: 90,
+  P1: 90,
+  P2: 180,
+  P3: 60,
+}
+
 /** Which transition a record is actively working, if any. */
 export function activeTransitionFor(r: PipelineRecord): PipelineTransition | null {
   if (r.pending) return 'NEOP'
@@ -193,12 +206,20 @@ export function gateItemsFor(r: PipelineRecord, rows: PipelineGateProgress[]): G
 
   const items: GateItem[] = def.gates.map((g) => {
     const row = byKey.get(g.key)
+    let status: GateItem['status'] = row ? row.status : 'untracked'
+    /* The rideout count self-completes at the 4-rideout target —
+       typing "4" into Edit record checks the gate off without a
+       second tap (Justin, 2026-08-24). */
+    if (g.key === 'supervisor_rideouts' && status === 'pending') {
+      const n = row?.value?.match(/\d+/)
+      if (n && parseInt(n[0], 10) >= 4) status = 'complete'
+    }
     return {
       key: g.key,
       label: g.label,
       hint: g.hint,
       kind: g.kind,
-      status: row ? row.status : 'untracked',
+      status,
       value: row?.value ?? null,
       completedAt: row?.completedAt ?? null,
       completedByName: row?.completedByName ?? null,
@@ -335,21 +356,53 @@ export function warningChips(r: PipelineRecord, today = new Date()): WarningChip
 
 /* ── Compliance due logic ──────────────────────────────────────────── */
 
-/** TX jurisprudence is required once per 4-year licensure cycle. The
- *  current cycle runs from (license expiry − 4 yr) to expiry, so a
- *  completion OLDER than the cycle start no longer counts — that's the
- *  signal to reassign it in the LMS. Unknown license expiry → can't
- *  compute a cycle; treat a recorded completion as good. */
-export function jurisprudenceDue(r: PipelineRecord): boolean {
-  if (!r.txJurisprudenceAt) return true
-  if (!r.txLicenseExpiresAt) return false
-  const cycleStart = new Date(`${r.txLicenseExpiresAt}T00:00:00`)
+/** Once-per-licensure-cycle items (TX jurisprudence, HEART, …). The
+ *  current cycle runs from (license expiry − 4 yr) to expiry. An
+ *  out-of-cycle completion is NOT an alarm for the whole 4 years —
+ *  it renders as a "required before <license expiry>" tag for both
+ *  the CDO and the employee, and flips to DUE only inside the final
+ *  6 months of the license (Justin, 2026-08-24). Unknown license
+ *  expiry → no cycle to compute; a recorded completion counts, a
+ *  missing one surfaces as due. */
+export interface CycleStatus {
+  state: 'ok' | 'required' | 'due'
+  /** The cycle deadline (= TX license expiry), when known. */
+  requiredBefore: string | null
+}
+
+const DUE_WINDOW_DAYS = 183 // ~6 months before license expiry
+
+export function cycleItemStatus(
+  completedAt: string | null,
+  record: PipelineRecord | null,
+  today = new Date(),
+): CycleStatus {
+  const exp = record?.txLicenseExpiresAt ?? null
+  if (!exp) return { state: completedAt ? 'ok' : 'due', requiredBefore: null }
+  const expDate = new Date(`${exp}T00:00:00`)
+  const cycleStart = new Date(expDate)
   cycleStart.setFullYear(cycleStart.getFullYear() - 4)
-  return new Date(`${r.txJurisprudenceAt}T00:00:00`).getTime() < cycleStart.getTime()
+  const inCycle =
+    !!completedAt && new Date(`${completedAt}T00:00:00`).getTime() >= cycleStart.getTime()
+  if (inCycle) return { state: 'ok', requiredBefore: exp }
+  const days = Math.ceil((expDate.getTime() - today.getTime()) / 86_400_000)
+  return { state: days <= DUE_WINDOW_DAYS ? 'due' : 'required', requiredBefore: exp }
+}
+
+export function jurisprudenceStatus(r: PipelineRecord, today = new Date()): CycleStatus {
+  return cycleItemStatus(r.txJurisprudenceAt, r, today)
+}
+
+/** Inside the 6-month window (or no way to compute one) — the LMS
+ *  reassignment signal. */
+export function jurisprudenceDue(r: PipelineRecord): boolean {
+  return jurisprudenceStatus(r).state === 'due'
 }
 
 export interface RequirementStatus {
-  state: 'ok' | 'expiring' | 'due'
+  /** 'required' = per-cycle item not yet done this cycle, but the
+   *  6-month due window hasn't opened — render as a deadline tag. */
+  state: 'ok' | 'expiring' | 'due' | 'required'
   /** When action is needed (expiry / recompute date), if known. */
   dueAt: string | null
   latest: PipelineRequirementCompletion | null
@@ -358,7 +411,9 @@ export interface RequirementStatus {
 /** Due-ness of one requirement for one person.
  *  annual         — due 365 days after the last completion
  *  per_cert_cycle — completion must fall inside the current 4-yr
- *                   licensure cycle (same rule as jurisprudence)
+ *                   licensure cycle (same rule as jurisprudence);
+ *                   out-of-cycle shows 'required' until 6 months
+ *                   before license expiry, then 'due'
  *  certification  — the completion's own expires_at governs; expiring
  *                   = within 60 days
  *  one_time       — any completion ever satisfies it */
@@ -372,6 +427,12 @@ export function requirementStatus(
     .filter((c) => c.requirementId === req.id)
     .sort((a, b) => b.completedAt.localeCompare(a.completedAt))
   const latest = mine[0] ?? null
+
+  if (req.cycle === 'per_cert_cycle') {
+    const cs = cycleItemStatus(latest?.completedAt ?? null, record, today)
+    return { state: cs.state, dueAt: cs.requiredBefore, latest }
+  }
+
   if (!latest) return { state: 'due', dueAt: null, latest: null }
 
   const day = 86_400_000
@@ -385,18 +446,10 @@ export function requirementStatus(
     return { state: days < 0 ? 'due' : days <= 60 ? 'expiring' : 'ok', dueAt, latest }
   }
 
-  if (req.cycle === 'certification') {
-    if (!latest.expiresAt) return { state: 'ok', dueAt: null, latest }
-    const days = Math.ceil((new Date(`${latest.expiresAt}T00:00:00`).getTime() - today.getTime()) / day)
-    return { state: days < 0 ? 'due' : days <= 60 ? 'expiring' : 'ok', dueAt: latest.expiresAt, latest }
-  }
-
-  /* per_cert_cycle */
-  if (!record?.txLicenseExpiresAt) return { state: 'ok', dueAt: null, latest }
-  const cycleStart = new Date(`${record.txLicenseExpiresAt}T00:00:00`)
-  cycleStart.setFullYear(cycleStart.getFullYear() - 4)
-  const inCycle = new Date(`${latest.completedAt}T00:00:00`).getTime() >= cycleStart.getTime()
-  return { state: inCycle ? 'ok' : 'due', dueAt: record.txLicenseExpiresAt, latest }
+  /* certification */
+  if (!latest.expiresAt) return { state: 'ok', dueAt: null, latest }
+  const days = Math.ceil((new Date(`${latest.expiresAt}T00:00:00`).getTime() - today.getTime()) / day)
+  return { state: days < 0 ? 'due' : days <= 60 ? 'expiring' : 'ok', dueAt: latest.expiresAt, latest }
 }
 
 /** Badge class key from the credential level ("EMT - FTO?" → neutral). */

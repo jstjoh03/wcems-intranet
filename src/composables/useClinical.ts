@@ -2,7 +2,7 @@ import { computed } from 'vue'
 import { usePipeline } from '@/composables/usePipeline'
 import {
   activeTransitionFor,
-  jurisprudenceDue,
+  jurisprudenceStatus,
   requirementStatus,
 } from '@/constants/pipelineGates'
 import type { PipelinePerson, PipelineRequirement } from '@/types'
@@ -62,13 +62,17 @@ export function useClinical() {
     })
   }
 
-  /** Required-for-level items with nothing on file. */
+  /** Required-for-level CARD classes with nothing on file. Per-cycle
+   *  items (jurisprudence, HEART) are deliberately excluded — they get
+   *  the "required before <license expiry>" treatment instead of an
+   *  everyone-at-once missing-card alarm. */
   function missingRequired(p: PipelinePerson): PipelineRequirement[] {
     if (p.record.pending) return []
     const comps = completionsFor(p.userId)
     return requirements.value.filter(
       (r) =>
         r.active &&
+        r.cycle === 'certification' &&
         r.requiredLevels.length > 0 &&
         !!p.record.certLevel &&
         r.requiredLevels.includes(p.record.certLevel) &&
@@ -95,15 +99,29 @@ export function useClinical() {
 
     for (const req of requirementsFor(p)) {
       const st = requirementStatus(req, completionsFor(p.userId), p.record)
-      if (!st.latest) continue
-      if (st.state === 'due')
-        items.push({ person: p, detail: `${req.name} — expired/due`, severity: 'due' })
-      else if (st.state === 'expiring')
+      if (st.state === 'due') {
+        if (req.cycle === 'per_cert_cycle')
+          items.push({ person: p, detail: `${req.name} — required before ${st.dueAt ?? 'license renewal'}`, severity: 'due' })
+        else if (st.latest)
+          items.push({ person: p, detail: `${req.name} — expired/due`, severity: 'due' })
+      } else if (st.state === 'expiring' && st.latest) {
         items.push({ person: p, detail: `${req.name} — expires ${st.dueAt}`, severity: 'warn' })
+      }
+      /* 'required' (per-cycle, window not open) is a tag on the file,
+         not an attention item. */
     }
 
-    if (!p.record.pending && jurisprudenceDue(p.record))
-      items.push({ person: p, detail: 'TX jurisprudence not on file for this cycle', severity: 'due' })
+    if (!p.record.pending) {
+      const js = jurisprudenceStatus(p.record)
+      if (js.state === 'due')
+        items.push({
+          person: p,
+          detail: js.requiredBefore
+            ? `TX jurisprudence — required before ${js.requiredBefore}`
+            : 'TX jurisprudence not on file for this cycle',
+          severity: 'due',
+        })
+    }
 
     const t = p.record.workingTargetAt
     if (p.record.workingPhase && t && new Date(`${t}T00:00:00`).getTime() < Date.now())
@@ -188,6 +206,18 @@ export function useClinical() {
     return { key: 'new', label: 'FTEP — new program', dorTracked: true, dorWindow: 4, icrTarget: 10, icrLabel: 'ICRs', rideoutTarget: null }
   }
 
+  /** Rideouts credited via the P2→P3 gate value — completed before the
+   *  portal existed and typed into Edit record (e.g. Dodd's 4). Views
+   *  max() this with submitted rideout DORs so manual credit checks
+   *  the requirement off without fabricating report rows. */
+  function manualRideouts(p: PipelinePerson): number {
+    const row = gatesFor(p.record.id).find(
+      (g) => g.transition === 'P2_P3' && g.gateKey === 'supervisor_rideouts',
+    )
+    const m = row?.value?.match(/\d+/)
+    return m ? parseInt(m[0], 10) : 0
+  }
+
   /** One roster-row status chip per person. */
   function statusChip(p: PipelinePerson): { text: string; kind: 'navy' | 'ok' | 'hold' } {
     if (p.record.pending) return { text: 'NEOP · pending', kind: 'hold' }
@@ -237,6 +267,7 @@ export function useClinical() {
     statusChip,
     attentionChip,
     ftepTrackFor,
+    manualRideouts,
     gatesFor,
   }
 }

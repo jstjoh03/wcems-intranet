@@ -19,7 +19,7 @@ import type { FtepReport, PipelinePerson } from '@/types'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor } = useClinical()
+const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor, manualRideouts } = useClinical()
 const ftep = useFtep()
 
 watch(
@@ -89,8 +89,11 @@ function statsFor(p: PipelinePerson) {
   const dors = ftep.submittedFor(p.userId, 'dor').length
   const cells: { v: string; l: string }[] = []
   if (track?.key === 'rideup') {
-    cells.push({ v: `${dors}/${track.rideoutTarget}`, l: 'rideouts' })
-    cells.push({ v: fmt(ftep.lastDorDate(p.userId)), l: 'last rideout' })
+    /* Credit rideouts typed into the P2→P3 gate (pre-portal) alongside
+       submitted rideout DORs. */
+    const manual = manualRideouts(p)
+    cells.push({ v: `${Math.max(dors, manual)}/${track.rideoutTarget}`, l: manual > dors ? 'rideouts (manual)' : 'rideouts' })
+    cells.push({ v: dors === 0 && manual > 0 ? 'pre-portal' : fmt(ftep.lastDorDate(p.userId)), l: 'last rideout' })
   } else if (track?.key === 'legacy') {
     const evals = ftep.submittedFor(p.userId, 'icr').sort((a, b) => b.evalDate.localeCompare(a.evalDate))
     cells.push({ v: `${ftep.icrCount(p.userId)}/${track.icrTarget}`, l: 'call evals' })
