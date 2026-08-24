@@ -10,11 +10,18 @@ import { useAuthStore } from '@/stores/auth'
  * stays private.
  */
 
-export type ClinicalDocFolder = 'signed_forms' | 'certs' | 'counseling' | 'generated' | 'other'
+export type ClinicalDocFolder =
+  | 'signed_forms'
+  | 'certs'
+  | 'ce_certs'
+  | 'counseling'
+  | 'generated'
+  | 'other'
 
 export const FOLDER_LABELS: Record<ClinicalDocFolder, string> = {
   signed_forms: 'Signed forms',
   certs: 'Cert cards',
+  ce_certs: 'CE certificates',
   counseling: 'Counseling',
   generated: 'Generated PDFs',
   other: 'Other',

@@ -235,7 +235,7 @@ async function downloadPacket() {
 /* ── Documents tab ───────────────────────────────────────────────── */
 const clindocs = useClinicalDocs()
 const docFolder = ref<ClinicalDocFolder | 'all'>('all')
-const FOLDERS: ClinicalDocFolder[] = ['signed_forms', 'certs', 'counseling', 'generated', 'other']
+const FOLDERS: ClinicalDocFolder[] = ['signed_forms', 'certs', 'ce_certs', 'counseling', 'generated', 'other']
 
 const myDocs = computed(() => {
   const p = person.value

@@ -47,9 +47,17 @@ function licDays(p: PipelinePerson): number | null {
   return Math.ceil((new Date(`${exp}T00:00:00`).getTime() - today.getTime()) / day)
 }
 
+/* Uniform table row (Justin, 2026-08-24 — the free-text bullet wall
+   read as chaos): every entry is person · item · short status · date,
+   so the whole panel renders as aligned columns like "Coming up". */
 interface ActionItem {
   person: PipelinePerson
-  detail: string
+  /** What it's about — "HEART Training", "BLS Provider", "TX license". */
+  item: string
+  /** Short status phrase — "required before", "expires", "no card on file". */
+  status: string
+  /** ISO date for the right-hand column, when one applies. */
+  when: string | null
   severity: 'due' | 'warn' | 'info'
 }
 
@@ -59,6 +67,10 @@ interface ActionGroup {
   hint: string
   items: ActionItem[]
 }
+
+const byWhen = (a: ActionItem, b: ActionItem) =>
+  (a.when ?? '9999').localeCompare(b.when ?? '9999') ||
+  a.person.fullName.localeCompare(b.person.fullName)
 
 const groups = computed<ActionGroup[]>(() => {
   const active = props.people.filter((p) => !p.record.pending)
@@ -71,9 +83,9 @@ const groups = computed<ActionGroup[]>(() => {
     .filter((x) => x.js.state === 'due')
     .map(({ p, js }) => ({
       person: p,
-      detail: js.requiredBefore
-        ? `TX jurisprudence — required before ${js.requiredBefore}`
-        : 'TX jurisprudence not on file for this cycle',
+      item: 'TX Jurisprudence',
+      status: js.requiredBefore ? 'required before' : 'not on file this cycle',
+      when: js.requiredBefore,
       severity: 'due' as const,
     }))
 
@@ -102,14 +114,14 @@ const groups = computed<ActionGroup[]>(() => {
            for people with nothing on file. */
         if (req.requiredLevels.length === 0 && !st.latest) continue
         if (st.state === 'due')
-          bucket.push({ person: p, detail: `${req.name} — required before ${st.dueAt ?? 'license renewal'}`, severity: 'due' })
+          bucket.push({ person: p, item: req.name, status: 'required before', when: st.dueAt, severity: 'due' })
         continue
       }
       if (!st.latest) continue
       if (st.state === 'due') {
-        bucket.push({ person: p, detail: `${req.name} — expired/due`, severity: 'due' })
+        bucket.push({ person: p, item: req.name, status: 'expired', when: st.dueAt, severity: 'due' })
       } else if (st.state === 'expiring') {
-        bucket.push({ person: p, detail: `${req.name} — expires ${st.dueAt}`, severity: 'warn' })
+        bucket.push({ person: p, item: req.name, status: 'expires', when: st.dueAt, severity: 'warn' })
       }
     }
   }
@@ -127,10 +139,11 @@ const groups = computed<ActionGroup[]>(() => {
       if (!lvl || !req.requiredLevels.includes(lvl)) continue
       const st = requirementStatus(req, completionsFor(p.userId), p.record, today)
       if (!st.latest) {
-        missing.push({ person: p, detail: `${req.name} — no card on file`, severity: 'due' })
+        missing.push({ person: p, item: req.name, status: 'no card on file', when: null, severity: 'due' })
       }
     }
   }
+  missing.sort((a, b) => a.person.fullName.localeCompare(b.person.fullName) || a.item.localeCompare(b.item))
 
   const lic: ActionItem[] = active
     .map((p) => ({ p, d: licDays(p) }))
@@ -138,7 +151,9 @@ const groups = computed<ActionGroup[]>(() => {
     .sort((a, b) => a.d - b.d)
     .map(({ p, d }) => ({
       person: p,
-      detail: d < 0 ? `TX license EXPIRED ${-d}d ago` : `TX license expires in ${d}d`,
+      item: 'TX license',
+      status: d < 0 ? `EXPIRED ${-d}d ago` : `expires in ${d}d`,
+      when: p.record.txLicenseExpiresAt,
       severity: d < 0 ? ('due' as const) : ('warn' as const),
     }))
 
@@ -149,23 +164,41 @@ const groups = computed<ActionGroup[]>(() => {
     })
     .map((p) => ({
       person: p,
-      detail: `Phase target ${p.record.workingTargetAt} passed — follow up`,
+      item: `Phase target (${p.record.workingPhase})`,
+      status: 'passed — follow up',
+      when: p.record.workingTargetAt,
       severity: 'warn' as const,
     }))
+    .sort(byWhen)
 
   const ready: ActionItem[] = active
     .filter((p) => activeTransitionFor(p.record) && openGapCount(p.record, gatesFor(p.record.id)) === 0)
-    .map((p) => ({ person: p, detail: 'All gates complete — schedule board / advancement', severity: 'info' as const }))
+    .map((p) => ({
+      person: p,
+      item: 'All gates complete',
+      status: 'schedule board / advancement',
+      when: null,
+      severity: 'info' as const,
+    }))
 
   return [
-    { key: 'lms', title: 'Reassign in LMS', hint: 'jurisprudence & recurring trainings', items: [...juris, ...lmsItems] },
+    { key: 'lms', title: 'Reassign in LMS', hint: 'jurisprudence & recurring trainings', items: [...juris, ...lmsItems].sort(byWhen) },
     { key: 'missing', title: 'Missing required certs', hint: 'no card on file for their level', items: missing },
-    { key: 'cards', title: 'Card classes', hint: 'expiring or lapsed', items: cardItems },
+    { key: 'cards', title: 'Card classes', hint: 'expiring or lapsed', items: cardItems.sort(byWhen) },
     { key: 'lic', title: 'Licenses', hint: '≤ 90 days or expired', items: lic },
     { key: 'follow', title: 'Follow-ups', hint: 'phase targets passed', items: overdue },
     { key: 'ready', title: 'Ready to advance', hint: 'schedule boards', items: ready },
   ].filter((g) => g.items.length > 0)
 })
+
+function fmtWhen(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
 
 const totalCount = computed(() => groups.value.reduce((n, g) => n + g.items.length, 0))
 
@@ -339,18 +372,20 @@ const reportLines = computed<string[]>(() => {
       <div v-else class="ac__groups">
         <div v-for="g in groups" :key="g.key" class="ac__group">
           <h4 class="ac__g-title">{{ g.title }} <span class="ac__g-n">{{ g.items.length }}</span> <span class="ac__g-hint">{{ g.hint }}</span></h4>
-          <ul class="ac__list">
-            <li
+          <div class="ac__table">
+            <button
               v-for="(item, idx) in expandedGroups[g.key] ? g.items : g.items.slice(0, VISIBLE)"
               :key="`${g.key}-${item.person.userId}-${idx}`"
+              type="button"
+              class="ac__row"
+              @click="emit('open', item.person)"
             >
-              <button type="button" class="ac__item" @click="emit('open', item.person)">
-                <span class="ac__dot" :class="`ac__dot--${item.severity}`"></span>
-                <span class="ac__who">{{ item.person.fullName }}</span>
-                <span class="ac__what">{{ item.detail }}</span>
-              </button>
-            </li>
-          </ul>
+              <span class="ac__dot" :class="`ac__dot--${item.severity}`"></span>
+              <span class="ac__who">{{ item.person.fullName }}</span>
+              <span class="ac__what">{{ item.item }} <em class="ac__status">{{ item.status }}</em></span>
+              <span class="ac__when" :class="{ 'ac__when--none': !item.when }">{{ fmtWhen(item.when) }}</span>
+            </button>
+          </div>
           <button
             v-if="g.items.length > VISIBLE"
             type="button"
@@ -432,15 +467,12 @@ const reportLines = computed<string[]>(() => {
   color: var(--color-success-500);
   padding: 4px 0 2px;
 }
+/* Sections stack full-width so every row's columns align — the old
+   two-column masonry read as chaos. */
 .ac__groups {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px;
-}
-@media (min-width: 1000px) {
-  .ac__groups {
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  }
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 .ac__g-title {
   font-size: 10.5px;
@@ -460,25 +492,31 @@ const reportLines = computed<string[]>(() => {
   color: var(--color-muted-soft);
   margin-left: 4px;
 }
-.ac__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.ac__table {
+  border: 1px solid var(--color-line-soft);
+  border-radius: 10px;
+  overflow: hidden;
 }
-.ac__item {
+.ac__row {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  padding: 5px 6px;
+  padding: 7px 12px;
   border: none;
-  border-radius: 8px;
-  background: none;
+  border-bottom: 1px solid var(--color-line-soft);
+  background: var(--color-surface);
   cursor: pointer;
   text-align: left;
   font-size: 12.5px;
 }
-.ac__item:hover {
+.ac__row:last-child {
+  border-bottom: none;
+}
+.ac__row:nth-child(even) {
+  background: color-mix(in oklab, var(--color-surface-soft) 45%, var(--color-surface));
+}
+.ac__row:hover {
   background: var(--color-surface-soft);
 }
 .ac__dot {
@@ -486,19 +524,49 @@ const reportLines = computed<string[]>(() => {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  align-self: center;
 }
 .ac__dot--due { background: var(--color-danger-500); }
 .ac__dot--warn { background: oklch(0.68 0.14 75); }
 .ac__dot--info { background: var(--color-success-500); }
 .ac__who {
+  flex: 0 0 150px;
   font-weight: 600;
   color: var(--color-ink);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ac__what {
-  color: var(--color-muted);
+  flex: 1;
   min-width: 0;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ac__status {
+  font-style: normal;
+  color: var(--color-muted-soft);
+  margin-left: 4px;
+}
+.ac__when {
+  flex-shrink: 0;
+  width: 92px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--color-accent-strong, #a8842c);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ac__when--none {
+  color: var(--color-muted-soft);
+  font-weight: 500;
+}
+@media (max-width: 560px) {
+  .ac__who { flex-basis: 108px; }
+  .ac__when { width: 74px; }
 }
 .ac__more {
   font-size: 11.5px;

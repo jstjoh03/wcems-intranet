@@ -142,7 +142,7 @@ const today = () => new Date().toISOString().slice(0, 10)
         </span>
         <span class="fps__lbl">{{ ph.label }}</span>
         <span class="fps__meta">
-          <template v-if="rowByKey.get(ph.key)?.ftoName">FTO {{ rowByKey.get(ph.key)!.ftoName }}</template>
+          <template v-if="!ph.noFto && rowByKey.get(ph.key)?.ftoName">FTO {{ rowByKey.get(ph.key)!.ftoName }}</template>
           <template v-else>{{ ph.hint }}</template>
         </span>
         <span v-if="stateFor(ph.key) === 'current'" class="fps__now">
@@ -155,8 +155,11 @@ const today = () => new Date().toISOString().slice(0, 10)
     </div>
 
     <div v-if="open && openDef && editable" class="fps__editor">
-      <span class="fps__editor-title">Phase {{ openDef.no }} — {{ openDef.label }}</span>
-      <label class="fps__field">
+      <span class="fps__editor-title">
+        Phase {{ openDef.no }} — {{ openDef.label }}
+        <template v-if="openDef.noFto"> · run by the Clinical Department, no FTO assigned</template>
+      </span>
+      <label v-if="!openDef.noFto" class="fps__field">
         <span>FTO for this phase</span>
         <select v-model="draft.ftoUserId">
           <option value="">— unassigned —</option>

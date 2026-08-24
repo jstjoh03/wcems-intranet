@@ -153,12 +153,14 @@ export interface FtepProgramPhase {
   no: number
   label: string
   hint: string
+  /** Run by the Clinical Department — no FTO is assigned. */
+  noFto?: boolean
 }
 
 export const FTEP_PROGRAM_PHASES: Record<'P1C_P1' | 'P1_P2', FtepProgramPhase[]> = {
   /* P1C → P1 (90-day cap) */
   P1C_P1: [
-    { key: 'phase0', no: 0, label: 'NEOP Academy', hint: '4 days' },
+    { key: 'phase0', no: 0, label: 'NEOP Academy', hint: 'Clinical Department · 4 days', noFto: true },
     { key: 'phase1', no: 1, label: 'EMT Orientation', hint: '1 tour' },
     { key: 'phase2', no: 2, label: 'Clinical Integration', hint: '2 tours' },
     { key: 'phase3', no: 3, label: 'Partner Phase', hint: '4 tours' },
