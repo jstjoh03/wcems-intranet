@@ -159,6 +159,25 @@ const routes: RouteRecordRaw[] = [
     name: 'clinical-development',
     component: () => import('@/views/ClinicalDevelopmentView.vue'),
   },
+  /* ── Redesigned Clinical Development section (phase 1) ───────────
+     Soft-launched: reachable by URL for board viewers while the
+     legacy board above stays in the nav. Views redirect non-viewers
+     to /clinical-development; RLS enforces server-side. */
+  {
+    path: '/clinical',
+    name: 'clinical-home',
+    component: () => import('@/views/clinical/ClinicalHomeView.vue'),
+  },
+  {
+    path: '/clinical/people',
+    name: 'clinical-people',
+    component: () => import('@/views/clinical/ClinicalPeopleView.vue'),
+  },
+  {
+    path: '/clinical/people/:id',
+    name: 'clinical-file',
+    component: () => import('@/views/clinical/ClinicalFileView.vue'),
+  },
   /* Skills Day: adaptive — station runner + live board for
      evaluators (admins/supervisors/FTOs/grants), own results for
      candidates. RLS enforces the write rules server-side. */

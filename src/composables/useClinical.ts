@@ -1,0 +1,208 @@
+import { computed } from 'vue'
+import { usePipeline } from '@/composables/usePipeline'
+import {
+  activeTransitionFor,
+  jurisprudenceDue,
+  requirementStatus,
+} from '@/constants/pipelineGates'
+import type { PipelinePerson, PipelineRequirement } from '@/types'
+
+/**
+ * Shared scoping + rollups for the redesigned Clinical Development
+ * section (/clinical). Wraps usePipeline with the clinical-file rule
+ * (cert level "N/A" — office staff without clinical requirements —
+ * are excluded) and the attention/coming-up computations the hub,
+ * roster, and file pages all share.
+ */
+
+export interface AttentionItem {
+  person: PipelinePerson
+  detail: string
+  severity: 'due' | 'warn' | 'info'
+}
+
+export interface UpcomingItem {
+  person: PipelinePerson | null
+  when: string // ISO date
+  detail: string
+}
+
+const DAY = 86_400_000
+
+export function useClinical() {
+  const pipeline = usePipeline()
+  const { people, requirements, completionsFor, gatesFor } = pipeline
+
+  /** Everyone with a clinical file — active people with a clinical cert. */
+  const clinicalPeople = computed<PipelinePerson[]>(() =>
+    people.value.filter(
+      (p) => p.active && p.record.certLevel && p.record.certLevel !== 'N/A',
+    ),
+  )
+
+  function personById(userId: string): PipelinePerson | null {
+    return clinicalPeople.value.find((p) => p.userId === userId) ?? null
+  }
+
+  function licDays(p: PipelinePerson): number | null {
+    const exp = p.record.txLicenseExpiresAt
+    if (!exp) return null
+    return Math.ceil((new Date(`${exp}T00:00:00`).getTime() - Date.now()) / DAY)
+  }
+
+  /** Requirements that apply to this person's level (or that they have
+   *  a completion for anyway — voluntarily tracked extras). */
+  function requirementsFor(p: PipelinePerson): PipelineRequirement[] {
+    const comps = completionsFor(p.userId)
+    return requirements.value.filter((r) => {
+      if (!r.active) return false
+      if (r.requiredLevels.length === 0)
+        return comps.some((c) => c.requirementId === r.id)
+      return !!p.record.certLevel && r.requiredLevels.includes(p.record.certLevel)
+    })
+  }
+
+  /** Required-for-level items with nothing on file. */
+  function missingRequired(p: PipelinePerson): PipelineRequirement[] {
+    if (p.record.pending) return []
+    const comps = completionsFor(p.userId)
+    return requirements.value.filter(
+      (r) =>
+        r.active &&
+        r.requiredLevels.length > 0 &&
+        !!p.record.certLevel &&
+        r.requiredLevels.includes(p.record.certLevel) &&
+        !comps.some((c) => c.requirementId === r.id),
+    )
+  }
+
+  /** Everything needing action for one person (file page + rollups). */
+  function attentionFor(p: PipelinePerson): AttentionItem[] {
+    const items: AttentionItem[] = []
+    const lic = licDays(p)
+    if (lic !== null && lic < 0)
+      items.push({ person: p, detail: `TX license expired ${-lic}d ago`, severity: 'due' })
+    else if (lic !== null && lic <= 90)
+      items.push({ person: p, detail: `TX license expires in ${lic}d`, severity: lic <= 30 ? 'due' : 'warn' })
+
+    const missing = missingRequired(p)
+    if (missing.length)
+      items.push({
+        person: p,
+        detail: `${missing.map((m) => m.name).join(', ')} — no card on file`,
+        severity: 'due',
+      })
+
+    for (const req of requirementsFor(p)) {
+      const st = requirementStatus(req, completionsFor(p.userId), p.record)
+      if (!st.latest) continue
+      if (st.state === 'due')
+        items.push({ person: p, detail: `${req.name} — expired/due`, severity: 'due' })
+      else if (st.state === 'expiring')
+        items.push({ person: p, detail: `${req.name} — expires ${st.dueAt}`, severity: 'warn' })
+    }
+
+    if (!p.record.pending && jurisprudenceDue(p.record))
+      items.push({ person: p, detail: 'TX jurisprudence not on file for this cycle', severity: 'due' })
+
+    const t = p.record.workingTargetAt
+    if (p.record.workingPhase && t && new Date(`${t}T00:00:00`).getTime() < Date.now())
+      items.push({ person: p, detail: `Phase target ${t} passed — follow up`, severity: 'warn' })
+
+    return items
+  }
+
+  const attentionAll = computed<AttentionItem[]>(() =>
+    clinicalPeople.value.flatMap((p) => attentionFor(p)),
+  )
+
+  /** People counted once, however many items they have. */
+  const attentionPeopleCount = computed(
+    () => new Set(attentionAll.value.map((i) => i.person.userId)).size,
+  )
+
+  const inPipeline = computed(() =>
+    clinicalPeople.value.filter((p) => activeTransitionFor(p.record) !== null),
+  )
+
+  const missingCertPeople = computed(() =>
+    clinicalPeople.value.filter((p) => missingRequired(p).length > 0),
+  )
+
+  /** Next-90-day horizon: expirations and phase targets, soonest first. */
+  const comingUp = computed<UpcomingItem[]>(() => {
+    const out: UpcomingItem[] = []
+    const horizon = Date.now() + 90 * DAY
+    for (const p of clinicalPeople.value) {
+      const exp = p.record.txLicenseExpiresAt
+      if (exp) {
+        const t = new Date(`${exp}T00:00:00`).getTime()
+        if (t > Date.now() && t < horizon)
+          out.push({ person: p, when: exp, detail: `${p.fullName} — TX license expires` })
+      }
+      for (const req of requirementsFor(p)) {
+        const st = requirementStatus(req, completionsFor(p.userId), p.record)
+        if (st.state === 'expiring' && st.dueAt)
+          out.push({ person: p, when: st.dueAt, detail: `${p.fullName} — ${req.name} expires` })
+      }
+      const target = p.record.workingTargetAt
+      if (p.record.workingPhase && target) {
+        const t = new Date(`${target}T00:00:00`).getTime()
+        if (t > Date.now() && t < horizon)
+          out.push({ person: p, when: target, detail: `${p.fullName} — phase target` })
+      }
+    }
+    return out.sort((a, b) => a.when.localeCompare(b.when)).slice(0, 8)
+  })
+
+  /** One roster-row status chip per person. */
+  function statusChip(p: PipelinePerson): { text: string; kind: 'navy' | 'ok' | 'hold' } {
+    if (p.record.pending) return { text: 'NEOP · pending', kind: 'hold' }
+    const transition = activeTransitionFor(p.record)
+    if (transition) {
+      const labels: Record<string, string> = {
+        NEOP: 'NEOP',
+        P1C_P1: 'P1C → P1',
+        P1_P2: 'P1 → P2',
+        P1_P2_LEGACY: 'P1 → P2 · Legacy',
+        P2_P3: 'P2 → P3',
+        AEMT: 'AEMT upgrade',
+      }
+      return { text: labels[transition] ?? transition, kind: 'navy' }
+    }
+    return { text: 'Credentialed', kind: 'ok' }
+  }
+
+  /** Primary attention chip for the roster row (worst first). */
+  function attentionChip(p: PipelinePerson): { text: string; severity: 'due' | 'warn' } | null {
+    const items = attentionFor(p)
+    const due = items.find((i) => i.severity === 'due')
+    if (due) {
+      const missing = missingRequired(p)
+      if (missing.length > 1) return { text: `${missing.length} certs missing`, severity: 'due' }
+      return { text: due.detail.length > 34 ? `${due.detail.slice(0, 32)}…` : due.detail, severity: 'due' }
+    }
+    const warn = items.find((i) => i.severity === 'warn')
+    if (warn)
+      return { text: warn.detail.length > 34 ? `${warn.detail.slice(0, 32)}…` : warn.detail, severity: 'warn' }
+    return null
+  }
+
+  return {
+    ...pipeline,
+    clinicalPeople,
+    personById,
+    licDays,
+    requirementsFor,
+    missingRequired,
+    attentionFor,
+    attentionAll,
+    attentionPeopleCount,
+    inPipeline,
+    missingCertPeople,
+    comingUp,
+    statusChip,
+    attentionChip,
+    gatesFor,
+  }
+}
