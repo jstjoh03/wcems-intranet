@@ -70,10 +70,12 @@ async function ftepPdf(reportId: string, mode: 'view' | 'download' = 'download')
   }
 }
 
+/* Full files are clinical-only (Justin, 2026-08-24): supervisors/FTOs
+   work from the FTEP page; crew have My Progress. */
 watch(
-  [ready, canViewBoard],
-  ([r, ok]) => {
-    if (r && !ok) router.replace('/clinical-development')
+  [ready, canEdit, canViewBoard],
+  ([r, edit, board]) => {
+    if (r && !edit) router.replace(board ? '/clinical/ftep' : '/clinical-development')
   },
   { immediate: true },
 )

@@ -29,6 +29,7 @@ import {
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
+import { useClinicalAccess } from '@/composables/useClinicalAccess'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import Avatar from '@/components/primitives/Avatar.vue'
 
@@ -40,6 +41,7 @@ const auth = useAuthStore()
 /* Same catalog the desktop Systems dropdown shows — ESO, Aladtec,
    Paycom, and the rest, admin-managed via Manage Quick Links. */
 const { links: systemLinks } = useQuickLinks()
+const { clinicalNav } = useClinicalAccess()
 
 /* "On this page" anchors only make sense on the dashboard — every
    other route has its own content and no #section hashes. */
@@ -96,13 +98,9 @@ const pages = computed<NavItem[]>(() => [
   { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },
   { label: 'Training Library', to: '/training/recordings', icon: Film },
   { label: 'Required Training', to: '/training/required', icon: ShieldCheck },
-  /* Adaptive route: board for supervisors/editors/FTOs, own progress
-     for crew — the label just follows role. */
-  {
-    label: auth.isSupervisor ? 'Clinical Development' : 'My Progress',
-    to: '/clinical-development',
-    icon: TrendingUp,
-  },
+  /* Role-targeted: editors → the full Clinical Development section,
+     supervisors/FTOs → FTEP, crew → their own progress. */
+  { label: clinicalNav.value.label, to: clinicalNav.value.to, icon: TrendingUp },
   { label: 'Skills Day', to: '/skills', icon: ShieldCheck },
   { label: 'Policies', to: '/policies', icon: FileText },
   { label: 'Employee Directory', to: '/directory', icon: Contact },

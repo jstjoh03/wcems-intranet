@@ -1,12 +1,16 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { ChevronRight } from 'lucide-vue-next'
+import { usePipeline } from '@/composables/usePipeline'
 
 /**
  * Section chrome for the redesigned Clinical Development area
  * (/clinical): breadcrumb + section nav. More areas (FTEP,
  * Evaluations, Resources, Settings) join as their phases ship —
- * only built pages are listed, no dead links.
+ * only built pages are listed, no dead links. Supervisors/FTOs only
+ * ever land on FTEP, so the Home/Employee Files pills are
+ * editor-only.
  */
 
 defineProps<{
@@ -14,14 +18,25 @@ defineProps<{
 }>()
 
 const route = useRoute()
+const { canEdit } = usePipeline()
 
-const SECTIONS = [
-  { label: 'Home', to: '/clinical', exact: true },
-  { label: 'Employee Files', to: '/clinical/people', exact: false },
-  { label: 'FTEP', to: '/clinical/ftep', exact: false },
-]
+interface Section {
+  label: string
+  to: string
+  exact: boolean
+}
 
-function isOn(s: (typeof SECTIONS)[number]): boolean {
+const sections = computed<Section[]>(() =>
+  canEdit.value
+    ? [
+        { label: 'Home', to: '/clinical', exact: true },
+        { label: 'Employee Files', to: '/clinical/people', exact: false },
+        { label: 'FTEP', to: '/clinical/ftep', exact: false },
+      ]
+    : [{ label: 'FTEP', to: '/clinical/ftep', exact: false }],
+)
+
+function isOn(s: Section): boolean {
   return s.exact ? route.path === s.to : route.path.startsWith(s.to)
 }
 </script>
@@ -39,7 +54,7 @@ function isOn(s: (typeof SECTIONS)[number]): boolean {
     </nav>
     <nav class="cn__sections" aria-label="Clinical Development sections">
       <RouterLink
-        v-for="s in SECTIONS"
+        v-for="s in sections"
         :key="s.to"
         :to="s.to"
         class="cn__pill"

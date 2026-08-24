@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import { GraduationCap, Plus, Users, X } from 'lucide-vue-next'
+import { computed, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { FileText, GraduationCap, Plus, Users, X } from 'lucide-vue-next'
+import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { usePipeline } from '@/composables/usePipeline'
+import { useFtep } from '@/composables/useFtep'
+import { useClinicalDocs, FOLDER_LABELS } from '@/composables/useClinicalDocs'
+import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import {
   activeTransitionFor,
   openGapCount,
@@ -42,6 +47,19 @@ const {
   addEditor,
   removeEditor,
 } = usePipeline()
+
+const router = useRouter()
+
+/* Supervisors/FTOs work from the FTEP page — the full board is a
+   clinical-department surface (Justin, 2026-08-24). Crew stay here on
+   My Progress. */
+watch(
+  [ready, canViewBoard, canEdit],
+  ([r, board, edit]) => {
+    if (r && board && !edit) router.replace('/clinical/ftep')
+  },
+  { immediate: true },
+)
 
 /* ── Stat tiles ─────────────────────────────────────────────────────── */
 
@@ -230,6 +248,68 @@ const myPhaseText = computed(() => {
   if (r.clearedPhase) return `Cleared · ${phaseLabel(r.clearedPhase)}`
   return '—'
 })
+
+/* ── My file (crew): shared documents + my submitted FTEP reports ──
+   RLS already scopes both loads — crew get only their own
+   employee-visible docs and their own submitted reports. */
+
+const clindocs = useClinicalDocs()
+const ftep = useFtep()
+
+const myDocs = computed(() =>
+  myRecord.value ? clindocs.docsFor(myRecord.value.userId) : [],
+)
+const myFtepReports = computed(() =>
+  myRecord.value
+    ? ftep.submittedFor(myRecord.value.userId).sort((a, b) => b.evalDate.localeCompare(a.evalDate))
+    : [],
+)
+
+/* Evaluator names — crew's pipeline load holds only their own row, so
+   look the names up from the directory. */
+const evalNames = ref<Record<string, string>>({})
+watch(
+  myFtepReports,
+  async (rs) => {
+    const missing = [...new Set(rs.map((r) => r.evaluatorId))].filter((id) => !evalNames.value[id])
+    if (!missing.length || auth.usingDevStub) return
+    const { data } = await supabase.from('app_users').select('id, full_name').in('id', missing)
+    for (const u of data ?? []) evalNames.value[u.id as string] = u.full_name as string
+  },
+  { immediate: true },
+)
+
+async function openMyDoc(docId: string) {
+  const d = myDocs.value.find((x) => x.id === docId)
+  if (!d) return
+  const res = await clindocs.openDoc(d)
+  if (res.ok) window.open(res.url, '_blank', 'noopener')
+}
+
+const myPdfBusy = ref<string | null>(null)
+async function viewMyReport(reportId: string) {
+  const r = myFtepReports.value.find((x) => x.id === reportId)
+  if (!r || !myRecord.value || myPdfBusy.value) return
+  myPdfBusy.value = reportId
+  try {
+    const doc = await generateFtepReportPdf({
+      report: r,
+      traineeName: myRecord.value.fullName,
+      evaluatorName: evalNames.value[r.evaluatorId] ?? 'Evaluator',
+    })
+    window.open(doc.output('bloburl'), '_blank', 'noopener')
+  } finally {
+    myPdfBusy.value = null
+  }
+}
+
+function fmtDate(iso: string): string {
+  return new Date(`${iso.slice(0, 10)}T00:00:00`).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
 </script>
 
 <template>
@@ -380,6 +460,52 @@ const myPhaseText = computed(() => {
         </div>
         <div class="cd__me-detail reveal" style="animation-delay: 80ms">
           <PipelinePersonDetail :person="myRecord" />
+        </div>
+
+        <!-- My documents — files clinical has shared with this employee -->
+        <div class="cd__mycard reveal" style="animation-delay: 140ms">
+          <div class="cd__mycard-hd">My documents</div>
+          <button
+            v-for="d in myDocs"
+            :key="d.id"
+            type="button"
+            class="cd__myrow"
+            @click="openMyDoc(d.id)"
+          >
+            <FileText :size="14" :stroke-width="1.9" class="cd__myrow-ic" />
+            <span class="cd__myrow-name">{{ d.name }}</span>
+            <span class="cd__myrow-meta">{{ FOLDER_LABELS[d.folder] }} · {{ fmtDate(d.createdAt) }}</span>
+          </button>
+          <div v-if="myDocs.length === 0" class="cd__myempty">
+            Nothing shared with you yet — documents appear here when the Clinical Department
+            shares them (cert copies, signed forms, completion certificates).
+          </div>
+        </div>
+
+        <!-- My FTEP reports — submitted DORs/ICRs about this employee -->
+        <div class="cd__mycard reveal" style="animation-delay: 200ms">
+          <div class="cd__mycard-hd">My FTEP reports</div>
+          <button
+            v-for="r in myFtepReports"
+            :key="r.id"
+            type="button"
+            class="cd__myrow"
+            :disabled="myPdfBusy === r.id || !!r.payload.legacyManual"
+            @click="viewMyReport(r.id)"
+          >
+            <FileText :size="14" :stroke-width="1.9" class="cd__myrow-ic" />
+            <span class="cd__myrow-name">{{ r.kind.toUpperCase() }} · {{ fmtDate(r.evalDate) }}</span>
+            <span class="cd__myrow-meta">
+              <template v-if="r.payload.legacyManual">call evaluation (Jotform)</template>
+              <template v-else>
+                <template v-if="r.payload.average !== undefined">avg {{ r.payload.average?.toFixed(2) }} · </template>
+                by {{ evalNames[r.evaluatorId] ?? '—' }} · tap to view PDF
+              </template>
+            </span>
+          </button>
+          <div v-if="myFtepReports.length === 0" class="cd__myempty">
+            No submitted evaluations yet — DORs and ICRs your FTO submits will appear here.
+          </div>
         </div>
       </template>
     </template>
@@ -575,6 +701,60 @@ const myPhaseText = computed(() => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 8px;
+}
+
+/* My file cards (crew) */
+.cd__mycard {
+  margin-top: 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+  padding: 14px 18px;
+}
+.cd__mycard-hd {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin-bottom: 6px;
+}
+.cd__myrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--color-line-soft);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+.cd__myrow:last-of-type { border-bottom: none; }
+.cd__myrow:hover:not(:disabled) { background: var(--color-surface-soft); }
+.cd__myrow:disabled { cursor: default; }
+.cd__myrow-ic { color: var(--color-brand-600); flex-shrink: 0; }
+.cd__myrow-name {
+  font-weight: 600;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cd__myrow-meta {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+.cd__myempty {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-muted);
+  padding: 4px 0;
 }
 
 /* My Progress */

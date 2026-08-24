@@ -27,12 +27,12 @@ const {
   comingUp,
 } = useClinical()
 
-/* Crew have their own My Progress on the legacy route; the new section
-   is for board viewers. */
+/* The hub is the clinical department's surface. Supervisors/FTOs get
+   FTEP as their home; crew get My Progress on the legacy route. */
 watch(
-  [ready, canViewBoard],
-  ([r, ok]) => {
-    if (r && !ok) router.replace('/clinical-development')
+  [ready, canEdit, canViewBoard],
+  ([r, edit, board]) => {
+    if (r && !edit) router.replace(board ? '/clinical/ftep' : '/clinical-development')
   },
   { immediate: true },
 )

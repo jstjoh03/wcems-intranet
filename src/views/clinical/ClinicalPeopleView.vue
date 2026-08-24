@@ -17,6 +17,7 @@ const route = useRoute()
 const router = useRouter()
 const {
   ready,
+  canEdit,
   canViewBoard,
   clinicalPeople,
   attentionFor,
@@ -26,10 +27,12 @@ const {
   licDays,
 } = useClinical()
 
+/* Full files are clinical-department territory; supervisors/FTOs get
+   the credential roster on the FTEP page instead. */
 watch(
-  [ready, canViewBoard],
-  ([r, ok]) => {
-    if (r && !ok) router.replace('/clinical-development')
+  [ready, canEdit, canViewBoard],
+  ([r, edit, board]) => {
+    if (r && !edit) router.replace(board ? '/clinical/ftep' : '/clinical-development')
   },
   { immediate: true },
 )

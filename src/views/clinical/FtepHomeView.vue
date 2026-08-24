@@ -7,7 +7,7 @@ import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
-import { activeTransitionFor } from '@/constants/pipelineGates'
+import { activeTransitionFor, gateItemsFor, petitionItemsFor } from '@/constants/pipelineGates'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import type { FtepReport, PipelinePerson } from '@/types'
 
@@ -20,7 +20,7 @@ import type { FtepReport, PipelinePerson } from '@/types'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor, manualRideouts } = useClinical()
+const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor, manualRideouts, gatesFor, statusChip } = useClinical()
 const ftep = useFtep()
 
 watch(
@@ -123,6 +123,30 @@ function statsFor(p: PipelinePerson) {
     track,
   }
 }
+
+/* "What's still needed" — the open credentialing gates for a trainee,
+   read-only, so evaluators can see the remaining requirements without
+   opening the full file (which is clinical-only). */
+const needsOpen = ref<string | null>(null)
+function toggleNeeds(id: string) {
+  needsOpen.value = needsOpen.value === id ? null : id
+}
+function needsFor(p: PipelinePerson) {
+  const rows = gatesFor(p.record.id)
+  const items = gateItemsFor(p.record, rows).filter((i) => i.status !== 'complete' && i.status !== 'na')
+  const pets = petitionItemsFor(p.record, rows).filter((i) => i.status !== 'complete')
+  return { items, pets, count: items.length + pets.length }
+}
+
+/* Credential roster — the informational list supervisors/FTOs get in
+   place of Employee Files: who's credentialed at what level. */
+const rosterQuery = ref('')
+const rosterRows = computed(() => {
+  const q = rosterQuery.value.trim().toLowerCase()
+  return clinicalPeople.value
+    .filter((p) => !q || p.fullName.toLowerCase().includes(q))
+    .sort((a, b) => a.fullName.localeCompare(b.fullName))
+})
 
 /* Legacy manual call-eval recording (until the Jotform webhook). */
 const legacyDialog = ref<PipelinePerson | null>(null)
@@ -252,11 +276,13 @@ async function review(r: FtepReport) {
           <span class="fh__avatar">{{ initials(p.fullName) }}</span>
           <div class="fh__tc">
             <button
+              v-if="canEdit"
               type="button"
               class="fh__tc-name fh__tc-name--link"
               title="Open clinical file"
               @click="router.push(`/clinical/people/${p.userId}`)"
             >{{ p.fullName }}</button>
+            <div v-else class="fh__tc-name">{{ p.fullName }}</div>
             <div class="fh__tc-sub">
               {{ p.record.certLevel }}
               <template v-if="p.record.workingPhase"> · working {{ p.record.workingPhase }}</template>
@@ -294,13 +320,33 @@ async function review(r: FtepReport) {
                   {{ statsFor(p).icrDraft ? 'Resume ICR draft' : 'New Individual Call Report' }}
                 </button>
               </template>
-              <button type="button" @click="router.push(`/clinical/people/${p.userId}`)">
+              <button type="button" @click="toggleNeeds(p.userId)">
+                What's still needed
+              </button>
+              <button v-if="canEdit" type="button" @click="router.push(`/clinical/people/${p.userId}`)">
                 Open credentialing file
               </button>
             </div>
           </div>
           <div v-if="g.key === 'new' && hasPhaseLadder(p)" class="fh__stepper">
             <FtepPhaseStepper :person="p" :editable="canEdit" />
+          </div>
+          <div v-if="needsOpen === p.userId" class="fh__needs">
+            <div class="fh__needs-hd">Still needed to advance</div>
+            <template v-if="needsFor(p).count">
+              <div v-for="i in needsFor(p).items" :key="i.key" class="fh__needs-row">
+                <span class="fh__needs-dot"></span>
+                <span>{{ i.label }}</span>
+                <span v-if="i.hint || i.value" class="fh__needs-hint">{{ i.value ?? i.hint }}</span>
+              </div>
+              <div v-for="i in needsFor(p).pets" :key="i.key" class="fh__needs-row">
+                <span class="fh__needs-dot"></span>
+                <span>Petition signature — {{ i.label }}</span>
+              </div>
+            </template>
+            <div v-else class="fh__needs-row fh__needs-row--done">
+              <Check :size="13" :stroke-width="2.5" /> All tracked requirements complete.
+            </div>
           </div>
         </div>
       </template>
@@ -329,6 +375,30 @@ async function review(r: FtepReport) {
         </div>
         <div v-if="recent.length === 0" class="fh__card-empty">No submitted reports yet.</div>
       </div>
+
+      <!-- Credential roster — informational stand-in for Employee Files
+           (which is clinical-only): who holds what level. -->
+      <template v-if="!canEdit">
+        <div class="fh__sectitle">
+          Credential roster
+          <span class="fh__track-hint">every clinical employee · cert &amp; credential level</span>
+        </div>
+        <div class="fh__card">
+          <input
+            v-model="rosterQuery"
+            type="search"
+            class="fh__roster-search"
+            placeholder="Search by name…"
+          />
+          <div v-for="p in rosterRows" :key="p.userId" class="fh__roster-row">
+            <span class="fh__roster-name">{{ p.fullName }}</span>
+            <span class="fh__roster-cert">{{ p.record.certLevel ?? '—' }}</span>
+            <span class="fh__roster-level">{{ p.record.level ?? '—' }}</span>
+            <span class="fh__roster-chip" :class="`fh__roster-chip--${statusChip(p).kind}`">{{ statusChip(p).text }}</span>
+          </div>
+          <div v-if="rosterRows.length === 0" class="fh__card-empty">No one matches that search.</div>
+        </div>
+      </template>
 
       <!-- Legacy call-eval dialog -->
       <div v-if="legacyDialog" class="fh__overlay" @click.self="legacyDialog = null">
@@ -422,6 +492,102 @@ async function review(r: FtepReport) {
   flex-basis: 100%;
   border-top: 1px solid var(--color-line-soft);
   padding-top: 6px;
+}
+.fh__needs {
+  flex-basis: 100%;
+  border-top: 1px solid var(--color-line-soft);
+  padding-top: 8px;
+}
+.fh__needs-hd {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin-bottom: 4px;
+}
+.fh__needs-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12.5px;
+  color: var(--color-ink-soft);
+}
+.fh__needs-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-warning-500, oklch(0.68 0.14 75));
+}
+.fh__needs-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-muted-soft);
+  font-variant-numeric: tabular-nums;
+}
+.fh__needs-row--done {
+  color: var(--color-success-500);
+  font-weight: 600;
+}
+.fh__roster-search {
+  width: 100%;
+  max-width: 320px;
+  margin-bottom: 8px;
+  padding: 7px 11px;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  font-size: 13px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.fh__roster-search:focus {
+  outline: none;
+  border-color: var(--color-accent-600);
+}
+.fh__roster-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--color-line-soft);
+  font-size: 12.5px;
+}
+.fh__roster-row:last-of-type {
+  border-bottom: none;
+}
+.fh__roster-name {
+  flex: 0 0 190px;
+  font-weight: 600;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fh__roster-cert {
+  flex: 0 0 76px;
+  color: var(--color-muted);
+}
+.fh__roster-level {
+  flex: 0 0 60px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+}
+.fh__roster-chip {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.fh__roster-chip--ok { background: var(--color-success-50); color: var(--color-success-500); }
+.fh__roster-chip--navy { background: oklch(0.93 0.02 250); color: var(--color-brand-700); }
+.fh__roster-chip--hold { background: var(--color-warning-50); color: oklch(0.5 0.12 75); }
+@media (max-width: 560px) {
+  .fh__roster-name { flex-basis: 130px; }
+  .fh__roster-cert { flex-basis: 60px; }
 }
 .fh__tc-sub { font-size: 11.5px; color: var(--color-muted); margin-top: 1px; }
 .fh__draftnote {

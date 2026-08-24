@@ -25,7 +25,7 @@ const props = defineProps<{
   person: PipelinePerson
 }>()
 
-const { gatesFor, requirements, completionsFor } = usePipeline()
+const { gatesFor, requirements, completionsFor, canEdit } = usePipeline()
 
 const record = computed(() => props.person.record)
 const transition = computed(() => activeTransitionFor(record.value))
@@ -117,10 +117,15 @@ function fmt(iso: string | null): string {
         <div class="pd__fact"><span class="pd__ic" :class="{ 'pd__ic--ok': !!record.workingStartedAt }">{{ record.workingStartedAt ? '✓' : '·' }}</span><span class="pd__fk">Phase started</span><span class="pd__fv">{{ fmt(record.workingStartedAt) }}</span></div>
         <div v-if="record.txLicenseNumber" class="pd__fact"><span class="pd__ic pd__ic--ok">✓</span><span class="pd__fk">TX license #</span><span class="pd__fv">{{ record.txLicenseNumber }}</span></div>
 
-        <div v-if="record.coverageNote" class="pd__note"><b>Coverage impact:</b> {{ record.coverageNote }}</div>
-        <div v-if="record.blockerNote" class="pd__note pd__note--bad"><b>Blocker:</b> {{ record.blockerNote }}</div>
-        <div v-if="record.pipActive && record.pipReason" class="pd__note pd__note--bad"><b>PIP:</b> {{ record.pipReason }}</div>
-        <div v-if="record.notes" class="pd__note"><b>Notes:</b> {{ record.notes }}</div>
+        <!-- Notes are clinical-department-only (Justin, 2026-08-24) —
+             hidden from supervisors, FTOs, and the employee's own
+             My Progress view alike. -->
+        <template v-if="canEdit">
+          <div v-if="record.coverageNote" class="pd__note"><b>Coverage impact:</b> {{ record.coverageNote }}</div>
+          <div v-if="record.blockerNote" class="pd__note pd__note--bad"><b>Blocker:</b> {{ record.blockerNote }}</div>
+          <div v-if="record.pipActive && record.pipReason" class="pd__note pd__note--bad"><b>PIP:</b> {{ record.pipReason }}</div>
+          <div v-if="record.notes" class="pd__note"><b>Notes:</b> {{ record.notes }}</div>
+        </template>
       </div>
     </div>
   </div>
