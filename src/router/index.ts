@@ -184,6 +184,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/clinical/FtepHomeView.vue'),
   },
   {
+    path: '/clinical/submissions',
+    name: 'clinical-submissions',
+    component: () => import('@/views/clinical/FtepSubmissionsView.vue'),
+  },
+  {
     path: '/clinical/ftep/:kind(dor|icr)/:traineeId',
     name: 'clinical-ftep-report',
     component: () => import('@/views/clinical/FtepReportView.vue'),

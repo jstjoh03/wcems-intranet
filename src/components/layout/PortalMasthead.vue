@@ -66,9 +66,10 @@ const nav = computed<NavItem[]>(() => [
       { label: 'Training Library', to: '/training/recordings' },
       { label: 'Required Training', to: '/training/required' },
       /* Role-targeted: editors → the full Clinical Development section,
-         supervisors/FTOs → FTEP, crew → their own progress. */
+         supervisors/FTOs → FTEP, crew → their own progress. Skills Day
+         moved off the menu (Justin, 2026-08-24) — it lives as a card on
+         the Training page for evaluators. */
       { label: clinicalNav.value.label, to: clinicalNav.value.to },
-      { label: 'Skills Day', to: '/skills' },
     ],
   },
   { label: 'Policies', to: '/policies', match: '/policies' },

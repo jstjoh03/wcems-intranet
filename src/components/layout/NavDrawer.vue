@@ -99,9 +99,9 @@ const pages = computed<NavItem[]>(() => [
   { label: 'Training Library', to: '/training/recordings', icon: Film },
   { label: 'Required Training', to: '/training/required', icon: ShieldCheck },
   /* Role-targeted: editors → the full Clinical Development section,
-     supervisors/FTOs → FTEP, crew → their own progress. */
+     supervisors/FTOs → FTEP, crew → their own progress. Skills Day
+     moved off the menu — evaluators reach it from the Training page. */
   { label: clinicalNav.value.label, to: clinicalNav.value.to, icon: TrendingUp },
-  { label: 'Skills Day', to: '/skills', icon: ShieldCheck },
   { label: 'Policies', to: '/policies', icon: FileText },
   { label: 'Employee Directory', to: '/directory', icon: Contact },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },

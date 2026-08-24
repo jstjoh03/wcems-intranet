@@ -10,11 +10,20 @@ import {
 } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import { useTraining } from '@/composables/useTraining'
+import { useAuthStore } from '@/stores/auth'
+import { useClinicalAccess } from '@/composables/useClinicalAccess'
 import { parseDateOnly } from '@/utils/date'
 
 const REGISTER_URL = 'https://www.wallercountyems.com/internaleducation'
 
 const { events, loading, lastFetchedAt, errorMessage, refresh } = useTraining()
+
+/* Skills Day entry point — moved here off the main menu. Shown to the
+   people who run stations (supervisors, FTOs, clinical); grant-only
+   evaluators can still reach /skills directly. */
+const auth = useAuthStore()
+const { isFto, isEditor } = useClinicalAccess()
+const showSkillsDay = computed(() => auth.isSupervisor || isFto.value || isEditor.value)
 
 function freshnessLabel(d: Date | null): string {
   if (!d) return ''
@@ -106,6 +115,14 @@ function fillColor(filled: number, total: number) {
         minutes.
       </p>
     </header>
+
+    <RouterLink v-if="showSkillsDay" to="/skills" class="training__skillsday">
+      <span class="training__skillsday-body">
+        <b>Skills Day</b>
+        <span>Evaluation stations — check-offs, live board, recheck queue, and trainee packets.</span>
+      </span>
+      <span class="training__skillsday-go">Open →</span>
+    </RouterLink>
 
     <div v-if="errorMessage" class="training__empty">
       <GraduationCap :size="22" :stroke-width="1.5" class="training__empty-icon" />
@@ -240,6 +257,47 @@ function fillColor(filled: number, total: number) {
   margin-top: 6px;
   font-size: 13px;
   color: var(--color-muted);
+}
+
+/* Skills Day entry card (evaluators only) */
+.training__skillsday {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 13px 18px;
+  border-radius: 13px;
+  background: var(--color-brand-950);
+  color: #fff;
+  text-decoration: none;
+  border: 1px solid var(--color-brand-800);
+  box-shadow: var(--shadow-sm);
+}
+.training__skillsday:hover {
+  box-shadow: var(--shadow-md, var(--shadow-sm));
+}
+.training__skillsday-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.training__skillsday-body b {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 17px;
+  color: var(--color-accent-on-dark, #e8cb72);
+}
+.training__skillsday-body span {
+  font-size: 12px;
+  color: oklch(0.85 0.01 250);
+}
+.training__skillsday-go {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--color-accent-on-dark, #e8cb72);
 }
 
 .training__toolbar {

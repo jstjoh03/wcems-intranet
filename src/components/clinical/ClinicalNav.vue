@@ -32,6 +32,7 @@ const sections = computed<Section[]>(() =>
         { label: 'Home', to: '/clinical', exact: true },
         { label: 'Employee Files', to: '/clinical/people', exact: false },
         { label: 'FTEP', to: '/clinical/ftep', exact: false },
+        { label: 'Submissions', to: '/clinical/submissions', exact: false },
       ]
     : [{ label: 'FTEP', to: '/clinical/ftep', exact: false }],
 )

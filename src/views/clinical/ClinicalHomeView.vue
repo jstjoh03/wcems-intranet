@@ -5,6 +5,7 @@ import { Search, ArrowRight, CalendarDays, AlertTriangle, ChevronRight, Upload }
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import PipelineActionCenter from '@/components/pipeline/PipelineActionCenter.vue'
 import { useClinical } from '@/composables/useClinical'
+import { useFtep } from '@/composables/useFtep'
 import type { PipelinePerson } from '@/types'
 
 /**
@@ -26,6 +27,11 @@ const {
   missingCertPeople,
   comingUp,
 } = useClinical()
+
+const ftep = useFtep()
+const submittedCount = computed(
+  () => ftep.reports.value.filter((r) => r.status === 'submitted').length,
+)
 
 /* The hub is the clinical department's surface. Supervisors/FTOs get
    FTEP as their home; crew get My Progress on the legacy route. */
@@ -137,6 +143,11 @@ function fmtWhen(iso: string): string {
         <button type="button" class="ch__tile ch__tile--warn" @click="goFiltered('missing')">
           <span class="ch__tile-n">{{ missingCertPeople.length }}</span>
           <span class="ch__tile-l">Missing a required cert</span>
+          <ArrowRight :size="15" :stroke-width="2" class="ch__tile-go" />
+        </button>
+        <button type="button" class="ch__tile" @click="router.push('/clinical/submissions')">
+          <span class="ch__tile-n">{{ submittedCount }}</span>
+          <span class="ch__tile-l">FTEP submissions</span>
           <ArrowRight :size="15" :stroke-width="2" class="ch__tile-go" />
         </button>
       </div>
@@ -297,7 +308,7 @@ function fmtWhen(iso: string): string {
   margin: 22px 0;
 }
 @media (min-width: 900px) {
-  .ch__tiles { grid-template-columns: repeat(4, 1fr); }
+  .ch__tiles { grid-template-columns: repeat(5, 1fr); }
 }
 .ch__tile {
   position: relative;
