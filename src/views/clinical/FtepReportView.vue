@@ -185,6 +185,10 @@ const ratedCount = computed(() => cats.value.filter((c) => ratings[String(c.no)]
 const average = computed(() => ratingAverage(ratings))
 const nrtFlagged = computed(() => Object.values(ratings).some((r) => r.nrt))
 const hasOne = computed(() => Object.values(ratings).some((r) => r.score === 1))
+/** Any category scored below 3 — gates the ICR explanation card. */
+const hasBelowThree = computed(() =>
+  Object.values(ratings).some((r) => typeof r.score === 'number' && r.score < 3),
+)
 const commentGaps = computed(() => missingComments(kind.value, ratings))
 
 const blockers = computed<string[]>(() => {
@@ -414,7 +418,7 @@ function fmtSaveState(): string {
           </label>
         </div>
       </div>
-      <div v-else class="fr__card">
+      <div v-else-if="hasBelowThree" class="fr__card">
         <div class="fr__card-hd">Explanation — required for any category below 3</div>
         <div class="fr__narratives">
           <textarea v-model="explanation" rows="4" placeholder="Cite the category number, what happened on the call, and the standard expected."></textarea>
