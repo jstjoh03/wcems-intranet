@@ -178,6 +178,16 @@ const routes: RouteRecordRaw[] = [
     name: 'clinical-file',
     component: () => import('@/views/clinical/ClinicalFileView.vue'),
   },
+  {
+    path: '/clinical/ftep',
+    name: 'clinical-ftep',
+    component: () => import('@/views/clinical/FtepHomeView.vue'),
+  },
+  {
+    path: '/clinical/ftep/:kind(dor|icr)/:traineeId',
+    name: 'clinical-ftep-report',
+    component: () => import('@/views/clinical/FtepReportView.vue'),
+  },
   /* Skills Day: adaptive — station runner + live board for
      evaluators (admins/supervisors/FTOs/grants), own results for
      candidates. RLS enforces the write rules server-side. */

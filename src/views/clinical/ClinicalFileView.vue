@@ -6,6 +6,8 @@ import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
 import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
 import { useClinical } from '@/composables/useClinical'
+import { useFtep } from '@/composables/useFtep'
+import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import { useSkillsDay } from '@/composables/useSkillsDay'
 import { requirementStatus, activeTransitionFor } from '@/constants/pipelineGates'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
@@ -37,6 +39,28 @@ const {
 } = useClinical()
 
 const skills = useSkillsDay()
+const ftep = useFtep()
+
+const myReports = computed(() => {
+  const p = person.value
+  if (!p) return []
+  return ftep.submittedFor(p.userId).sort((a, b) => b.evalDate.localeCompare(a.evalDate))
+})
+const ftepPdfBusy = ref<string | null>(null)
+async function ftepPdf(reportId: string) {
+  const p = person.value
+  const r = ftep.reportById(reportId)
+  if (!p || !r || ftepPdfBusy.value) return
+  ftepPdfBusy.value = reportId
+  try {
+    const evaluator = personById(r.evaluatorId)?.fullName ?? 'Evaluator'
+    const doc = await generateFtepReportPdf({ report: r, traineeName: p.fullName, evaluatorName: evaluator })
+    const safe = p.fullName.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+    doc.save(`WCEMS_${r.kind.toUpperCase()}_${safe}_${r.evalDate}.pdf`)
+  } finally {
+    ftepPdfBusy.value = null
+  }
+}
 
 watch(
   [ready, canViewBoard],
@@ -321,6 +345,35 @@ function fmtDateTime(iso: string): string {
       <section v-if="tab === 'pipe'">
         <div v-if="activeTransitionFor(person.record) === null && person.record.clearedPhase === 'FinalRelease'" class="cf__note">
           Credentialed — no active progression. The gate record below is the historical credentialing path.
+        </div>
+        <div v-if="myReports.length || activeTransitionFor(person.record)" class="cf__card">
+          <div class="cf__card-hd">FTEP records
+            <span style="margin-left:auto;font-size:11.5px;color:var(--color-muted);font-weight:600">auto-computed from submitted reports</span>
+          </div>
+          <div class="cf__gate">
+            <span class="cf__tick" :class="(ftep.dorRollingAverage(person.userId) ?? 0) >= 3.5 ? 'cf__tick--ok' : 'cf__tick--open'">
+              <Check v-if="(ftep.dorRollingAverage(person.userId) ?? 0) >= 3.5" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+            </span>
+            <span class="cf__gate-l">Daily Observation Reports</span>
+            <span class="cf__gate-v">{{ ftep.submittedFor(person.userId, 'dor').length }} filed · rolling avg {{ ftep.dorRollingAverage(person.userId)?.toFixed(2) ?? '—' }} (floor 3.5)</span>
+          </div>
+          <div class="cf__gate">
+            <span class="cf__tick" :class="ftep.icrCount(person.userId) >= 10 ? 'cf__tick--ok' : 'cf__tick--open'">
+              <Check v-if="ftep.icrCount(person.userId) >= 10" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+            </span>
+            <span class="cf__gate-l">Scored ALS call evaluations (ICRs)</span>
+            <span class="cf__gate-v">{{ ftep.icrCount(person.userId) }} of 10 required</span>
+          </div>
+          <div v-for="r in myReports.slice(0, 8)" :key="r.id" class="cf__gate cf__gate--hist">
+            <span class="cf__gate-l">{{ r.kind.toUpperCase() }} · {{ fmt(r.evalDate) }}</span>
+            <span class="cf__gate-v">
+              <template v-if="r.payload.average !== undefined">avg {{ r.payload.average?.toFixed(2) }} · </template>
+              <b v-if="r.payload.nrtFlagged" class="cf__late">NRT · </b>by {{ personById(r.evaluatorId)?.fullName ?? '—' }}
+            </span>
+            <button type="button" class="cf__mini" :disabled="ftepPdfBusy === r.id" @click="ftepPdf(r.id)">
+              <Download :size="12" :stroke-width="2" /> PDF
+            </button>
+          </div>
         </div>
         <PipelinePersonDetail :person="person" />
       </section>

@@ -453,6 +453,23 @@ export interface PipelineGateProgress {
 }
 
 /** Pipeline record joined with roster identity for the board. */
+/* ── FTEP reports (DOR / ICR) ─────────────────────────────────────── */
+export interface FtepReport {
+  id: string
+  kind: 'dor' | 'icr'
+  traineeId: string
+  evaluatorId: string
+  status: 'draft' | 'submitted'
+  evalDate: string
+  payload: import('@/constants/ftepForms').FtepPayload
+  traineeSignature: string | null
+  evaluatorSignature: string | null
+  submittedAt: string | null
+  reviewedBy: string | null
+  reviewedAt: string | null
+  updatedAt: string
+}
+
 export interface PipelinePerson {
   record: PipelineRecord
   userId: string

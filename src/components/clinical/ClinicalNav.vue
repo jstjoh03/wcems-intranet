@@ -18,6 +18,7 @@ const route = useRoute()
 const SECTIONS = [
   { label: 'Home', to: '/clinical', exact: true },
   { label: 'Employee Files', to: '/clinical/people', exact: false },
+  { label: 'FTEP', to: '/clinical/ftep', exact: false },
 ]
 
 function isOn(s: (typeof SECTIONS)[number]): boolean {
