@@ -19,7 +19,7 @@ import type { FtepReport, PipelinePerson } from '@/types'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, canViewBoard, canEdit, clinicalPeople } = useClinical()
+const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor } = useClinical()
 const ftep = useFtep()
 
 watch(
@@ -30,15 +30,34 @@ watch(
   { immediate: true },
 )
 
-/** Trainees = anyone actively progressing. "Mine" (ftoName matches the
- *  signed-in evaluator) sort first. */
-const trainees = computed<PipelinePerson[]>(() => {
+/** Trainees grouped by FTEP track — the programs carry different
+ *  requirements and must read as distinct. "Mine" (ftoName matches
+ *  the signed-in evaluator) sort first within each group. */
+const TRACK_ORDER = ['new', 'legacy', 'rideup', 'aemt'] as const
+const TRACK_HINTS: Record<string, string> = {
+  new: 'DOR average over the final four (floor 3.5) · 10 scored ALS ICRs',
+  legacy: 'DOR average over the final two · 10 call evaluations (narrative format)',
+  rideup: '4 × 12-hr rideouts with a supervisor · skills check-offs · protocol test — no ICR count',
+  aemt: 'Skills checklists · medication administration sign-off · protocol exam',
+}
+const groups = computed(() => {
   const myLast = (auth.appUser?.lastName ?? '').toLowerCase()
   const mine = (p: PipelinePerson) =>
     !!myLast && (p.record.ftoName ?? '').toLowerCase().includes(myLast) ? 0 : 1
-  return clinicalPeople.value
-    .filter((p) => activeTransitionFor(p.record) !== null)
-    .sort((a, b) => mine(a) - mine(b) || a.fullName.localeCompare(b.fullName))
+  const all = clinicalPeople.value.filter((p) => activeTransitionFor(p.record) !== null)
+  return TRACK_ORDER.map((key) => ({
+    key,
+    label: {
+      new: 'FTEP — new program',
+      legacy: 'Legacy track',
+      rideup: 'Ride-up supervisor (P2 → P3)',
+      aemt: 'AEMT upgrade',
+    }[key],
+    hint: TRACK_HINTS[key],
+    people: all
+      .filter((p) => ftepTrackFor(p)?.key === key)
+      .sort((a, b) => mine(a) - mine(b) || a.fullName.localeCompare(b.fullName)),
+  })).filter((g) => g.people.length > 0)
 })
 
 const openMenu = ref<string | null>(null)
@@ -66,13 +85,25 @@ function fmt(iso: string | null): string {
 }
 
 function statsFor(p: PipelinePerson) {
+  const track = ftepTrackFor(p)
+  const dors = ftep.submittedFor(p.userId, 'dor').length
+  const cells: { v: string; l: string }[] = []
+  if (track?.key === 'rideup') {
+    cells.push({ v: `${dors}/${track.rideoutTarget}`, l: 'rideouts' })
+    cells.push({ v: fmt(ftep.lastDorDate(p.userId)), l: 'last rideout' })
+  } else {
+    cells.push({ v: String(dors), l: 'DORs' })
+    const avg = ftep.dorRollingAverage(p.userId, track?.dorWindow ?? 4)
+    cells.push({ v: avg !== null ? avg.toFixed(2) : '—', l: `avg (last ${track?.dorWindow ?? 4})` })
+    if (track?.icrTarget)
+      cells.push({ v: `${ftep.icrCount(p.userId)}/${track.icrTarget}`, l: track.icrLabel })
+    cells.push({ v: fmt(ftep.lastDorDate(p.userId)), l: 'last DOR' })
+  }
   return {
-    dors: ftep.submittedFor(p.userId, 'dor').length,
-    avg: ftep.dorRollingAverage(p.userId),
-    icrs: ftep.icrCount(p.userId),
-    lastDor: ftep.lastDorDate(p.userId),
+    cells,
     dorDraft: ftep.myDraft(p.userId, 'dor'),
     icrDraft: ftep.myDraft(p.userId, 'icr'),
+    track,
   }
 }
 
@@ -149,49 +180,55 @@ async function review(r: FtepReport) {
         </div>
       </div>
 
-      <!-- Trainees -->
-      <div class="fh__sectitle">Trainees in the program</div>
-      <div v-for="p in trainees" :key="p.userId" class="fh__trainee">
-        <span class="fh__avatar">{{ initials(p.fullName) }}</span>
-        <div class="fh__tc">
-          <div class="fh__tc-name">{{ p.fullName }}</div>
-          <div class="fh__tc-sub">
-            {{ p.record.certLevel }}
-            <template v-if="p.record.workingPhase"> · working {{ p.record.workingPhase }}</template>
-            <template v-if="p.record.ftoName"> · FTO: {{ p.record.ftoName }}</template>
+      <!-- Trainees, grouped by track -->
+      <template v-for="g in groups" :key="g.key">
+        <div class="fh__sectitle">
+          <span class="fh__track" :class="`fh__track--${g.key}`">{{ g.label }}</span>
+          <span class="fh__track-hint">{{ g.hint }}</span>
+        </div>
+        <div v-for="p in g.people" :key="p.userId" class="fh__trainee" :class="`fh__trainee--${g.key}`">
+          <span class="fh__avatar">{{ initials(p.fullName) }}</span>
+          <div class="fh__tc">
+            <div class="fh__tc-name">{{ p.fullName }}</div>
+            <div class="fh__tc-sub">
+              {{ p.record.certLevel }}
+              <template v-if="p.record.workingPhase"> · working {{ p.record.workingPhase }}</template>
+              <template v-if="p.record.ftoName"> · FTO: {{ p.record.ftoName }}</template>
+            </div>
+            <div v-if="statsFor(p).dorDraft || statsFor(p).icrDraft" class="fh__draftnote">
+              <FileText :size="12" :stroke-width="2" />
+              <template v-if="statsFor(p).dorDraft">DOR draft in progress — resume from Actions.</template>
+              <template v-else>ICR draft in progress — resume from Actions.</template>
+            </div>
           </div>
-          <div v-if="statsFor(p).dorDraft || statsFor(p).icrDraft" class="fh__draftnote">
-            <FileText :size="12" :stroke-width="2" />
-            <template v-if="statsFor(p).dorDraft">DOR draft in progress — resume from Actions.</template>
-            <template v-else>ICR draft in progress — resume from Actions.</template>
+          <div class="fh__stats">
+            <span v-for="c in statsFor(p).cells" :key="c.l"><b>{{ c.v }}</b>{{ c.l }}</span>
+          </div>
+          <div class="fh__menuwrap">
+            <button type="button" class="fh__actions" @click.stop="toggleMenu(p.userId)">
+              Actions <ChevronDown :size="13" :stroke-width="2" />
+            </button>
+            <div v-if="openMenu === p.userId" class="fh__menu">
+              <button type="button" @click="startReport(p, 'dor')">
+                <FileText :size="13" :stroke-width="2" />
+                {{ statsFor(p).dorDraft
+                  ? (g.key === 'rideup' ? 'Resume rideout DOR draft' : 'Resume DOR draft')
+                  : (g.key === 'rideup' ? 'New rideout DOR (12-hr supervisor)' : 'New Daily Observation Report') }}
+              </button>
+              <button v-if="statsFor(p).track?.icrTarget" type="button" @click="startReport(p, 'icr')">
+                <FileText :size="13" :stroke-width="2" />
+                {{ statsFor(p).icrDraft
+                  ? 'Resume ICR draft'
+                  : (g.key === 'legacy' ? 'New call evaluation (ICR)' : 'New Individual Call Report') }}
+              </button>
+              <button type="button" @click="router.push(`/clinical/people/${p.userId}`)">
+                Open credentialing file
+              </button>
+            </div>
           </div>
         </div>
-        <div class="fh__stats">
-          <span><b>{{ statsFor(p).dors }}</b>DORs</span>
-          <span><b>{{ statsFor(p).avg !== null ? statsFor(p).avg!.toFixed(2) : '—' }}</b>avg (last 4)</span>
-          <span><b>{{ statsFor(p).icrs }}/10</b>ICRs</span>
-          <span><b>{{ fmt(statsFor(p).lastDor) }}</b>last DOR</span>
-        </div>
-        <div class="fh__menuwrap">
-          <button type="button" class="fh__actions" @click.stop="toggleMenu(p.userId)">
-            Actions <ChevronDown :size="13" :stroke-width="2" />
-          </button>
-          <div v-if="openMenu === p.userId" class="fh__menu">
-            <button type="button" @click="startReport(p, 'dor')">
-              <FileText :size="13" :stroke-width="2" />
-              {{ statsFor(p).dorDraft ? 'Resume DOR draft' : 'New Daily Observation Report' }}
-            </button>
-            <button type="button" @click="startReport(p, 'icr')">
-              <FileText :size="13" :stroke-width="2" />
-              {{ statsFor(p).icrDraft ? 'Resume ICR draft' : 'New Individual Call Report' }}
-            </button>
-            <button type="button" @click="router.push(`/clinical/people/${p.userId}`)">
-              Open credentialing file
-            </button>
-          </div>
-        </div>
-      </div>
-      <div v-if="trainees.length === 0" class="fh__empty">No trainees actively progressing.</div>
+      </template>
+      <div v-if="groups.length === 0" class="fh__empty">No trainees actively progressing.</div>
 
       <!-- Recent reports -->
       <div class="fh__sectitle">{{ canEdit ? 'Recent reports — all evaluators' : 'My recent reports' }}</div>
@@ -227,6 +264,20 @@ async function review(r: FtepReport) {
   color: var(--color-muted); margin: 22px 0 12px;
 }
 .fh__sectitle::after { content: ''; flex: 1; height: 1px; background: var(--color-line); }
+.fh__track {
+  display: inline-flex; align-items: center;
+  border-radius: 999px; padding: 4px 12px;
+  font-size: 10.5px; font-weight: 800; letter-spacing: 0.07em;
+}
+.fh__track--new { background: oklch(0.93 0.02 260); color: oklch(0.35 0.07 260); }
+.fh__track--legacy { background: oklch(0.96 0.05 80); color: oklch(0.45 0.1 75); }
+.fh__track--rideup { background: oklch(0.95 0.06 90); color: var(--color-accent-strong, #a8842c); border: 1px solid oklch(0.85 0.07 90); }
+.fh__track--aemt { background: var(--color-surface-soft); color: var(--color-muted); }
+.fh__track-hint { font-weight: 500; letter-spacing: 0.01em; text-transform: none; font-size: 11px; color: var(--color-muted); }
+.fh__trainee--legacy { border-left: 3px solid oklch(0.75 0.09 80); }
+.fh__trainee--rideup { border-left: 3px solid var(--color-accent-strong, #a8842c); }
+.fh__trainee--new { border-left: 3px solid oklch(0.55 0.07 260); }
+.fh__trainee--aemt { border-left: 3px solid var(--color-line); }
 
 .fh__queue {
   background: oklch(0.97 0.03 80); border: 1px solid oklch(0.86 0.06 80);

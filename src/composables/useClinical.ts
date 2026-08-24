@@ -155,6 +155,36 @@ export function useClinical() {
     return out.sort((a, b) => a.when.localeCompare(b.when)).slice(0, 8)
   })
 
+  /** Which FTEP track a trainee is on — the programs carry different
+   *  forms and requirements and must read as visually distinct
+   *  (Justin, 2026-08-20):
+   *   new    — current FTEP program: DOR avg over final 4 (floor 3.5),
+   *            10 scored ALS ICRs
+   *   legacy — pre-program P2 candidates: DOR avg over final 2,
+   *            10 call evals in narrative format
+   *   rideup — P2→P3 ride-up supervisor (Dodd, Cates): 4 × 12-hr
+   *            supervisor rideouts + skills check-offs — NO ICR count
+   *   aemt   — AEMT upgrade: skills checklists + med sign-off
+   */
+  function ftepTrackFor(p: PipelinePerson): {
+    key: 'new' | 'legacy' | 'rideup' | 'aemt'
+    label: string
+    dorWindow: number
+    icrTarget: number | null
+    icrLabel: string
+    rideoutTarget: number | null
+  } | null {
+    const t = activeTransitionFor(p.record)
+    if (!t) return null
+    if (t === 'P1_P2_LEGACY')
+      return { key: 'legacy', label: 'Legacy track', dorWindow: 2, icrTarget: 10, icrLabel: 'call evals', rideoutTarget: null }
+    if (t === 'P2_P3')
+      return { key: 'rideup', label: 'Ride-up supervisor', dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: 4 }
+    if (t === 'AEMT')
+      return { key: 'aemt', label: 'AEMT upgrade', dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: null }
+    return { key: 'new', label: 'FTEP — new program', dorWindow: 4, icrTarget: 10, icrLabel: 'ICRs', rideoutTarget: null }
+  }
+
   /** One roster-row status chip per person. */
   function statusChip(p: PipelinePerson): { text: string; kind: 'navy' | 'ok' | 'hold' } {
     if (p.record.pending) return { text: 'NEOP · pending', kind: 'hold' }
@@ -203,6 +233,7 @@ export function useClinical() {
     comingUp,
     statusChip,
     attentionChip,
+    ftepTrackFor,
     gatesFor,
   }
 }

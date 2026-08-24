@@ -6,6 +6,7 @@ import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
 import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
 import { useClinical } from '@/composables/useClinical'
+import { useClinicalDocs, FOLDER_LABELS, type ClinicalDocFolder } from '@/composables/useClinicalDocs'
 import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import { useSkillsDay } from '@/composables/useSkillsDay'
@@ -36,6 +37,7 @@ const {
   addCompletion,
   removeCompletion,
   requirements,
+  ftepTrackFor,
 } = useClinical()
 
 const skills = useSkillsDay()
@@ -74,14 +76,19 @@ const person = computed<PipelinePerson | null>(() =>
   personById(String(route.params.id)),
 )
 
-type TabKey = 'ovr' | 'pipe' | 'skills' | 'cred' | 'comp'
+type TabKey = 'ovr' | 'pipe' | 'skills' | 'cred' | 'comp' | 'docs'
 const tab = ref<TabKey>('ovr')
 const tabs = computed<{ key: TabKey; label: string }[]>(() => [
   { key: 'ovr', label: 'Overview' },
   ...(canEdit.value ? [{ key: 'cred', label: 'Credentials' } as const] : []),
   { key: 'pipe', label: 'Pipeline' },
   { key: 'skills', label: 'Skills' },
-  ...(canEdit.value ? [{ key: 'comp', label: 'Compliance' } as const] : []),
+  ...(canEdit.value
+    ? [
+        { key: 'docs', label: 'Documents' } as const,
+        { key: 'comp', label: 'Compliance' } as const,
+      ]
+    : []),
 ])
 
 const editing = ref(false)
@@ -204,6 +211,77 @@ async function downloadPacket() {
   } finally {
     packetBusy.value = false
   }
+}
+
+/* ── Documents tab ───────────────────────────────────────────────── */
+const clindocs = useClinicalDocs()
+const docFolder = ref<ClinicalDocFolder | 'all'>('all')
+const FOLDERS: ClinicalDocFolder[] = ['signed_forms', 'certs', 'counseling', 'generated', 'other']
+
+const myDocs = computed(() => {
+  const p = person.value
+  if (!p) return []
+  const all = clindocs.docsFor(p.userId)
+  return docFolder.value === 'all' ? all : all.filter((d) => d.folder === docFolder.value)
+})
+function folderCount(f: ClinicalDocFolder): number {
+  const p = person.value
+  return p ? clindocs.docsFor(p.userId).filter((d) => d.folder === f).length : 0
+}
+
+const uploadFolder = ref<ClinicalDocFolder>('signed_forms')
+const uploadVisible = ref(false)
+const uploadBusy = ref(false)
+const uploadError = ref<string | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+async function onUploadPick(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  const p = person.value
+  if (!file || !p || uploadBusy.value) return
+  uploadBusy.value = true
+  uploadError.value = null
+  const res = await clindocs.upload({
+    userId: p.userId,
+    folder: uploadFolder.value,
+    file,
+    employeeVisible: uploadVisible.value,
+  })
+  uploadBusy.value = false
+  if (!res.ok) uploadError.value = res.error
+}
+
+async function viewDoc(docId: string) {
+  const d = myDocs.value.find((x) => x.id === docId)
+  if (!d) return
+  const res = await clindocs.openDoc(d)
+  if (res.ok) window.open(res.url, '_blank', 'noopener')
+}
+
+async function toggleDocVisibility(docId: string) {
+  const d = myDocs.value.find((x) => x.id === docId)
+  if (!d) return
+  await clindocs.setVisibility(d, !d.employeeVisible)
+}
+
+const docDeleteArm = ref<string | null>(null)
+async function deleteDoc(docId: string) {
+  if (docDeleteArm.value !== docId) {
+    docDeleteArm.value = docId
+    setTimeout(() => { if (docDeleteArm.value === docId) docDeleteArm.value = null }, 4000)
+    return
+  }
+  const d = myDocs.value.find((x) => x.id === docId)
+  docDeleteArm.value = null
+  if (d) await clindocs.remove(d)
+}
+
+function fmtSize(bytes: number | null): string {
+  if (!bytes) return ''
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function fmtDateTime(iso: string): string {
@@ -348,22 +426,39 @@ function fmtDateTime(iso: string): string {
         </div>
         <div v-if="myReports.length || activeTransitionFor(person.record)" class="cf__card">
           <div class="cf__card-hd">FTEP records
+            <span v-if="ftepTrackFor(person)" class="cf__trackchip" :class="`cf__trackchip--${ftepTrackFor(person)!.key}`">{{ ftepTrackFor(person)!.label }}</span>
             <span style="margin-left:auto;font-size:11.5px;color:var(--color-muted);font-weight:600">auto-computed from submitted reports</span>
           </div>
-          <div class="cf__gate">
-            <span class="cf__tick" :class="(ftep.dorRollingAverage(person.userId) ?? 0) >= 3.5 ? 'cf__tick--ok' : 'cf__tick--open'">
-              <Check v-if="(ftep.dorRollingAverage(person.userId) ?? 0) >= 3.5" :size="12" :stroke-width="2.5" /><template v-else>·</template>
-            </span>
-            <span class="cf__gate-l">Daily Observation Reports</span>
-            <span class="cf__gate-v">{{ ftep.submittedFor(person.userId, 'dor').length }} filed · rolling avg {{ ftep.dorRollingAverage(person.userId)?.toFixed(2) ?? '—' }} (floor 3.5)</span>
-          </div>
-          <div class="cf__gate">
-            <span class="cf__tick" :class="ftep.icrCount(person.userId) >= 10 ? 'cf__tick--ok' : 'cf__tick--open'">
-              <Check v-if="ftep.icrCount(person.userId) >= 10" :size="12" :stroke-width="2.5" /><template v-else>·</template>
-            </span>
-            <span class="cf__gate-l">Scored ALS call evaluations (ICRs)</span>
-            <span class="cf__gate-v">{{ ftep.icrCount(person.userId) }} of 10 required</span>
-          </div>
+          <template v-if="ftepTrackFor(person)?.key === 'rideup'">
+            <div class="cf__gate">
+              <span class="cf__tick" :class="ftep.submittedFor(person.userId, 'dor').length >= 4 ? 'cf__tick--ok' : 'cf__tick--open'">
+                <Check v-if="ftep.submittedFor(person.userId, 'dor').length >= 4" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+              </span>
+              <span class="cf__gate-l">12-hr supervisor rideouts (DORs)</span>
+              <span class="cf__gate-v">{{ ftep.submittedFor(person.userId, 'dor').length }} of 4 required</span>
+            </div>
+            <div class="cf__gate">
+              <span class="cf__tick cf__tick--open">·</span>
+              <span class="cf__gate-l">Skills check-offs</span>
+              <span class="cf__gate-v">check-off set to be built — no ICR requirement on this track</span>
+            </div>
+          </template>
+          <template v-else>
+            <div class="cf__gate">
+              <span class="cf__tick" :class="(ftep.dorRollingAverage(person.userId, ftepTrackFor(person)?.dorWindow ?? 4) ?? 0) >= 3.5 ? 'cf__tick--ok' : 'cf__tick--open'">
+                <Check v-if="(ftep.dorRollingAverage(person.userId, ftepTrackFor(person)?.dorWindow ?? 4) ?? 0) >= 3.5" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+              </span>
+              <span class="cf__gate-l">Daily Observation Reports</span>
+              <span class="cf__gate-v">{{ ftep.submittedFor(person.userId, 'dor').length }} filed · avg last {{ ftepTrackFor(person)?.dorWindow ?? 4 }}: {{ ftep.dorRollingAverage(person.userId, ftepTrackFor(person)?.dorWindow ?? 4)?.toFixed(2) ?? '—' }} (floor 3.5)</span>
+            </div>
+            <div v-if="ftepTrackFor(person)?.icrTarget" class="cf__gate">
+              <span class="cf__tick" :class="ftep.icrCount(person.userId) >= ftepTrackFor(person)!.icrTarget! ? 'cf__tick--ok' : 'cf__tick--open'">
+                <Check v-if="ftep.icrCount(person.userId) >= ftepTrackFor(person)!.icrTarget!" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+              </span>
+              <span class="cf__gate-l">{{ ftepTrackFor(person)?.key === 'legacy' ? 'Call evaluations (narrative format)' : 'Scored ALS call evaluations (ICRs)' }}</span>
+              <span class="cf__gate-v">{{ ftep.icrCount(person.userId) }} of {{ ftepTrackFor(person)!.icrTarget }} required</span>
+            </div>
+          </template>
           <div v-for="r in myReports.slice(0, 8)" :key="r.id" class="cf__gate cf__gate--hist">
             <span class="cf__gate-l">{{ r.kind.toUpperCase() }} · {{ fmt(r.evalDate) }}</span>
             <span class="cf__gate-v">
@@ -400,6 +495,82 @@ function fmtDateTime(iso: string): string {
             </span>
           </div>
           <div v-if="myEvals.length === 0" class="cf__card-empty">No skills evaluations on record.</div>
+        </div>
+      </section>
+
+      <!-- Documents (editors) -->
+      <section v-if="tab === 'docs' && canEdit">
+        <div class="cf__folderbar">
+          <button
+            type="button"
+            class="cf__folder"
+            :class="{ 'cf__folder--on': docFolder === 'all' }"
+            @click="docFolder = 'all'"
+          >All <span class="cf__folder-n">{{ person ? clindocs.docsFor(person.userId).length : 0 }}</span></button>
+          <button
+            v-for="f in FOLDERS"
+            :key="f"
+            type="button"
+            class="cf__folder"
+            :class="{ 'cf__folder--on': docFolder === f }"
+            @click="docFolder = f"
+          >{{ FOLDER_LABELS[f] }} <span class="cf__folder-n">{{ folderCount(f) }}</span></button>
+        </div>
+
+        <div class="cf__card">
+          <div v-for="d in myDocs" :key="d.id" class="cf__docrow">
+            <span class="cf__doc-ico"><FileText :size="16" :stroke-width="1.9" /></span>
+            <div class="cf__doc-id">
+              <button type="button" class="cf__doc-name" @click="viewDoc(d.id)">{{ d.name }}</button>
+              <div class="cf__doc-meta">
+                {{ FOLDER_LABELS[d.folder] }} · {{ fmt(d.createdAt.slice(0, 10)) }}
+                · by {{ personById(d.uploadedBy ?? '')?.fullName ?? 'staff' }}
+                <template v-if="d.sizeBytes"> · {{ fmtSize(d.sizeBytes) }}</template>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="cf__vis"
+              :class="{ 'cf__vis--emp': d.employeeVisible, 'cf__vis--locked': d.folder === 'counseling' }"
+              :disabled="d.folder === 'counseling'"
+              :title="d.folder === 'counseling' ? 'Counseling documents are always staff-only' : 'Toggle whether the employee can see this document'"
+              @click="toggleDocVisibility(d.id)"
+            >{{ d.folder === 'counseling' ? 'Staff only · locked' : d.employeeVisible ? 'Visible to employee' : 'Clinical staff only' }}</button>
+            <button type="button" class="cf__mini" @click="viewDoc(d.id)">
+              <Download :size="12" :stroke-width="2" /> View
+            </button>
+            <button
+              type="button"
+              class="cf__mini cf__mini--danger"
+              @click="deleteDoc(d.id)"
+            >
+              <Trash2 :size="12" :stroke-width="2" />
+              {{ docDeleteArm === d.id ? 'Confirm?' : '' }}
+            </button>
+          </div>
+          <div v-if="myDocs.length === 0" class="cf__card-empty">Nothing in this folder yet.</div>
+        </div>
+
+        <div class="cf__uploader">
+          <div class="cf__uploader-row">
+            <label>Folder
+              <select v-model="uploadFolder">
+                <option v-for="f in FOLDERS" :key="f" :value="f">{{ FOLDER_LABELS[f] }}</option>
+              </select>
+            </label>
+            <label v-if="uploadFolder !== 'counseling'" class="cf__uploader-check">
+              <input v-model="uploadVisible" type="checkbox" />
+              Visible to employee
+            </label>
+            <span v-else class="cf__uploader-locknote">Counseling uploads are always staff-only.</span>
+            <button type="button" class="cf__mini cf__mini--primary" :disabled="uploadBusy" @click="fileInput?.click()">
+              <Plus :size="12" :stroke-width="2.5" />
+              {{ uploadBusy ? 'Uploading…' : 'Upload scanned document' }}
+            </button>
+            <input ref="fileInput" type="file" accept=".pdf,image/*" style="display:none" @change="onUploadPick" />
+          </div>
+          <div v-if="uploadError" class="cf__uploader-err">{{ uploadError }}</div>
+          <div class="cf__uploader-hint">PDFs and photos (a phone picture of a signed paper form works). Files live in private storage — only clinical editors and, when you flip the toggle, the employee can open them.</div>
         </div>
       </section>
 
@@ -725,6 +896,76 @@ function fmtDateTime(iso: string): string {
   margin: 20px 0 10px;
 }
 .cf__sectitle::after { content: ''; flex: 1; height: 1px; background: var(--color-line); }
+.cf__folderbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.cf__folder {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--font-sans); font-size: 12.5px; font-weight: 600;
+  color: var(--color-ink-soft); background: var(--color-surface);
+  border: 1px solid var(--color-line); border-radius: 10px; padding: 8px 14px;
+  cursor: pointer; transition: border-color 140ms var(--ease-out), background 140ms var(--ease-out);
+}
+.cf__folder:hover { border-color: oklch(0.85 0.06 90); }
+.cf__folder--on { border-color: var(--color-accent-strong, #a8842c); background: oklch(0.98 0.015 90); color: var(--color-ink); }
+.cf__folder-n { font-size: 11px; color: var(--color-muted); font-variant-numeric: tabular-nums; }
+.cf__docrow {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 11px 16px; border-bottom: 1px solid var(--color-surface-soft);
+}
+.cf__docrow:last-child { border-bottom: none; }
+.cf__doc-ico {
+  width: 34px; height: 34px; border-radius: 9px;
+  background: var(--color-surface-soft); color: var(--color-ink-soft);
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.cf__doc-id { flex: 1; min-width: 200px; }
+.cf__doc-name {
+  font-family: var(--font-sans); font-size: 13.5px; font-weight: 600;
+  color: var(--color-ink); background: none; border: none; padding: 0;
+  cursor: pointer; text-align: left;
+}
+.cf__doc-name:hover { color: var(--color-brand-800); text-decoration: underline; text-underline-offset: 3px; }
+.cf__doc-meta { font-size: 11.5px; color: var(--color-muted); margin-top: 2px; }
+.cf__vis {
+  font-family: var(--font-sans); font-size: 10.5px; font-weight: 700;
+  border-radius: 999px; padding: 4px 11px; cursor: pointer;
+  border: 1px solid var(--color-line); background: var(--color-surface-soft);
+  color: var(--color-muted); transition: all 140ms var(--ease-out);
+}
+.cf__vis--emp { background: oklch(0.94 0.03 260); color: oklch(0.35 0.07 260); border-color: oklch(0.85 0.05 260); }
+.cf__vis--locked { opacity: 0.6; cursor: not-allowed; }
+.cf__uploader {
+  border: 1.5px dashed var(--color-line); border-radius: 14px;
+  padding: 14px 16px; margin-top: 14px; background: var(--color-surface);
+}
+.cf__uploader-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.cf__uploader-row label {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600; color: var(--color-muted);
+}
+.cf__uploader-row select {
+  font-family: var(--font-sans); font-size: 12.5px; color: var(--color-ink);
+  border: 1.5px solid var(--color-line); border-radius: 8px; padding: 6px 9px;
+  background: var(--color-surface);
+}
+.cf__uploader-check input { accent-color: var(--color-brand-600); }
+.cf__uploader-locknote { font-size: 11.5px; color: var(--color-muted); font-style: italic; }
+.cf__uploader-err { margin-top: 8px; font-size: 12.5px; color: oklch(0.5 0.16 30); }
+.cf__uploader-hint { margin-top: 8px; font-size: 11.5px; line-height: 1.5; color: var(--color-muted); }
+
+.cf__trackchip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.cf__trackchip--new { background: oklch(0.93 0.02 260); color: oklch(0.35 0.07 260); }
+.cf__trackchip--legacy { background: oklch(0.96 0.05 80); color: oklch(0.45 0.1 75); }
+.cf__trackchip--rideup { background: oklch(0.95 0.06 90); color: var(--color-accent-strong, #a8842c); }
+.cf__trackchip--aemt { background: var(--color-surface-soft); color: var(--color-muted); }
 .cf__note {
   background: oklch(0.98 0.015 90);
   border: 1px solid oklch(0.88 0.05 90);
