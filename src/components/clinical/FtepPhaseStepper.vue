@@ -67,7 +67,7 @@ const ftos = computed(() =>
 /* ── Editor popover ────────────────────────────────────────────────── */
 
 const open = ref<string | null>(null)
-const draft = reactive({ ftoUserId: '', startedAt: '', completedAt: '' })
+const draft = reactive({ ftoUserId: '', startedAt: '', completedAt: '', note: '' })
 const busy = ref(false)
 const error = ref<string | null>(null)
 
@@ -81,6 +81,7 @@ function toggle(key: string) {
   draft.ftoUserId = row?.ftoUserId ?? ''
   draft.startedAt = row?.startedAt ?? ''
   draft.completedAt = row?.completedAt ?? ''
+  draft.note = row?.note ?? ''
   error.value = null
   open.value = key
 }
@@ -98,6 +99,7 @@ async function save() {
       ftoName: fto?.fullName ?? null,
       startedAt: draft.startedAt || null,
       completedAt: draft.completedAt || null,
+      note: draft.note.trim() || null,
     })
     open.value = null
   } catch (err) {
@@ -151,6 +153,11 @@ const today = () => new Date().toISOString().slice(0, 10)
         <span v-else-if="stateFor(ph.key) === 'done'" class="fps__done-date">
           {{ fmt(rowByKey.get(ph.key)!.completedAt) }}
         </span>
+        <span
+          v-if="rowByKey.get(ph.key)?.note"
+          class="fps__note"
+          :title="rowByKey.get(ph.key)!.note ?? ''"
+        >{{ rowByKey.get(ph.key)!.note }}</span>
       </component>
     </div>
 
@@ -179,6 +186,10 @@ const today = () => new Date().toISOString().slice(0, 10)
           <input v-model="draft.completedAt" type="date" />
           <button v-if="!draft.completedAt" type="button" class="fps__quick" @click="draft.completedAt = today()">today</button>
         </span>
+      </label>
+      <label class="fps__field fps__field--note">
+        <span>Note <em class="fps__field-hint">document exceptions — e.g. "Day 2 with Sarah Reyes"</em></span>
+        <input v-model="draft.note" type="text" maxlength="200" placeholder="One FTO per phase is the standard — note any split here" />
       </label>
       <span class="fps__editor-actions">
         <button type="button" class="fps__btn fps__btn--primary" :disabled="busy" @click="save">
@@ -302,6 +313,31 @@ const today = () => new Date().toISOString().slice(0, 10)
   font-size: 9.5px;
   color: var(--color-success-500);
   font-weight: 600;
+}
+/* Phase exception note — e.g. a split-FTO tour */
+.fps__note {
+  font-size: 9px;
+  font-style: italic;
+  color: var(--color-accent-700);
+  line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fps__field--note {
+  flex: 1;
+  min-width: 240px;
+}
+.fps__field--note input {
+  width: 100%;
+}
+.fps__field-hint {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 9.5px;
+  color: var(--color-muted-soft);
+  margin-left: 4px;
 }
 .fps__editor {
   display: flex;
