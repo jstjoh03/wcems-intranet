@@ -39,8 +39,8 @@ export const DOR_SECTIONS: FtepSection[] = [
     categories: [
       { no: 8, label: 'Acceptance of feedback' },
       { no: 9, label: 'Attitude toward EMS work' },
-      { no: 10, label: 'With patients & families' },
-      { no: 11, label: 'With crews, public safety & hospital staff' },
+      { no: 10, label: 'Attitude with patients & families' },
+      { no: 11, label: 'Attitude with crews, public safety & hospital staff' },
     ],
   },
   {
@@ -125,6 +125,26 @@ export const ICR_SECTIONS: FtepSection[] = [
   },
 ]
 
+/** Uniform tier & phase choices (per the FTEP Program Guide) — a
+ *  dropdown so printed PDFs never depend on FTOs typing them alike. */
+export const TIER_PHASE_OPTIONS = [
+  'P1C · Phase 0 — NEOP Academy',
+  'P1C · Phase 1 — EMT Orientation',
+  'P1C · Phase 2 — Clinical Integration',
+  'P1C · Phase 3 — Partner Phase',
+  'P1C · Phase 4 — Final Evaluation',
+  'P1 · Phase 5 — P2 Development',
+  'P1 · Phase 6 — Ghost Phase',
+  'P1 · Phase 7 — P2 Final Evaluation',
+  'P1 · Legacy P2 track',
+  'P2 · P3 Ride-up (supervisor rideout)',
+  'AEMT upgrade',
+] as const
+
+export const UNIT_OPTIONS = [
+  'M211', 'M221', 'M242', 'M281', 'M231', 'M271', 'M272', 'M206',
+] as const
+
 export type FtepKind = 'dor' | 'icr'
 
 export function sectionsFor(kind: FtepKind): FtepSection[] {
@@ -174,6 +194,10 @@ export interface FtepPayload {
   callLevel?: 'bls' | 'als' | 'als_p2'
   countsToward10?: boolean
   explanation?: string
+  /* Legacy-track call evals recorded manually from Jotform until the
+     webhook lands — no ratings/signatures, just the count + context. */
+  legacyManual?: boolean
+  note?: string
   /* shared */
   ratings?: Record<string, FtepRating>
   /** Mean of numeric scores (N.O. excluded), stamped at submit. */

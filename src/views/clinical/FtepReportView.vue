@@ -13,6 +13,8 @@ import {
   missingComments,
   DOR_SCALE_NOTE,
   ICR_SCALE_NOTE,
+  TIER_PHASE_OPTIONS,
+  UNIT_OPTIONS,
   type FtepKind,
   type FtepRating,
   type FtepPayload,
@@ -43,6 +45,12 @@ const traineeId = computed(() => String(route.params.traineeId))
 const trainee = computed(() => personById(traineeId.value))
 const isDor = computed(() => kind.value === 'dor')
 const title = computed(() => (isDor.value ? 'Daily Observation Report' : 'Individual Call Report'))
+/** "P1C" from "P1C · Phase 2 — Clinical Integration". */
+const tierShort = computed(() => meta.tierPhase.split('·')[0]?.trim() || null)
+const titleFor = computed(() => {
+  if (!trainee.value) return title.value
+  return `${title.value} — ${trainee.value.fullName}${tierShort.value ? `, ${tierShort.value}` : ''}`
+})
 
 watch(
   [ready, canViewBoard],
@@ -257,9 +265,10 @@ function fmtSaveState(): string {
 
       <header class="fr__head">
         <div>
-          <h1 class="display fr__title">{{ title }}</h1>
+          <h1 class="display fr__title">{{ titleFor }}</h1>
           <div class="fr__sub">
-            {{ trainee.fullName }} · {{ trainee.record.certLevel }}
+            {{ trainee.record.certLevel }}
+            <template v-if="meta.tierPhase"> · {{ meta.tierPhase }}</template>
             <template v-if="isDor"> · one per training day · reviewed with the trainee before end of shift</template>
             <template v-else> · one per evaluated call · reviewed with the trainee</template>
           </div>
@@ -280,15 +289,25 @@ function fmtSaveState(): string {
         <div class="fr__card-hd">{{ isDor ? 'Shift data' : 'Call data' }}</div>
         <div class="fr__meta">
           <label>Date <input v-model="evalDate" type="date" /></label>
-          <label>Tier &amp; phase <input v-model="meta.tierPhase" type="text" placeholder="e.g. P1C · Phase 2" /></label>
-          <label>Unit <input v-model="meta.unit" type="text" placeholder="M281" /></label>
+          <label>Tier &amp; phase
+            <select v-model="meta.tierPhase">
+              <option value="" disabled>Select…</option>
+              <option v-for="t in TIER_PHASE_OPTIONS" :key="t" :value="t">{{ t }}</option>
+            </select>
+          </label>
+          <label>Unit
+            <select v-model="meta.unit">
+              <option value="" disabled>Select…</option>
+              <option v-for="u in UNIT_OPTIONS" :key="u" :value="u">{{ u }}</option>
+            </select>
+          </label>
           <template v-if="isDor">
-            <label>Training day # of phase <input v-model="meta.trainingDayNo" type="text" inputmode="numeric" /></label>
-            <label>Calls dispatched <input v-model="shift.dispatched" type="text" inputmode="numeric" /></label>
-            <label>Attended by trainee <input v-model="shift.attended" type="text" inputmode="numeric" /></label>
-            <label>ICRs completed <input v-model="shift.icrs" type="text" inputmode="numeric" /></label>
-            <label>P2-required contacts <input v-model="shift.contacts" type="text" inputmode="numeric" /></label>
-            <label>Scenarios substituted <input v-model="shift.scenarios" type="text" inputmode="numeric" /></label>
+            <label>Training day # of phase <input v-model="meta.trainingDayNo" type="text" inputmode="numeric" placeholder="#" /></label>
+            <label>Number of calls dispatched <input v-model="shift.dispatched" type="text" inputmode="numeric" placeholder="#" /></label>
+            <label>Number attended by trainee <input v-model="shift.attended" type="text" inputmode="numeric" placeholder="#" /></label>
+            <label>Number of ICRs completed <input v-model="shift.icrs" type="text" inputmode="numeric" placeholder="#" /></label>
+            <label>Number of P2-required contacts <input v-model="shift.contacts" type="text" inputmode="numeric" placeholder="#" /></label>
+            <label>Number of scenarios substituted <input v-model="shift.scenarios" type="text" inputmode="numeric" placeholder="#" /></label>
           </template>
           <template v-else>
             <label>Incident # <input v-model="meta.incidentNo" type="text" /></label>
@@ -420,7 +439,7 @@ function fmtSaveState(): string {
       <!-- Sign overlay -->
       <div v-if="signing" class="fr__overlay" @click.self="signing = false">
         <div class="fr__sign">
-          <h2 class="display fr__sign-title">{{ title }} — sign &amp; submit</h2>
+          <h2 class="display fr__sign-title">{{ titleFor }} — sign &amp; submit</h2>
           <p class="fr__sign-sum">
             {{ trainee.fullName }} · {{ evalDate }} ·
             <template v-if="average !== null">shift average {{ average.toFixed(2) }}</template>

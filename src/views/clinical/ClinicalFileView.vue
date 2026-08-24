@@ -49,7 +49,7 @@ const myReports = computed(() => {
   return ftep.submittedFor(p.userId).sort((a, b) => b.evalDate.localeCompare(a.evalDate))
 })
 const ftepPdfBusy = ref<string | null>(null)
-async function ftepPdf(reportId: string) {
+async function ftepPdf(reportId: string, mode: 'view' | 'download' = 'download') {
   const p = person.value
   const r = ftep.reportById(reportId)
   if (!p || !r || ftepPdfBusy.value) return
@@ -57,8 +57,12 @@ async function ftepPdf(reportId: string) {
   try {
     const evaluator = personById(r.evaluatorId)?.fullName ?? 'Evaluator'
     const doc = await generateFtepReportPdf({ report: r, traineeName: p.fullName, evaluatorName: evaluator })
-    const safe = p.fullName.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
-    doc.save(`WCEMS_${r.kind.toUpperCase()}_${safe}_${r.evalDate}.pdf`)
+    if (mode === 'view') {
+      window.open(doc.output('bloburl'), '_blank', 'noopener')
+    } else {
+      const safe = p.fullName.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+      doc.save(`WCEMS_${r.kind.toUpperCase()}_${safe}_${r.evalDate}.pdf`)
+    }
   } finally {
     ftepPdfBusy.value = null
   }
@@ -443,6 +447,15 @@ function fmtDateTime(iso: string): string {
               <span class="cf__gate-v">check-off set to be built — no ICR requirement on this track</span>
             </div>
           </template>
+          <template v-else-if="ftepTrackFor(person)?.key === 'legacy'">
+            <div class="cf__gate">
+              <span class="cf__tick" :class="ftep.icrCount(person.userId) >= 10 ? 'cf__tick--ok' : 'cf__tick--open'">
+                <Check v-if="ftep.icrCount(person.userId) >= 10" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+              </span>
+              <span class="cf__gate-l">Call evaluations (Jotform · narrative format)</span>
+              <span class="cf__gate-v">{{ ftep.icrCount(person.userId) }} of 10 required · DORs stay in Jotform</span>
+            </div>
+          </template>
           <template v-else>
             <div class="cf__gate">
               <span class="cf__tick" :class="(ftep.dorRollingAverage(person.userId, ftepTrackFor(person)?.dorWindow ?? 4) ?? 0) >= 3.5 ? 'cf__tick--ok' : 'cf__tick--open'">
@@ -455,19 +468,30 @@ function fmtDateTime(iso: string): string {
               <span class="cf__tick" :class="ftep.icrCount(person.userId) >= ftepTrackFor(person)!.icrTarget! ? 'cf__tick--ok' : 'cf__tick--open'">
                 <Check v-if="ftep.icrCount(person.userId) >= ftepTrackFor(person)!.icrTarget!" :size="12" :stroke-width="2.5" /><template v-else>·</template>
               </span>
-              <span class="cf__gate-l">{{ ftepTrackFor(person)?.key === 'legacy' ? 'Call evaluations (narrative format)' : 'Scored ALS call evaluations (ICRs)' }}</span>
+              <span class="cf__gate-l">Scored ALS call evaluations (ICRs)</span>
               <span class="cf__gate-v">{{ ftep.icrCount(person.userId) }} of {{ ftepTrackFor(person)!.icrTarget }} required</span>
             </div>
           </template>
           <div v-for="r in myReports.slice(0, 8)" :key="r.id" class="cf__gate cf__gate--hist">
-            <span class="cf__gate-l">{{ r.kind.toUpperCase() }} · {{ fmt(r.evalDate) }}</span>
-            <span class="cf__gate-v">
-              <template v-if="r.payload.average !== undefined">avg {{ r.payload.average?.toFixed(2) }} · </template>
-              <b v-if="r.payload.nrtFlagged" class="cf__late">NRT · </b>by {{ personById(r.evaluatorId)?.fullName ?? '—' }}
-            </span>
-            <button type="button" class="cf__mini" :disabled="ftepPdfBusy === r.id" @click="ftepPdf(r.id)">
-              <Download :size="12" :stroke-width="2" /> PDF
-            </button>
+            <template v-if="r.payload.legacyManual">
+              <span class="cf__gate-l">Call eval (Jotform) · {{ fmt(r.evalDate) }}</span>
+              <span class="cf__gate-v">{{ r.payload.note ?? '' }}<template v-if="r.payload.note"> · </template>recorded by {{ personById(r.evaluatorId)?.fullName ?? '—' }} · original in Documents</span>
+            </template>
+            <template v-else>
+              <button
+                type="button"
+                class="cf__gate-l cf__gate-link"
+                title="Open the report PDF in a new window"
+                @click="ftepPdf(r.id, 'view')"
+              >{{ r.kind.toUpperCase() }} · {{ fmt(r.evalDate) }}</button>
+              <span class="cf__gate-v">
+                <template v-if="r.payload.average !== undefined">avg {{ r.payload.average?.toFixed(2) }} · </template>
+                <b v-if="r.payload.nrtFlagged" class="cf__late">NRT · </b>by {{ personById(r.evaluatorId)?.fullName ?? '—' }}
+              </span>
+              <button type="button" class="cf__mini" :disabled="ftepPdfBusy === r.id" @click="ftepPdf(r.id, 'download')">
+                <Download :size="12" :stroke-width="2" /> PDF
+              </button>
+            </template>
           </div>
         </div>
         <PipelinePersonDetail :person="person" />
@@ -832,6 +856,16 @@ function fmtDateTime(iso: string): string {
 .cf__tick--open { background: var(--color-surface-soft); color: var(--color-muted); border: 1.5px dashed var(--color-line); }
 .cf__tick--warn { background: oklch(0.96 0.05 80); color: oklch(0.48 0.11 75); }
 .cf__gate-l { flex: 1; font-weight: 500; color: var(--color-ink); }
+.cf__gate-link {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.cf__gate-link:hover { color: var(--color-brand-800); text-decoration: underline; text-underline-offset: 3px; }
 .cf__gate-v { font-size: 12px; color: var(--color-muted); text-align: right; font-variant-numeric: tabular-nums; }
 .cf__late { color: oklch(0.45 0.15 30); }
 .cf__soon { color: oklch(0.48 0.11 75); }

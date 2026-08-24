@@ -227,6 +227,35 @@ export function useFtep() {
     return { ok: true }
   }
 
+  /** Legacy-track call eval recorded manually from Jotform (until the
+   *  webhook automates it): a submitted ICR row with no ratings or
+   *  signatures — it exists to drive the x/10 count. */
+  async function recordLegacyCallEval(input: {
+    traineeId: string
+    evalDate: string
+    note?: string
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const uid = auth.appUser?.id
+    if (!uid) return { ok: false, error: 'Sign in first.' }
+    if (!isLive.value) return { ok: true }
+    const { data, error } = await supabase
+      .from('ftep_reports')
+      .insert({
+        kind: 'icr',
+        trainee_id: input.traineeId,
+        evaluator_id: uid,
+        status: 'submitted',
+        eval_date: input.evalDate,
+        payload: { countsToward10: true, legacyManual: true, note: input.note?.trim() || undefined },
+        submitted_at: new Date().toISOString(),
+      })
+      .select(COLUMNS)
+      .single()
+    if (error) return { ok: false, error: error.message }
+    reports.value = [fromRow(data as ReportRow), ...reports.value]
+    return { ok: true }
+  }
+
   /** CDO acknowledgement — clears the "new reports" queue item. */
   async function markReviewed(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
     const uid = auth.appUser?.id
@@ -263,6 +292,7 @@ export function useFtep() {
     lastDorDate,
     saveDraft,
     submitReport,
+    recordLegacyCallEval,
     discardDraft,
     markReviewed,
     unreviewed,

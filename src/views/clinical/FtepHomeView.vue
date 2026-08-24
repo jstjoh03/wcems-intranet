@@ -36,7 +36,7 @@ watch(
 const TRACK_ORDER = ['new', 'legacy', 'rideup', 'aemt'] as const
 const TRACK_HINTS: Record<string, string> = {
   new: 'DOR average over the final four (floor 3.5) · 10 scored ALS ICRs',
-  legacy: 'DOR average over the final two · 10 call evaluations (narrative format)',
+  legacy: '10 call evaluations via Jotform (narrative format) — recorded here manually until the webhook lands · DORs stay in Jotform',
   rideup: '4 × 12-hr rideouts with a supervisor · skills check-offs · protocol test — no ICR count',
   aemt: 'Skills checklists · medication administration sign-off · protocol exam',
 }
@@ -91,6 +91,10 @@ function statsFor(p: PipelinePerson) {
   if (track?.key === 'rideup') {
     cells.push({ v: `${dors}/${track.rideoutTarget}`, l: 'rideouts' })
     cells.push({ v: fmt(ftep.lastDorDate(p.userId)), l: 'last rideout' })
+  } else if (track?.key === 'legacy') {
+    const evals = ftep.submittedFor(p.userId, 'icr').sort((a, b) => b.evalDate.localeCompare(a.evalDate))
+    cells.push({ v: `${ftep.icrCount(p.userId)}/${track.icrTarget}`, l: 'call evals' })
+    cells.push({ v: fmt(evals[0]?.evalDate ?? null), l: 'last call eval' })
   } else {
     cells.push({ v: String(dors), l: 'DORs' })
     const avg = ftep.dorRollingAverage(p.userId, track?.dorWindow ?? 4)
@@ -107,6 +111,35 @@ function statsFor(p: PipelinePerson) {
   }
 }
 
+/* Legacy manual call-eval recording (until the Jotform webhook). */
+const legacyDialog = ref<PipelinePerson | null>(null)
+const legacyDate = ref(new Date().toISOString().slice(0, 10))
+const legacyNote = ref('')
+const legacyBusy = ref(false)
+const legacyError = ref<string | null>(null)
+
+function openLegacyDialog(p: PipelinePerson) {
+  openMenu.value = null
+  legacyDialog.value = p
+  legacyDate.value = new Date().toISOString().slice(0, 10)
+  legacyNote.value = ''
+  legacyError.value = null
+}
+
+async function saveLegacyEval() {
+  if (!legacyDialog.value || legacyBusy.value) return
+  legacyBusy.value = true
+  legacyError.value = null
+  const res = await ftep.recordLegacyCallEval({
+    traineeId: legacyDialog.value.userId,
+    evalDate: legacyDate.value,
+    note: legacyNote.value,
+  })
+  legacyBusy.value = false
+  if (!res.ok) { legacyError.value = res.error; return }
+  legacyDialog.value = null
+}
+
 function nameOf(userId: string): string {
   return clinicalPeople.value.find((p) => p.userId === userId)?.fullName ?? 'Staff'
 }
@@ -120,17 +153,30 @@ const recent = computed<FtepReport[]>(() => {
 })
 
 const pdfBusy = ref<string | null>(null)
+async function makePdf(r: FtepReport) {
+  return generateFtepReportPdf({
+    report: r,
+    traineeName: nameOf(r.traineeId),
+    evaluatorName: nameOf(r.evaluatorId),
+  })
+}
 async function downloadPdf(r: FtepReport) {
   if (pdfBusy.value) return
   pdfBusy.value = r.id
   try {
-    const doc = await generateFtepReportPdf({
-      report: r,
-      traineeName: nameOf(r.traineeId),
-      evaluatorName: nameOf(r.evaluatorId),
-    })
+    const doc = await makePdf(r)
     const safe = nameOf(r.traineeId).replace(/\s+/g, '_').replace(/[^\w-]/g, '')
     doc.save(`WCEMS_${r.kind.toUpperCase()}_${safe}_${r.evalDate}.pdf`)
+  } finally {
+    pdfBusy.value = null
+  }
+}
+async function viewPdf(r: FtepReport) {
+  if (pdfBusy.value) return
+  pdfBusy.value = r.id
+  try {
+    const doc = await makePdf(r)
+    window.open(doc.output('bloburl'), '_blank', 'noopener')
   } finally {
     pdfBusy.value = null
   }
@@ -170,6 +216,9 @@ async function review(r: FtepReport) {
             <b v-if="r.payload.nrtFlagged" class="fh__nrt-flag"> · NRT FLAGGED</b>
           </span>
           <span class="fh__queue-actions">
+            <button type="button" class="fh__mini" :disabled="pdfBusy === r.id" @click="viewPdf(r)">
+              <FileText :size="12" :stroke-width="2" /> View
+            </button>
             <button type="button" class="fh__mini" :disabled="pdfBusy === r.id" @click="downloadPdf(r)">
               <Download :size="12" :stroke-width="2" /> PDF
             </button>
@@ -209,18 +258,24 @@ async function review(r: FtepReport) {
               Actions <ChevronDown :size="13" :stroke-width="2" />
             </button>
             <div v-if="openMenu === p.userId" class="fh__menu">
-              <button type="button" @click="startReport(p, 'dor')">
-                <FileText :size="13" :stroke-width="2" />
-                {{ statsFor(p).dorDraft
-                  ? (g.key === 'rideup' ? 'Resume rideout DOR draft' : 'Resume DOR draft')
-                  : (g.key === 'rideup' ? 'New rideout DOR (12-hr supervisor)' : 'New Daily Observation Report') }}
-              </button>
-              <button v-if="statsFor(p).track?.icrTarget" type="button" @click="startReport(p, 'icr')">
-                <FileText :size="13" :stroke-width="2" />
-                {{ statsFor(p).icrDraft
-                  ? 'Resume ICR draft'
-                  : (g.key === 'legacy' ? 'New call evaluation (ICR)' : 'New Individual Call Report') }}
-              </button>
+              <template v-if="g.key === 'legacy'">
+                <button type="button" @click="openLegacyDialog(p)">
+                  <FileText :size="13" :stroke-width="2" />
+                  Record call evaluation (from Jotform)
+                </button>
+              </template>
+              <template v-else>
+                <button type="button" @click="startReport(p, 'dor')">
+                  <FileText :size="13" :stroke-width="2" />
+                  {{ statsFor(p).dorDraft
+                    ? (g.key === 'rideup' ? 'Resume rideout DOR draft' : 'Resume DOR draft')
+                    : (g.key === 'rideup' ? 'New rideout DOR (12-hr supervisor)' : 'New Daily Observation Report') }}
+                </button>
+                <button v-if="statsFor(p).track?.icrTarget" type="button" @click="startReport(p, 'icr')">
+                  <FileText :size="13" :stroke-width="2" />
+                  {{ statsFor(p).icrDraft ? 'Resume ICR draft' : 'New Individual Call Report' }}
+                </button>
+              </template>
               <button type="button" @click="router.push(`/clinical/people/${p.userId}`)">
                 Open credentialing file
               </button>
@@ -241,11 +296,39 @@ async function review(r: FtepReport) {
             <template v-if="r.payload.average !== undefined"> · avg {{ r.payload.average?.toFixed(2) }}</template>
             <template v-if="r.reviewedAt"> · reviewed</template>
           </span>
-          <button type="button" class="fh__mini" style="margin-left:auto" :disabled="pdfBusy === r.id" @click="downloadPdf(r)">
-            <Download :size="12" :stroke-width="2" /> {{ pdfBusy === r.id ? '…' : 'PDF' }}
-          </button>
+          <span v-if="!r.payload.legacyManual" style="margin-left:auto;display:flex;gap:8px">
+            <button type="button" class="fh__mini" :disabled="pdfBusy === r.id" @click="viewPdf(r)">
+              <FileText :size="12" :stroke-width="2" /> View
+            </button>
+            <button type="button" class="fh__mini" :disabled="pdfBusy === r.id" @click="downloadPdf(r)">
+              <Download :size="12" :stroke-width="2" /> {{ pdfBusy === r.id ? '…' : 'PDF' }}
+            </button>
+          </span>
+          <span v-else style="margin-left:auto;font-size:11px;color:var(--color-muted)">Jotform — original in Documents</span>
         </div>
         <div v-if="recent.length === 0" class="fh__card-empty">No submitted reports yet.</div>
+      </div>
+
+      <!-- Legacy call-eval dialog -->
+      <div v-if="legacyDialog" class="fh__overlay" @click.self="legacyDialog = null">
+        <div class="fh__dialog">
+          <h2 class="display fh__dialog-title">Record call evaluation — {{ legacyDialog.fullName }}</h2>
+          <p class="fh__dialog-sub">
+            Legacy track: the call evaluation itself lives in Jotform. This records it toward the
+            required 10; upload the Jotform PDF to the employee's Documents tab for the file.
+          </p>
+          <label class="fh__dialog-field">Date of call <input v-model="legacyDate" type="date" /></label>
+          <label class="fh__dialog-field">Note (optional)
+            <input v-model="legacyNote" type="text" placeholder="e.g. incident #, chief complaint" />
+          </label>
+          <div v-if="legacyError" class="fh__dialog-err">{{ legacyError }}</div>
+          <div class="fh__dialog-actions">
+            <button type="button" class="fh__mini" @click="legacyDialog = null">Cancel</button>
+            <button type="button" class="fh__actions" :disabled="legacyBusy" @click="saveLegacyEval">
+              {{ legacyBusy ? 'Saving…' : 'Record call eval' }}
+            </button>
+          </div>
+        </div>
       </div>
     </template>
   </div>
@@ -367,4 +450,25 @@ async function review(r: FtepReport) {
 .fh__mini:hover { border-color: var(--color-accent-strong, #a8842c); }
 .fh__mini--ok { color: oklch(0.42 0.13 150); border-color: oklch(0.85 0.07 150); background: oklch(0.97 0.03 150); }
 .fh__mini:disabled { opacity: 0.5; }
+
+.fh__overlay {
+  position: fixed; inset: 0; background: oklch(0.2 0.03 260 / 0.5);
+  display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 90;
+}
+.fh__dialog {
+  width: 100%; max-width: 460px;
+  background: var(--color-surface); border-radius: 16px; padding: 22px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.fh__dialog-title { font-size: 20px; color: var(--color-ink); }
+.fh__dialog-sub { font-size: 12.5px; line-height: 1.55; color: var(--color-ink-soft); }
+.fh__dialog-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 600; color: var(--color-muted); }
+.fh__dialog-field input {
+  font-family: var(--font-sans); font-size: 13px; color: var(--color-ink);
+  border: 1.5px solid var(--color-line); border-radius: 8px; padding: 8px 10px;
+  background: var(--color-surface);
+}
+.fh__dialog-field input:focus { outline: none; border-color: var(--color-brand-600); }
+.fh__dialog-err { font-size: 12.5px; color: oklch(0.5 0.16 30); }
+.fh__dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 </style>

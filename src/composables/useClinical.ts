@@ -169,6 +169,9 @@ export function useClinical() {
   function ftepTrackFor(p: PipelinePerson): {
     key: 'new' | 'legacy' | 'rideup' | 'aemt'
     label: string
+    /** Legacy DORs live in Jotform on a different scale — the portal
+     *  tracks only their call evals, so DOR stats are off entirely. */
+    dorTracked: boolean
     dorWindow: number
     icrTarget: number | null
     icrLabel: string
@@ -177,12 +180,12 @@ export function useClinical() {
     const t = activeTransitionFor(p.record)
     if (!t) return null
     if (t === 'P1_P2_LEGACY')
-      return { key: 'legacy', label: 'Legacy track', dorWindow: 2, icrTarget: 10, icrLabel: 'call evals', rideoutTarget: null }
+      return { key: 'legacy', label: 'Legacy track', dorTracked: false, dorWindow: 2, icrTarget: 10, icrLabel: 'call evals', rideoutTarget: null }
     if (t === 'P2_P3')
-      return { key: 'rideup', label: 'Ride-up supervisor', dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: 4 }
+      return { key: 'rideup', label: 'Ride-up supervisor', dorTracked: true, dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: 4 }
     if (t === 'AEMT')
-      return { key: 'aemt', label: 'AEMT upgrade', dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: null }
-    return { key: 'new', label: 'FTEP — new program', dorWindow: 4, icrTarget: 10, icrLabel: 'ICRs', rideoutTarget: null }
+      return { key: 'aemt', label: 'AEMT upgrade', dorTracked: true, dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: null }
+    return { key: 'new', label: 'FTEP — new program', dorTracked: true, dorWindow: 4, icrTarget: 10, icrLabel: 'ICRs', rideoutTarget: null }
   }
 
   /** One roster-row status chip per person. */
