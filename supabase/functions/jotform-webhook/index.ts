@@ -119,14 +119,15 @@ async function jfJson(pathAndQuery: string, apiKey: string): Promise<any | null>
 }
 
 /** Pull the submission's signed PDF into the private bucket.
- *  NOTE: generatePDF needs a FULL-ACCESS key — read-only keys get 401;
- *  rows queue without a PDF and ?refreshpdfs=1 attaches them later. */
+ *  generatePDF wants LOWERCASE params on the HIPAA host — the
+ *  formID/submissionID casing answers 401 (found the hard way,
+ *  2026-08-25). */
 // deno-lint-ignore no-explicit-any
 async function storePdf(supabase: any, submissionId: string, formId: string | null, apiKey: string): Promise<string | null> {
   if (!apiKey || !submissionId) return null
   const urls = JF_BASES.flatMap((base) => [
+    formId ? `${base}/generatePDF?formid=${formId}&submissionid=${submissionId}&apiKey=${apiKey}` : null,
     `${base}/pdf-submission/${submissionId}?apiKey=${apiKey}`,
-    formId ? `${base}/generatePDF?formID=${formId}&submissionID=${submissionId}&apiKey=${apiKey}` : null,
   ]).filter(Boolean) as string[]
   for (const u of urls) {
     try {
