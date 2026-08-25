@@ -1,13 +1,11 @@
 // supabase/functions/jotform-webhook/index.ts
 //
-// Jotform → portal bridge for the legacy-track "FTEP - Call Evaluation"
-// form. Jotform POSTs each submission here (webhook configured in the
-// form's Settings → Integrations → Webhooks); we match the employee and
-// evaluator to app_users and file a submitted ICR row exactly like the
-// manual "Record call evaluation" flow (payload.legacyManual, counts
-// toward the 10). Anything that can't be auto-filed lands in
-// jotform_inbox with the reason, surfaced to clinical editors in the
-// Submissions view — nothing is silently dropped.
+// Jotform → portal bridge for the "FTEP - Call Evaluation" form.
+// v2 (Justin, 2026-08-25): NOTHING auto-files. Every submission lands
+// in jotform_inbox as status 'pending' — with the employee/evaluator
+// pre-matched where possible — and clinical editors accept it into the
+// employee's file (deciding whether it counts toward the required 10)
+// or reject it with a documented reason, from the Submissions view.
 //
 // Auth: Jotform can't send headers, so the webhook URL carries
 // ?secret=<ROSTER_SYNC_SECRET>. Idempotent per Jotform submissionID.
@@ -146,80 +144,45 @@ Deno.serve(async (req: Request) => {
 
   const fields = extractFields(raw)
 
-  const park = async (reason: string) => {
-    await supabase.from('jotform_inbox').upsert(
-      {
-        submission_id: submissionId || null,
-        form_title: formTitle || null,
-        employee_name: fields.employeeName,
-        evaluator_name: fields.evaluatorName,
-        reason,
-        raw,
-      },
-      { onConflict: 'submission_id', ignoreDuplicates: true },
-    )
-    return new Response(JSON.stringify({ ok: true, parked: reason }), { status: 200 })
-  }
-
-  /* Idempotency: one ICR per Jotform submission. */
-  if (submissionId) {
-    const { data: existing } = await supabase
-      .from('ftep_reports')
-      .select('id')
-      .eq('payload->>jotformId', submissionId)
-      .limit(1)
-    if (existing?.length) {
-      return new Response(JSON.stringify({ ok: true, duplicate: true }), { status: 200 })
-    }
-  }
-
-  const { data: usersData, error: usersErr } = await supabase
+  const { data: usersData } = await supabase
     .from('app_users')
     .select('id, full_name, email')
     .eq('account_type', 'person')
     .eq('active', true)
-  if (usersErr) return park(`Roster lookup failed: ${usersErr.message}`)
   const users = (usersData ?? []) as AppUser[]
 
   const employee = matchUser(users, fields.employeeEmail, fields.employeeName)
-  if (!employee) return park(`Employee not matched: "${fields.employeeName ?? fields.employeeEmail ?? '?'}"`)
-
   const evaluator = matchUser(users, fields.evaluatorEmail, fields.evaluatorName)
-  if (!evaluator) return park(`Evaluator not matched: "${fields.evaluatorName ?? fields.evaluatorEmail ?? '?'}"`)
 
-  /* Only the legacy track runs call evals through Jotform — anything
-     else is parked for clinical review rather than silently counted. */
-  const { data: rec } = await supabase
-    .from('pipeline_records')
-    .select('legacy_track, working_phase')
-    .eq('user_id', employee.id)
-    .maybeSingle()
-  if (!rec?.legacy_track) {
-    return park(`${employee.full_name} is not on the legacy track — review before counting`)
+  const notes: string[] = []
+  if (!employee) notes.push(`employee not matched: "${fields.employeeName ?? fields.employeeEmail ?? '?'}"`)
+  if (!evaluator) notes.push(`evaluator not matched: "${fields.evaluatorName ?? fields.evaluatorEmail ?? '?'}"`)
+  if (employee) {
+    const { data: rec } = await supabase
+      .from('pipeline_records')
+      .select('legacy_track')
+      .eq('user_id', employee.id)
+      .maybeSingle()
+    if (!rec?.legacy_track) notes.push('not on the legacy track')
   }
 
-  const noteBits = [
-    `Jotform #${submissionId || 'n/a'}`,
-    fields.incident ? `incident ${fields.incident}` : null,
-    fields.complaint ?? null,
-    fields.level ? `level: ${fields.level}` : null,
-  ].filter(Boolean)
-
-  const { error: insErr } = await supabase.from('ftep_reports').insert({
-    kind: 'icr',
-    trainee_id: employee.id,
-    evaluator_id: evaluator.id,
-    status: 'submitted',
-    eval_date: new Date().toISOString().slice(0, 10),
-    submitted_at: new Date().toISOString(),
-    payload: {
-      countsToward10: true,
-      legacyManual: true,
-      jotformId: submissionId || undefined,
-      note: noteBits.join(' · '),
+  const { error: insErr } = await supabase.from('jotform_inbox').upsert(
+    {
+      submission_id: submissionId || null,
+      form_title: formTitle || null,
+      employee_name: fields.employeeName,
+      evaluator_name: fields.evaluatorName,
+      employee_id: employee?.id ?? null,
+      evaluator_id: evaluator?.id ?? null,
+      eval_date: new Date().toISOString().slice(0, 10),
+      status: 'pending',
+      reason: notes.length ? notes.join(' · ') : 'matched — awaiting review',
+      raw,
     },
-  })
-  if (insErr) return park(`Insert failed: ${insErr.message}`)
-
-  return new Response(JSON.stringify({ ok: true, filed: employee.full_name }), { status: 200 })
+    { onConflict: 'submission_id', ignoreDuplicates: true },
+  )
+  if (insErr) {
+    return new Response(JSON.stringify({ ok: false, error: insErr.message }), { status: 500 })
+  }
+  return new Response(JSON.stringify({ ok: true, queued: true }), { status: 200 })
 })

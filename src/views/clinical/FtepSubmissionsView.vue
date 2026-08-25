@@ -20,7 +20,7 @@ import type { FtepReport } from '@/types'
  */
 
 const router = useRouter()
-const { ready, canEdit, canViewBoard, personById } = useClinical()
+const { ready, canEdit, canViewBoard, personById, clinicalPeople } = useClinical()
 const ftep = useFtep()
 
 watch(
@@ -34,14 +34,21 @@ watch(
 const query = ref('')
 const kindFilter = ref<'all' | 'dor' | 'icr'>('all')
 
-/* ── Jotform holding pen — webhook submissions that couldn't be
-   auto-filed (unmatched name, not on the legacy track, …). ─────────── */
+/* ── Jotform review queue — EVERY incoming call evaluation pends here
+   (Justin, 2026-08-25): he and Heather accept it into the employee's
+   file (choosing whether it counts toward the 10) or reject it with a
+   documented reason. Rejected rows are kept as the decision record. */
 const auth = useAuthStore()
 interface InboxRow {
   id: string
+  submission_id: string | null
   employee_name: string | null
   evaluator_name: string | null
+  employee_id: string | null
+  evaluator_id: string | null
+  eval_date: string | null
   reason: string
+  raw: Record<string, unknown> | null
   created_at: string
 }
 const inbox = ref<InboxRow[]>([])
@@ -50,15 +57,141 @@ async function loadInbox() {
   if (auth.usingDevStub) return
   const { data } = await supabase
     .from('jotform_inbox')
-    .select('id, employee_name, evaluator_name, reason, created_at')
+    .select('id, submission_id, employee_name, evaluator_name, employee_id, evaluator_id, eval_date, reason, raw, created_at')
+    .eq('status', 'pending')
     .order('created_at', { ascending: false })
   inbox.value = (data ?? []) as InboxRow[]
 }
 onMounted(loadInbox)
 
-async function dismissInbox(id: string) {
-  await supabase.from('jotform_inbox').delete().eq('id', id)
-  inbox.value = inbox.value.filter((r) => r.id !== id)
+/* Per-row review state */
+const queueOpen = ref<string | null>(null)
+const queueCounts = ref(true)
+const queueEmployee = ref('')
+const queueDate = ref('')
+const queueReject = ref('')
+const queueBusy = ref(false)
+const queueError = ref<string | null>(null)
+
+function openQueueRow(row: InboxRow) {
+  if (queueOpen.value === row.id) {
+    queueOpen.value = null
+    return
+  }
+  queueOpen.value = row.id
+  queueCounts.value = true
+  queueEmployee.value = row.employee_id ?? ''
+  queueDate.value = row.eval_date ?? new Date().toISOString().slice(0, 10)
+  queueReject.value = ''
+  queueError.value = null
+}
+
+/** Human-readable view of the Jotform answers for the decision. */
+function prettyRaw(raw: Record<string, unknown> | null): { label: string; value: string }[] {
+  if (!raw) return []
+  const SKIP = /^(slug|path|event_id|jsexecutiontracker|buildDate|uploadServerUrl|eventObserver|validatedNewRequiredFieldIDs|timeToSubmit|q\d+_signature|temp_upload|file)/i
+  const out: { label: string; value: string }[] = []
+  for (const [key, value] of Object.entries(raw)) {
+    if (SKIP.test(key)) continue
+    const label = key
+      .replace(/^q\d+_/, '')
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/^./, (c) => c.toUpperCase())
+    let v: string
+    if (value && typeof value === 'object') {
+      const o = value as Record<string, unknown>
+      if ('first' in o || 'last' in o) v = `${o.first ?? ''} ${o.last ?? ''}`.trim()
+      else v = Object.entries(o).map(([k2, v2]) => `${k2}: ${String(v2)}`).join(' · ')
+    } else {
+      v = String(value ?? '').trim()
+    }
+    if (v) out.push({ label, value: v })
+  }
+  return out
+}
+
+function rawField(raw: Record<string, unknown> | null, needle: string): string | null {
+  if (!raw) return null
+  for (const [key, value] of Object.entries(raw)) {
+    if (key.toLowerCase().includes(needle) && typeof value === 'string' && value.trim())
+      return value.trim()
+  }
+  return null
+}
+
+async function acceptQueueRow(row: InboxRow) {
+  if (queueBusy.value) return
+  const employeeId = queueEmployee.value
+  if (!employeeId) {
+    queueError.value = 'Pick the employee this evaluation is for.'
+    return
+  }
+  queueBusy.value = true
+  queueError.value = null
+  const noteBits = [
+    `Jotform #${row.submission_id ?? 'n/a'}`,
+    rawField(row.raw, 'incident') ? `incident ${rawField(row.raw, 'incident')}` : null,
+    rawField(row.raw, 'complaint'),
+  ].filter(Boolean)
+  const { data: rep, error: repErr } = await supabase
+    .from('ftep_reports')
+    .insert({
+      kind: 'icr',
+      trainee_id: employeeId,
+      evaluator_id: row.evaluator_id ?? auth.appUser?.id,
+      status: 'submitted',
+      eval_date: queueDate.value || new Date().toISOString().slice(0, 10),
+      submitted_at: new Date().toISOString(),
+      payload: {
+        countsToward10: queueCounts.value,
+        legacyManual: true,
+        jotformId: row.submission_id ?? undefined,
+        note: noteBits.join(' · '),
+        triageNote: queueCounts.value ? undefined : 'accepted to file but excluded from the 10',
+      },
+    })
+    .select('id')
+    .single()
+  if (repErr) {
+    queueBusy.value = false
+    queueError.value = repErr.message
+    return
+  }
+  await supabase
+    .from('jotform_inbox')
+    .update({
+      status: 'accepted',
+      employee_id: employeeId,
+      decided_by: auth.appUser?.id ?? null,
+      decided_at: new Date().toISOString(),
+      report_id: rep.id,
+    })
+    .eq('id', row.id)
+  queueBusy.value = false
+  queueOpen.value = null
+  inbox.value = inbox.value.filter((r) => r.id !== row.id)
+}
+
+async function rejectQueueRow(row: InboxRow) {
+  if (queueBusy.value || !queueReject.value.trim()) return
+  queueBusy.value = true
+  queueError.value = null
+  const { error } = await supabase
+    .from('jotform_inbox')
+    .update({
+      status: 'rejected',
+      decided_by: auth.appUser?.id ?? null,
+      decided_at: new Date().toISOString(),
+      decision_reason: queueReject.value.trim(),
+    })
+    .eq('id', row.id)
+  queueBusy.value = false
+  if (error) {
+    queueError.value = error.message
+    return
+  }
+  queueOpen.value = null
+  inbox.value = inbox.value.filter((r) => r.id !== row.id)
 }
 
 /* ── Trainee Evaluations of FTOs — CDO-only reading room ──────────── */
@@ -211,15 +344,56 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
       <div v-if="inbox.length" class="fs__inbox">
         <div class="fs__inbox-hd">
           <AlertTriangle :size="14" :stroke-width="2" />
-          {{ inbox.length }} Jotform submission{{ inbox.length === 1 ? '' : 's' }} couldn't be auto-filed
+          Jotform review queue — {{ inbox.length }} call evaluation{{ inbox.length === 1 ? '' : 's' }} awaiting a decision
         </div>
-        <div v-for="row in inbox" :key="row.id" class="fs__inbox-row">
-          <span class="fs__inbox-who">{{ row.employee_name ?? '—' }}</span>
-          <span class="fs__inbox-reason">{{ row.reason }}<template v-if="row.evaluator_name"> · by {{ row.evaluator_name }}</template></span>
-          <span class="fs__inbox-when">{{ new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }}</span>
-          <button type="button" class="fs__inbox-dismiss" title="Handled — remove from this list" @click="dismissInbox(row.id)">Dismiss</button>
-        </div>
-        <div class="fs__inbox-hint">Handle these manually (record the call eval from FTEP, or fix the name in Jotform and resubmit), then dismiss.</div>
+        <template v-for="row in inbox" :key="row.id">
+          <button type="button" class="fs__inbox-row fs__inbox-row--btn" @click="openQueueRow(row)">
+            <span class="fs__inbox-who">{{ row.employee_name ?? '—' }}</span>
+            <span class="fs__inbox-reason">{{ row.reason }}<template v-if="row.evaluator_name"> · by {{ row.evaluator_name }}</template></span>
+            <span class="fs__inbox-when">{{ new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }}</span>
+            <span class="fs__inbox-open">{{ queueOpen === row.id ? 'Close' : 'Review' }}</span>
+          </button>
+          <div v-if="queueOpen === row.id" class="fs__queue-detail">
+            <div class="fs__queue-fields">
+              <div v-for="f in prettyRaw(row.raw)" :key="f.label" class="fs__queue-field">
+                <b>{{ f.label }}</b><span>{{ f.value }}</span>
+              </div>
+            </div>
+            <div class="fs__queue-decide">
+              <label class="fs__queue-lbl">
+                For employee
+                <select v-model="queueEmployee">
+                  <option value="" disabled>Select…</option>
+                  <option v-for="p in clinicalPeople" :key="p.userId" :value="p.userId">{{ p.fullName }}</option>
+                </select>
+              </label>
+              <label class="fs__queue-lbl">
+                Call date
+                <input v-model="queueDate" type="date" />
+              </label>
+              <label class="fs__queue-check">
+                <input v-model="queueCounts" type="checkbox" />
+                Counts toward the required 10 call evaluations
+              </label>
+              <button type="button" class="fs__triage-btn fs__triage-btn--accept" :disabled="queueBusy" @click="acceptQueueRow(row)">
+                Accept into file
+              </button>
+              <span class="fs__queue-or">or</span>
+              <input
+                v-model="queueReject"
+                type="text"
+                class="fs__queue-rejectwhy"
+                maxlength="200"
+                placeholder="Reason not to include (required to reject)"
+              />
+              <button type="button" class="fs__triage-btn fs__triage-btn--danger" :disabled="queueBusy || !queueReject.trim()" @click="rejectQueueRow(row)">
+                Reject
+              </button>
+              <span v-if="queueError" class="fs__triage-err">{{ queueError }}</span>
+            </div>
+          </div>
+        </template>
+        <div class="fs__inbox-hint">Accepting files it as a call evaluation on the employee's record; rejecting keeps the submission and your reason as the decision record.</div>
       </div>
 
       <div class="fs__bar">
@@ -616,6 +790,91 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
 }
 .fs__inbox-dismiss:hover { text-decoration: underline; }
 .fs__inbox-hint { margin-top: 6px; font-size: 11px; color: oklch(0.45 0.08 75); }
+.fs__inbox-row--btn {
+  width: 100%;
+  background: none;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  cursor: pointer;
+  text-align: left;
+}
+.fs__inbox-row--btn:hover { background: oklch(0.95 0.05 90); }
+.fs__inbox-open {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--color-brand-600);
+}
+.fs__queue-detail {
+  background: var(--color-surface);
+  border: 1px solid oklch(0.88 0.05 90);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 6px 0 10px;
+}
+.fs__queue-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 18px;
+  margin-bottom: 12px;
+}
+.fs__queue-field {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+.fs__queue-field b { color: var(--color-muted); font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }
+.fs__queue-field span { color: var(--color-ink); line-height: 1.45; white-space: pre-wrap; }
+.fs__queue-decide {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-line-soft);
+}
+.fs__queue-lbl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+.fs__queue-lbl select,
+.fs__queue-lbl input {
+  font-size: 12.5px;
+  padding: 6px 9px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.fs__queue-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--color-ink);
+  padding-bottom: 7px;
+}
+.fs__queue-or { font-size: 11.5px; color: var(--color-muted-soft); padding-bottom: 9px; }
+.fs__queue-rejectwhy {
+  flex: 1;
+  min-width: 220px;
+  font-size: 12.5px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.fs__triage-btn--accept {
+  background: var(--color-brand-700);
+  border-color: var(--color-brand-700);
+  color: #fff;
+}
 .fs__sectitle {
   display: flex;
   align-items: baseline;
