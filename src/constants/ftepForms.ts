@@ -223,6 +223,8 @@ export interface FtepPayload {
   callLevel?: 'bls' | 'als' | 'als_p2'
   countsToward10?: boolean
   explanation?: string
+  /** Optional FTO narrative — anything relevant to the call. */
+  callNotes?: string
   /* Legacy-track call evals recorded manually from Jotform until the
      webhook lands — no ratings/signatures, just the count + context. */
   legacyManual?: boolean

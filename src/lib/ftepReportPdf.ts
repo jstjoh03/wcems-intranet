@@ -262,9 +262,15 @@ export async function generateFtepReportPdf(input: FtepPdfInput): Promise<jsPDF>
       n.remedial,
     )
     para('Goal for the next training day', n.goal)
-  } else if (p.explanation?.trim()) {
-    sectionRule('Explanation — categories below 3')
-    para('', p.explanation)
+  } else {
+    if (p.explanation?.trim()) {
+      sectionRule('Explanation — categories below 3')
+      para('', p.explanation)
+    }
+    if (p.callNotes?.trim()) {
+      sectionRule('Additional call notes')
+      para('', p.callNotes)
+    }
   }
 
   /* ── Signatures ──────────────────────────────────────────────────── */

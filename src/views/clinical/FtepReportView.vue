@@ -76,6 +76,7 @@ const meta = reactive({
 const shift = reactive({ dispatched: '', attended: '', icrs: '', contacts: '', scenarios: '' })
 const narratives = reactive({ best: '', least: '', situation: '', remedial: '', remedialMinutes: '', goal: '' })
 const explanation = ref('')
+const callNotes = ref('')
 const ratings = reactive<Record<string, FtepRating>>({})
 const commentOpen = reactive<Record<string, boolean>>({})
 
@@ -99,6 +100,7 @@ function hydrateFromDraft() {
   Object.assign(shift, p.shift ?? {})
   Object.assign(narratives, p.narratives ?? {})
   explanation.value = p.explanation ?? ''
+  callNotes.value = p.callNotes ?? ''
   for (const [k, v] of Object.entries(p.ratings ?? {})) {
     ratings[k] = { ...v }
     if (v.comment) commentOpen[k] = true
@@ -123,6 +125,7 @@ function buildPayload(): FtepPayload {
     base.callLevel = meta.callLevel
     base.countsToward10 = meta.countsToward10
     base.explanation = explanation.value || undefined
+    base.callNotes = callNotes.value.trim() || undefined
   }
   return base
 }
@@ -154,7 +157,7 @@ function queueAutosave() {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => { void persistDraft() }, 2000)
 }
-watch([meta, shift, narratives, explanation, ratings, evalDate], queueAutosave, { deep: true })
+watch([meta, shift, narratives, explanation, callNotes, ratings, evalDate], queueAutosave, { deep: true })
 onBeforeUnmount(() => {
   if (saveTimer) clearTimeout(saveTimer)
   if (dirtySinceSave && reportId.value) void persistDraft()
@@ -433,6 +436,14 @@ function fmtSaveState(): string {
         </div>
       </div>
 
+      <!-- ICR: optional free narrative about the call -->
+      <div v-if="!isDor" class="fr__card">
+        <div class="fr__card-hd">Additional call notes <span class="fr__optional">optional</span></div>
+        <div class="fr__narratives">
+          <textarea v-model="callNotes" rows="4" placeholder="Anything relevant to the call — context, teaching points, follow-up items."></textarea>
+        </div>
+      </div>
+
       <!-- Blockers + footer -->
       <div v-if="blockers.length" class="fr__blockers">
         <AlertTriangle :size="15" :stroke-width="2" />
@@ -513,6 +524,10 @@ function fmtSaveState(): string {
 .fr__card {
   background: var(--color-surface); border: 1px solid var(--color-line);
   border-radius: 14px; overflow: hidden; margin-bottom: 16px;
+}
+.fr__optional {
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--color-muted-soft);
 }
 .fr__card-hd {
   display: flex; align-items: center; gap: 10px;
