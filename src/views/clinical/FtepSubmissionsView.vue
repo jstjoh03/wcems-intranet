@@ -6,6 +6,7 @@ import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useClinical } from '@/composables/useClinical'
+import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import { FTO_EVAL_AREAS, FTO_EVAL_NARRATIVES, type FtoEvalPayload } from '@/constants/ftepForms'
@@ -49,20 +50,29 @@ interface InboxRow {
   eval_date: string | null
   reason: string
   raw: Record<string, unknown> | null
+  pdf_path: string | null
   created_at: string
 }
 const inbox = ref<InboxRow[]>([])
+const clindocs = useClinicalDocs()
 
 async function loadInbox() {
   if (auth.usingDevStub) return
   const { data } = await supabase
     .from('jotform_inbox')
-    .select('id, submission_id, employee_name, evaluator_name, employee_id, evaluator_id, eval_date, reason, raw, created_at')
+    .select('id, submission_id, employee_name, evaluator_name, employee_id, evaluator_id, eval_date, reason, raw, pdf_path, created_at')
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
   inbox.value = (data ?? []) as InboxRow[]
 }
 onMounted(loadInbox)
+
+/** Open the signed Jotform PDF (pulled by the webhook via API key). */
+async function viewQueuePdf(row: InboxRow) {
+  if (!row.pdf_path) return
+  const { data } = await supabase.storage.from('jotform-pdfs').createSignedUrl(row.pdf_path, 300)
+  if (data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener')
+}
 
 /* Per-row review state */
 const queueOpen = ref<string | null>(null)
@@ -167,6 +177,30 @@ async function acceptQueueRow(row: InboxRow) {
       report_id: rep.id,
     })
     .eq('id', row.id)
+
+  /* File the signed Jotform PDF into the employee's Documents as the
+     signed original (when the webhook was able to pull it). */
+  if (row.pdf_path) {
+    try {
+      const { data: signed } = await supabase.storage
+        .from('jotform-pdfs')
+        .createSignedUrl(row.pdf_path, 300)
+      if (signed?.signedUrl) {
+        const blob = await (await fetch(signed.signedUrl)).blob()
+        const who = clinicalPeople.value.find((p) => p.userId === employeeId)
+        const safe = (who?.fullName ?? 'Employee').replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+        await clindocs.upload({
+          userId: employeeId,
+          folder: 'signed_forms',
+          file: new File([blob], `Jotform_CallEval_${safe}_${queueDate.value}.pdf`, { type: 'application/pdf' }),
+          employeeVisible: true,
+          note: 'Signed Jotform call evaluation (original)',
+        })
+      }
+    } catch (e) {
+      console.error('[jotform] filing signed PDF failed:', e)
+    }
+  }
   queueBusy.value = false
   queueOpen.value = null
   inbox.value = inbox.value.filter((r) => r.id !== row.id)
@@ -354,6 +388,15 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
             <span class="fs__inbox-open">{{ queueOpen === row.id ? 'Close' : 'Review' }}</span>
           </button>
           <div v-if="queueOpen === row.id" class="fs__queue-detail">
+            <button
+              v-if="row.pdf_path"
+              type="button"
+              class="fs__triage-btn fs__queue-pdfbtn"
+              @click="viewQueuePdf(row)"
+            >
+              <FileText :size="13" :stroke-width="2" />
+              View signed Jotform PDF
+            </button>
             <div class="fs__queue-fields">
               <div v-for="f in prettyRaw(row.raw)" :key="f.label" class="fs__queue-field">
                 <b>{{ f.label }}</b><span>{{ f.value }}</span>
@@ -874,6 +917,12 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
   background: var(--color-brand-700);
   border-color: var(--color-brand-700);
   color: #fff;
+}
+.fs__queue-pdfbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 .fs__sectitle {
   display: flex;
