@@ -9,6 +9,7 @@ import { useFtep } from '@/composables/useFtep'
 import { useClinicalDocs, FOLDER_LABELS } from '@/composables/useClinicalDocs'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
+import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
 import type { FtepReport } from '@/types'
 import {
   activeTransitionFor,
@@ -556,6 +557,23 @@ async function submitSign() {
           </div>
         </div>
 
+        <!-- Program resources — trainee-audience library docs -->
+        <div class="cd__mycard-wrap reveal" style="animation-delay: 260ms">
+          <FtepResourcesCard title="Program resources" />
+        </div>
+
+        <!-- Trainee Evaluation of FTO — phase-transition feedback, CDO-only -->
+        <div v-if="myRecord.record.workingPhase || myRecord.record.pending" class="cd__ftoeval reveal" style="animation-delay: 320ms">
+          <div class="cd__ftoeval-copy">
+            <b>Finishing a phase?</b>
+            Complete your Trainee Evaluation of FTO — it goes to the Clinical Development Officer
+            only, never to your FTO.
+          </div>
+          <button type="button" class="btn" @click="router.push('/clinical-development/fto-eval')">
+            Evaluate my FTO
+          </button>
+        </div>
+
         <!-- Review & sign modal (view-only — trainees can never edit) -->
         <div v-if="signTarget" class="cd__signoverlay" @click.self="signTarget = null">
           <div class="cd__signmodal">
@@ -839,6 +857,27 @@ async function submitSign() {
 }
 .cd__signmodal-err { font-size: 12.5px; color: var(--color-danger-500); }
 .cd__signmodal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+.cd__mycard-wrap { margin-top: 14px; }
+.cd__ftoeval {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 13px 18px;
+  border-radius: 13px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+}
+.cd__ftoeval-copy {
+  flex: 1;
+  min-width: 260px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+}
+.cd__ftoeval-copy b { color: var(--color-ink); display: block; }
 
 /* My file cards (crew) */
 .cd__mycard {

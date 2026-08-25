@@ -174,6 +174,43 @@ export const FTEP_PROGRAM_PHASES: Record<'P1C_P1' | 'P1_P2', FtepProgramPhase[]>
   ],
 }
 
+/* ── Trainee Evaluation of FTO (paper form v1.0, 1:1) ─────────────────
+   Completed at each phase transition · submitted to the CDO — not the
+   FTO. Feedback reaches FTOs in aggregate and without attribution
+   wherever possible. */
+
+export const FTO_EVAL_AREAS: { no: number; label: string; hint: string }[] = [
+  { no: 1, label: 'Teaching quality', hint: 'Explained the why, not just the what; used downtime for scenarios and teach-backs' },
+  { no: 2, label: 'Feedback', hint: 'Timely, specific, and behavioral — I knew where I stood before the DOR was written' },
+  { no: 3, label: 'Consistency & fairness', hint: 'Held me to the published standards — the same standards every day, no moving targets' },
+  { no: 4, label: 'Protocol & clinical knowledge', hint: 'Modeled current WCEMS protocols and answered questions accurately or found the answer' },
+  { no: 5, label: 'Professionalism', hint: 'Treated me, patients, families, and crews with respect; modeled the conduct expected of me' },
+  { no: 6, label: 'Scenario & skill training', hint: 'Substituted quality scenarios when call volume was low; ran them fully, not passively' },
+  { no: 7, label: 'Support & advocacy', hint: 'Invested in my success; created room to perform without abandoning oversight' },
+  { no: 8, label: 'Communication of expectations', hint: "I understood each day's goal and how it connected to my phase requirements" },
+]
+
+export const FTO_EVAL_NARRATIVES: { key: string; label: string }[] = [
+  { key: 'keepDoing', label: 'What should this FTO keep doing?' },
+  { key: 'change', label: 'What should this FTO change or improve?' },
+  { key: 'inconsistent', label: 'Was anything in your training inconsistent with the Program Guide or workbook? If so, what?' },
+  { key: 'other', label: 'Anything else the Clinical Department should know?' },
+]
+
+export const FTO_EVAL_SCALE_NOTE =
+  'Scale: 5 consistently exceptional · 4 above standard · 3 met the standard · 2 below standard · ' +
+  '1 significant concern. Scores of 1 or 2 are most useful with a comment.'
+
+export const FTO_EVAL_HOW_USED =
+  'This evaluation goes to the Clinical Development Officer, who reviews it directly. Feedback ' +
+  'reaches FTOs in aggregate and without attribution wherever possible; it informs FTO development ' +
+  'and program improvement — it is not discipline, and honest feedback will never be held against a trainee.'
+
+export interface FtoEvalPayload {
+  ratings?: Record<string, { score?: number; comment?: string; label?: string }>
+  narratives?: Record<string, string>
+}
+
 export type FtepKind = 'dor' | 'icr'
 
 export function sectionsFor(kind: FtepKind): FtepSection[] {

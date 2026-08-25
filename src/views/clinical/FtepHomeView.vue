@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ChevronDown, Download, FileText, Check, AlertTriangle } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
+import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
@@ -375,6 +376,10 @@ async function review(r: FtepReport) {
         </div>
         <div v-if="recent.length === 0" class="fh__card-empty">No submitted reports yet.</div>
       </div>
+
+      <!-- Resources library — handbooks, guides, workbooks, blank forms -->
+      <div class="fh__sectitle">Resources</div>
+      <FtepResourcesCard :editable="canEdit" />
 
       <!-- Credential roster — informational stand-in for Employee Files
            (which is clinical-only): who holds what level. -->

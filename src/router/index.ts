@@ -188,6 +188,12 @@ const routes: RouteRecordRaw[] = [
     name: 'clinical-submissions',
     component: () => import('@/views/clinical/FtepSubmissionsView.vue'),
   },
+  /* Trainee-facing: Trainee Evaluation of FTO (goes to the CDO only). */
+  {
+    path: '/clinical-development/fto-eval',
+    name: 'fto-eval',
+    component: () => import('@/views/clinical/FtoEvalView.vue'),
+  },
   {
     path: '/clinical/ftep/:kind(dor|icr)/:traineeId',
     name: 'clinical-ftep-report',

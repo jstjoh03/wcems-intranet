@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Download, FileText, Check } from 'lucide-vue-next'
+import { Download, FileText, Check, AlertTriangle } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
+import { supabase } from '@/lib/supabase'
+import { useAuthStore } from '@/stores/auth'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
+import { FTO_EVAL_AREAS, FTO_EVAL_NARRATIVES, type FtoEvalPayload } from '@/constants/ftepForms'
 import type { FtepReport } from '@/types'
 
 /**
@@ -30,6 +33,72 @@ watch(
 
 const query = ref('')
 const kindFilter = ref<'all' | 'dor' | 'icr'>('all')
+
+/* ── Jotform holding pen — webhook submissions that couldn't be
+   auto-filed (unmatched name, not on the legacy track, …). ─────────── */
+const auth = useAuthStore()
+interface InboxRow {
+  id: string
+  employee_name: string | null
+  evaluator_name: string | null
+  reason: string
+  created_at: string
+}
+const inbox = ref<InboxRow[]>([])
+
+async function loadInbox() {
+  if (auth.usingDevStub) return
+  const { data } = await supabase
+    .from('jotform_inbox')
+    .select('id, employee_name, evaluator_name, reason, created_at')
+    .order('created_at', { ascending: false })
+  inbox.value = (data ?? []) as InboxRow[]
+}
+onMounted(loadInbox)
+
+async function dismissInbox(id: string) {
+  await supabase.from('jotform_inbox').delete().eq('id', id)
+  inbox.value = inbox.value.filter((r) => r.id !== id)
+}
+
+/* ── Trainee Evaluations of FTOs — CDO-only reading room ──────────── */
+interface FtoEvalRow {
+  id: string
+  trainee_id: string
+  fto_name: string
+  phase: string | null
+  payload: FtoEvalPayload
+  reviewed_at: string | null
+  created_at: string
+}
+const ftoEvals = ref<FtoEvalRow[]>([])
+const ftoEvalOpen = ref<string | null>(null)
+
+async function loadFtoEvals() {
+  if (auth.usingDevStub) return
+  const { data } = await supabase
+    .from('ftep_fto_evals')
+    .select('id, trainee_id, fto_name, phase, payload, reviewed_at, created_at')
+    .order('created_at', { ascending: false })
+  ftoEvals.value = (data ?? []) as FtoEvalRow[]
+}
+onMounted(loadFtoEvals)
+
+function ftoEvalAvg(e: FtoEvalRow): string {
+  const scores = Object.values(e.payload.ratings ?? {})
+    .map((r) => r.score)
+    .filter((s): s is number => typeof s === 'number')
+  if (!scores.length) return '—'
+  return (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)
+}
+
+async function markFtoEvalReviewed(e: FtoEvalRow) {
+  const { error } = await supabase
+    .from('ftep_fto_evals')
+    .update({ reviewed_by: auth.appUser?.id ?? null, reviewed_at: new Date().toISOString() })
+    .eq('id', e.id)
+  if (!error) await loadFtoEvals()
+}
 
 function nameOf(userId: string): string {
   return personById(userId)?.fullName ?? 'Staff'
@@ -139,6 +208,20 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
     <div v-if="!ready || !ftep.ready.value" class="fs__empty">Loading…</div>
 
     <template v-else>
+      <div v-if="inbox.length" class="fs__inbox">
+        <div class="fs__inbox-hd">
+          <AlertTriangle :size="14" :stroke-width="2" />
+          {{ inbox.length }} Jotform submission{{ inbox.length === 1 ? '' : 's' }} couldn't be auto-filed
+        </div>
+        <div v-for="row in inbox" :key="row.id" class="fs__inbox-row">
+          <span class="fs__inbox-who">{{ row.employee_name ?? '—' }}</span>
+          <span class="fs__inbox-reason">{{ row.reason }}<template v-if="row.evaluator_name"> · by {{ row.evaluator_name }}</template></span>
+          <span class="fs__inbox-when">{{ new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }}</span>
+          <button type="button" class="fs__inbox-dismiss" title="Handled — remove from this list" @click="dismissInbox(row.id)">Dismiss</button>
+        </div>
+        <div class="fs__inbox-hint">Handle these manually (record the call eval from FTEP, or fix the name in Jotform and resubmit), then dismiss.</div>
+      </div>
+
       <div class="fs__bar">
         <button
           v-for="k in (['all', 'dor', 'icr'] as const)"
@@ -228,6 +311,43 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
           </div>
         </template>
         <div v-if="rows.length === 0" class="fs__empty">No submissions match.</div>
+      </div>
+
+      <!-- Trainee Evaluations of FTOs — CDO-only; the FTO never sees these -->
+      <div class="fs__sectitle">
+        Trainee evaluations of FTOs
+        <span class="fs__sectitle-hint">clinical-only · share with FTOs in aggregate, without attribution</span>
+      </div>
+      <div class="fs__table">
+        <template v-for="e in ftoEvals" :key="e.id">
+          <button type="button" class="fs__row" @click="ftoEvalOpen = ftoEvalOpen === e.id ? null : e.id">
+            <span class="fs__kindchip fs__kindchip--eval">EVAL</span>
+            <span class="fs__who">FTO {{ e.fto_name }}</span>
+            <span class="fs__by">by {{ nameOf(e.trainee_id) }}</span>
+            <span class="fs__meta">
+              avg {{ ftoEvalAvg(e) }}<template v-if="e.phase"> · {{ e.phase }}</template>
+              <span v-if="e.reviewed_at" class="fs__reviewed"><Check :size="11" :stroke-width="2.5" /> reviewed</span>
+            </span>
+            <span class="fs__when">{{ new Date(e.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }}</span>
+          </button>
+          <div v-if="ftoEvalOpen === e.id" class="fs__evaldetail">
+            <div v-for="a in FTO_EVAL_AREAS" :key="a.no" class="fs__evalrow">
+              <span class="fs__evalscore">{{ e.payload.ratings?.[String(a.no)]?.score ?? '—' }}</span>
+              <span class="fs__evallabel">{{ a.label }}</span>
+              <span v-if="e.payload.ratings?.[String(a.no)]?.comment" class="fs__evalcomment">“{{ e.payload.ratings?.[String(a.no)]?.comment }}”</span>
+            </div>
+            <div v-for="n in FTO_EVAL_NARRATIVES" :key="n.key">
+              <div v-if="e.payload.narratives?.[n.key]" class="fs__evalnarr">
+                <b>{{ n.label }}</b>
+                <p>{{ e.payload.narratives[n.key] }}</p>
+              </div>
+            </div>
+            <button v-if="!e.reviewed_at" type="button" class="fs__triage-btn" @click="markFtoEvalReviewed(e)">
+              Mark reviewed
+            </button>
+          </div>
+        </template>
+        <div v-if="ftoEvals.length === 0" class="fs__empty">No trainee evaluations submitted yet.</div>
       </div>
     </template>
   </div>
@@ -457,6 +577,92 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
 }
 .fs__triage-btn:disabled { opacity: 0.55; cursor: default; }
 .fs__triage-err { flex-basis: 100%; font-size: 12px; color: var(--color-danger-500); }
+.fs__inbox {
+  margin-bottom: 14px;
+  border: 1px solid oklch(0.85 0.07 90);
+  border-radius: 12px;
+  background: var(--color-warning-50);
+  padding: 12px 16px;
+}
+.fs__inbox-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: oklch(0.42 0.1 75);
+  margin-bottom: 6px;
+}
+.fs__inbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 12.5px;
+  border-bottom: 1px solid oklch(0.88 0.05 90);
+}
+.fs__inbox-row:last-of-type { border-bottom: none; }
+.fs__inbox-who { font-weight: 600; color: var(--color-ink); flex-shrink: 0; }
+.fs__inbox-reason { color: var(--color-ink-soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs__inbox-when { margin-left: auto; flex-shrink: 0; font-size: 11px; color: var(--color-muted); }
+.fs__inbox-dismiss {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-brand-600);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.fs__inbox-dismiss:hover { text-decoration: underline; }
+.fs__inbox-hint { margin-top: 6px; font-size: 11px; color: oklch(0.45 0.08 75); }
+.fs__sectitle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 22px 0 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.fs__sectitle-hint {
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--color-muted-soft);
+}
+.fs__kindchip--eval { background: oklch(0.94 0.03 300); color: oklch(0.42 0.12 300); }
+.fs__evaldetail {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-line-soft);
+  background: var(--color-surface-soft);
+}
+.fs__evalrow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+.fs__evalscore {
+  flex-shrink: 0;
+  width: 22px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-brand-700);
+}
+.fs__evallabel { color: var(--color-ink); font-weight: 600; }
+.fs__evalcomment { color: var(--color-muted); font-style: italic; }
+.fs__evalnarr {
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.fs__evalnarr b { color: var(--color-ink); }
+.fs__evalnarr p { margin: 2px 0 0; color: var(--color-ink-soft); line-height: 1.55; white-space: pre-wrap; }
+.fs__evaldetail .fs__triage-btn { margin-top: 10px; }
 @media (max-width: 640px) {
   .fs__by { display: none; }
   .fs__who { flex-basis: 110px; }
