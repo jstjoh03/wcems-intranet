@@ -100,16 +100,34 @@ function matchUser(users: AppUser[], email: string | null, name: string | null):
   return null
 }
 
-/** Pull the submission's signed PDF into the private bucket. */
+/* WCEMS's Jotform account is HIPAA-mode — API calls live on the
+   hipaa-api host (the standard host answers 301). Try HIPAA first. */
+const JF_BASES = ['https://hipaa-api.jotform.com', 'https://api.jotform.com']
+
+// deno-lint-ignore no-explicit-any
+async function jfJson(pathAndQuery: string, apiKey: string): Promise<any | null> {
+  for (const base of JF_BASES) {
+    try {
+      const res = await fetch(`${base}${pathAndQuery}${pathAndQuery.includes('?') ? '&' : '?'}apiKey=${apiKey}`)
+      const body = await res.json()
+      if (body?.responseCode === 200) return body
+    } catch (_e) {
+      /* try next base */
+    }
+  }
+  return null
+}
+
+/** Pull the submission's signed PDF into the private bucket.
+ *  NOTE: generatePDF needs a FULL-ACCESS key — read-only keys get 401;
+ *  rows queue without a PDF and ?refreshpdfs=1 attaches them later. */
 // deno-lint-ignore no-explicit-any
 async function storePdf(supabase: any, submissionId: string, formId: string | null, apiKey: string): Promise<string | null> {
   if (!apiKey || !submissionId) return null
-  const urls = [
-    `https://api.jotform.com/pdf-submission/${submissionId}?apiKey=${apiKey}`,
-    formId
-      ? `https://api.jotform.com/generatePDF?formID=${formId}&submissionID=${submissionId}&apiKey=${apiKey}`
-      : null,
-  ].filter(Boolean) as string[]
+  const urls = JF_BASES.flatMap((base) => [
+    `${base}/pdf-submission/${submissionId}?apiKey=${apiKey}`,
+    formId ? `${base}/generatePDF?formID=${formId}&submissionID=${submissionId}&apiKey=${apiKey}` : null,
+  ]).filter(Boolean) as string[]
   for (const u of urls) {
     try {
       const res = await fetch(u)
@@ -131,7 +149,10 @@ async function storePdf(supabase: any, submissionId: string, formId: string | nu
   return null
 }
 
-/** Queue one submission (webhook or backfill). Idempotent. */
+/** Queue one submission (webhook or backfill). Idempotent.
+ *  legacyOnly (backfill): skip submissions cleanly matched to someone
+ *  NOT on the legacy track — but still queue unmatched names, since a
+ *  typo'd legacy trainee must surface for manual matching, not vanish. */
 // deno-lint-ignore no-explicit-any
 async function queueSubmission(supabase: any, users: AppUser[], input: {
   submissionId: string
@@ -140,7 +161,8 @@ async function queueSubmission(supabase: any, users: AppUser[], input: {
   raw: Record<string, unknown>
   evalDate: string
   apiKey: string
-}): Promise<{ queued: boolean; error?: string }> {
+  legacyOnly?: boolean
+}): Promise<{ queued: boolean; filtered?: boolean; duplicate?: boolean; error?: string }> {
   const fields = extractFields(input.raw)
   const employee = matchUser(users, fields.employeeEmail, fields.employeeName)
   const evaluator = matchUser(users, fields.evaluatorEmail, fields.evaluatorName)
@@ -148,14 +170,28 @@ async function queueSubmission(supabase: any, users: AppUser[], input: {
   const notes: string[] = []
   if (!employee) notes.push(`employee not matched: "${fields.employeeName ?? fields.employeeEmail ?? '?'}"`)
   if (!evaluator) notes.push(`evaluator not matched: "${fields.evaluatorName ?? fields.evaluatorEmail ?? '?'}"`)
+  let isLegacy = false
   if (employee) {
     const { data: rec } = await supabase
       .from('pipeline_records')
       .select('legacy_track')
       .eq('user_id', employee.id)
       .maybeSingle()
-    if (!rec?.legacy_track) notes.push('not on the legacy track')
+    isLegacy = !!rec?.legacy_track
+    if (!isLegacy) notes.push('not on the legacy track')
   }
+
+  if (input.legacyOnly && employee && !isLegacy) {
+    return { queued: false, filtered: true }
+  }
+
+  /* Skip the (slow) PDF pull for rows that already exist. */
+  const { data: dup } = await supabase
+    .from('jotform_inbox')
+    .select('id')
+    .eq('submission_id', input.submissionId)
+    .limit(1)
+  if (dup?.length) return { queued: false, duplicate: true }
 
   const pdfPath = await storePdf(supabase, input.submissionId, input.formId, input.apiKey)
 
@@ -201,6 +237,30 @@ Deno.serve(async (req: Request) => {
     .eq('active', true)
   const users = (usersData ?? []) as AppUser[]
 
+  /* ── Refresh PDFs: retro-attach signed PDFs for queued rows once a
+     full-access key is available. ─────────────────────────────────── */
+  if (url.searchParams.get('refreshpdfs') === '1') {
+    if (!apiKey) {
+      return new Response(JSON.stringify({ ok: false, error: 'apikey required' }), { status: 400 })
+    }
+    const formId = url.searchParams.get('formid')
+    const { data: rows } = await supabase
+      .from('jotform_inbox')
+      .select('id, submission_id')
+      .is('pdf_path', null)
+      .not('submission_id', 'is', null)
+    let attached = 0
+    let missing = 0
+    for (const r of (rows ?? []) as { id: string; submission_id: string }[]) {
+      const path = await storePdf(supabase, r.submission_id, formId, apiKey)
+      if (path) {
+        await supabase.from('jotform_inbox').update({ pdf_path: path }).eq('id', r.id)
+        attached++
+      } else missing++
+    }
+    return new Response(JSON.stringify({ ok: true, refreshpdfs: true, attached, missing }), { status: 200 })
+  }
+
   /* ── Backfill: pull every historical submission via the API ──────── */
   if (url.searchParams.get('backfill') === '1') {
     if (!apiKey) {
@@ -208,8 +268,7 @@ Deno.serve(async (req: Request) => {
     }
     let formId = url.searchParams.get('formid')
     if (!formId) {
-      const res = await fetch(`https://api.jotform.com/user/forms?apiKey=${apiKey}&limit=200`)
-      const body = await res.json()
+      const body = await jfJson('/user/forms?limit=200', apiKey)
       const forms = (body?.content ?? []) as { id: string; title: string }[]
       const hit = forms.find((f) => f.title?.toLowerCase().includes('call evaluation'))
       if (!hit) {
@@ -217,15 +276,15 @@ Deno.serve(async (req: Request) => {
       }
       formId = hit.id
     }
+    const legacyOnly = url.searchParams.get('legacyonly') === '1'
     let offset = 0
     let queued = 0
-    let skipped = 0
+    let filtered = 0
+    let duplicates = 0
+    let failed = 0
     const errors: string[] = []
     for (;;) {
-      const res = await fetch(
-        `https://api.jotform.com/form/${formId}/submissions?apiKey=${apiKey}&limit=100&offset=${offset}&orderby=created_at`,
-      )
-      const body = await res.json()
+      const body = await jfJson(`/form/${formId}/submissions?limit=100&offset=${offset}&orderby=created_at`, apiKey)
       const subs = (body?.content ?? []) as {
         id: string
         created_at: string
@@ -246,17 +305,23 @@ Deno.serve(async (req: Request) => {
           raw,
           evalDate,
           apiKey,
+          legacyOnly,
         })
         if (r.queued) queued++
+        else if (r.filtered) filtered++
+        else if (r.duplicate) duplicates++
         else {
-          skipped++
+          failed++
           if (r.error) errors.push(`${s.id}: ${r.error}`)
         }
       }
       offset += subs.length
       if (subs.length < 100) break
     }
-    return new Response(JSON.stringify({ ok: true, backfill: true, formId, queued, skipped, errors: errors.slice(0, 10) }), { status: 200 })
+    return new Response(
+      JSON.stringify({ ok: true, backfill: true, formId, legacyOnly, queued, filtered, duplicates, failed, errors: errors.slice(0, 10) }),
+      { status: 200 },
+    )
   }
 
   /* ── Live webhook: one submission per POST ───────────────────────── */
