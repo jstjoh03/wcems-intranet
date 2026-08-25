@@ -5,6 +5,7 @@ import { ChevronDown, Download, FileText, Check, AlertTriangle } from 'lucide-vu
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
+import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
@@ -220,8 +221,33 @@ async function viewPdf(r: FtepReport) {
   }
 }
 
+const clindocs = useClinicalDocs()
+
 async function review(r: FtepReport) {
   await ftep.markReviewed(r.id)
+  /* Auto-file the letterhead PDF into the trainee's Documents
+     (generated folder) so the employee file carries the complete
+     record without an extra step. Same-name re-reviews replace the
+     old copy (e.g. after a deferred trainee signature lands). */
+  if (r.payload.legacyManual) return
+  try {
+    const doc = await makePdf(r)
+    const safe = nameOf(r.traineeId).replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+    const name = `WCEMS_${r.kind.toUpperCase()}_${safe}_${r.evalDate}.pdf`
+    const existing = clindocs
+      .docsFor(r.traineeId)
+      .find((d) => d.folder === 'generated' && d.name === name)
+    if (existing) await clindocs.remove(existing)
+    const blob = doc.output('blob') as Blob
+    await clindocs.upload({
+      userId: r.traineeId,
+      folder: 'generated',
+      file: new File([blob], name, { type: 'application/pdf' }),
+      employeeVisible: true,
+    })
+  } catch (e) {
+    console.error('[ftep] auto-filing the reviewed PDF failed:', e)
+  }
 }
 </script>
 
