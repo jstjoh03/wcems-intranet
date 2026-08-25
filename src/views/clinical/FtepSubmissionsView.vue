@@ -436,7 +436,7 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
             </div>
           </div>
         </template>
-        <div class="fs__inbox-hint">Accepting files it as a call evaluation on the employee's record; rejecting keeps the submission and your reason as the decision record.</div>
+        <div class="fs__inbox-hint">Accept adds the call evaluation to the employee's record (with the signed PDF in their Documents); Reject keeps the submission and your reason as the decision record.</div>
       </div>
 
       <div class="fs__bar">
