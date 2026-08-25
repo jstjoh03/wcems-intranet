@@ -13,12 +13,19 @@ import { usePipeline } from '@/composables/usePipeline'
  * editor-only.
  */
 
+/** Crumbs are clickable when they carry a destination; plain strings
+ *  render as static text (the last crumb = the current page). */
+export type Crumb = string | { label: string; to: string }
+
 defineProps<{
-  crumbs: string[]
+  crumbs: Crumb[]
 }>()
 
 const route = useRoute()
 const { canEdit } = usePipeline()
+
+const crumbLabel = (c: Crumb) => (typeof c === 'string' ? c : c.label)
+const crumbTo = (c: Crumb) => (typeof c === 'string' ? null : c.to)
 
 interface Section {
   label: string
@@ -45,12 +52,17 @@ function isOn(s: Section): boolean {
 <template>
   <div class="cn">
     <nav class="cn__crumbs" aria-label="Breadcrumb">
-      <span>Portal</span>
+      <RouterLink to="/" class="cn__crumb-link">Portal</RouterLink>
       <ChevronRight :size="11" :stroke-width="2" />
-      <span>Clinical Development</span>
-      <template v-for="(c, i) in crumbs" :key="c">
+      <RouterLink :to="canEdit ? '/clinical' : '/clinical/ftep'" class="cn__crumb-link">Clinical Development</RouterLink>
+      <template v-for="(c, i) in crumbs" :key="crumbLabel(c)">
         <ChevronRight :size="11" :stroke-width="2" />
-        <b :class="{ 'cn__last': i === crumbs.length - 1 }">{{ c }}</b>
+        <RouterLink
+          v-if="crumbTo(c) && i < crumbs.length - 1"
+          :to="crumbTo(c)!"
+          class="cn__crumb-link cn__crumb-link--strong"
+        >{{ crumbLabel(c) }}</RouterLink>
+        <b v-else :class="{ 'cn__last': i === crumbs.length - 1 }">{{ crumbLabel(c) }}</b>
       </template>
     </nav>
     <nav class="cn__sections" aria-label="Clinical Development sections">
@@ -86,6 +98,19 @@ function isOn(s: Section): boolean {
 .cn__crumbs b {
   font-weight: 600;
   color: var(--color-ink-soft);
+}
+.cn__crumb-link {
+  color: var(--color-muted);
+  text-decoration: none;
+}
+.cn__crumb-link--strong {
+  font-weight: 600;
+  color: var(--color-ink-soft);
+}
+.cn__crumb-link:hover {
+  color: var(--color-brand-600);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .cn__crumbs b.cn__last {
   color: var(--color-ink);

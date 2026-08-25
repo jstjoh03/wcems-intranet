@@ -264,7 +264,7 @@ function fmtSaveState(): string {
 
 <template>
   <div class="fr">
-    <ClinicalNav :crumbs="['FTEP', `${isDor ? 'DOR' : 'ICR'} — ${trainee?.fullName ?? '…'}`]" />
+    <ClinicalNav :crumbs="[{ label: 'FTEP', to: '/clinical/ftep' }, `${isDor ? 'DOR' : 'ICR'} — ${trainee?.fullName ?? '…'}`]" />
 
     <div v-if="!ready" class="fr__empty">Loading…</div>
     <div v-else-if="!trainee" class="fr__empty">No clinical file for this trainee.</div>

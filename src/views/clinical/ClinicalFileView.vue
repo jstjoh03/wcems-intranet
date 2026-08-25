@@ -318,7 +318,7 @@ function fmtDateTime(iso: string): string {
 
 <template>
   <div class="cf">
-    <ClinicalNav :crumbs="['Employee Files', person?.fullName ?? '…']" />
+    <ClinicalNav :crumbs="[{ label: 'Employee Files', to: '/clinical/people' }, person?.fullName ?? '…']" />
 
     <button type="button" class="cf__back" @click="router.push('/clinical/people')">
       <ArrowLeft :size="14" :stroke-width="2" />
