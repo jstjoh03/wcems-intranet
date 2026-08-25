@@ -507,6 +507,10 @@ function fmtDateTime(iso: string): string {
               <span class="cf__gate-v">
                 <template v-if="r.payload.average !== undefined">avg {{ r.payload.average?.toFixed(2) }} · </template>
                 <b v-if="r.payload.nrtFlagged" class="cf__late">NRT · </b>by {{ personById(r.evaluatorId)?.fullName ?? '—' }}
+                <template v-if="r.kind === 'icr' && r.payload.countsToward10 === false">
+                  · <b class="cf__late">excluded from the 10</b><template v-if="r.payload.triageNote"> — {{ r.payload.triageNote }}</template>
+                </template>
+                <b v-if="!r.traineeSignature" class="cf__soon"> · awaiting trainee signature</b>
               </span>
               <button type="button" class="cf__mini" :disabled="ftepPdfBusy === r.id" @click="ftepPdf(r.id, 'download')">
                 <Download :size="12" :stroke-width="2" /> PDF

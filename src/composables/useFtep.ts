@@ -196,7 +196,9 @@ export function useFtep() {
     id: string
     evalDate: string
     payload: FtepPayload
-    traineeSignature: string
+    /** Null = trainee unavailable at shift change; they're prompted to
+     *  review & sign from My Progress (ftep_sign_report RPC). */
+    traineeSignature: string | null
     evaluatorSignature: string
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!isLive.value) return { ok: true }
@@ -216,6 +218,52 @@ export function useFtep() {
     if (error) return { ok: false, error: error.message }
     const row = fromRow(data as ReportRow)
     reports.value = [row, ...reports.value.filter((r) => r.id !== row.id)]
+    return { ok: true }
+  }
+
+  /** Trainee adds their deferred signature (view-only flow — the RPC
+   *  only accepts their own submitted, still-unsigned report). */
+  async function signAsTrainee(
+    reportId: string,
+    signature: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!isLive.value) return { ok: true }
+    const { data, error } = await supabase.rpc('ftep_sign_report', {
+      p_report_id: reportId,
+      p_signature: signature,
+    })
+    if (error) return { ok: false, error: error.message }
+    if (!data) return { ok: false, error: 'This report can no longer be signed.' }
+    reports.value = reports.value.map((r) =>
+      r.id === reportId ? { ...r, traineeSignature: signature } : r,
+    )
+    return { ok: true }
+  }
+
+  /** Clinical triage: include/exclude an ICR from the required 10,
+   *  documenting why (editors only — RLS enforces). */
+  async function setIcrCounts(
+    reportId: string,
+    counts: boolean,
+    reason?: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!isLive.value) return { ok: true }
+    const report = reports.value.find((r) => r.id === reportId)
+    if (!report) return { ok: false, error: 'Report not found.' }
+    const payload: FtepPayload = {
+      ...report.payload,
+      countsToward10: counts,
+      triageNote: counts ? undefined : (reason?.trim() || undefined),
+    }
+    const { data, error } = await supabase
+      .from('ftep_reports')
+      .update({ payload })
+      .eq('id', reportId)
+      .select(COLUMNS)
+      .single()
+    if (error) return { ok: false, error: error.message }
+    const row = fromRow(data as ReportRow)
+    reports.value = reports.value.map((r) => (r.id === row.id ? row : r))
     return { ok: true }
   }
 
@@ -292,6 +340,8 @@ export function useFtep() {
     lastDorDate,
     saveDraft,
     submitReport,
+    signAsTrainee,
+    setIcrCounts,
     recordLegacyCallEval,
     discardDraft,
     markReviewed,

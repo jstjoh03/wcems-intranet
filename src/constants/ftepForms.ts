@@ -227,6 +227,9 @@ export interface FtepPayload {
      webhook lands — no ratings/signatures, just the count + context. */
   legacyManual?: boolean
   note?: string
+  /** Clinical triage: why this ICR was excluded from the required 10
+   *  (set alongside countsToward10=false from the Submissions inbox). */
+  triageNote?: string
   /* shared */
   ratings?: Record<string, FtepRating>
   /** Mean of numeric scores (N.O. excluded), stamped at submit. */

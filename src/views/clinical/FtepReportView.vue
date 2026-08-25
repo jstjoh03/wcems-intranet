@@ -211,7 +211,15 @@ const evaluatorSig = ref<string | null>(null)
 const submitting = ref(false)
 const submitError = ref<string | null>(null)
 
-const canSubmit = computed(() => !!traineeSig.value && !!evaluatorSig.value && !submitting.value)
+/* Dual signatures at review is the standard. The exception (Justin,
+   2026-08-24): a 48-hr trainee asleep when the day-1 FTO leaves at
+   0600 — the FTO submits signed alone and the trainee is prompted on
+   My Progress to review & sign (view-only). */
+const deferTrainee = ref(false)
+
+const canSubmit = computed(
+  () => !!evaluatorSig.value && (!!traineeSig.value || deferTrainee.value) && !submitting.value,
+)
 
 async function onSubmit() {
   if (!canSubmit.value || !trainee.value) return
@@ -233,7 +241,7 @@ async function onSubmit() {
     id: reportId.value!,
     evalDate: evalDate.value,
     payload,
-    traineeSignature: traineeSig.value!,
+    traineeSignature: traineeSig.value ?? null,
     evaluatorSignature: evaluatorSig.value!,
   })
   submitting.value = false
@@ -455,11 +463,21 @@ function fmtSaveState(): string {
               : 'This ICR was reviewed with the trainee. Both signatures attest the ratings reflect performance on this call.' }}
           </p>
           <div class="fr__pads">
-            <div><div class="fr__pad-label">Trainee — {{ trainee.fullName }}</div>
+            <div v-if="!deferTrainee"><div class="fr__pad-label">Trainee — {{ trainee.fullName }}</div>
               <SignaturePad :height="100" @change="(v: string) => (traineeSig = v || null)" /></div>
+            <div v-else class="fr__defer-note">
+              <b>Trainee signature deferred.</b>
+              {{ trainee.fullName.split(' ')[0] }} will see a "needs your signature" prompt on
+              My Progress and can review the finished report and sign there — they can't edit it.
+            </div>
             <div><div class="fr__pad-label">Evaluator — {{ auth.appUser?.fullName }}</div>
               <SignaturePad :height="100" @change="(v: string) => (evaluatorSig = v || null)" /></div>
           </div>
+          <label v-if="!traineeSig" class="fr__defer">
+            <input v-model="deferTrainee" type="checkbox" />
+            Trainee unavailable to sign right now (e.g. asleep at shift change) — submit with my
+            signature and prompt them to review &amp; sign later
+          </label>
           <div v-if="submitError" class="fr__error">{{ submitError }}</div>
           <div class="fr__sign-actions">
             <button type="button" class="fr__ghost" @click="signing = false">Back to form</button>
@@ -623,4 +641,25 @@ function fmtSaveState(): string {
 .fr__pad-label { font-size: 11.5px; font-weight: 700; color: var(--color-muted); margin-bottom: 4px; }
 .fr__error { font-size: 13px; color: oklch(0.5 0.16 30); }
 .fr__sign-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.fr__defer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+  padding: 4px 0 8px;
+}
+.fr__defer input { margin-top: 2px; }
+.fr__defer-note {
+  align-self: center;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-ink-soft);
+  background: var(--color-surface-soft);
+  border: 1px dashed var(--color-line);
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+.fr__defer-note b { color: var(--color-ink); }
 </style>

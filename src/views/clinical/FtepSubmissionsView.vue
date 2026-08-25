@@ -70,6 +70,39 @@ function fmtSubmitted(r: FtepReport): string {
   })
 }
 
+/* ── ICR triage ────────────────────────────────────────────────────
+   Some submitted ICRs don't meet the ALS criteria to count toward the
+   required 10 — exclude them here with a documented reason. The x/10
+   counters everywhere recompute automatically. */
+const triageOpen = ref<string | null>(null)
+const triageReason = ref('')
+const triageBusy = ref(false)
+const triageError = ref<string | null>(null)
+
+function openTriage(r: FtepReport) {
+  triageOpen.value = triageOpen.value === r.id ? null : r.id
+  triageReason.value = r.payload.triageNote ?? ''
+  triageError.value = null
+}
+
+async function excludeIcr() {
+  if (!triageOpen.value || triageBusy.value || !triageReason.value.trim()) return
+  triageBusy.value = true
+  triageError.value = null
+  const res = await ftep.setIcrCounts(triageOpen.value, false, triageReason.value)
+  triageBusy.value = false
+  if (!res.ok) { triageError.value = res.error; return }
+  triageOpen.value = null
+}
+
+async function includeIcr(r: FtepReport) {
+  if (triageBusy.value) return
+  triageBusy.value = true
+  await ftep.setIcrCounts(r.id, true)
+  triageBusy.value = false
+  triageOpen.value = null
+}
+
 const pdfBusy = ref<string | null>(null)
 async function openPdf(r: FtepReport, mode: 'view' | 'download') {
   if (pdfBusy.value || r.payload.legacyManual) return
@@ -124,36 +157,76 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
       </div>
 
       <div class="fs__table">
-        <button
-          v-for="r in rows"
-          :key="r.id"
-          type="button"
-          class="fs__row"
-          :disabled="!!r.payload.legacyManual"
-          :title="r.payload.legacyManual ? 'Recorded from Jotform — original in Documents' : 'Open the report PDF'"
-          @click="openPdf(r, 'view')"
-        >
-          <span class="fs__kindchip" :class="`fs__kindchip--${r.kind}`">{{ r.kind.toUpperCase() }}</span>
-          <span class="fs__who">{{ nameOf(r.traineeId) }}</span>
-          <span class="fs__by">by {{ nameOf(r.evaluatorId) }}</span>
-          <span class="fs__meta">
-            <template v-if="r.payload.legacyManual">call eval (Jotform)</template>
-            <template v-else>
-              <template v-if="r.payload.average !== undefined">avg {{ r.payload.average?.toFixed(2) }} · </template>
-              <b v-if="r.payload.nrtFlagged" class="fs__nrt">NRT · </b>call {{ new Date(`${r.evalDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }}
+        <template v-for="r in rows" :key="r.id">
+          <button
+            type="button"
+            class="fs__row"
+            :class="{ 'fs__row--static': !!r.payload.legacyManual }"
+            :title="r.payload.legacyManual ? 'Recorded from Jotform — original in Documents' : 'Open the report PDF'"
+            @click="openPdf(r, 'view')"
+          >
+            <span class="fs__kindchip" :class="`fs__kindchip--${r.kind}`">{{ r.kind.toUpperCase() }}</span>
+            <span class="fs__who">{{ nameOf(r.traineeId) }}</span>
+            <span class="fs__by">by {{ nameOf(r.evaluatorId) }}</span>
+            <span class="fs__meta">
+              <template v-if="r.payload.legacyManual">call eval (Jotform)</template>
+              <template v-else>
+                <template v-if="r.payload.average !== undefined">avg {{ r.payload.average?.toFixed(2) }} · </template>
+                <b v-if="r.payload.nrtFlagged" class="fs__nrt">NRT · </b>call {{ new Date(`${r.evalDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }}
+              </template>
+              <span v-if="r.reviewedAt" class="fs__reviewed"><Check :size="11" :stroke-width="2.5" /> reviewed</span>
+              <span
+                v-if="!r.traineeSignature && !r.payload.legacyManual"
+                class="fs__unsigned"
+                title="Submitted with the trainee signature deferred — they're prompted on My Progress"
+              >awaiting trainee signature</span>
+            </span>
+            <span
+              v-if="r.kind === 'icr'"
+              class="fs__count"
+              :class="r.payload.countsToward10 ? 'fs__count--yes' : 'fs__count--no'"
+              role="button"
+              :title="r.payload.countsToward10
+                ? 'Counts toward the required 10 — click to exclude with a reason'
+                : `Excluded from the 10${r.payload.triageNote ? ` — ${r.payload.triageNote}` : ''} — click to manage`"
+              @click.stop="openTriage(r)"
+            >{{ r.payload.countsToward10 ? 'counts' : 'excluded' }}</span>
+            <span class="fs__when">{{ fmtSubmitted(r) }}</span>
+            <span
+              v-if="!r.payload.legacyManual"
+              class="fs__dl"
+              role="button"
+              title="Download PDF"
+              @click.stop="openPdf(r, 'download')"
+            ><Download :size="13" :stroke-width="2" /></span>
+            <span v-else class="fs__dl fs__dl--none"><FileText :size="13" :stroke-width="2" /></span>
+          </button>
+          <div v-if="triageOpen === r.id" class="fs__triage">
+            <template v-if="r.payload.countsToward10">
+              <span class="fs__triage-l">Exclude this ICR from the required 10 — document why:</span>
+              <input
+                v-model="triageReason"
+                type="text"
+                maxlength="200"
+                placeholder="e.g. BLS-level call — does not meet ALS ICR criteria"
+                @keydown.enter="excludeIcr"
+              />
+              <button type="button" class="fs__triage-btn fs__triage-btn--danger" :disabled="triageBusy || !triageReason.trim()" @click="excludeIcr">
+                Exclude
+              </button>
             </template>
-            <span v-if="r.reviewedAt" class="fs__reviewed"><Check :size="11" :stroke-width="2.5" /> reviewed</span>
-          </span>
-          <span class="fs__when">{{ fmtSubmitted(r) }}</span>
-          <span
-            v-if="!r.payload.legacyManual"
-            class="fs__dl"
-            role="button"
-            title="Download PDF"
-            @click.stop="openPdf(r, 'download')"
-          ><Download :size="13" :stroke-width="2" /></span>
-          <span v-else class="fs__dl fs__dl--none"><FileText :size="13" :stroke-width="2" /></span>
-        </button>
+            <template v-else>
+              <span class="fs__triage-l">
+                Excluded from the 10<template v-if="r.payload.triageNote"> — “{{ r.payload.triageNote }}”</template>.
+              </span>
+              <button type="button" class="fs__triage-btn" :disabled="triageBusy" @click="includeIcr(r)">
+                Count it again
+              </button>
+            </template>
+            <button type="button" class="fs__triage-btn" @click="triageOpen = null">Close</button>
+            <span v-if="triageError" class="fs__triage-err">{{ triageError }}</span>
+          </div>
+        </template>
         <div v-if="rows.length === 0" class="fs__empty">No submissions match.</div>
       </div>
     </template>
@@ -323,6 +396,67 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
 }
 .fs__dl:hover { background: var(--color-line-soft); color: var(--color-ink); }
 .fs__dl--none { color: var(--color-muted-soft); }
+.fs__row--static { cursor: default; }
+.fs__unsigned {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-warning-50);
+  color: oklch(0.5 0.12 75);
+  white-space: nowrap;
+}
+.fs__count {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fs__count--yes { background: var(--color-success-50); color: var(--color-success-500); }
+.fs__count--yes:hover { background: oklch(0.9 0.06 150); }
+.fs__count--no { background: var(--color-danger-50); color: var(--color-danger-500); }
+.fs__triage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-line-soft);
+  background: var(--color-surface-soft);
+  font-size: 12.5px;
+}
+.fs__triage-l { color: var(--color-ink-soft); }
+.fs__triage input {
+  flex: 1;
+  min-width: 220px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  font-size: 12.5px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.fs__triage-btn {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  cursor: pointer;
+}
+.fs__triage-btn--danger {
+  background: var(--color-danger-500);
+  border-color: var(--color-danger-500);
+  color: #fff;
+}
+.fs__triage-btn:disabled { opacity: 0.55; cursor: default; }
+.fs__triage-err { flex-basis: 100%; font-size: 12px; color: var(--color-danger-500); }
 @media (max-width: 640px) {
   .fs__by { display: none; }
   .fs__who { flex-basis: 110px; }

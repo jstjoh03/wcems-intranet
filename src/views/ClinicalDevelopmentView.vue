@@ -8,6 +8,8 @@ import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
 import { useClinicalDocs, FOLDER_LABELS } from '@/composables/useClinicalDocs'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
+import SignaturePad from '@/components/primitives/SignaturePad.vue'
+import type { FtepReport } from '@/types'
 import {
   activeTransitionFor,
   openGapCount,
@@ -310,6 +312,37 @@ function fmtDate(iso: string): string {
     year: 'numeric',
   })
 }
+
+/* Deferred signatures: reports the FTO submitted while this trainee
+   was unavailable (asleep at shift change) — review & sign here,
+   view-only. */
+const awaitingSign = computed(() =>
+  myFtepReports.value.filter((r) => !r.traineeSignature && !r.payload.legacyManual),
+)
+
+const signTarget = ref<FtepReport | null>(null)
+const signSig = ref<string | null>(null)
+const signBusy = ref(false)
+const signError = ref<string | null>(null)
+
+function openSign(r: FtepReport) {
+  signTarget.value = r
+  signSig.value = null
+  signError.value = null
+}
+
+async function submitSign() {
+  if (!signTarget.value || !signSig.value || signBusy.value) return
+  signBusy.value = true
+  signError.value = null
+  const res = await ftep.signAsTrainee(signTarget.value.id, signSig.value)
+  signBusy.value = false
+  if (!res.ok) {
+    signError.value = res.error
+    return
+  }
+  signTarget.value = null
+}
 </script>
 
 <template>
@@ -449,6 +482,13 @@ function fmtDate(iso: string): string {
         if you think this is a mistake.
       </div>
       <template v-else>
+        <!-- Deferred-signature prompt -->
+        <div v-if="awaitingSign.length" class="cd__signbanner reveal">
+          <b>{{ awaitingSign.length }} report{{ awaitingSign.length === 1 ? '' : 's' }} need{{ awaitingSign.length === 1 ? 's' : '' }} your signature.</b>
+          Your FTO submitted {{ awaitingSign.length === 1 ? 'it' : 'them' }} while you were unavailable —
+          review and sign below under "My FTEP reports."
+        </div>
+
         <div class="cd__me reveal">
           <div class="cd__me-line">
             <span class="cd__me-phase">{{ myPhaseText }}</span>
@@ -502,9 +542,46 @@ function fmtDate(iso: string): string {
                 by {{ evalNames[r.evaluatorId] ?? '—' }} · tap to view PDF
               </template>
             </span>
+            <span
+              v-if="!r.traineeSignature && !r.payload.legacyManual"
+              class="cd__signchip"
+              role="button"
+              tabindex="0"
+              @click.stop="openSign(r)"
+              @keydown.enter.stop.prevent="openSign(r)"
+            >Needs your signature</span>
           </button>
           <div v-if="myFtepReports.length === 0" class="cd__myempty">
             No submitted evaluations yet — DORs and ICRs your FTO submits will appear here.
+          </div>
+        </div>
+
+        <!-- Review & sign modal (view-only — trainees can never edit) -->
+        <div v-if="signTarget" class="cd__signoverlay" @click.self="signTarget = null">
+          <div class="cd__signmodal">
+            <h2 class="display cd__signmodal-title">
+              {{ signTarget.kind.toUpperCase() }} · {{ fmtDate(signTarget.evalDate) }} — review &amp; sign
+            </h2>
+            <p class="cd__signmodal-sub">
+              Submitted by {{ evalNames[signTarget.evaluatorId] ?? 'your FTO' }}<template v-if="signTarget.payload.average !== undefined"> · shift average {{ signTarget.payload.average?.toFixed(2) }}</template>.
+              Review the finished report, then sign — your signature attests you reviewed it; the
+              report itself can't be changed.
+            </p>
+            <button type="button" class="btn cd__signmodal-view" :disabled="myPdfBusy === signTarget.id" @click="viewMyReport(signTarget.id)">
+              <FileText :size="14" :stroke-width="2" />
+              {{ myPdfBusy === signTarget.id ? 'Opening…' : 'View the report (PDF)' }}
+            </button>
+            <div class="cd__signmodal-pad">
+              <div class="cd__signmodal-padlabel">Trainee — {{ myRecord?.fullName }}</div>
+              <SignaturePad :height="110" @change="(v: string) => (signSig = v || null)" />
+            </div>
+            <div v-if="signError" class="cd__signmodal-err">{{ signError }}</div>
+            <div class="cd__signmodal-actions">
+              <button type="button" class="btn" @click="signTarget = null">Not now</button>
+              <button type="button" class="btn btn-primary" :disabled="!signSig || signBusy" @click="submitSign">
+                {{ signBusy ? 'Saving…' : 'Sign & save' }}
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -702,6 +779,66 @@ function fmtDate(iso: string): string {
   gap: 10px;
   margin-top: 8px;
 }
+
+/* Deferred-signature prompt + modal (crew) */
+.cd__signbanner {
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: var(--color-warning-50);
+  border: 1px solid oklch(0.85 0.07 90);
+  font-size: 13px;
+  line-height: 1.5;
+  color: oklch(0.42 0.1 75);
+}
+.cd__signbanner b { color: oklch(0.35 0.1 75); }
+.cd__signchip {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--color-warning-50);
+  color: oklch(0.5 0.12 75);
+  border: 1px solid oklch(0.85 0.07 90);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cd__signchip:hover { background: oklch(0.93 0.06 90); }
+.cd__signoverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: oklch(0.2 0.04 250 / 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.cd__signmodal {
+  width: 100%;
+  max-width: 520px;
+  background: var(--color-surface);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cd__signmodal-title { font-size: 20px; color: var(--color-brand-800); }
+.cd__signmodal-sub { font-size: 12.5px; line-height: 1.55; color: var(--color-ink-soft); }
+.cd__signmodal-view { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; }
+.cd__signmodal-padlabel {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin-bottom: 5px;
+}
+.cd__signmodal-err { font-size: 12.5px; color: var(--color-danger-500); }
+.cd__signmodal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
 /* My file cards (crew) */
 .cd__mycard {
