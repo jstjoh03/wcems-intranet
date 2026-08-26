@@ -79,9 +79,20 @@ const queueOpen = ref<string | null>(null)
 const queueCounts = ref(true)
 const queueEmployee = ref('')
 const queueDate = ref('')
+const queuePhase = ref<'P1' | 'P2'>('P2')
 const queueReject = ref('')
 const queueBusy = ref(false)
 const queueError = ref<string | null>(null)
+
+/** Default the rung from the employee's current legacy phase. */
+function defaultPhaseFor(employeeId: string | null): 'P1' | 'P2' {
+  const rec = employeeId ? personById(employeeId)?.record : null
+  return rec?.workingPhase === 'P1' ? 'P1' : 'P2'
+}
+
+function isLegacyEmployee(employeeId: string): boolean {
+  return !!personById(employeeId)?.record.legacyTrack
+}
 
 function openQueueRow(row: InboxRow) {
   if (queueOpen.value === row.id) {
@@ -92,32 +103,9 @@ function openQueueRow(row: InboxRow) {
   queueCounts.value = true
   queueEmployee.value = row.employee_id ?? ''
   queueDate.value = row.eval_date ?? new Date().toISOString().slice(0, 10)
+  queuePhase.value = defaultPhaseFor(row.employee_id)
   queueReject.value = ''
   queueError.value = null
-}
-
-/** Human-readable view of the Jotform answers for the decision. */
-function prettyRaw(raw: Record<string, unknown> | null): { label: string; value: string }[] {
-  if (!raw) return []
-  const SKIP = /^(slug|path|event_id|jsexecutiontracker|buildDate|uploadServerUrl|eventObserver|validatedNewRequiredFieldIDs|timeToSubmit|q\d+_signature|temp_upload|file)/i
-  const out: { label: string; value: string }[] = []
-  for (const [key, value] of Object.entries(raw)) {
-    if (SKIP.test(key)) continue
-    const label = key
-      .replace(/^q\d+_/, '')
-      .replace(/([a-z])([A-Z])/g, '$1 $2')
-      .replace(/^./, (c) => c.toUpperCase())
-    let v: string
-    if (value && typeof value === 'object') {
-      const o = value as Record<string, unknown>
-      if ('first' in o || 'last' in o) v = `${o.first ?? ''} ${o.last ?? ''}`.trim()
-      else v = Object.entries(o).map(([k2, v2]) => `${k2}: ${String(v2)}`).join(' · ')
-    } else {
-      v = String(value ?? '').trim()
-    }
-    if (v) out.push({ label, value: v })
-  }
-  return out
 }
 
 function rawField(raw: Record<string, unknown> | null, needle: string): string | null {
@@ -127,6 +115,18 @@ function rawField(raw: Record<string, unknown> | null, needle: string): string |
       return value.trim()
   }
   return null
+}
+
+/** The decision-relevant bits — the signed PDF is the review document;
+ *  this is just enough context to not need it for the obvious calls. */
+function queueSummary(row: InboxRow): { line: string; narrative: string | null } {
+  const bits = [
+    rawField(row.raw, 'levelof') ?? rawField(row.raw, 'level'),
+    rawField(row.raw, 'incident') ? `incident ${rawField(row.raw, 'incident')}` : null,
+    rawField(row.raw, 'complaint'),
+    rawField(row.raw, 'condition'),
+  ].filter(Boolean) as string[]
+  return { line: bits.join(' · '), narrative: rawField(row.raw, 'please') ?? rawField(row.raw, 'explanation') }
 }
 
 async function acceptQueueRow(row: InboxRow) {
@@ -155,6 +155,7 @@ async function acceptQueueRow(row: InboxRow) {
       payload: {
         countsToward10: queueCounts.value,
         legacyManual: true,
+        legacyPhase: isLegacyEmployee(employeeId) ? queuePhase.value : undefined,
         jotformId: row.submission_id ?? undefined,
         note: noteBits.join(' · '),
         triageNote: queueCounts.value ? undefined : 'accepted to file but excluded from the 10',
@@ -388,20 +389,19 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
             <span class="fs__inbox-open">{{ queueOpen === row.id ? 'Close' : 'Review' }}</span>
           </button>
           <div v-if="queueOpen === row.id" class="fs__queue-detail">
-            <button
-              v-if="row.pdf_path"
-              type="button"
-              class="fs__triage-btn fs__queue-pdfbtn"
-              @click="viewQueuePdf(row)"
-            >
-              <FileText :size="13" :stroke-width="2" />
-              View signed Jotform PDF
-            </button>
-            <div class="fs__queue-fields">
-              <div v-for="f in prettyRaw(row.raw)" :key="f.label" class="fs__queue-field">
-                <b>{{ f.label }}</b><span>{{ f.value }}</span>
-              </div>
+            <div class="fs__queue-top">
+              <button
+                v-if="row.pdf_path"
+                type="button"
+                class="fs__triage-btn fs__queue-pdfbtn"
+                @click="viewQueuePdf(row)"
+              >
+                <FileText :size="13" :stroke-width="2" />
+                Open the signed evaluation (PDF)
+              </button>
+              <span v-if="queueSummary(row).line" class="fs__queue-line">{{ queueSummary(row).line }}</span>
             </div>
+            <p v-if="queueSummary(row).narrative" class="fs__queue-narr">“{{ queueSummary(row).narrative }}”</p>
             <div class="fs__queue-decide">
               <label class="fs__queue-lbl">
                 For employee
@@ -413,6 +413,13 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
               <label class="fs__queue-lbl">
                 Call date
                 <input v-model="queueDate" type="date" />
+              </label>
+              <label v-if="queueEmployee && isLegacyEmployee(queueEmployee)" class="fs__queue-lbl">
+                Counts toward
+                <select v-model="queuePhase">
+                  <option value="P1">P1 credentialing</option>
+                  <option value="P2">P1 → P2 in-charge</option>
+                </select>
               </label>
               <label class="fs__queue-check">
                 <input v-model="queueCounts" type="checkbox" />
@@ -856,19 +863,24 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
   padding: 12px 14px;
   margin: 6px 0 10px;
 }
-.fs__queue-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 6px 18px;
-  margin-bottom: 12px;
-}
-.fs__queue-field {
+.fs__queue-top {
   display: flex;
-  flex-direction: column;
-  font-size: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 8px;
 }
-.fs__queue-field b { color: var(--color-muted); font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }
-.fs__queue-field span { color: var(--color-ink); line-height: 1.45; white-space: pre-wrap; }
+.fs__queue-line {
+  font-size: 12.5px;
+  color: var(--color-ink-soft);
+}
+.fs__queue-narr {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+}
 .fs__queue-decide {
   display: flex;
   flex-wrap: wrap;

@@ -397,7 +397,7 @@ export type PipelinePhase = 'NEOP' | 'FTR' | 'P1' | 'P2' | 'P3' | 'FinalRelease'
 
 /** Which credentialing transition a gate row belongs to. P1_P2_LEGACY
  *  is the pre-FTEP-rebuild requirement set for P1s already mid-track. */
-export type PipelineTransition = 'NEOP' | 'P1C_P1' | 'P1_P2' | 'P1_P2_LEGACY' | 'P2_P3' | 'AEMT'
+export type PipelineTransition = 'NEOP' | 'P1C_P1' | 'P1_P2' | 'P1_LEGACY' | 'P1_P2_LEGACY' | 'P2_P3' | 'AEMT'
 
 export type GateStatus = 'pending' | 'complete' | 'na'
 

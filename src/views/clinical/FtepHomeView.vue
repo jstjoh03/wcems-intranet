@@ -108,7 +108,7 @@ function statsFor(p: PipelinePerson) {
     cells.push({ v: dors === 0 && manual > 0 ? 'pre-portal' : fmt(ftep.lastDorDate(p.userId)), l: 'last rideout' })
   } else if (track?.key === 'legacy') {
     const evals = ftep.submittedFor(p.userId, 'icr').sort((a, b) => b.evalDate.localeCompare(a.evalDate))
-    cells.push({ v: `${ftep.icrCount(p.userId)}/${track.icrTarget}`, l: 'call evals' })
+    cells.push({ v: `${ftep.icrCount(p.userId, track.legacyPhase)}/${track.icrTarget}`, l: `evals → ${track.legacyPhase}` })
     cells.push({ v: fmt(evals[0]?.evalDate ?? null), l: 'last call eval' })
   } else {
     cells.push({ v: String(dors), l: 'DORs' })
@@ -154,6 +154,7 @@ const rosterRows = computed(() => {
 const legacyDialog = ref<PipelinePerson | null>(null)
 const legacyDate = ref(new Date().toISOString().slice(0, 10))
 const legacyNote = ref('')
+const legacyPhase = ref<'P1' | 'P2'>('P2')
 const legacyBusy = ref(false)
 const legacyError = ref<string | null>(null)
 
@@ -162,6 +163,7 @@ function openLegacyDialog(p: PipelinePerson) {
   legacyDialog.value = p
   legacyDate.value = new Date().toISOString().slice(0, 10)
   legacyNote.value = ''
+  legacyPhase.value = ftepTrackFor(p)?.legacyPhase ?? 'P2'
   legacyError.value = null
 }
 
@@ -173,6 +175,7 @@ async function saveLegacyEval() {
     traineeId: legacyDialog.value.userId,
     evalDate: legacyDate.value,
     note: legacyNote.value,
+    legacyPhase: legacyPhase.value,
   })
   legacyBusy.value = false
   if (!res.ok) { legacyError.value = res.error; return }
@@ -440,6 +443,12 @@ async function review(r: FtepReport) {
             required 10; upload the Jotform PDF to the employee's Documents tab for the file.
           </p>
           <label class="fh__dialog-field">Date of call <input v-model="legacyDate" type="date" /></label>
+          <label class="fh__dialog-field">Counts toward
+            <select v-model="legacyPhase">
+              <option value="P1">Credentialing as P1 (10 required)</option>
+              <option value="P2">P1 → P2 in-charge (10 required)</option>
+            </select>
+          </label>
           <label class="fh__dialog-field">Note (optional)
             <input v-model="legacyNote" type="text" placeholder="e.g. incident #, chief complaint" />
           </label>

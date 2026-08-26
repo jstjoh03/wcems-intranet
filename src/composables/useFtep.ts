@@ -139,9 +139,18 @@ export function useFtep() {
     return Math.round((avgs.reduce((x, y) => x + y, 0) / avgs.length) * 100) / 100
   }
 
-  /** ICRs counting toward the required 10 scored ALS evaluations. */
-  function icrCount(traineeId: string): number {
-    return submittedFor(traineeId, 'icr').filter((r) => r.payload.countsToward10).length
+  /** ICRs counting toward the required 10 scored ALS evaluations.
+   *  For legacy trainees pass their current rung ('P1' | 'P2') — each
+   *  rung needs its own 10, so evals attributed to the other rung are
+   *  excluded (rows without an attribution count toward the current
+   *  rung, grandfathering older entries). */
+  function icrCount(traineeId: string, legacyPhase?: 'P1' | 'P2'): number {
+    return submittedFor(traineeId, 'icr').filter((r) => {
+      if (!r.payload.countsToward10) return false
+      if (legacyPhase && r.payload.legacyManual && r.payload.legacyPhase)
+        return r.payload.legacyPhase === legacyPhase
+      return true
+    }).length
   }
 
   function lastDorDate(traineeId: string): string | null {
@@ -282,6 +291,8 @@ export function useFtep() {
     traineeId: string
     evalDate: string
     note?: string
+    /** Which legacy rung this eval counts toward. */
+    legacyPhase?: 'P1' | 'P2'
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     const uid = auth.appUser?.id
     if (!uid) return { ok: false, error: 'Sign in first.' }
@@ -294,7 +305,12 @@ export function useFtep() {
         evaluator_id: uid,
         status: 'submitted',
         eval_date: input.evalDate,
-        payload: { countsToward10: true, legacyManual: true, note: input.note?.trim() || undefined },
+        payload: {
+          countsToward10: true,
+          legacyManual: true,
+          legacyPhase: input.legacyPhase,
+          note: input.note?.trim() || undefined,
+        },
         submitted_at: new Date().toISOString(),
       })
       .select(COLUMNS)

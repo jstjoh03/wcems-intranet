@@ -194,11 +194,15 @@ export function useClinical() {
     icrTarget: number | null
     icrLabel: string
     rideoutTarget: number | null
+    /** Legacy rung the current 10 count toward ('P1' or 'P2'). */
+    legacyPhase?: 'P1' | 'P2'
   } | null {
     const t = activeTransitionFor(p.record)
     if (!t) return null
+    if (t === 'P1_LEGACY')
+      return { key: 'legacy', label: 'Legacy — credentialing as P1', dorTracked: false, dorWindow: 2, icrTarget: 10, icrLabel: 'call evals', rideoutTarget: null, legacyPhase: 'P1' }
     if (t === 'P1_P2_LEGACY')
-      return { key: 'legacy', label: 'Legacy track', dorTracked: false, dorWindow: 2, icrTarget: 10, icrLabel: 'call evals', rideoutTarget: null }
+      return { key: 'legacy', label: 'Legacy — P1 → P2', dorTracked: false, dorWindow: 2, icrTarget: 10, icrLabel: 'call evals', rideoutTarget: null, legacyPhase: 'P2' }
     if (t === 'P2_P3')
       return { key: 'rideup', label: 'Ride-up supervisor', dorTracked: true, dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: 4 }
     if (t === 'AEMT')
@@ -227,6 +231,7 @@ export function useClinical() {
         NEOP: 'NEOP',
         P1C_P1: 'P1C → P1',
         P1_P2: 'P1 → P2',
+        P1_LEGACY: '→ P1 · Legacy',
         P1_P2_LEGACY: 'P1 → P2 · Legacy',
         P2_P3: 'P2 → P3',
         AEMT: 'AEMT upgrade',

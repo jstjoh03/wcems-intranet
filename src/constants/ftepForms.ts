@@ -265,6 +265,12 @@ export interface FtepPayload {
   /* Legacy-track call evals recorded manually from Jotform until the
      webhook lands — no ratings/signatures, just the count + context. */
   legacyManual?: boolean
+  /** Which legacy credentialing rung this eval counts toward: 'P1'
+   *  (working toward the P1 credential) or 'P2' (P1 → in-charge).
+   *  Each rung requires its own 10 — evals never carry across.
+   *  Missing on older rows = counts toward whatever rung the trainee
+   *  is currently working. */
+  legacyPhase?: 'P1' | 'P2'
   note?: string
   /** Clinical triage: why this ICR was excluded from the required 10
    *  (set alongside countsToward10=false from the Submissions inbox). */

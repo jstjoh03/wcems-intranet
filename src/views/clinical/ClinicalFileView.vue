@@ -469,11 +469,11 @@ function fmtDateTime(iso: string): string {
           </template>
           <template v-else-if="ftepTrackFor(person)?.key === 'legacy'">
             <div class="cf__gate">
-              <span class="cf__tick" :class="ftep.icrCount(person.userId) >= 10 ? 'cf__tick--ok' : 'cf__tick--open'">
-                <Check v-if="ftep.icrCount(person.userId) >= 10" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+              <span class="cf__tick" :class="ftep.icrCount(person.userId, ftepTrackFor(person)?.legacyPhase) >= 10 ? 'cf__tick--ok' : 'cf__tick--open'">
+                <Check v-if="ftep.icrCount(person.userId, ftepTrackFor(person)?.legacyPhase) >= 10" :size="12" :stroke-width="2.5" /><template v-else>·</template>
               </span>
-              <span class="cf__gate-l">Call evaluations (Jotform · narrative format)</span>
-              <span class="cf__gate-v">{{ ftep.icrCount(person.userId) }} of 10 required · DORs stay in Jotform</span>
+              <span class="cf__gate-l">Call evaluations toward {{ ftepTrackFor(person)?.legacyPhase === 'P1' ? 'P1 credentialing' : 'P2 in-charge' }} (Jotform · narrative)</span>
+              <span class="cf__gate-v">{{ ftep.icrCount(person.userId, ftepTrackFor(person)?.legacyPhase) }} of 10 for this rung · each rung needs its own 10</span>
             </div>
           </template>
           <template v-else>
@@ -495,7 +495,7 @@ function fmtDateTime(iso: string): string {
           <div v-for="r in myReports.slice(0, 8)" :key="r.id" class="cf__gate cf__gate--hist">
             <template v-if="r.payload.legacyManual">
               <span class="cf__gate-l">Call eval (Jotform) · {{ fmt(r.evalDate) }}</span>
-              <span class="cf__gate-v">{{ r.payload.note ?? '' }}<template v-if="r.payload.note"> · </template>recorded by {{ personById(r.evaluatorId)?.fullName ?? '—' }} · original in Documents</span>
+              <span class="cf__gate-v"><template v-if="r.payload.legacyPhase">→ {{ r.payload.legacyPhase }} rung · </template>{{ r.payload.note ?? '' }}<template v-if="r.payload.note"> · </template>recorded by {{ personById(r.evaluatorId)?.fullName ?? '—' }} · original in Documents</span>
             </template>
             <template v-else>
               <button

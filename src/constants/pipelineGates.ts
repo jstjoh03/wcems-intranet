@@ -92,10 +92,26 @@ export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
     petitionChain: ['Supervisor', 'CDO', 'Asst Chief'],
     includesAccess: true,
   },
-  /* Pre-rebuild requirement set for P1s already mid-track when the new
-     FTEP program landed — call evals are narrative, not numerically
+  /* Pre-rebuild requirement sets for people already mid-track when the
+     new FTEP program landed — call evals are narrative, not numerically
      graded, so the gate is a count, and there are no DORs/ICRs/oral
-     board. Flagged per person via pipeline_records.legacy_track. */
+     board. Flagged per person via pipeline_records.legacy_track. The
+     legacy program has TWO credentialing rungs, each needing its OWN
+     10 ALS call evals + protocol test + mega code (Justin, 2026-08-25):
+     P1_LEGACY (working toward the P1 credential — today's P1C
+     equivalent) then P1_P2_LEGACY (credentialed P1 → P2/in-charge). */
+  P1_LEGACY: {
+    transition: 'P1_LEGACY',
+    label: 'Credentialing as P1 (legacy program)',
+    toLabel: 'P1',
+    gates: [
+      metric('call_evals', 'Call evaluations', '10 required, narrative format'),
+      exam('mega_code', 'Mega code'),
+      exam('protocol_test', 'Protocol test'),
+    ],
+    petitionChain: [],
+    includesAccess: true,
+  },
   P1_P2_LEGACY: {
     transition: 'P1_P2_LEGACY',
     label: 'P1 → P2 (legacy program)',
@@ -209,9 +225,16 @@ export const ENROLLMENT_TRACKS: EnrollmentTrack[] = [
     patch: { workingPhase: 'P2', legacyTrack: false },
   },
   {
+    key: 'p1_legacy',
+    label: 'Legacy program — credentialing as P1',
+    hint: '10 call evaluations (Jotform) + protocol test + mega code',
+    days: 180,
+    patch: { workingPhase: 'P1', legacyTrack: true },
+  },
+  {
     key: 'p1_p2_legacy',
-    label: 'P1 → P2 — legacy program',
-    hint: 'call evaluations via Jotform',
+    label: 'Legacy program — P1 → P2',
+    hint: '10 call evaluations (Jotform) + protocol test + mega code',
     days: 180,
     patch: { workingPhase: 'P2', legacyTrack: true },
   },
@@ -240,7 +263,7 @@ export function activeTransitionFor(r: PipelineRecord): PipelineTransition | nul
   if (r.workingPhase === 'NEOP') return 'NEOP'
   if (r.workingPhase === 'P2') return r.legacyTrack ? 'P1_P2_LEGACY' : 'P1_P2'
   if (r.workingPhase === 'P3') return 'P2_P3'
-  return 'P1C_P1'
+  return r.legacyTrack ? 'P1_LEGACY' : 'P1C_P1'
 }
 
 /* ── Gate item resolution (defs ⋈ stored rows ⋈ record dates) ──────── */
