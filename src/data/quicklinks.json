@@ -13,7 +13,7 @@
   { "id": "paycom", "label": "Paycom", "sub": "Time & pay", "url": "https://www.paycomonline.net/v4/ee/web.php/app/login", "iconName": "ClipboardList", "category": "Schedule & Pay", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 220 },
 
   { "id": "internal-edu", "label": "Internal Education", "sub": "CE catalog", "url": "https://www.wallercountyems.com/internaleducation", "iconName": "GraduationCap", "category": "Training", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 310 },
-  { "id": "ems1-academy", "label": "EMS1 Academy", "sub": "Self-paced CE", "url": "https://olt.ems1academy.com/login/", "iconName": "BookOpen", "category": "Training", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 320 },
+  { "id": "ems1-academy", "label": "Lexipol (Formerly EMS1)", "sub": "Self-paced CE", "url": "https://olt.ems1academy.com/login/", "iconName": "BookOpen", "category": "Training", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 320 },
 
   { "id": "nremt", "label": "NREMT", "sub": "National registry", "url": "https://nremt.org/login", "iconName": "FileCheck", "category": "Licensure", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 410 },
   { "id": "dshs", "label": "Texas DSHS", "sub": "State licensing", "url": "https://vo.ras.dshs.state.tx.us/datamart/login.do", "iconName": "Shield", "category": "Licensure", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 420 },
