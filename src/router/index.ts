@@ -194,6 +194,12 @@ const routes: RouteRecordRaw[] = [
     name: 'fto-eval',
     component: () => import('@/views/clinical/FtoEvalView.vue'),
   },
+  /* Candidate-facing: proctored protocol examination runner. */
+  {
+    path: '/exam/:id',
+    name: 'exam-runner',
+    component: () => import('@/views/clinical/ExamRunnerView.vue'),
+  },
   {
     path: '/clinical/ftep/:kind(dor|icr)/:traineeId',
     name: 'clinical-ftep-report',

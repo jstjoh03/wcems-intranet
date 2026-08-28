@@ -8,6 +8,7 @@ import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue
 import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useClinicalDocs, FOLDER_LABELS, type ClinicalDocFolder } from '@/composables/useClinicalDocs'
+import { useExams } from '@/composables/useExams'
 import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import { useSkillsDay } from '@/composables/useSkillsDay'
@@ -130,6 +131,47 @@ const rideouts = computed(() => {
 })
 
 const juris = computed(() => (person.value ? jurisprudenceStatus(person.value.record) : null))
+
+/* ── Protocol exams (editors assign / release / see results) ──────── */
+const exams = useExams()
+const myExamAssignments = computed(() =>
+  person.value ? exams.assignmentsFor(person.value.userId).filter((a) => a.status !== 'cancelled') : [],
+)
+const examToAssign = ref('')
+const examBusy = ref(false)
+const examError = ref<string | null>(null)
+
+async function assignExam() {
+  const p = person.value
+  if (!p || !examToAssign.value || examBusy.value) return
+  examBusy.value = true
+  examError.value = null
+  const res = await exams.assign(examToAssign.value, p.userId)
+  examBusy.value = false
+  if (!res.ok) { examError.value = res.error ?? 'Failed.'; return }
+  examToAssign.value = ''
+}
+
+async function releaseExam(id: string) {
+  if (examBusy.value) return
+  examBusy.value = true
+  await exams.release(id)
+  examBusy.value = false
+}
+
+async function cancelExam(id: string) {
+  if (examBusy.value) return
+  examBusy.value = true
+  await exams.cancel(id)
+  examBusy.value = false
+}
+
+const EXAM_STATUS_LABELS: Record<string, string> = {
+  assigned: 'Assigned — awaiting release',
+  released: 'Released — ready to begin',
+  in_progress: 'In progress',
+  submitted: 'Submitted',
+}
 
 /* ── Credentials tab ─────────────────────────────────────────────── */
 const cardReqs = computed<PipelineRequirement[]>(() =>
@@ -518,6 +560,51 @@ function fmtDateTime(iso: string): string {
             </template>
           </div>
         </div>
+        <!-- Protocol exams (editors) -->
+        <div v-if="canEdit" class="cf__card">
+          <div class="cf__card-hd">Protocol examinations</div>
+          <div v-for="a in myExamAssignments" :key="a.id" class="cf__gate">
+            <span class="cf__tick" :class="a.status === 'submitted' && a.passed ? 'cf__tick--ok' : 'cf__tick--open'">
+              <Check v-if="a.status === 'submitted' && a.passed" :size="12" :stroke-width="2.5" /><template v-else>·</template>
+            </span>
+            <span class="cf__gate-l">{{ exams.definitionById(a.examId)?.title ?? 'Examination' }}</span>
+            <span class="cf__gate-v">
+              <template v-if="a.status === 'submitted'">
+                {{ a.scorePct?.toFixed(1) }}% — <b :class="a.passed ? '' : 'cf__late'">{{ a.passed ? 'passed' : 'not passed' }}</b>
+                <template v-if="(a.criticalMissed?.length ?? 0) > 0"> · <b class="cf__late">{{ a.criticalMissed!.length }} critical item{{ a.criticalMissed!.length === 1 ? '' : 's' }} missed — targeted retest required</b></template>
+                · {{ fmt((a.submittedAt ?? '').slice(0, 10)) }}
+              </template>
+              <template v-else>{{ EXAM_STATUS_LABELS[a.status] ?? a.status }}</template>
+            </span>
+            <button
+              v-if="a.status === 'assigned'"
+              type="button"
+              class="cf__mini cf__mini--primary"
+              :disabled="examBusy"
+              @click="releaseExam(a.id)"
+            >Release</button>
+            <button
+              v-if="a.status === 'assigned' || a.status === 'released'"
+              type="button"
+              class="cf__mini"
+              :disabled="examBusy"
+              @click="cancelExam(a.id)"
+            >Cancel</button>
+          </div>
+          <div v-if="myExamAssignments.length === 0" class="cf__card-empty">No exams assigned.</div>
+          <div class="cf__compform" style="margin: 10px 16px 14px">
+            <span class="cf__compform-l">Assign an examination</span>
+            <select v-model="examToAssign">
+              <option value="" disabled>Select exam…</option>
+              <option v-for="d in exams.activeDefinitions.value" :key="d.id" :value="d.id">{{ d.title }}</option>
+            </select>
+            <button type="button" class="cf__mini cf__mini--primary" :disabled="!examToAssign || examBusy" @click="assignExam">
+              <Plus :size="12" :stroke-width="2.5" /> Assign
+            </button>
+            <span v-if="examError" class="cf__late">{{ examError }}</span>
+          </div>
+        </div>
+
         <PipelinePersonDetail :person="person" />
       </section>
 

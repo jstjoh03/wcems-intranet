@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
+import { useExams } from '@/composables/useExams'
 import { useClinicalDocs, FOLDER_LABELS } from '@/composables/useClinicalDocs'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
@@ -258,6 +259,15 @@ const myPhaseText = computed(() => {
 
 const clindocs = useClinicalDocs()
 const ftep = useFtep()
+const exams = useExams()
+
+/** Open exam work for this candidate — released ones pulse "begin". */
+const myExams = computed(() =>
+  exams.myAssignments.value.map((a) => ({
+    a,
+    title: exams.definitionById(a.examId)?.title ?? 'Protocol examination',
+  })),
+)
 
 const myDocs = computed(() =>
   myRecord.value ? clindocs.docsFor(myRecord.value.userId) : [],
@@ -499,6 +509,25 @@ async function submitSign() {
           </div>
           <div class="cd__me-track"><i :style="{ width: `${myPct}%` }"></i></div>
         </div>
+        <!-- Protocol exams — assigned / released / results -->
+        <div v-for="x in myExams" :key="x.a.id" class="cd__exam reveal" :class="{ 'cd__exam--go': x.a.status === 'released' || x.a.status === 'in_progress' }">
+          <div class="cd__exam-copy">
+            <b>{{ x.title }}</b>
+            <span v-if="x.a.status === 'assigned'">Assigned — your proctor will release it when you're seated. This page updates automatically.</span>
+            <span v-else-if="x.a.status === 'released'">Released — you may begin when your proctor tells you.</span>
+            <span v-else-if="x.a.status === 'in_progress'">In progress — the clock is running.</span>
+            <span v-else-if="x.a.status === 'submitted'">
+              Submitted · {{ x.a.scorePct?.toFixed(1) }}% — {{ x.a.passed ? 'passed' : 'not passed' }}<template v-if="(x.a.criticalMissed?.length ?? 0) > 0"> · targeted retest required on flagged items</template>
+            </span>
+          </div>
+          <button
+            v-if="x.a.status === 'released' || x.a.status === 'in_progress'"
+            type="button"
+            class="btn btn-primary"
+            @click="router.push(`/exam/${x.a.id}`)"
+          >{{ x.a.status === 'in_progress' ? 'Resume exam' : 'Begin exam' }}</button>
+        </div>
+
         <div class="cd__me-detail reveal" style="animation-delay: 80ms">
           <PipelinePersonDetail :person="myRecord" />
         </div>
@@ -859,6 +888,29 @@ async function submitSign() {
 .cd__signmodal-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
 .cd__mycard-wrap { margin-top: 14px; }
+.cd__exam {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 13px 18px;
+  border-radius: 13px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+}
+.cd__exam--go {
+  border-color: var(--color-accent-600);
+  box-shadow: 0 0 0 3px oklch(0.9 0.06 90 / 0.4);
+}
+.cd__exam-copy {
+  flex: 1;
+  min-width: 240px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+}
+.cd__exam-copy b { display: block; color: var(--color-ink); }
 .cd__ftoeval {
   display: flex;
   flex-wrap: wrap;
