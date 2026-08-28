@@ -2,8 +2,9 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Check, Clock } from 'lucide-vue-next'
+import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
-import { useExams } from '@/composables/useExams'
+import { useExams, type ExamAnswers } from '@/composables/useExams'
 
 /**
  * Protocol exam runner — the candidate's page. Starts only after the
@@ -24,7 +25,7 @@ const definition = computed(() =>
   assignment.value ? exams.definitionById(assignment.value.examId) : null,
 )
 
-const answers = ref<Record<string, string>>({})
+const answers = ref<ExamAnswers>({})
 let hydrated = false
 watch(
   assignment,
@@ -37,8 +38,44 @@ watch(
   { immediate: true },
 )
 
-const answeredCount = computed(() => Object.keys(answers.value).length)
+function toggleMulti(no: number, letter: string) {
+  const k = String(no)
+  const cur = Array.isArray(answers.value[k]) ? [...(answers.value[k] as string[])] : []
+  const i = cur.indexOf(letter)
+  if (i >= 0) cur.splice(i, 1)
+  else cur.push(letter)
+  if (cur.length) answers.value[k] = cur.sort()
+  else delete answers.value[k]
+}
+
+function isPicked(no: number, letter: string): boolean {
+  const v = answers.value[String(no)]
+  return Array.isArray(v) ? v.includes(letter) : v === letter
+}
+
+const answeredCount = computed(
+  () => Object.values(answers.value).filter((v) => (Array.isArray(v) ? v.length > 0 : !!v)).length,
+)
 const totalCount = computed(() => definition.value?.questions.length ?? 0)
+
+/* Question images (rhythm strips, reference charts) — signed URLs from
+   the exam-assets bucket, loaded once the definition is visible. */
+const imageUrls = ref<Record<string, string>>({})
+watch(
+  definition,
+  async (d) => {
+    if (!d) return
+    for (const q of d.questions) {
+      if (q.image && !imageUrls.value[q.image]) {
+        const { data } = await supabase.storage
+          .from('exam-assets')
+          .createSignedUrl(`${d.slug}/${q.image}`, 7200)
+        if (data?.signedUrl) imageUrls.value = { ...imageUrls.value, [q.image]: data.signedUrl }
+      }
+    }
+  },
+  { immediate: true },
+)
 
 /* Group questions by section for headers. */
 const sections = computed(() => {
@@ -227,22 +264,49 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
       <template v-for="sec in sections" :key="sec.title ?? 'x'">
         <div v-if="sec.title" class="ex__section">{{ sec.title }}</div>
         <div v-for="q in sec.questions" :key="q.no" class="ex__q">
-          <div class="ex__q-text"><b>{{ q.no }}.</b> {{ q.text }}</div>
-          <label
-            v-for="(text, letter) in q.options"
-            :key="letter"
-            class="ex__opt"
-            :class="{ 'ex__opt--on': answers[String(q.no)] === letter }"
-          >
-            <input
-              v-model="answers[String(q.no)]"
-              type="radio"
-              :name="`q${q.no}`"
-              :value="letter"
-            />
-            <span class="ex__opt-letter">{{ letter }}</span>
-            <span>{{ text }}</span>
-          </label>
+          <div class="ex__q-text">
+            <b>{{ q.no }}.</b> {{ q.text }}
+            <span v-if="q.type === 'multi'" class="ex__multi-hint">select all that apply</span>
+          </div>
+          <img
+            v-if="q.image && imageUrls[q.image]"
+            :src="imageUrls[q.image]"
+            class="ex__q-img"
+            alt="Question reference image"
+          />
+          <template v-if="q.type === 'multi'">
+            <label
+              v-for="(text, letter) in q.options"
+              :key="letter"
+              class="ex__opt"
+              :class="{ 'ex__opt--on': isPicked(q.no, letter) }"
+            >
+              <input
+                type="checkbox"
+                :checked="isPicked(q.no, letter)"
+                @change="toggleMulti(q.no, letter)"
+              />
+              <span class="ex__opt-letter">{{ letter }}</span>
+              <span>{{ text }}</span>
+            </label>
+          </template>
+          <template v-else>
+            <label
+              v-for="(text, letter) in q.options"
+              :key="letter"
+              class="ex__opt"
+              :class="{ 'ex__opt--on': answers[String(q.no)] === letter }"
+            >
+              <input
+                v-model="answers[String(q.no)]"
+                type="radio"
+                :name="`q${q.no}`"
+                :value="letter"
+              />
+              <span class="ex__opt-letter">{{ letter }}</span>
+              <span>{{ text }}</span>
+            </label>
+          </template>
         </div>
       </template>
 
@@ -320,6 +384,15 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
   border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
 }
 .ex__q-text { font-size: 14px; line-height: 1.55; color: var(--color-ink); margin-bottom: 10px; }
+.ex__multi-hint {
+  margin-left: 8px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--color-accent-700);
+  background: oklch(0.95 0.06 90); padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+}
+.ex__q-img {
+  display: block; max-width: 100%; border: 1px solid var(--color-line);
+  border-radius: 8px; margin: 0 0 12px; background: #fff;
+}
 .ex__opt {
   display: flex; align-items: flex-start; gap: 10px;
   padding: 8px 10px; border-radius: 9px; cursor: pointer;

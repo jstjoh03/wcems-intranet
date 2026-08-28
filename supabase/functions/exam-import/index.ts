@@ -33,8 +33,11 @@ Deno.serve(async (req: Request) => {
     passingPct?: number
     instructions?: string
     questions: unknown[]
-    answers: Record<string, string>
+    answers: Record<string, string | string[]>
     refs?: Record<string, string>
+    /** Question images (rhythm strips, reference charts) — stored in
+     *  exam-assets under <slug>/<name>. */
+    assets?: { name: string; b64: string; contentType?: string }[]
   }
   try {
     body = await req.json()
@@ -72,8 +75,23 @@ Deno.serve(async (req: Request) => {
     .upsert({ exam_id: def.id, answers: body.answers, refs: body.refs ?? null }, { onConflict: 'exam_id' })
   if (keyErr) return new Response(JSON.stringify({ ok: false, error: keyErr.message }), { status: 500 })
 
+  let assetsStored = 0
+  for (const a of body.assets ?? []) {
+    const bytes = Uint8Array.from(atob(a.b64), (c) => c.charCodeAt(0))
+    const { error: upErr } = await supabase.storage
+      .from('exam-assets')
+      .upload(`${body.slug}/${a.name}`, bytes, { contentType: a.contentType ?? 'image/jpeg', upsert: true })
+    if (!upErr) assetsStored++
+  }
+
   return new Response(
-    JSON.stringify({ ok: true, examId: def.id, questions: body.questions.length, keyed: Object.keys(body.answers).length }),
+    JSON.stringify({
+      ok: true,
+      examId: def.id,
+      questions: body.questions.length,
+      keyed: Object.keys(body.answers).length,
+      assetsStored,
+    }),
     { status: 200 },
   )
 })

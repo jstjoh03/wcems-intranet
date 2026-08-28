@@ -16,8 +16,15 @@ export interface ExamQuestion {
   section: string | null
   text: string
   options: Record<string, string>
+  /** 'multi' = select-all-that-apply (graded as an exact set). */
+  type?: 'single' | 'multi'
+  /** Image filename in exam-assets/<slug>/. */
+  image?: string
   critical?: boolean
 }
+
+/** Single answers are letters; multi-select answers are letter arrays. */
+export type ExamAnswers = Record<string, string | string[]>
 
 export interface ExamDefinition {
   id: string
@@ -41,7 +48,7 @@ export interface ExamAssignment {
   releasedAt: string | null
   startedAt: string | null
   submittedAt: string | null
-  answers: Record<string, string>
+  answers: ExamAnswers
   scorePct: number | null
   passed: boolean | null
   criticalMissed: number[] | null
@@ -81,7 +88,7 @@ function assignFromRow(r: any): ExamAssignment {
     releasedAt: r.released_at,
     startedAt: r.started_at,
     submittedAt: r.submitted_at,
-    answers: (r.answers ?? {}) as Record<string, string>,
+    answers: (r.answers ?? {}) as ExamAnswers,
     scorePct: r.score_pct !== null ? Number(r.score_pct) : null,
     passed: r.passed,
     criticalMissed: (r.critical_missed ?? null) as number[] | null,
@@ -182,14 +189,14 @@ export function useExams() {
     return { ok: true, startedAt: data as string }
   }
 
-  async function saveAnswers(assignmentId: string, answers: Record<string, string>): Promise<boolean> {
+  async function saveAnswers(assignmentId: string, answers: ExamAnswers): Promise<boolean> {
     const { data } = await supabase.rpc('exam_save', { p_assignment: assignmentId, p_answers: answers })
     return !!data
   }
 
   async function submit(
     assignmentId: string,
-    answers: Record<string, string>,
+    answers: ExamAnswers,
   ): Promise<{ ok: boolean; scorePct?: number; passed?: boolean; passingPct?: number; criticalMissed?: number[]; error?: string }> {
     const { data, error } = await supabase.rpc('exam_submit', {
       p_assignment: assignmentId,
