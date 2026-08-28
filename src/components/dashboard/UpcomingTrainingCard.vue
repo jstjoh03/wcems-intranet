@@ -131,8 +131,8 @@ function freshnessLabel(d: Date | null): string {
             />
           </div>
           <a
-            v-if="t.source === 'wix'"
-            :href="REGISTER_URL"
+            v-if="t.source === 'wix' || t.registrationUrl"
+            :href="t.registrationUrl || REGISTER_URL"
             target="_blank"
             rel="noopener noreferrer"
             class="training-card__register"

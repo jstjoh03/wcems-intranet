@@ -30,10 +30,11 @@ export interface TrainingEvent {
   total: number
   location: string
   instructor: string
-  source: 'wix' | 'calendar' | 'lecture'
+  source: 'wix' | 'calendar' | 'lecture' | 'manual'
   /** Per-event registration URL. Wix events fall back to the global
-   *  internal-education portal; lectures carry their own training-PWA
-   *  registration link; calendar-only events have none. */
+   *  internal-education portal; lectures and manual one-off classes
+   *  carry their own registration link (e.g. a Jotform); calendar-only
+   *  events have none. */
   registrationUrl: string | null
 }
 
@@ -46,7 +47,7 @@ interface TrainingSessionRow {
   remaining_capacity: number
   location: string
   instructor: string
-  source: 'wix' | 'calendar' | 'lecture'
+  source: 'wix' | 'calendar' | 'lecture' | 'manual'
   registration_url: string | null
   synced_at: string
 }

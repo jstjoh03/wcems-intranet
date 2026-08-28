@@ -210,7 +210,7 @@ function fillColor(filled: number, total: number) {
             </div>
           </div>
           <a
-            v-if="t.source === 'wix' || (t.source === 'lecture' && t.registrationUrl)"
+            v-if="t.source === 'wix' || t.registrationUrl"
             :href="t.registrationUrl || REGISTER_URL"
             target="_blank"
             rel="noopener noreferrer"

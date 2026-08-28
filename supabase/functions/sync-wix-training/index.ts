@@ -385,16 +385,31 @@ Deno.serve(async (req: Request) => {
 
     /* Prune rows not seen in this run — handles canceled sessions,
        calendar events that got "blue" un-tagged, and the 180-day
-       horizon falloff. */
+       horizon falloff. Only reconcile the sources this sync OWNS:
+       'manual' (one-off classes added by hand, e.g. Jotform-registered)
+       and 'lecture' rows are managed elsewhere and must survive. */
     const liveIds = rows.map((r) => r.id)
+    const ownSources = ['wix', 'calendar']
     const { error: delErr } =
       liveIds.length > 0
         ? await supabase
             .from('training_sessions')
             .delete()
+            .in('source', ownSources)
             .not('id', 'in', `(${liveIds.map((id) => `"${id}"`).join(',')})`)
-        : await supabase.from('training_sessions').delete().neq('id', '')
+        : await supabase.from('training_sessions').delete().in('source', ownSources)
     if (delErr) throw new Error(`prune: ${delErr.message}`)
+
+    /* Tidy: drop manual one-offs once their class day is well past
+       (the UI already hides past dates; this just keeps the table clean). */
+    const cutoff = new Date(Date.now() - 7 * 24 * 3600 * 1000)
+      .toISOString()
+      .slice(0, 19)
+    await supabase
+      .from('training_sessions')
+      .delete()
+      .eq('source', 'manual')
+      .lt('local_start', cutoff)
 
     return new Response(
       JSON.stringify({
