@@ -365,6 +365,9 @@ export interface Announcement {
   /** Per-announcement toggle: crew can leave comments on the
    *  full-story view. Enforced server-side by RLS on inserts. */
   allowComments: boolean
+  /** app_users ids who get a push when someone comments (picked by the
+   *  admin at compose time — e.g. the subject of a good-news post). */
+  commentNotifyUserIds: string[]
 }
 
 export interface BirthdayEntry {

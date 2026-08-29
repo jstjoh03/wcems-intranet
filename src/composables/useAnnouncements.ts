@@ -28,6 +28,7 @@ interface AnnouncementRow {
   published_at: string
   active: boolean
   allow_comments: boolean
+  comment_notify_user_ids: string[]
 }
 
 function formatDateLabel(iso: string): string {
@@ -48,6 +49,7 @@ function rowToAnnouncement(r: AnnouncementRow): Announcement {
     publishedAt: r.published_at,
     active: r.active,
     allowComments: r.allow_comments,
+    commentNotifyUserIds: r.comment_notify_user_ids ?? [],
   }
 }
 
@@ -64,7 +66,7 @@ async function loadAnnouncements() {
   const { data, error } = await supabase
     .from('announcements')
     .select(
-      'id, tag, title, body, image_url, author_name, author_user_id, published_at, active, allow_comments',
+      'id, tag, title, body, image_url, author_name, author_user_id, published_at, active, allow_comments, comment_notify_user_ids',
     )
     .order('published_at', { ascending: false })
   if (error) {
@@ -128,6 +130,7 @@ export interface NewAnnouncementInput {
   body: string
   imageUrl: string | null
   allowComments: boolean
+  commentNotifyUserIds: string[]
 }
 
 export interface UpdateAnnouncementInput extends NewAnnouncementInput {
@@ -168,6 +171,7 @@ export function useAnnouncements() {
           publishedAt: new Date().toISOString(),
           active: true,
           allowComments: input.allowComments,
+          commentNotifyUserIds: input.commentNotifyUserIds,
         },
         ...announcements.value,
       ]
@@ -181,6 +185,7 @@ export function useAnnouncements() {
       author_name: author?.fullName ?? 'Admin',
       author_user_id: author?.id ?? null,
       allow_comments: input.allowComments,
+      comment_notify_user_ids: input.commentNotifyUserIds,
     })
     if (error) throw error
     /* Realtime INSERT will prepend the new row; no explicit refresh
@@ -199,6 +204,7 @@ export function useAnnouncements() {
               body: input.body,
               imageUrl: input.imageUrl,
               allowComments: input.allowComments,
+              commentNotifyUserIds: input.commentNotifyUserIds,
             }
           : a,
       )
@@ -212,6 +218,7 @@ export function useAnnouncements() {
         body: input.body || null,
         image_url: input.imageUrl,
         allow_comments: input.allowComments,
+        comment_notify_user_ids: input.commentNotifyUserIds,
       })
       .eq('id', input.id)
     if (error) throw error

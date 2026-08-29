@@ -30,6 +30,8 @@ interface Draft {
   body: string
   imageUrl: string | null
   allowComments: boolean
+  /** app_users ids pushed when someone comments. */
+  notifyIds: string[]
 }
 
 const composing = ref(false)
@@ -79,8 +81,63 @@ function blankDraft(): Draft {
     body: '',
     imageUrl: null,
     allowComments: false,
+    notifyIds: [],
   }
 }
+
+/* ── Comment-notification recipients ──
+   Roster for the "notify on comments" picker, loaded lazily the first
+   time the compose form opens (same source as the spotlight picker:
+   app_users directly, so ids resolve for the push). */
+const roster = ref<Array<{ id: string; fullName: string }>>([])
+let rosterLoaded = false
+async function loadRoster() {
+  if (rosterLoaded) return
+  if (auth.usingDevStub) {
+    /* Fixture roster so the picker flow is demoable offline. */
+    rosterLoaded = true
+    roster.value = [
+      { id: 'dev-1', fullName: 'Benjamin Egert' },
+      { id: 'dev-2', fullName: 'April Mancini' },
+      { id: 'dev-3', fullName: 'Heather Fojt' },
+    ]
+    return
+  }
+  rosterLoaded = true
+  const { data, error } = await supabase
+    .from('app_users')
+    .select('id, full_name')
+    .eq('active', true)
+    .eq('account_type', 'person')
+    .order('full_name')
+  if (error) {
+    console.warn('[announcements] roster load failed:', error.message)
+    rosterLoaded = false
+    return
+  }
+  roster.value = (data ?? []).map((r: { id: string; full_name: string }) => ({
+    id: r.id,
+    fullName: r.full_name,
+  }))
+}
+
+const notifyPicker = ref('')
+function addNotifyPick() {
+  const id = notifyPicker.value
+  notifyPicker.value = ''
+  if (id && !draft.value.notifyIds.includes(id)) {
+    draft.value.notifyIds = [...draft.value.notifyIds, id]
+  }
+}
+function removeNotify(id: string) {
+  draft.value.notifyIds = draft.value.notifyIds.filter((x) => x !== id)
+}
+function notifyName(id: string): string {
+  return roster.value.find((r) => r.id === id)?.fullName ?? 'Teammate'
+}
+const notifyOptions = computed(() =>
+  roster.value.filter((r) => !draft.value.notifyIds.includes(r.id)),
+)
 
 /* ── Full-story view (spotlight pattern) ──
    Long bodies get a snippet in-card with a "Read the full story" link
@@ -115,6 +172,7 @@ function startCompose() {
   draft.value = blankDraft()
   composing.value = true
   composeError.value = null
+  void loadRoster()
 }
 
 function startEdit(id: string) {
@@ -129,9 +187,11 @@ function startEdit(id: string) {
     body: a.body,
     imageUrl: a.imageUrl,
     allowComments: a.allowComments,
+    notifyIds: [...a.commentNotifyUserIds],
   }
   composing.value = true
   composeError.value = null
+  void loadRoster()
 }
 
 function cancelCompose() {
@@ -202,6 +262,7 @@ async function submitDraft() {
       body: draft.value.body.trim(),
       imageUrl: draft.value.imageUrl,
       allowComments: draft.value.allowComments,
+      commentNotifyUserIds: draft.value.allowComments ? draft.value.notifyIds : [],
     }
     if (draft.value.id) {
       await update({ id: draft.value.id, ...payload })
@@ -317,6 +378,32 @@ const submitLabel = computed(() => {
           </span>
         </span>
       </label>
+
+      <!-- Who gets a push when a comment lands (e.g. the person the
+           good news is about). Only meaningful with comments on. -->
+      <div v-if="draft.allowComments && roster.length" class="announcements-card__notify">
+        <span class="announcements-card__notify-label">Notify on new comments</span>
+        <div v-if="draft.notifyIds.length" class="announcements-card__notify-chips">
+          <span v-for="id in draft.notifyIds" :key="id" class="announcements-card__notify-chip">
+            {{ notifyName(id) }}
+            <button
+              type="button"
+              class="announcements-card__notify-chip-x"
+              :aria-label="`Stop notifying ${notifyName(id)}`"
+              @click="removeNotify(id)"
+            >×</button>
+          </span>
+        </div>
+        <select v-model="notifyPicker" class="announcements-card__select" @change="addNotifyPick">
+          <option value="" disabled>
+            {{ draft.notifyIds.length ? 'Add another person…' : 'Pick who gets notified…' }}
+          </option>
+          <option v-for="r in notifyOptions" :key="r.id" :value="r.id">{{ r.fullName }}</option>
+        </select>
+        <span class="announcements-card__toggle-hint">
+          They'll get a push notification each time someone comments.
+        </span>
+      </div>
 
       <!-- Image picker — flyer / invitation / etc. -->
       <div class="announcements-card__image-block">
@@ -730,6 +817,50 @@ const submitLabel = computed(() => {
 .announcements-card__toggle-hint {
   font-weight: 400;
   color: var(--color-muted);
+}
+.announcements-card__notify {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--color-surface);
+  border: 1px dashed var(--color-line);
+}
+.announcements-card__notify-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+}
+.announcements-card__notify-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.announcements-card__notify-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-brand-700);
+  background: var(--color-brand-50);
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+}
+.announcements-card__notify-chip-x {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--color-brand-600);
+  padding: 0 3px;
+}
+.announcements-card__notify-chip-x:hover {
+  color: var(--color-brand-800);
 }
 .announcements-card__edit {
   background: transparent;

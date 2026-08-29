@@ -1,18 +1,22 @@
 // supabase/functions/send-comment-push/index.ts
 //
 // Targeted Web Push to the PERSON a comment is about — spotlight
-// congratulations and birthday wishes — so recognition actually
-// reaches its subject instead of sitting unseen on the dashboard.
+// congratulations, birthday wishes, and announcement comment threads —
+// so recognition actually reaches its subject instead of sitting
+// unseen on the dashboard.
 //
-// Triggered by AFTER INSERT triggers on spotlight_comments and
-// birthday_comments (migration comment_push_triggers) via pg_net.
+// Triggered by AFTER INSERT triggers on spotlight_comments,
+// birthday_comments, and announcement_comments via pg_net.
 // Unlike send-announcement-push (fan-out to everyone), this resolves
-// ONE recipient and pushes only to their subscriptions:
+// specific recipients and pushes only to their subscriptions:
 //
-//   spotlight — spotlights.person_name matched to app_users.full_name
-//               (case-insensitive)
-//   birthday  — person_key is slugify(full_name) (lowercase, spaces →
-//               dashes), matched against the roster in JS
+//   spotlight    — spotlights.person_name matched to app_users.full_name
+//                  (case-insensitive)
+//   birthday     — person_key is slugify(full_name) (lowercase, spaces →
+//                  dashes), matched against the roster in JS
+//   announcement — announcements.comment_notify_user_ids, picked by the
+//                  admin when composing (e.g. the subject's spouse on
+//                  a good-news post)
 //
 // Self-comments never notify. Recipients without push subscriptions
 // (never enabled notifications, or name didn't match a roster row)
@@ -40,11 +44,12 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && VAPID_SUBJECT) {
 }
 
 interface CommentPayload {
-  kind: 'spotlight' | 'birthday'
+  kind: 'spotlight' | 'birthday' | 'announcement'
   user_id: string
   body: string
   spotlight_id?: string
   person_key?: string
+  announcement_id?: string
 }
 
 interface SubscriptionRow {
@@ -122,6 +127,19 @@ Deno.serve(async (req: Request) => {
     if (hit) targetIds.push(hit.id)
   }
 
+  let announcementTitle = ''
+  if (p.kind === 'announcement' && p.announcement_id) {
+    const { data: ann } = await supabase
+      .from('announcements')
+      .select('title, comment_notify_user_ids')
+      .eq('id', p.announcement_id)
+      .maybeSingle()
+    announcementTitle = ann?.title ?? ''
+    for (const id of ann?.comment_notify_user_ids ?? []) {
+      if (!targetIds.includes(id)) targetIds.push(id)
+    }
+  }
+
   const recipients = targetIds.filter((id) => id !== p.user_id)
   if (recipients.length === 0) return done({ sent: 0, reason: 'no matching recipient' })
 
@@ -144,14 +162,23 @@ Deno.serve(async (req: Request) => {
           icon: '/wcems-patch.png',
           badge: '/wcems-patch.png',
         }
-      : {
-          title: `🎂 ${authorName} wished you a happy birthday`,
-          body: `"${snippet}"`,
-          url: '/#people',
-          tag: `birthday-comment-${p.person_key}`,
-          icon: '/wcems-patch.png',
-          badge: '/wcems-patch.png',
-        },
+      : p.kind === 'announcement'
+        ? {
+            title: `💬 ${authorName} commented on "${announcementTitle}"`,
+            body: `"${snippet}"`,
+            url: '/',
+            tag: `announcement-comment-${p.announcement_id}`,
+            icon: '/wcems-patch.png',
+            badge: '/wcems-patch.png',
+          }
+        : {
+            title: `🎂 ${authorName} wished you a happy birthday`,
+            body: `"${snippet}"`,
+            url: '/#people',
+            tag: `birthday-comment-${p.person_key}`,
+            icon: '/wcems-patch.png',
+            badge: '/wcems-patch.png',
+          },
   )
 
   const deadIds: string[] = []
