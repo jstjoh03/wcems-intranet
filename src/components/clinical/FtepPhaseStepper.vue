@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watchEffect } from 'vue'
 import { Check } from 'lucide-vue-next'
 import type { PipelinePerson } from '@/types'
 import { activeTransitionFor } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { usePipeline } from '@/composables/usePipeline'
+import { useFtep } from '@/composables/useFtep'
 
 /**
  * The Program Guide phase ladder for one trainee — which phase they're
- * in, per-phase FTO assignment, start/complete dates. Editors click a
- * phase to assign the FTO and move it along; everyone else reads it.
+ * in, per-phase FTO assignment, and the SCHEDULED shift days. Editors
+ * click a phase to assign the FTO and load the planned dates; everyone
+ * else reads it. Each scheduled day is matched against submitted DORs
+ * (eval date), and a phase auto-completes once all its days have
+ * passed AND each day has its DOR (Clinical-run phases need only the
+ * calendar). Future dates render as "scheduled" — never complete.
  * Renders only for tracks that HAVE a phase ladder (paramedic P1C→P1
  * and P1→P2) — legacy/ride-up/AEMT tracks are gate-driven instead.
  */
@@ -20,8 +25,34 @@ const props = defineProps<{
 }>()
 
 const { phasesFor, setPhaseProgress, clearPhaseProgress, people } = usePipeline()
+const ftep = useFtep()
 
 const record = computed(() => props.person.record)
+
+const todayIso = () => new Date().toISOString().slice(0, 10)
+
+/** Eval dates of the trainee's counting DORs — the per-day match set. */
+const dorDates = computed(() => new Set(ftep.activeDors(props.person.userId).map((r) => r.evalDate)))
+
+type DayState = 'done' | 'missed' | 'upcoming'
+function dayState(day: string, noFto?: boolean): DayState {
+  if (noFto) return day <= todayIso() ? 'done' : 'upcoming'
+  if (dorDates.value.has(day)) return 'done'
+  return day < todayIso() ? 'missed' : 'upcoming'
+}
+
+/** Every scheduled day passed and (for FTO phases) has its DOR. */
+function scheduleSatisfied(key: string, noFto?: boolean): boolean {
+  const days = rowByKey.value.get(key)?.scheduledDays ?? []
+  if (days.length === 0) return false
+  return days.every((d) => d < todayIso() && (noFto || dorDates.value.has(d)))
+}
+
+/** A day is past due without its DOR — flag, and hold the phase open. */
+function missingDorDays(key: string, noFto?: boolean): string[] {
+  if (noFto) return []
+  return (rowByKey.value.get(key)?.scheduledDays ?? []).filter((d) => dayState(d) === 'missed')
+}
 
 const phaseSet = computed<FtepProgramPhase[] | null>(() => {
   const t = activeTransitionFor(record.value)
@@ -39,19 +70,70 @@ const rowByKey = computed(() => {
   return map
 })
 
-type StepState = 'done' | 'current' | 'todo'
+type StepState = 'done' | 'current' | 'scheduled' | 'todo'
+
+/** Phase state — future dates NEVER read as complete:
+ *  done      completed date has passed, or the schedule is satisfied
+ *  current   started (or first scheduled day reached) and not done
+ *  scheduled dates loaded but none reached yet
+ *  todo      nothing on file */
 function stateFor(key: string): StepState {
   const row = rowByKey.value.get(key)
-  if (row?.completedAt) return 'done'
-  if (row?.startedAt) return 'current'
+  const def = phaseSet.value?.find((p) => p.key === key)
+  if (!row) return 'todo'
+  if (row.completedAt && row.completedAt <= todayIso()) return 'done'
+  if (scheduleSatisfied(key, def?.noFto)) return 'done'
+  const firstDay = row.scheduledDays[0] ?? null
+  const started =
+    (row.startedAt && row.startedAt <= todayIso()) || (firstDay && firstDay <= todayIso())
+  if (started) return 'current'
+  if (row.startedAt || row.scheduledDays.length > 0 || row.completedAt) return 'scheduled'
   return 'todo'
+}
+
+/** Effective completion date for display — stamped or derived. */
+function doneDate(key: string): string | null {
+  const row = rowByKey.value.get(key)
+  if (!row) return null
+  if (row.completedAt && row.completedAt <= todayIso()) return row.completedAt
+  return row.scheduledDays[row.scheduledDays.length - 1] ?? row.completedAt
 }
 
 function daysIn(key: string): number | null {
   const row = rowByKey.value.get(key)
-  if (!row?.startedAt || row.completedAt) return null
-  return Math.max(0, Math.floor((Date.now() - new Date(`${row.startedAt}T00:00:00`).getTime()) / 86_400_000))
+  if (!row || stateFor(key) !== 'current') return null
+  const base = row.startedAt && row.startedAt <= todayIso() ? row.startedAt : row.scheduledDays[0]
+  if (!base) return null
+  return Math.max(0, Math.floor((Date.now() - new Date(`${base}T00:00:00`).getTime()) / 86_400_000))
 }
+
+/** First upcoming scheduled day (for the "scheduled" meta line). */
+function startsOn(key: string): string | null {
+  const row = rowByKey.value.get(key)
+  if (!row) return null
+  return row.scheduledDays.find((d) => d >= todayIso()) ?? row.startedAt ?? null
+}
+
+/* Auto-stamp: when a phase's schedule is satisfied but completed_at is
+   still open, an editor's session writes the completion (dated to the
+   last scheduled day) so the record matches what the tracker derived.
+   Guarded per record+phase so realtime reloads don't double-write. */
+const autoStamped = new Set<string>()
+watchEffect(() => {
+  if (!props.editable) return
+  for (const ph of phaseSet.value ?? []) {
+    const row = rowByKey.value.get(ph.key)
+    if (!row || row.completedAt) continue
+    if (!scheduleSatisfied(ph.key, ph.noFto)) continue
+    const guard = `${record.value.id}:${ph.key}`
+    if (autoStamped.has(guard)) continue
+    autoStamped.add(guard)
+    const last = row.scheduledDays[row.scheduledDays.length - 1]
+    void setPhaseProgress(record.value.id, ph.key, { completedAt: last }).catch((e) =>
+      console.warn('[ftep] phase auto-complete failed:', e),
+    )
+  }
+})
 
 function fmt(iso: string | null): string {
   if (!iso) return ''
@@ -67,7 +149,13 @@ const ftos = computed(() =>
 /* ── Editor popover ────────────────────────────────────────────────── */
 
 const open = ref<string | null>(null)
-const draft = reactive({ ftoUserId: '', startedAt: '', completedAt: '', note: '' })
+const draft = reactive({
+  ftoUserId: '',
+  startedAt: '',
+  completedAt: '',
+  note: '',
+  days: [] as string[],
+})
 const busy = ref(false)
 const error = ref<string | null>(null)
 
@@ -78,12 +166,25 @@ function toggle(key: string) {
     return
   }
   const row = rowByKey.value.get(key)
+  const def = phaseSet.value?.find((p) => p.key === key)
   draft.ftoUserId = row?.ftoUserId ?? ''
   draft.startedAt = row?.startedAt ?? ''
   draft.completedAt = row?.completedAt ?? ''
   draft.note = row?.note ?? ''
+  /* Pre-fill the scheduler with the phase's standard day count so
+     loading a phase is "type 4 dates", not "build 4 rows first". */
+  draft.days = row?.scheduledDays.length
+    ? [...row.scheduledDays]
+    : Array.from({ length: def?.tours ?? 1 }, () => '')
   error.value = null
   open.value = key
+}
+
+function addDay() {
+  draft.days = [...draft.days, '']
+}
+function removeDay(i: number) {
+  draft.days = draft.days.filter((_, idx) => idx !== i)
 }
 
 const openDef = computed(() => phaseSet.value?.find((p) => p.key === open.value) ?? null)
@@ -100,6 +201,7 @@ async function save() {
       startedAt: draft.startedAt || null,
       completedAt: draft.completedAt || null,
       note: draft.note.trim() || null,
+      scheduledDays: draft.days.filter(Boolean),
     })
     open.value = null
   } catch (err) {
@@ -151,7 +253,17 @@ const today = () => new Date().toISOString().slice(0, 10)
           day {{ (daysIn(ph.key) ?? 0) + 1 }}
         </span>
         <span v-else-if="stateFor(ph.key) === 'done'" class="fps__done-date">
-          {{ fmt(rowByKey.get(ph.key)!.completedAt) }}
+          {{ fmt(doneDate(ph.key)) }}
+        </span>
+        <span v-else-if="stateFor(ph.key) === 'scheduled'" class="fps__sched">
+          starts {{ fmt(startsOn(ph.key)) }}
+        </span>
+        <span
+          v-if="missingDorDays(ph.key, ph.noFto).length"
+          class="fps__missing"
+          :title="`No DOR on file for: ${missingDorDays(ph.key, ph.noFto).map(fmt).join(', ')}`"
+        >
+          {{ missingDorDays(ph.key, ph.noFto).length }} day{{ missingDorDays(ph.key, ph.noFto).length === 1 ? '' : 's' }} missing DOR
         </span>
         <span
           v-if="rowByKey.get(ph.key)?.note"
@@ -187,6 +299,21 @@ const today = () => new Date().toISOString().slice(0, 10)
           <button v-if="!draft.completedAt" type="button" class="fps__quick" @click="draft.completedAt = today()">today</button>
         </span>
       </label>
+      <div class="fps__field fps__field--days">
+        <span>
+          Scheduled shift days
+          <em class="fps__field-hint">
+            future dates show as scheduled — the phase completes on its own once each day has its DOR{{ openDef.noFto ? ' (Clinical-run: dates alone)' : '' }}
+          </em>
+        </span>
+        <span class="fps__days">
+          <span v-for="(_d, i) in draft.days" :key="i" class="fps__day">
+            <input v-model="draft.days[i]" type="date" />
+            <button type="button" class="fps__day-x" :aria-label="`Remove day ${i + 1}`" @click="removeDay(i)">×</button>
+          </span>
+          <button type="button" class="fps__quick" @click="addDay">+ add day</button>
+        </span>
+      </div>
       <label class="fps__field fps__field--note">
         <span>Note <em class="fps__field-hint">document exceptions — e.g. "Day 2 with Sarah Reyes"</em></span>
         <input v-model="draft.note" type="text" maxlength="200" placeholder="One FTO per phase is the standard — note any split here" />
@@ -313,6 +440,62 @@ const today = () => new Date().toISOString().slice(0, 10)
   font-size: 9.5px;
   color: var(--color-success-500);
   font-weight: 600;
+}
+.fps__sched {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-brand-600);
+}
+.fps__step--scheduled .fps__dot {
+  border-style: dashed;
+  border-color: var(--color-brand-400, oklch(0.6 0.06 260));
+  color: var(--color-brand-600);
+}
+.fps__missing {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: oklch(0.5 0.14 45);
+  background: oklch(0.96 0.05 75);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.fps__field--days {
+  flex-basis: 100%;
+}
+.fps__days {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.fps__day {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.fps__day input {
+  font-size: 12px;
+  padding: 5px 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.fps__day-x {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--color-muted);
+  padding: 2px 4px;
+}
+.fps__day-x:hover {
+  color: var(--color-danger-500);
 }
 /* Phase exception note — e.g. a split-FTO tour */
 .fps__note {

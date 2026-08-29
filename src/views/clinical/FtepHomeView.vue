@@ -5,6 +5,7 @@ import { ChevronDown, Download, FileText, Check, AlertTriangle } from 'lucide-vu
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
+import FtepTraineeQuickview from '@/components/clinical/FtepTraineeQuickview.vue'
 import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
@@ -68,10 +69,71 @@ function toggleMenu(id: string) {
   openMenu.value = openMenu.value === id ? null : id
 }
 function onDocClick(e: MouseEvent) {
-  if (!(e.target as HTMLElement).closest?.('.fh__menuwrap')) openMenu.value = null
+  const t = e.target as HTMLElement
+  if (!t.closest?.('.fh__menuwrap')) openMenu.value = null
+  if (!t.closest?.('.fh__triagewrap')) triageOpen.value = null
 }
 onMounted(() => document.addEventListener('click', onDocClick))
 onBeforeUnmount(() => document.removeEventListener('click', onDocClick))
+
+/* ── Queue triage — include/exclude right from the review line ──────
+   ICRs: counts toward the required 10 (same flag Submissions edits).
+   DORs: excluded from the record entirely (rolling average, rideout
+   counts, scheduled-day matching). Excluding documents a reason. */
+const triageOpen = ref<string | null>(null)
+const triageExcluding = ref<string | null>(null)
+const triageReason = ref('')
+const triageBusy = ref(false)
+
+function triageState(r: FtepReport): 'counts' | 'excluded' {
+  if (r.kind === 'icr') return r.payload.countsToward10 ? 'counts' : 'excluded'
+  return r.payload.excludedFromRecord ? 'excluded' : 'counts'
+}
+
+function toggleTriage(r: FtepReport) {
+  triageExcluding.value = null
+  triageReason.value = ''
+  triageOpen.value = triageOpen.value === r.id ? null : r.id
+}
+
+async function triageInclude(r: FtepReport) {
+  if (triageBusy.value) return
+  triageBusy.value = true
+  const res =
+    r.kind === 'icr' ? await ftep.setIcrCounts(r.id, true) : await ftep.setDorExcluded(r.id, false)
+  triageBusy.value = false
+  if (res.ok) triageOpen.value = null
+}
+
+function startExclude(r: FtepReport) {
+  triageExcluding.value = r.id
+  triageReason.value = ''
+}
+
+async function confirmExclude(r: FtepReport) {
+  if (triageBusy.value || !triageReason.value.trim()) return
+  triageBusy.value = true
+  const reason = triageReason.value.trim()
+  const res =
+    r.kind === 'icr'
+      ? await ftep.setIcrCounts(r.id, false, reason)
+      : await ftep.setDorExcluded(r.id, true, reason)
+  triageBusy.value = false
+  if (res.ok) {
+    triageOpen.value = null
+    triageExcluding.value = null
+    triageReason.value = ''
+  }
+}
+
+/* ── Trainee quickview — click the card for the planning picture ──── */
+const quickview = ref<PipelinePerson | null>(null)
+function openQuickview(p: PipelinePerson, e: MouseEvent) {
+  const t = e.target as HTMLElement
+  /* Interactive regions keep their own behavior. */
+  if (t.closest('button, a, select, input, textarea, .fh__menuwrap, .fh__stepper, .fh__needs')) return
+  quickview.value = p
+}
 
 function startReport(p: PipelinePerson, kind: 'dor' | 'icr') {
   openMenu.value = null
@@ -98,7 +160,7 @@ function fmt(iso: string | null): string {
 
 function statsFor(p: PipelinePerson) {
   const track = ftepTrackFor(p)
-  const dors = ftep.submittedFor(p.userId, 'dor').length
+  const dors = ftep.activeDors(p.userId).length
   const cells: { v: string; l: string }[] = []
   if (track?.key === 'rideup') {
     /* Credit rideouts typed into the P2→P3 gate (pre-portal) alongside
@@ -283,6 +345,41 @@ async function review(r: FtepReport) {
             <b v-if="r.payload.nrtFlagged" class="fh__nrt-flag"> · NRT FLAGGED</b>
           </span>
           <span class="fh__queue-actions">
+            <span class="fh__triagewrap">
+              <button
+                type="button"
+                class="fh__mini"
+                :class="{ 'fh__mini--excl': triageState(r) === 'excluded' }"
+                @click.stop="toggleTriage(r)"
+              >
+                {{ triageState(r) === 'excluded' ? 'Excluded' : (r.kind === 'icr' ? 'Counts' : 'Included') }}
+                <ChevronDown :size="11" :stroke-width="2" />
+              </button>
+              <div v-if="triageOpen === r.id" class="fh__triage">
+                <button type="button" :disabled="triageBusy" @click="triageInclude(r)">
+                  <Check :size="12" :stroke-width="2.5" />
+                  {{ r.kind === 'icr' ? 'Counts toward the 10' : 'Include in the record' }}
+                </button>
+                <button type="button" :disabled="triageBusy" @click="startExclude(r)">
+                  {{ r.kind === 'icr' ? 'Exclude from the 10…' : 'Exclude from the record…' }}
+                </button>
+                <div v-if="triageExcluding === r.id" class="fh__triage-form" @click.stop>
+                  <input
+                    v-model="triageReason"
+                    type="text"
+                    maxlength="200"
+                    placeholder="Reason (required — kept with the report)"
+                    @keydown.enter.prevent="confirmExclude(r)"
+                  />
+                  <button
+                    type="button"
+                    class="fh__mini fh__mini--excl"
+                    :disabled="triageBusy || !triageReason.trim()"
+                    @click="confirmExclude(r)"
+                  >Exclude</button>
+                </div>
+              </div>
+            </span>
             <button type="button" class="fh__mini" :disabled="pdfBusy === r.id" @click="viewPdf(r)">
               <FileText :size="12" :stroke-width="2" /> View
             </button>
@@ -302,7 +399,14 @@ async function review(r: FtepReport) {
           <span class="fh__track" :class="`fh__track--${g.key}`">{{ g.label }}</span>
           <span class="fh__track-hint">{{ g.hint }}</span>
         </div>
-        <div v-for="p in g.people" :key="p.userId" class="fh__trainee" :class="`fh__trainee--${g.key}`">
+        <div
+          v-for="p in g.people"
+          :key="p.userId"
+          class="fh__trainee fh__trainee--clickable"
+          :class="`fh__trainee--${g.key}`"
+          title="Click for quick view"
+          @click="openQuickview(p, $event)"
+        >
           <span class="fh__avatar">{{ initials(p.fullName) }}</span>
           <div class="fh__tc">
             <button
@@ -350,6 +454,9 @@ async function review(r: FtepReport) {
                   {{ statsFor(p).icrDraft ? 'Resume ICR draft' : 'New Individual Call Report' }}
                 </button>
               </template>
+              <button type="button" @click="quickview = p">
+                Quick view — schedule &amp; progress
+              </button>
               <button type="button" @click="toggleNeeds(p.userId)">
                 What's still needed
               </button>
@@ -434,6 +541,9 @@ async function review(r: FtepReport) {
         </div>
       </template>
 
+      <!-- Trainee quickview -->
+      <FtepTraineeQuickview :person="quickview" @close="quickview = null" />
+
       <!-- Legacy call-eval dialog -->
       <div v-if="legacyDialog" class="fh__overlay" @click.self="legacyDialog = null">
         <div class="fh__dialog">
@@ -509,6 +619,35 @@ async function review(r: FtepReport) {
 .fh__queue-meta { color: var(--color-ink-soft); font-size: 12px; }
 .fh__nrt-flag { color: oklch(0.45 0.15 30); }
 .fh__queue-actions { margin-left: auto; display: flex; gap: 8px; }
+.fh__triagewrap { position: relative; }
+.fh__triage {
+  position: absolute; right: 0; top: calc(100% + 5px); z-index: 45;
+  background: var(--color-surface); border: 1px solid var(--color-line);
+  border-radius: 10px; box-shadow: 0 8px 24px oklch(0.2 0.03 260 / 0.16);
+  min-width: 235px; padding: 5px;
+}
+.fh__triage > button {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; border-radius: 7px; padding: 8px 10px;
+  font-family: var(--font-sans); font-size: 12.5px; font-weight: 500; color: var(--color-ink);
+  cursor: pointer;
+}
+.fh__triage > button:hover { background: var(--color-surface-soft); }
+.fh__triage > button svg { color: var(--color-success-500); }
+.fh__triage-form {
+  display: flex; gap: 6px; padding: 6px 8px 5px;
+  border-top: 1px solid var(--color-line-soft); margin-top: 3px;
+}
+.fh__triage-form input {
+  flex: 1; min-width: 0;
+  font-family: var(--font-sans); font-size: 12px; color: var(--color-ink);
+  border: 1px solid var(--color-line); border-radius: 7px; padding: 6px 8px;
+  background: var(--color-surface);
+}
+.fh__triage-form input:focus { outline: none; border-color: var(--color-brand-600); }
+.fh__mini--excl { color: oklch(0.48 0.13 45); border-color: oklch(0.85 0.08 60); background: oklch(0.97 0.04 75); }
+.fh__trainee--clickable { cursor: pointer; }
+.fh__trainee--clickable:hover { border-color: var(--color-muted-soft); box-shadow: 0 2px 10px oklch(0.2 0.03 260 / 0.06); }
 
 .fh__trainee {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;

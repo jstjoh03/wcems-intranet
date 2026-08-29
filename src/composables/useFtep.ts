@@ -127,9 +127,15 @@ export function useFtep() {
     return reports.value.filter((r) => r.status === 'draft' && r.evaluatorId === uid)
   }
 
-  /** Rolling DOR average over the most recent N submitted DORs. */
+  /** Submitted DORs that count in the record (clinical can exclude a
+   *  duplicate/erroneous one — payload.excludedFromRecord). */
+  function activeDors(traineeId: string): FtepReport[] {
+    return submittedFor(traineeId, 'dor').filter((r) => !r.payload.excludedFromRecord)
+  }
+
+  /** Rolling DOR average over the most recent N counting DORs. */
   function dorRollingAverage(traineeId: string, lastN = 4): number | null {
-    const dors = submittedFor(traineeId, 'dor')
+    const dors = activeDors(traineeId)
       .sort((a, b) => b.evalDate.localeCompare(a.evalDate))
       .slice(0, lastN)
     const avgs = dors
@@ -154,7 +160,7 @@ export function useFtep() {
   }
 
   function lastDorDate(traineeId: string): string | null {
-    const dors = submittedFor(traineeId, 'dor').sort((a, b) =>
+    const dors = activeDors(traineeId).sort((a, b) =>
       b.evalDate.localeCompare(a.evalDate),
     )
     return dors[0]?.evalDate ?? null
@@ -276,6 +282,34 @@ export function useFtep() {
     return { ok: true }
   }
 
+  /** Clinical triage (DOR): exclude a DOR from the record — it drops
+   *  out of the rolling average, rideout counts, and scheduled-day
+   *  matching. Reason documented like ICR triage; reversible. */
+  async function setDorExcluded(
+    reportId: string,
+    excluded: boolean,
+    reason?: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!isLive.value) return { ok: true }
+    const report = reports.value.find((r) => r.id === reportId)
+    if (!report) return { ok: false, error: 'Report not found.' }
+    const payload: FtepPayload = {
+      ...report.payload,
+      excludedFromRecord: excluded || undefined,
+      triageNote: excluded ? (reason?.trim() || undefined) : undefined,
+    }
+    const { data, error } = await supabase
+      .from('ftep_reports')
+      .update({ payload })
+      .eq('id', reportId)
+      .select(COLUMNS)
+      .single()
+    if (error) return { ok: false, error: error.message }
+    const row = fromRow(data as ReportRow)
+    reports.value = reports.value.map((r) => (r.id === row.id ? row : r))
+    return { ok: true }
+  }
+
   async function discardDraft(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!isLive.value) return { ok: true }
     const { error } = await supabase.from('ftep_reports').delete().eq('id', id)
@@ -349,6 +383,7 @@ export function useFtep() {
     reports,
     reportsFor,
     submittedFor,
+    activeDors,
     myDraft,
     myDrafts,
     dorRollingAverage,
@@ -358,6 +393,7 @@ export function useFtep() {
     submitReport,
     signAsTrainee,
     setIcrCounts,
+    setDorExcluded,
     recordLegacyCallEval,
     discardDraft,
     markReviewed,

@@ -259,7 +259,7 @@ async function loadAll() {
       .select('id, requirement_id, user_id, completed_at, expires_at, source, note'),
     supabase
       .from('ftep_phase_progress')
-      .select('id, record_id, phase_key, fto_user_id, fto_name, started_at, completed_at, note'),
+      .select('id, record_id, phase_key, fto_user_id, fto_name, started_at, completed_at, note, scheduled_days'),
   ])
   const err =
     recRes.error ?? gateRes.error ?? edRes.error ?? reqRes.error ?? compRes.error ?? phaseRes.error
@@ -311,6 +311,7 @@ async function loadAll() {
     startedAt: (p.started_at ?? null) as string | null,
     completedAt: (p.completed_at ?? null) as string | null,
     note: (p.note ?? null) as string | null,
+    scheduledDays: ((p.scheduled_days ?? []) as string[]).slice().sort(),
   }))
   lastFetchedAt.value = new Date()
   loading.value = false
@@ -564,6 +565,7 @@ export function usePipeline() {
       startedAt?: string | null
       completedAt?: string | null
       note?: string | null
+      scheduledDays?: string[]
     },
   ) {
     if (!isLive) return
@@ -579,6 +581,10 @@ export function usePipeline() {
         started_at: patch.startedAt !== undefined ? patch.startedAt : (existing?.startedAt ?? null),
         completed_at: patch.completedAt !== undefined ? patch.completedAt : (existing?.completedAt ?? null),
         note: patch.note !== undefined ? patch.note : (existing?.note ?? null),
+        scheduled_days:
+          patch.scheduledDays !== undefined
+            ? patch.scheduledDays.filter(Boolean).sort()
+            : (existing?.scheduledDays ?? []),
       },
       { onConflict: 'record_id,phase_key' },
     )

@@ -125,7 +125,7 @@ const attention = computed(() => (person.value ? attentionFor(person.value) : []
 const rideouts = computed(() => {
   const p = person.value
   if (!p) return { dors: 0, manual: 0, count: 0 }
-  const dors = ftep.submittedFor(p.userId, 'dor').length
+  const dors = ftep.activeDors(p.userId).length
   const manual = manualRideouts(p)
   return { dors, manual, count: Math.max(dors, manual) }
 })
@@ -524,7 +524,7 @@ function fmtDateTime(iso: string): string {
                 <Check v-if="(ftep.dorRollingAverage(person.userId, ftepTrackFor(person)?.dorWindow ?? 4) ?? 0) >= 3.5" :size="12" :stroke-width="2.5" /><template v-else>·</template>
               </span>
               <span class="cf__gate-l">Daily Observation Reports</span>
-              <span class="cf__gate-v">{{ ftep.submittedFor(person.userId, 'dor').length }} filed · avg last {{ ftepTrackFor(person)?.dorWindow ?? 4 }}: {{ ftep.dorRollingAverage(person.userId, ftepTrackFor(person)?.dorWindow ?? 4)?.toFixed(2) ?? '—' }} (floor 3.5)</span>
+              <span class="cf__gate-v">{{ ftep.activeDors(person.userId).length }} filed · avg last {{ ftepTrackFor(person)?.dorWindow ?? 4 }}: {{ ftep.dorRollingAverage(person.userId, ftepTrackFor(person)?.dorWindow ?? 4)?.toFixed(2) ?? '—' }} (floor 3.5)</span>
             </div>
             <div v-if="ftepTrackFor(person)?.icrTarget" class="cf__gate">
               <span class="cf__tick" :class="ftep.icrCount(person.userId) >= ftepTrackFor(person)!.icrTarget! ? 'cf__tick--ok' : 'cf__tick--open'">

@@ -470,6 +470,9 @@ export interface FtepPhaseProgress {
   startedAt: string | null
   completedAt: string | null
   note: string | null
+  /** Planned shift dates (YYYY-MM-DD) for this phase — each is matched
+   *  against submitted DORs so per-day completion is automatic. */
+  scheduledDays: string[]
 }
 
 /** Pipeline record joined with roster identity for the board. */

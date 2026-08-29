@@ -153,18 +153,21 @@ export interface FtepProgramPhase {
   no: number
   label: string
   hint: string
-  /** Run by the Clinical Department — no FTO is assigned. */
+  /** Run by the Clinical Department — no FTO is assigned, and its
+   *  scheduled days complete on the calendar alone (no DORs). */
   noFto?: boolean
+  /** Standard number of shift days — pre-fills the day scheduler. */
+  tours?: number
 }
 
 export const FTEP_PROGRAM_PHASES: Record<'P1C_P1' | 'P1_P2', FtepProgramPhase[]> = {
   /* P1C → P1 (90-day cap) */
   P1C_P1: [
-    { key: 'phase0', no: 0, label: 'NEOP Academy', hint: 'Clinical Department · 4 days', noFto: true },
-    { key: 'phase1', no: 1, label: 'EMT Orientation', hint: '1 tour' },
-    { key: 'phase2', no: 2, label: 'Clinical Integration', hint: '2 tours' },
-    { key: 'phase3', no: 3, label: 'Partner Phase', hint: '4 tours' },
-    { key: 'phase4', no: 4, label: 'Final Evaluation', hint: '1 tour · different FTO' },
+    { key: 'phase0', no: 0, label: 'NEOP Academy', hint: 'Clinical Department · 4 days', noFto: true, tours: 4 },
+    { key: 'phase1', no: 1, label: 'EMT Orientation', hint: '1 tour', tours: 1 },
+    { key: 'phase2', no: 2, label: 'Clinical Integration', hint: '2 tours', tours: 2 },
+    { key: 'phase3', no: 3, label: 'Partner Phase', hint: '4 tours', tours: 4 },
+    { key: 'phase4', no: 4, label: 'Final Evaluation', hint: '1 tour · different FTO', tours: 1 },
   ],
   /* P1 → P2 (traditional 36 days / accelerated 10 · 6-month cap) */
   P1_P2: [
@@ -275,6 +278,10 @@ export interface FtepPayload {
   /** Clinical triage: why this ICR was excluded from the required 10
    *  (set alongside countsToward10=false from the Submissions inbox). */
   triageNote?: string
+  /** Clinical triage (DOR): excluded from the record entirely — out of
+   *  the rolling average, rideout counts, and scheduled-day matching
+   *  (e.g. a duplicate or erroneous submission). Reason in triageNote. */
+  excludedFromRecord?: boolean
   /* shared */
   ratings?: Record<string, FtepRating>
   /** Mean of numeric scores (N.O. excluded), stamped at submit. */
