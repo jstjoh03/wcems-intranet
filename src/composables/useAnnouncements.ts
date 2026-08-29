@@ -27,6 +27,7 @@ interface AnnouncementRow {
   author_user_id: string | null
   published_at: string
   active: boolean
+  allow_comments: boolean
 }
 
 function formatDateLabel(iso: string): string {
@@ -46,6 +47,7 @@ function rowToAnnouncement(r: AnnouncementRow): Announcement {
     authorName: r.author_name,
     publishedAt: r.published_at,
     active: r.active,
+    allowComments: r.allow_comments,
   }
 }
 
@@ -62,7 +64,7 @@ async function loadAnnouncements() {
   const { data, error } = await supabase
     .from('announcements')
     .select(
-      'id, tag, title, body, image_url, author_name, author_user_id, published_at, active',
+      'id, tag, title, body, image_url, author_name, author_user_id, published_at, active, allow_comments',
     )
     .order('published_at', { ascending: false })
   if (error) {
@@ -125,6 +127,7 @@ export interface NewAnnouncementInput {
   title: string
   body: string
   imageUrl: string | null
+  allowComments: boolean
 }
 
 export interface UpdateAnnouncementInput extends NewAnnouncementInput {
@@ -164,6 +167,7 @@ export function useAnnouncements() {
           authorName: author?.fullName ?? 'Admin',
           publishedAt: new Date().toISOString(),
           active: true,
+          allowComments: input.allowComments,
         },
         ...announcements.value,
       ]
@@ -176,6 +180,7 @@ export function useAnnouncements() {
       image_url: input.imageUrl,
       author_name: author?.fullName ?? 'Admin',
       author_user_id: author?.id ?? null,
+      allow_comments: input.allowComments,
     })
     if (error) throw error
     /* Realtime INSERT will prepend the new row; no explicit refresh
@@ -193,6 +198,7 @@ export function useAnnouncements() {
               title: input.title,
               body: input.body,
               imageUrl: input.imageUrl,
+              allowComments: input.allowComments,
             }
           : a,
       )
@@ -205,6 +211,7 @@ export function useAnnouncements() {
         title: input.title,
         body: input.body || null,
         image_url: input.imageUrl,
+        allow_comments: input.allowComments,
       })
       .eq('id', input.id)
     if (error) throw error

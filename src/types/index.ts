@@ -362,6 +362,9 @@ export interface Announcement {
   /** Soft-archive flag. False = hidden from crew (RLS) but kept in the
    *  DB so admins can restore. Default true on insert. */
   active: boolean
+  /** Per-announcement toggle: crew can leave comments on the
+   *  full-story view. Enforced server-side by RLS on inserts. */
+  allowComments: boolean
 }
 
 export interface BirthdayEntry {

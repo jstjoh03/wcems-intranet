@@ -4,9 +4,11 @@ import { Plus, Edit2, X, Upload, Archive, ArchiveRestore } from 'lucide-vue-next
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
+import AnnouncementDetailModal from '@/components/dashboard/AnnouncementDetailModal.vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useAnnouncements } from '@/composables/useAnnouncements'
+import type { Announcement } from '@/types'
 
 const auth = useAuthStore()
 const { announcements, publish, update, setArchived, remove } = useAnnouncements()
@@ -27,6 +29,7 @@ interface Draft {
   title: string
   body: string
   imageUrl: string | null
+  allowComments: boolean
 }
 
 const composing = ref(false)
@@ -75,7 +78,37 @@ function blankDraft(): Draft {
     title: '',
     body: '',
     imageUrl: null,
+    allowComments: false,
   }
+}
+
+/* ── Full-story view (spotlight pattern) ──
+   Long bodies get a snippet in-card with a "Read the full story" link
+   into the detail modal; announcements posted with comments allowed
+   always get the link so the thread is reachable. */
+const SNIPPET_LIMIT = 240
+
+const detailId = ref<string | null>(null)
+const detailAnnouncement = computed<Announcement | null>(
+  () => announcements.value.find((a) => a.id === detailId.value) ?? null,
+)
+
+function isTruncated(a: Announcement): boolean {
+  return a.body.length > SNIPPET_LIMIT
+}
+
+function snippetFor(a: Announcement): string {
+  if (!isTruncated(a)) return a.body
+  const cut = a.body.slice(0, SNIPPET_LIMIT)
+  const lastSpace = cut.lastIndexOf(' ')
+  return `${cut.slice(0, lastSpace > SNIPPET_LIMIT * 0.6 ? lastSpace : SNIPPET_LIMIT).trimEnd()}…`
+}
+
+function storyLinkLabel(a: Announcement): string {
+  if (isTruncated(a)) {
+    return a.allowComments ? 'Read the full story & comment →' : 'Read the full story →'
+  }
+  return 'Leave a comment →'
 }
 
 function startCompose() {
@@ -95,6 +128,7 @@ function startEdit(id: string) {
     title: a.title,
     body: a.body,
     imageUrl: a.imageUrl,
+    allowComments: a.allowComments,
   }
   composing.value = true
   composeError.value = null
@@ -167,6 +201,7 @@ async function submitDraft() {
       title: draft.value.title.trim(),
       body: draft.value.body.trim(),
       imageUrl: draft.value.imageUrl,
+      allowComments: draft.value.allowComments,
     }
     if (draft.value.id) {
       await update({ id: draft.value.id, ...payload })
@@ -272,6 +307,16 @@ const submitLabel = computed(() => {
         class="announcements-card__textarea"
         rows="3"
       />
+
+      <label class="announcements-card__toggle">
+        <input v-model="draft.allowComments" type="checkbox" />
+        <span>
+          Allow comments
+          <span class="announcements-card__toggle-hint">
+            — crew can reply on the full-story view
+          </span>
+        </span>
+      </label>
 
       <!-- Image picker — flyer / invitation / etc. -->
       <div class="announcements-card__image-block">
@@ -396,7 +441,15 @@ const submitLabel = computed(() => {
             referrerpolicy="no-referrer"
           />
         </button>
-        <p v-if="a.body" class="announcements-card__body">{{ a.body }}</p>
+        <p v-if="a.body" class="announcements-card__body">{{ snippetFor(a) }}</p>
+        <button
+          v-if="isTruncated(a) || a.allowComments"
+          type="button"
+          class="announcements-card__story-link"
+          @click="detailId = a.id"
+        >
+          {{ storyLinkLabel(a) }}
+        </button>
         <div class="announcements-card__by">— {{ a.authorName }}</div>
       </article>
     </div>
@@ -428,6 +481,12 @@ const submitLabel = computed(() => {
         />
       </div>
     </Teleport>
+
+    <!-- Full-story + comments modal (spotlight pattern). -->
+    <AnnouncementDetailModal
+      :announcement="detailAnnouncement"
+      @close="detailId = null"
+    />
   </AppCard>
 </template>
 
@@ -633,6 +692,43 @@ const submitLabel = computed(() => {
   margin-top: 6px;
   font-size: 11px;
   font-weight: 500;
+  color: var(--color-muted);
+}
+.announcements-card__story-link {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-brand-600);
+  transition: color 120ms var(--ease-out);
+}
+.announcements-card__story-link:hover {
+  color: var(--color-brand-700);
+  text-decoration: underline;
+}
+.announcements-card__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  user-select: none;
+}
+.announcements-card__toggle input {
+  accent-color: var(--color-brand-600);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+.announcements-card__toggle-hint {
+  font-weight: 400;
   color: var(--color-muted);
 }
 .announcements-card__edit {
