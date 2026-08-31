@@ -14,6 +14,7 @@ export type ClinicalDocFolder =
   | 'signed_forms'
   | 'certs'
   | 'ce_certs'
+  | 'protocol_exams'
   | 'counseling'
   | 'generated'
   | 'other'
@@ -22,6 +23,7 @@ export const FOLDER_LABELS: Record<ClinicalDocFolder, string> = {
   signed_forms: 'Signed forms',
   certs: 'Cert cards',
   ce_certs: 'CE certificates',
+  protocol_exams: 'Protocol exams',
   counseling: 'Counseling',
   generated: 'Generated PDFs',
   other: 'Other',

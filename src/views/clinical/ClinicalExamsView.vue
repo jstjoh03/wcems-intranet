@@ -104,7 +104,7 @@ function fmtDate(iso: string | null): string {
 
 /* ── Completion certificates ────────────────────────────────────────
    A clean pass files a certificate PDF (name, exam, score, date) into
-   the employee's Documents (Cert cards, employee-visible). Runs from
+   the employee's Documents (Protocol exams folder, employee-visible). Runs from
    the editor's session — the proctor has this page open during
    administration — and dedupes by document name so realtime reloads
    or a second editor can't double-file. The gate check-off itself
@@ -120,7 +120,9 @@ function certNameFor(a: ExamAssignment): string {
 
 function certFiled(a: ExamAssignment): boolean {
   const name = certNameFor(a)
-  return clindocs.docsFor(a.userId).some((d) => d.folder === 'certs' && d.name === name)
+  return clindocs
+    .docsFor(a.userId)
+    .some((d) => (d.folder === 'protocol_exams' || d.folder === 'certs') && d.name === name)
 }
 
 const certInFlight = new Set<string>()
@@ -144,7 +146,7 @@ watchEffect(() => {
         const blob = pdf.output('blob') as Blob
         const res = await clindocs.upload({
           userId: a.userId,
-          folder: 'certs',
+          folder: 'protocol_exams',
           file: new File([blob], certNameFor(a), { type: 'application/pdf' }),
           employeeVisible: true,
           note: 'Protocol examination certificate (auto-filed on pass)',
