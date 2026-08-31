@@ -37,7 +37,7 @@ import { useAuthStore } from '@/stores/auth'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, canViewBoard, personById } = useClinical()
+const { ready, canViewBoard, personById, ftepTrackFor } = useClinical()
 const ftep = useFtep()
 
 const kind = computed<FtepKind>(() => (route.params.kind === 'icr' ? 'icr' : 'dor'))
@@ -126,6 +126,10 @@ function buildPayload(): FtepPayload {
     base.countsToward10 = meta.countsToward10
     base.explanation = explanation.value || undefined
     base.callNotes = callNotes.value.trim() || undefined
+    /* Legacy-track trainees file portal ICRs too (as of 2026-08-31) —
+       stamp the rung so each credentialing step keeps its own 10. */
+    const track = trainee.value ? ftepTrackFor(trainee.value) : null
+    if (track?.key === 'legacy' && track.legacyPhase) base.legacyPhase = track.legacyPhase
   }
   return base
 }

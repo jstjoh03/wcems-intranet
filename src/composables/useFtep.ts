@@ -153,7 +153,10 @@ export function useFtep() {
   function icrCount(traineeId: string, legacyPhase?: 'P1' | 'P2'): number {
     return submittedFor(traineeId, 'icr').filter((r) => {
       if (!r.payload.countsToward10) return false
-      if (legacyPhase && r.payload.legacyManual && r.payload.legacyPhase)
+      /* Rung attribution applies to any attributed row — historical
+         Jotform imports AND portal ICRs (legacy files those too now).
+         Unattributed rows grandfather into the current rung. */
+      if (legacyPhase && r.payload.legacyPhase)
         return r.payload.legacyPhase === legacyPhase
       return true
     }).length

@@ -44,7 +44,7 @@ watch(
 const TRACK_ORDER = ['new', 'legacy', 'rideup', 'aemt'] as const
 const TRACK_HINTS: Record<string, string> = {
   new: 'DOR average over the final four (floor 3.5) · 10 scored ALS ICRs',
-  legacy: '10 call evaluations via Jotform (narrative format) — recorded here manually until the webhook lands · DORs stay in Jotform',
+  legacy: '10 call evaluations per credentialing rung — filed as portal ICRs (Jotform retired 2026-08-31; historical evals already counted) · no DOR tracking',
   rideup: '4 × 12-hr rideouts with a supervisor · skills check-offs · protocol test — no ICR count',
   aemt: 'Skills checklists · medication administration sign-off · protocol exam',
 }
@@ -473,9 +473,12 @@ async function review(r: FtepReport) {
             </button>
             <div v-if="openMenu === p.userId" class="fh__menu" @click="openMenu = null">
               <template v-if="g.key === 'legacy'">
-                <button type="button" @click="openLegacyDialog(p)">
+                <button type="button" @click="startReport(p, 'icr')">
                   <FileText :size="13" :stroke-width="2" />
-                  Record call evaluation (from Jotform)
+                  {{ statsFor(p).icrDraft ? 'Resume ICR draft' : 'New Individual Call Report' }}
+                </button>
+                <button type="button" @click="openLegacyDialog(p)">
+                  Record historical call eval (pre-portal)
                 </button>
               </template>
               <template v-else>
