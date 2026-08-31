@@ -77,16 +77,58 @@ watch(
   { immediate: true },
 )
 
-/* Group questions by section for headers. */
-const sections = computed(() => {
-  const out: { title: string | null; questions: NonNullable<typeof definition.value>['questions'] }[] = []
-  for (const q of definition.value?.questions ?? []) {
-    const last = out[out.length - 1]
-    if (last && last.title === (q.section ?? null)) last.questions.push(q)
-    else out.push({ title: q.section ?? null, questions: [q] })
+/* ── One question at a time (standardized-testing format) ─────────── */
+const questions = computed(() => definition.value?.questions ?? [])
+const idx = ref(0)
+const reviewing = ref(false)
+const currentQ = computed(() => questions.value[idx.value] ?? null)
+
+function isAnswered(no: number): boolean {
+  const v = answers.value[String(no)]
+  return Array.isArray(v) ? v.length > 0 : !!v
+}
+
+function goTo(i: number) {
+  idx.value = Math.min(Math.max(i, 0), questions.value.length - 1)
+  reviewing.value = false
+  confirmSubmit.value = false
+  window.scrollTo({ top: 0 })
+}
+function next() {
+  if (idx.value >= questions.value.length - 1) {
+    reviewing.value = true
+    window.scrollTo({ top: 0 })
+  } else {
+    goTo(idx.value + 1)
   }
-  return out
-})
+}
+function prev() {
+  if (reviewing.value) {
+    reviewing.value = false
+    return
+  }
+  goTo(idx.value - 1)
+}
+
+const unanswered = computed(() => questions.value.filter((q) => !isAnswered(q.no)))
+
+function openReview() {
+  reviewing.value = true
+  window.scrollTo({ top: 0 })
+}
+
+/* Resuming mid-exam lands on the first unanswered question. */
+let positioned = false
+watch(
+  [assignment, definition],
+  ([a, d]) => {
+    if (positioned || !a || !d || a.status !== 'in_progress') return
+    positioned = true
+    const first = d.questions.findIndex((q) => !isAnswered(q.no))
+    idx.value = first >= 0 ? first : d.questions.length - 1
+  },
+  { immediate: true },
+)
 
 /* ── Timer ─────────────────────────────────────────────────────────── */
 const now = ref(Date.now())
@@ -216,7 +258,8 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
       <p class="ex__result-sub">
         Passing standard: {{ shownResult.passingPct ?? definition.passingPct }}%.
         <template v-if="shownResult.passed && shownResult.criticalMissed.length === 0">
-          Clean pass — the protocol requirement on your credentialing checklist has been checked off automatically.
+          Clean pass — the protocol requirement on your credentialing checklist has been checked off
+          automatically, and a completion certificate will be added to your employee documents.
         </template>
         <template v-else-if="shownResult.criticalMissed.length > 0">
           {{ shownResult.criticalMissed.length }} flagged medication-dose item{{ shownResult.criticalMissed.length === 1 ? ' was' : 's were' }} missed —
@@ -250,41 +293,73 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
       </button>
     </div>
 
-    <!-- Runner -->
+    <!-- Runner — one question per screen -->
     <template v-else-if="assignment.status === 'in_progress'">
       <div class="ex__bar">
         <div class="ex__bar-title">{{ definition.title }}</div>
-        <span class="ex__bar-progress">{{ answeredCount }} / {{ totalCount }} answered</span>
+        <span class="ex__bar-progress">
+          <template v-if="!reviewing">Question {{ idx + 1 }} of {{ totalCount }} · </template>{{ answeredCount }} answered
+        </span>
         <span class="ex__timer" :class="{ 'ex__timer--low': (remainingMs ?? 0) < 10 * 60_000 }">
           <Clock :size="13" :stroke-width="2" /> {{ remainingText }}
         </span>
         <span class="ex__savestate">{{ saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : '' }}</span>
       </div>
 
-      <template v-for="sec in sections" :key="sec.title ?? 'x'">
-        <div v-if="sec.title" class="ex__section">{{ sec.title }}</div>
-        <div v-for="q in sec.questions" :key="q.no" class="ex__q">
+      <!-- Review & submit screen -->
+      <div v-if="reviewing" class="ex__review">
+        <h2 class="display ex__review-title">Review &amp; submit</h2>
+        <p class="ex__review-sub">
+          You've answered <b>{{ answeredCount }}</b> of <b>{{ totalCount }}</b> questions.
+          <template v-if="unanswered.length"> Unanswered questions score as incorrect — click a number to return to it.</template>
+        </p>
+        <div v-if="unanswered.length" class="ex__review-missing">
+          <button
+            v-for="q in unanswered"
+            :key="q.no"
+            type="button"
+            class="ex__navcell ex__navcell--open"
+            @click="goTo(questions.indexOf(q))"
+          >{{ q.no }}</button>
+        </div>
+        <div v-if="submitError" class="ex__error">{{ submitError }}</div>
+        <div class="ex__footer ex__footer--review">
+          <button type="button" class="ex__ghost" @click="reviewing = false">Back to questions</button>
+          <span v-if="confirmSubmit" class="ex__confirm">
+            {{ totalCount - answeredCount }} unanswered — submit anyway?
+          </span>
+          <button type="button" class="ex__primary" :disabled="submitting" @click="doSubmit(false)">
+            <Check :size="14" :stroke-width="2.5" />
+            {{ submitting ? 'Submitting…' : confirmSubmit ? 'Yes, submit now' : 'Submit examination' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Single question -->
+      <template v-else-if="currentQ">
+        <div class="ex__q ex__q--single">
+          <div v-if="currentQ.section" class="ex__section ex__section--inline">{{ currentQ.section }}</div>
           <div class="ex__q-text">
-            <b>{{ q.no }}.</b> {{ q.text }}
-            <span v-if="q.type === 'multi'" class="ex__multi-hint">select all that apply</span>
+            <b>{{ currentQ.no }}.</b> {{ currentQ.text }}
+            <span v-if="currentQ.type === 'multi'" class="ex__multi-hint">select all that apply</span>
           </div>
           <img
-            v-if="q.image && imageUrls[q.image]"
-            :src="imageUrls[q.image]"
+            v-if="currentQ.image && imageUrls[currentQ.image]"
+            :src="imageUrls[currentQ.image]"
             class="ex__q-img"
             alt="Question reference image"
           />
-          <template v-if="q.type === 'multi'">
+          <template v-if="currentQ.type === 'multi'">
             <label
-              v-for="(text, letter) in q.options"
+              v-for="(text, letter) in currentQ.options"
               :key="letter"
               class="ex__opt"
-              :class="{ 'ex__opt--on': isPicked(q.no, letter) }"
+              :class="{ 'ex__opt--on': isPicked(currentQ.no, letter) }"
             >
               <input
                 type="checkbox"
-                :checked="isPicked(q.no, letter)"
-                @change="toggleMulti(q.no, letter)"
+                :checked="isPicked(currentQ.no, letter)"
+                @change="toggleMulti(currentQ.no, letter)"
               />
               <span class="ex__opt-letter">{{ letter }}</span>
               <span>{{ text }}</span>
@@ -292,15 +367,15 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
           </template>
           <template v-else>
             <label
-              v-for="(text, letter) in q.options"
+              v-for="(text, letter) in currentQ.options"
               :key="letter"
               class="ex__opt"
-              :class="{ 'ex__opt--on': answers[String(q.no)] === letter }"
+              :class="{ 'ex__opt--on': answers[String(currentQ.no)] === letter }"
             >
               <input
-                v-model="answers[String(q.no)]"
+                v-model="answers[String(currentQ.no)]"
                 type="radio"
-                :name="`q${q.no}`"
+                :name="`q${currentQ.no}`"
                 :value="letter"
               />
               <span class="ex__opt-letter">{{ letter }}</span>
@@ -308,19 +383,35 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
             </label>
           </template>
         </div>
-      </template>
 
-      <div v-if="submitError" class="ex__error">{{ submitError }}</div>
-      <div class="ex__footer">
-        <span v-if="confirmSubmit" class="ex__confirm">
-          {{ totalCount - answeredCount }} unanswered — unanswered questions score as incorrect. Submit anyway?
-        </span>
-        <button type="button" class="ex__primary" :disabled="submitting" @click="doSubmit(false)">
-          <Check :size="14" :stroke-width="2.5" />
-          {{ submitting ? 'Submitting…' : confirmSubmit ? 'Yes, submit now' : 'Submit examination' }}
-        </button>
-        <button v-if="confirmSubmit" type="button" class="ex__ghost" @click="confirmSubmit = false">Keep working</button>
-      </div>
+        <div class="ex__footer ex__footer--nav">
+          <button type="button" class="ex__ghost" :disabled="idx === 0" @click="prev">
+            <ArrowLeft :size="13" :stroke-width="2" /> Previous
+          </button>
+          <button type="button" class="ex__navsubmit" @click="openReview">
+            Review &amp; submit
+          </button>
+          <button type="button" class="ex__primary ex__primary--next" @click="next">
+            {{ idx === totalCount - 1 ? 'Finish — review answers' : 'Next' }}
+          </button>
+        </div>
+
+        <!-- Question navigator -->
+        <div class="ex__navgrid" aria-label="Question navigator">
+          <button
+            v-for="(q, i) in questions"
+            :key="q.no"
+            type="button"
+            class="ex__navcell"
+            :class="{
+              'ex__navcell--done': isAnswered(q.no),
+              'ex__navcell--current': i === idx,
+            }"
+            :aria-label="`Question ${q.no}${isAnswered(q.no) ? ' (answered)' : ''}`"
+            @click="goTo(i)"
+          >{{ q.no }}</button>
+        </div>
+      </template>
     </template>
 
     <div v-else class="ex__empty">This assignment is {{ assignment.status }}.</div>
@@ -379,6 +470,62 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
   margin: 22px 0 10px; font-size: 11px; font-weight: 700;
   letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent-700);
 }
+.ex__section--inline { margin: 0 0 10px; }
+.ex__q--single { padding: 20px 22px; }
+.ex__q--single .ex__q-text { font-size: 15.5px; line-height: 1.6; }
+
+.ex__footer--nav { justify-content: space-between; }
+.ex__footer--nav .ex__ghost,
+.ex__footer--nav .ex__primary { margin-top: 0; margin-left: 0; }
+.ex__primary--next { min-width: 120px; justify-content: center; }
+.ex__ghost:disabled { opacity: 0.45; cursor: default; }
+.ex__navsubmit {
+  background: none; border: none; cursor: pointer; padding: 8px 10px;
+  font-family: var(--font-sans); font-size: 12.5px; font-weight: 600;
+  color: var(--color-brand-600);
+}
+.ex__navsubmit:hover { color: var(--color-brand-700); text-decoration: underline; text-underline-offset: 3px; }
+
+.ex__navgrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 6px; margin-top: 20px;
+  background: var(--color-surface); border: 1px solid var(--color-line-soft);
+  border-radius: 12px; padding: 12px;
+}
+.ex__navcell {
+  height: 32px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--color-line); background: var(--color-surface);
+  font-family: var(--font-sans); font-size: 12px; font-weight: 600;
+  color: var(--color-muted); font-variant-numeric: tabular-nums;
+}
+.ex__navcell:hover { border-color: var(--color-muted-soft); color: var(--color-ink); }
+.ex__navcell--done {
+  background: oklch(0.93 0.02 250); border-color: oklch(0.85 0.03 250);
+  color: var(--color-brand-700);
+}
+.ex__navcell--current {
+  border-color: var(--color-accent-600); color: var(--color-accent-700);
+  box-shadow: 0 0 0 2px oklch(0.9 0.06 90 / 0.55);
+}
+.ex__navcell--open {
+  background: oklch(0.96 0.05 60); border-color: oklch(0.85 0.08 60);
+  color: oklch(0.48 0.13 45);
+}
+
+.ex__review {
+  background: var(--color-surface); border: 1px solid var(--color-line-soft);
+  border-radius: 12px; padding: 22px 24px;
+}
+.ex__review-title { font-size: 22px; color: var(--color-brand-800); }
+.ex__review-sub { margin-top: 8px; font-size: 13.5px; line-height: 1.6; color: var(--color-ink-soft); }
+.ex__review-missing {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 6px; margin-top: 14px;
+}
+.ex__review-missing .ex__navcell { height: 32px; }
+.ex__footer--review { justify-content: flex-end; }
+.ex__footer--review .ex__ghost { margin: 0 auto 0 0; }
+.ex__footer--review .ex__primary { margin-top: 0; }
 .ex__q {
   background: var(--color-surface); border: 1px solid var(--color-line-soft);
   border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;

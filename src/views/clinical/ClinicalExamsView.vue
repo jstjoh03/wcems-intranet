@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
-import { Play, XCircle, ExternalLink, ClipboardCheck } from 'lucide-vue-next'
+import { Play, XCircle, ExternalLink, ClipboardCheck, Award } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import { useClinical } from '@/composables/useClinical'
+import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useExams, type ExamAssignment } from '@/composables/useExams'
 import { useAuthStore } from '@/stores/auth'
+import { generateExamCertPdf } from '@/lib/examCertPdf'
 
 /**
  * Protocol examinations manager (/clinical/exams, editors only) — the
@@ -99,6 +101,65 @@ function fmtDate(iso: string | null): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
+
+/* ── Completion certificates ────────────────────────────────────────
+   A clean pass files a certificate PDF (name, exam, score, date) into
+   the employee's Documents (Cert cards, employee-visible). Runs from
+   the editor's session — the proctor has this page open during
+   administration — and dedupes by document name so realtime reloads
+   or a second editor can't double-file. The gate check-off itself
+   happens server-side in exam_submit. */
+const clindocs = useClinicalDocs()
+
+function certNameFor(a: ExamAssignment): string {
+  const safe = nameOf(a.userId).replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+  const d = exams.definitionById(a.examId)
+  const date = (a.submittedAt ?? '').slice(0, 10)
+  return `WCEMS_Exam_Certificate_${d?.slug ?? a.examId.slice(0, 8)}_${safe}_${date}.pdf`
+}
+
+function certFiled(a: ExamAssignment): boolean {
+  const name = certNameFor(a)
+  return clindocs.docsFor(a.userId).some((d) => d.folder === 'certs' && d.name === name)
+}
+
+const certInFlight = new Set<string>()
+watchEffect(() => {
+  if (!canEdit.value || !clindocs.ready.value || !exams.ready.value) return
+  for (const a of exams.assignments.value) {
+    if (a.status !== 'submitted' || !a.passed || (a.criticalMissed?.length ?? 0) > 0) continue
+    const d = exams.definitionById(a.examId)
+    if (!d || !a.submittedAt || a.scorePct === null) continue
+    if (certFiled(a) || certInFlight.has(a.id)) continue
+    certInFlight.add(a.id)
+    void (async () => {
+      try {
+        const pdf = await generateExamCertPdf({
+          candidateName: nameOf(a.userId),
+          examTitle: d.title,
+          scorePct: a.scorePct!,
+          passingPct: d.passingPct,
+          submittedAt: a.submittedAt!,
+        })
+        const blob = pdf.output('blob') as Blob
+        const res = await clindocs.upload({
+          userId: a.userId,
+          folder: 'certs',
+          file: new File([blob], certNameFor(a), { type: 'application/pdf' }),
+          employeeVisible: true,
+          note: 'Protocol examination certificate (auto-filed on pass)',
+        })
+        if (!res.ok) {
+          console.error('[exams] cert auto-file failed:', res.error)
+          certInFlight.delete(a.id)
+        }
+      } catch (e) {
+        console.error('[exams] cert generation failed:', e)
+        certInFlight.delete(a.id)
+      }
+    })()
+  }
+})
 </script>
 
 <template>
@@ -206,6 +267,9 @@ function fmtDate(iso: string | null): string {
             <ClipboardCheck v-if="a.passed && !(a.criticalMissed?.length)" :size="12" :stroke-width="2.5" />
             {{ a.passed ? ((a.criticalMissed?.length) ? 'Pass — critical retest' : 'Pass') : 'Fail' }}
           </span>
+          <span v-if="certFiled(a)" class="ce__cert" title="Completion certificate filed to the employee's Documents">
+            <Award :size="11" :stroke-width="2" /> cert filed
+          </span>
           <span v-if="a.criticalMissed?.length" class="ce__crit">
             critical missed: Q{{ a.criticalMissed.join(', Q') }}
           </span>
@@ -292,6 +356,10 @@ function fmtDate(iso: string | null): string {
 .ce__pass--ok { background: var(--color-success-50); color: var(--color-success-500); }
 .ce__pass--no { background: oklch(0.96 0.05 30); color: oklch(0.48 0.15 30); }
 .ce__crit { flex-basis: 100%; font-size: 11px; color: oklch(0.48 0.13 45); }
+.ce__cert {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 700; color: var(--color-accent-strong, #a8842c);
+}
 .ce__quiet { font-size: 12.5px; color: var(--color-muted); }
 .ce__quiet--pad { padding: 16px; }
 .ce__note { margin-top: 16px; font-size: 12px; color: var(--color-muted); line-height: 1.5; }
