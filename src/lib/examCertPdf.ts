@@ -1,12 +1,13 @@
 import jsPDF from 'jspdf'
-import { GREAT_VIBES_TTF_B64 } from '@/lib/greatVibesFont'
+import { ALEX_BRUSH_TTF_B64 } from '@/lib/alexBrushFont'
 
 /**
  * Certificate of completion for a passed protocol examination — filed
  * into the employee's Documents automatically on a clean pass. Full
  * color (brand navy + gold, color crest) with signature blocks for the
- * Clinical Development Officer and Assistant Chief rendered in a
- * script face (Great Vibes, OFL).
+ * Clinical Development Officer and Assistant Chief: script signature
+ * (Alex Brush, OFL) over the rule, printed name + credentials and
+ * title beneath it.
  */
 
 const NAVY: [number, number, number] = [24, 38, 68]
@@ -42,8 +43,16 @@ export interface ExamCertInput {
 }
 
 const SIGNERS = [
-  { signature: 'Justin St John, RN, LP', title: 'Clinical Development Officer' },
-  { signature: 'Heather Fojt, LP', title: 'Assistant Chief' },
+  {
+    signature: 'Justin St John',
+    printed: 'Justin St John, RN, LP',
+    title: 'Clinical Development Officer',
+  },
+  {
+    signature: 'Heather Fojt',
+    printed: 'Heather Fojt, LP',
+    title: 'Assistant Chief',
+  },
 ] as const
 
 export async function generateExamCertPdf(input: ExamCertInput): Promise<jsPDF> {
@@ -52,8 +61,15 @@ export async function generateExamCertPdf(input: ExamCertInput): Promise<jsPDF> 
   const H = doc.internal.pageSize.getHeight()
   const CX = W / 2
 
-  doc.addFileToVFS('GreatVibes-Regular.ttf', GREAT_VIBES_TTF_B64)
-  doc.addFont('GreatVibes-Regular.ttf', 'GreatVibes', 'normal')
+  doc.addFileToVFS('AlexBrush-Regular.ttf', ALEX_BRUSH_TTF_B64)
+  doc.addFont('AlexBrush-Regular.ttf', 'AlexBrush', 'normal')
+
+  /* jsPDF's align:'center' ignores charSpace, so letterspaced lines
+     drift right of true center — measure and place them manually. */
+  function centeredSpaced(txt: string, y: number, charSpace: number) {
+    const w = doc.getTextWidth(txt) + charSpace * (txt.length - 1)
+    doc.text(txt, CX - w / 2, y, { charSpace })
+  }
 
   /* Frame — navy outer rule, gold inner rule. */
   doc.setDrawColor(...NAVY)
@@ -73,18 +89,18 @@ export async function generateExamCertPdf(input: ExamCertInput): Promise<jsPDF> 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(20)
   doc.setTextColor(...NAVY_DEEP)
-  doc.text('WALLER COUNTY', CX, y, { align: 'center', charSpace: 2 })
+  centeredSpaced('WALLER COUNTY', y, 2)
   y += 17
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10.5)
   doc.setTextColor(...INK_SOFT)
-  doc.text('EMERGENCY MEDICAL SERVICES', CX, y, { align: 'center', charSpace: 2.4 })
+  centeredSpaced('EMERGENCY MEDICAL SERVICES', y, 2.4)
   y += 28
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(13)
   doc.setTextColor(...GOLD)
-  doc.text('CERTIFICATE OF COMPLETION', CX, y, { align: 'center', charSpace: 3 })
+  centeredSpaced('CERTIFICATE OF COMPLETION', y, 3)
   y += 30
 
   doc.setFont('helvetica', 'normal')
@@ -141,17 +157,21 @@ export async function generateExamCertPdf(input: ExamCertInput): Promise<jsPDF> 
   const centers = [W * 0.3, W * 0.7]
   SIGNERS.forEach((s, i) => {
     const cx = centers[i]
-    doc.setFont('GreatVibes', 'normal')
-    doc.setFontSize(24)
+    doc.setFont('AlexBrush', 'normal')
+    doc.setFontSize(26)
     doc.setTextColor(...NAVY_DEEP)
     doc.text(s.signature, cx, sigLineY - 10, { align: 'center' })
     doc.setDrawColor(...NAVY)
     doc.setLineWidth(0.8)
     doc.line(cx - sigW / 2, sigLineY, cx + sigW / 2, sigLineY)
-    doc.setFont('helvetica', 'normal')
+    doc.setFont('helvetica', 'bold')
     doc.setFontSize(9.5)
+    doc.setTextColor(...NAVY_DEEP)
+    doc.text(s.printed, cx, sigLineY + 13, { align: 'center' })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
     doc.setTextColor(...INK_SOFT)
-    doc.text(s.title, cx, sigLineY + 14, { align: 'center' })
+    doc.text(s.title, cx, sigLineY + 25, { align: 'center' })
   })
 
   doc.setFontSize(8.5)
