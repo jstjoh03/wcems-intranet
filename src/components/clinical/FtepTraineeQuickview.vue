@@ -7,6 +7,13 @@ import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForm
 import { usePipeline } from '@/composables/usePipeline'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
+import {
+  buildDorDateSet,
+  dayState as sharedDayState,
+  scheduleSatisfied,
+  todayIso,
+  type ScheduledDayState,
+} from '@/lib/ftepSchedule'
 
 /**
  * Trainee quickview — click a card on the FTEP page and get the
@@ -24,8 +31,6 @@ const emit = defineEmits<{ close: [] }>()
 const { phasesFor } = usePipeline()
 const { ftepTrackFor, gatesFor, manualRideouts } = useClinical()
 const ftep = useFtep()
-
-const todayIso = () => new Date().toISOString().slice(0, 10)
 
 const record = computed(() => props.person?.record ?? null)
 const track = computed(() => (props.person ? ftepTrackFor(props.person) : null))
@@ -45,24 +50,20 @@ const rowByKey = computed(() => {
   return map
 })
 
-const dorDates = computed(
-  () => new Set(props.person ? ftep.activeDors(props.person.userId).map((r) => r.evalDate) : []),
+const dorDates = computed(() =>
+  buildDorDateSet(props.person ? ftep.activeDors(props.person.userId) : []),
 )
 
-type DayState = 'done' | 'missed' | 'upcoming'
-function dayState(day: string, noFto?: boolean): DayState {
-  if (noFto) return day <= todayIso() ? 'done' : 'upcoming'
-  if (dorDates.value.has(day)) return 'done'
-  return day < todayIso() ? 'missed' : 'upcoming'
+function dayState(day: string, noFto?: boolean): ScheduledDayState {
+  return sharedDayState(dorDates.value, day, noFto)
 }
 
 function phaseState(ph: FtepProgramPhase): 'done' | 'current' | 'scheduled' | 'todo' {
   const row = rowByKey.value.get(ph.key)
   if (!row) return 'todo'
   if (row.completedAt && row.completedAt <= todayIso()) return 'done'
+  if (scheduleSatisfied(row, dorDates.value, ph.noFto)) return 'done'
   const days = row.scheduledDays
-  if (days.length > 0 && days.every((d) => d < todayIso() && (ph.noFto || dorDates.value.has(d))))
-    return 'done'
   const started =
     (row.startedAt && row.startedAt <= todayIso()) || (days[0] && days[0] <= todayIso())
   if (started) return 'current'

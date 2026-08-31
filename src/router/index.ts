@@ -183,10 +183,33 @@ const routes: RouteRecordRaw[] = [
     name: 'clinical-ftep',
     component: () => import('@/views/clinical/FtepHomeView.vue'),
   },
+  /* FTEP mini-site tabs. NOTE: these literal segments must stay
+     distinct from the report runner's :kind(dor|icr) param below. */
+  {
+    path: '/clinical/ftep/reports',
+    name: 'clinical-ftep-reports',
+    component: () => import('@/views/clinical/FtepReportsView.vue'),
+  },
+  {
+    path: '/clinical/ftep/resources',
+    name: 'clinical-ftep-resources',
+    component: () => import('@/views/clinical/FtepResourcesView.vue'),
+  },
+  {
+    path: '/clinical/ftep/roster',
+    name: 'clinical-ftep-roster',
+    component: () => import('@/views/clinical/FtepRosterView.vue'),
+  },
   {
     path: '/clinical/submissions',
     name: 'clinical-submissions',
     component: () => import('@/views/clinical/FtepSubmissionsView.vue'),
+  },
+  /* Protocol examinations manager (editors). */
+  {
+    path: '/clinical/exams',
+    name: 'clinical-exams',
+    component: () => import('@/views/clinical/ClinicalExamsView.vue'),
   },
   /* Trainee-facing: Trainee Evaluation of FTO (goes to the CDO only). */
   {

@@ -6,6 +6,12 @@ import { activeTransitionFor } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
+import {
+  buildDorDateSet,
+  missingDorDays as sharedMissingDorDays,
+  scheduleSatisfied as sharedScheduleSatisfied,
+  todayIso,
+} from '@/lib/ftepSchedule'
 
 /**
  * The Program Guide phase ladder for one trainee — which phase they're
@@ -29,29 +35,17 @@ const ftep = useFtep()
 
 const record = computed(() => props.person.record)
 
-const todayIso = () => new Date().toISOString().slice(0, 10)
+/** Eval dates of the trainee's counting DORs — the per-day match set
+ *  (a DOR within ±1 day of the scheduled shift counts: 24-hr shifts
+ *  often push the DOR to the next calendar day). */
+const dorDates = computed(() => buildDorDateSet(ftep.activeDors(props.person.userId)))
 
-/** Eval dates of the trainee's counting DORs — the per-day match set. */
-const dorDates = computed(() => new Set(ftep.activeDors(props.person.userId).map((r) => r.evalDate)))
-
-type DayState = 'done' | 'missed' | 'upcoming'
-function dayState(day: string, noFto?: boolean): DayState {
-  if (noFto) return day <= todayIso() ? 'done' : 'upcoming'
-  if (dorDates.value.has(day)) return 'done'
-  return day < todayIso() ? 'missed' : 'upcoming'
-}
-
-/** Every scheduled day passed and (for FTO phases) has its DOR. */
 function scheduleSatisfied(key: string, noFto?: boolean): boolean {
-  const days = rowByKey.value.get(key)?.scheduledDays ?? []
-  if (days.length === 0) return false
-  return days.every((d) => d < todayIso() && (noFto || dorDates.value.has(d)))
+  return sharedScheduleSatisfied(rowByKey.value.get(key), dorDates.value, noFto)
 }
 
-/** A day is past due without its DOR — flag, and hold the phase open. */
 function missingDorDays(key: string, noFto?: boolean): string[] {
-  if (noFto) return []
-  return (rowByKey.value.get(key)?.scheduledDays ?? []).filter((d) => dayState(d) === 'missed')
+  return sharedMissingDorDays(rowByKey.value.get(key), dorDates.value, noFto)
 }
 
 const phaseSet = computed<FtepProgramPhase[] | null>(() => {

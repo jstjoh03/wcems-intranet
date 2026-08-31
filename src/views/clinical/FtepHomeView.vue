@@ -4,13 +4,16 @@ import { useRouter } from 'vue-router'
 import { ChevronDown, Download, FileText, Check, AlertTriangle } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
-import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
+import FtepSectionTabs from '@/components/clinical/FtepSectionTabs.vue'
 import FtepTraineeQuickview from '@/components/clinical/FtepTraineeQuickview.vue'
 import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
 import { activeTransitionFor, gateItemsFor, petitionItemsFor } from '@/constants/pipelineGates'
+import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
+import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
+import { usePipeline } from '@/composables/usePipeline'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import type { FtepReport, PipelinePerson } from '@/types'
 
@@ -23,7 +26,8 @@ import type { FtepReport, PipelinePerson } from '@/types'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor, manualRideouts, gatesFor, statusChip } = useClinical()
+const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor, manualRideouts, gatesFor } = useClinical()
+const { phasesFor } = usePipeline()
 const ftep = useFtep()
 
 watch(
@@ -158,6 +162,38 @@ function fmt(iso: string | null): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+/** The trainee's Program Guide ladder (mirrors the stepper's guard). */
+function ladderFor(p: PipelinePerson): FtepProgramPhase[] {
+  const t = activeTransitionFor(p.record)
+  const paramedic = /emt-p|^lp$/i.test(p.record.certLevel ?? '')
+  if ((t === 'NEOP' || t === 'P1C_P1') && paramedic) return FTEP_PROGRAM_PHASES.P1C_P1
+  if (t === 'P1_P2') return FTEP_PROGRAM_PHASES.P1_P2
+  return []
+}
+
+/* Scheduled shift days whose grace window has passed with no DOR on
+   file (a DOR within ±1 day of the shift counts — 24-hr shifts often
+   push the DOR to the next calendar day). Surfaced up top so nobody
+   has to open each trainee to find the gaps. */
+const missingDorRows = computed(() => {
+  const out: { p: PipelinePerson; phase: string; day: string }[] = []
+  for (const g of groups.value) {
+    for (const p of g.people) {
+      const ladder = ladderFor(p)
+      if (!ladder.length) continue
+      const set = buildDorDateSet(ftep.activeDors(p.userId))
+      const rows = phasesFor(p.record.id)
+      for (const ph of ladder) {
+        const row = rows.find((r) => r.phaseKey === ph.key)
+        for (const d of missingDorDays(row, set, ph.noFto)) {
+          out.push({ p, phase: ph.label, day: d })
+        }
+      }
+    }
+  }
+  return out.sort((a, b) => a.day.localeCompare(b.day) || a.p.fullName.localeCompare(b.p.fullName))
+})
+
 function statsFor(p: PipelinePerson) {
   const track = ftepTrackFor(p)
   const dors = ftep.activeDors(p.userId).length
@@ -202,16 +238,6 @@ function needsFor(p: PipelinePerson) {
   return { items, pets, count: items.length + pets.length }
 }
 
-/* Credential roster — the informational list supervisors/FTOs get in
-   place of Employee Files: who's credentialed at what level. */
-const rosterQuery = ref('')
-const rosterRows = computed(() => {
-  const q = rosterQuery.value.trim().toLowerCase()
-  return clinicalPeople.value
-    .filter((p) => !q || p.fullName.toLowerCase().includes(q))
-    .sort((a, b) => a.fullName.localeCompare(b.fullName))
-})
-
 /* Legacy manual call-eval recording (until the Jotform webhook). */
 const legacyDialog = ref<PipelinePerson | null>(null)
 const legacyDate = ref(new Date().toISOString().slice(0, 10))
@@ -247,14 +273,6 @@ async function saveLegacyEval() {
 function nameOf(userId: string): string {
   return clinicalPeople.value.find((p) => p.userId === userId)?.fullName ?? 'Staff'
 }
-
-/* Recent submitted reports (mine unless editor — editors see all). */
-const recent = computed<FtepReport[]>(() => {
-  const uid = auth.appUser?.id
-  return ftep.reports.value
-    .filter((r) => r.status === 'submitted' && (canEdit.value || r.evaluatorId === uid))
-    .slice(0, 12)
-})
 
 const pdfBusy = ref<string | null>(null)
 async function makePdf(r: FtepReport) {
@@ -319,6 +337,7 @@ async function review(r: FtepReport) {
 <template>
   <div class="fh">
     <ClinicalNav :crumbs="['FTEP']" />
+    <FtepSectionTabs />
 
     <header class="fh__head">
       <div>
@@ -390,6 +409,23 @@ async function review(r: FtepReport) {
               <Check :size="12" :stroke-width="2.5" /> Reviewed
             </button>
           </span>
+        </div>
+      </div>
+
+      <!-- Missing DORs — scheduled shift days past their grace window
+           with no DOR on file (±1 day counts: 24-hr shifts). -->
+      <div v-if="missingDorRows.length" class="fh__missing-card">
+        <div class="fh__missing-hd">
+          <AlertTriangle :size="15" :stroke-width="2" />
+          {{ missingDorRows.length }} training day{{ missingDorRows.length === 1 ? '' : 's' }} missing a DOR
+          <span class="fh__missing-hint">a DOR dated within a day of the shift counts</span>
+        </div>
+        <div v-for="m in missingDorRows" :key="`${m.p.userId}-${m.day}`" class="fh__missing-row">
+          <span class="fh__missing-who">{{ m.p.fullName }}</span>
+          <span class="fh__missing-meta">{{ m.phase }} · shift {{ fmt(m.day) }}</span>
+          <button type="button" class="fh__mini" @click="startReport(m.p, 'dor')">
+            <FileText :size="12" :stroke-width="2" /> New DOR
+          </button>
         </div>
       </div>
 
@@ -489,58 +525,6 @@ async function review(r: FtepReport) {
       </template>
       <div v-if="groups.length === 0" class="fh__empty">No trainees actively progressing.</div>
 
-      <!-- Recent reports -->
-      <div class="fh__sectitle">{{ canEdit ? 'Recent reports — all evaluators' : 'My recent reports' }}</div>
-      <div class="fh__card">
-        <div v-for="r in recent" :key="r.id" class="fh__report">
-          <span class="fh__kind" :class="`fh__kind--${r.kind}`">{{ r.kind.toUpperCase() }}</span>
-          <span class="fh__report-who">{{ nameOf(r.traineeId) }}</span>
-          <span class="fh__report-meta">
-            {{ fmt(r.evalDate) }} · by {{ nameOf(r.evaluatorId) }}
-            <template v-if="r.payload.average !== undefined"> · avg {{ r.payload.average?.toFixed(2) }}</template>
-            <template v-if="r.reviewedAt"> · reviewed</template>
-          </span>
-          <span v-if="!r.payload.legacyManual" style="margin-left:auto;display:flex;gap:8px">
-            <button type="button" class="fh__mini" :disabled="pdfBusy === r.id" @click="viewPdf(r)">
-              <FileText :size="12" :stroke-width="2" /> View
-            </button>
-            <button type="button" class="fh__mini" :disabled="pdfBusy === r.id" @click="downloadPdf(r)">
-              <Download :size="12" :stroke-width="2" /> {{ pdfBusy === r.id ? '…' : 'PDF' }}
-            </button>
-          </span>
-          <span v-else style="margin-left:auto;font-size:11px;color:var(--color-muted)">Jotform — original in Documents</span>
-        </div>
-        <div v-if="recent.length === 0" class="fh__card-empty">No submitted reports yet.</div>
-      </div>
-
-      <!-- Resources library — handbooks, guides, workbooks, blank forms -->
-      <div class="fh__sectitle">Resources</div>
-      <FtepResourcesCard :editable="canEdit" />
-
-      <!-- Credential roster — informational stand-in for Employee Files
-           (which is clinical-only): who holds what level. -->
-      <template v-if="!canEdit">
-        <div class="fh__sectitle">
-          Credential roster
-          <span class="fh__track-hint">every clinical employee · cert &amp; credential level</span>
-        </div>
-        <div class="fh__card">
-          <input
-            v-model="rosterQuery"
-            type="search"
-            class="fh__roster-search"
-            placeholder="Search by name…"
-          />
-          <div v-for="p in rosterRows" :key="p.userId" class="fh__roster-row">
-            <span class="fh__roster-name">{{ p.fullName }}</span>
-            <span class="fh__roster-cert">{{ p.record.certLevel ?? '—' }}</span>
-            <span class="fh__roster-level">{{ p.record.level ?? '—' }}</span>
-            <span class="fh__roster-chip" :class="`fh__roster-chip--${statusChip(p).kind}`">{{ statusChip(p).text }}</span>
-          </div>
-          <div v-if="rosterRows.length === 0" class="fh__card-empty">No one matches that search.</div>
-        </div>
-      </template>
-
       <!-- Trainee quickview -->
       <FtepTraineeQuickview :person="quickview" @close="quickview = null" />
 
@@ -618,6 +602,24 @@ async function review(r: FtepReport) {
 .fh__queue-who { font-weight: 700; color: var(--color-ink); }
 .fh__queue-meta { color: var(--color-ink-soft); font-size: 12px; }
 .fh__nrt-flag { color: oklch(0.45 0.15 30); }
+.fh__missing-card {
+  background: oklch(0.975 0.03 60); border: 1px solid oklch(0.87 0.06 60);
+  border-radius: 14px; padding: 4px 0 6px; margin-bottom: 10px;
+}
+.fh__missing-hd {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  padding: 11px 16px 8px; font-size: 13px; font-weight: 700; color: oklch(0.45 0.12 50);
+}
+.fh__missing-hint {
+  font-weight: 500; font-size: 11px; color: oklch(0.55 0.08 55);
+}
+.fh__missing-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px; border-top: 1px solid oklch(0.93 0.04 60); font-size: 13px;
+}
+.fh__missing-who { font-weight: 700; color: var(--color-ink); }
+.fh__missing-meta { color: var(--color-ink-soft); font-size: 12px; }
+.fh__missing-row .fh__mini { margin-left: auto; }
 .fh__queue-actions { margin-left: auto; display: flex; gap: 8px; }
 .fh__triagewrap { position: relative; }
 .fh__triage {
