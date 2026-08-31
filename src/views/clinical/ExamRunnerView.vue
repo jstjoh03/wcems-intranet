@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Check, Clock } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, Check, Clock } from 'lucide-vue-next'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useExams, type ExamAnswers } from '@/composables/useExams'
@@ -304,6 +304,9 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
           <Clock :size="13" :stroke-width="2" /> {{ remainingText }}
         </span>
         <span class="ex__savestate">{{ saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? 'Saved' : '' }}</span>
+        <button v-if="!reviewing" type="button" class="ex__bar-review" @click="openReview">
+          Review &amp; submit
+        </button>
       </div>
 
       <!-- Review & submit screen -->
@@ -324,7 +327,9 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
         </div>
         <div v-if="submitError" class="ex__error">{{ submitError }}</div>
         <div class="ex__footer ex__footer--review">
-          <button type="button" class="ex__ghost" @click="reviewing = false">Back to questions</button>
+          <button type="button" class="ex__navbtn" @click="reviewing = false">
+            <ArrowLeft :size="14" :stroke-width="2" /> Back to questions
+          </button>
           <span v-if="confirmSubmit" class="ex__confirm">
             {{ totalCount - answeredCount }} unanswered — submit anyway?
           </span>
@@ -385,14 +390,12 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
         </div>
 
         <div class="ex__footer ex__footer--nav">
-          <button type="button" class="ex__ghost" :disabled="idx === 0" @click="prev">
-            <ArrowLeft :size="13" :stroke-width="2" /> Previous
+          <button type="button" class="ex__navbtn" :disabled="idx === 0" @click="prev">
+            <ArrowLeft :size="14" :stroke-width="2" /> Previous
           </button>
-          <button type="button" class="ex__navsubmit" @click="openReview">
-            Review &amp; submit
-          </button>
-          <button type="button" class="ex__primary ex__primary--next" @click="next">
-            {{ idx === totalCount - 1 ? 'Finish — review answers' : 'Next' }}
+          <button type="button" class="ex__navbtn ex__navbtn--primary" @click="next">
+            {{ idx === totalCount - 1 ? 'Review answers' : 'Next' }}
+            <ArrowRight v-if="idx < totalCount - 1" :size="14" :stroke-width="2" />
           </button>
         </div>
 
@@ -474,17 +477,31 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
 .ex__q--single { padding: 20px 22px; }
 .ex__q--single .ex__q-text { font-size: 15.5px; line-height: 1.6; }
 
-.ex__footer--nav { justify-content: space-between; }
-.ex__footer--nav .ex__ghost,
-.ex__footer--nav .ex__primary { margin-top: 0; margin-left: 0; }
-.ex__primary--next { min-width: 120px; justify-content: center; }
-.ex__ghost:disabled { opacity: 0.45; cursor: default; }
-.ex__navsubmit {
-  background: none; border: none; cursor: pointer; padding: 8px 10px;
-  font-family: var(--font-sans); font-size: 12.5px; font-weight: 600;
-  color: var(--color-brand-600);
+.ex__footer--nav { justify-content: space-between; margin-top: 14px; }
+.ex__navbtn {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 38px; padding: 0 18px; border-radius: 9px;
+  border: 1px solid var(--color-line); background: var(--color-surface);
+  font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+  color: var(--color-ink-soft); cursor: pointer;
+  transition: border-color 120ms var(--ease-out), color 120ms var(--ease-out), background 120ms var(--ease-out);
 }
-.ex__navsubmit:hover { color: var(--color-brand-700); text-decoration: underline; text-underline-offset: 3px; }
+.ex__navbtn:hover:not(:disabled) { border-color: var(--color-muted-soft); color: var(--color-ink); }
+.ex__navbtn:disabled { opacity: 0.4; cursor: default; }
+.ex__navbtn--primary {
+  min-width: 118px; justify-content: center;
+  background: var(--color-brand-800); border-color: var(--color-brand-800); color: #fff;
+}
+.ex__navbtn--primary:hover:not(:disabled) { background: var(--color-brand-900, var(--color-brand-800)); color: #fff; }
+.ex__bar-review {
+  display: inline-flex; align-items: center;
+  padding: 5px 11px; border-radius: 7px;
+  border: 1px solid var(--color-line); background: transparent;
+  font-family: var(--font-sans); font-size: 11.5px; font-weight: 600;
+  color: var(--color-ink-soft); cursor: pointer; white-space: nowrap;
+  transition: border-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+.ex__bar-review:hover { border-color: var(--color-accent-strong, #a8842c); color: var(--color-ink); }
 
 .ex__navgrid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
@@ -524,7 +541,7 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
 }
 .ex__review-missing .ex__navcell { height: 32px; }
 .ex__footer--review { justify-content: flex-end; }
-.ex__footer--review .ex__ghost { margin: 0 auto 0 0; }
+.ex__footer--review .ex__navbtn { margin-right: auto; }
 .ex__footer--review .ex__primary { margin-top: 0; }
 .ex__q {
   background: var(--color-surface); border: 1px solid var(--color-line-soft);
