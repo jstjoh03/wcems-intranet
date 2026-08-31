@@ -53,9 +53,12 @@ export async function generateExamCertPdf(input: ExamCertInput): Promise<jsPDF> 
   const crest = await loadImageAsBase64(`${window.location.origin}/wcems-patch-bw.jpg`)
   const CREST_W = 64
   const CREST_H = CREST_W * (280 / 262)
-  if (crest) doc.addImage(crest, 'JPEG', CX - CREST_W / 2, 58, CREST_W, CREST_H, 'wcems-crest-bw')
+  /* Content block starts low enough that the certificate reads
+     vertically balanced inside the frame. */
+  const TOP = 92
+  if (crest) doc.addImage(crest, 'JPEG', CX - CREST_W / 2, TOP, CREST_W, CREST_H, 'wcems-crest-bw')
 
-  let y = 58 + CREST_H + 26
+  let y = TOP + CREST_H + 26
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(20)
   doc.setTextColor(...BLACK)
