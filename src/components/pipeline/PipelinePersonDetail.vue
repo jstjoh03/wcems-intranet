@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { PipelinePerson } from '@/types'
 import {
   TRANSITIONS,
@@ -14,18 +14,21 @@ import { usePipeline } from '@/composables/usePipeline'
 import PipelineGateRow from './PipelineGateRow.vue'
 
 /**
- * Read-only expanded person panel — the two-panel layout from the
- * approved pipeline board: credentialing gates (with the petition
- * signature chain) beside compliance & credentials, plus coverage/
- * blocker notes. ALL editing happens in PipelinePersonModal (opened
- * from the row's Edit button) — this panel is for reading fast.
+ * Expanded person panel — the two-panel layout from the approved
+ * pipeline board: credentialing gates (with the petition signature
+ * chain) beside compliance & credentials, plus coverage/blocker notes.
+ * For clinical editors the gate rows are DIRECTLY clickable (cycle
+ * complete/NA/pending; access rows toggle held) — Justin couldn't
+ * find the OpIQ/NarcSafe check-off buried in the Edit-record modal.
+ * Everyone else (crew's My Progress) reads it. Record fields and
+ * petitions still edit in PipelinePersonModal.
  */
 
 const props = defineProps<{
   person: PipelinePerson
 }>()
 
-const { gatesFor, requirements, completionsFor, canEdit } = usePipeline()
+const { gatesFor, requirements, completionsFor, canEdit, saveRecord, setGate } = usePipeline()
 
 const record = computed(() => props.person.record)
 const transition = computed(() => activeTransitionFor(record.value))
@@ -51,6 +54,37 @@ const cycleItems = computed(() => {
     .map((r) => ({ req: r, st: requirementStatus(r, comps, record.value) }))
 })
 
+/* Editor check-off, mirroring PipelinePersonModal.cycleGate: access
+   items toggle the held flag on the record; everything else cycles
+   complete -> n/a -> pending. */
+const gateError = ref<string | null>(null)
+async function cycleGate(item: ReturnType<typeof gateItemsFor>[number]) {
+  if (!canEdit.value || !transition.value) return
+  gateError.value = null
+  try {
+    if (item.kind === 'access') {
+      const key = item.key === 'op_iq' ? 'opIqAccess' : 'narcSafeAccess'
+      await saveRecord({ userId: props.person.userId, [key]: item.status !== 'complete' })
+      return
+    }
+    const next = item.status === 'complete' ? 'na' : item.status === 'na' ? 'pending' : 'complete'
+    await setGate(record.value.id, transition.value, item.key, next, item.value)
+  } catch (err) {
+    gateError.value = (err as Error).message
+  }
+}
+async function setGateValue(item: ReturnType<typeof gateItemsFor>[number], value: string) {
+  if (!canEdit.value || !transition.value) return
+  gateError.value = null
+  try {
+    const status =
+      item.status === 'complete' || item.status === 'na' ? item.status : 'pending'
+    await setGate(record.value.id, transition.value, item.key, status, value)
+  } catch (err) {
+    gateError.value = (err as Error).message
+  }
+}
+
 function fmt(iso: string | null): string {
   if (!iso) return '—'
   const d = new Date(`${iso.slice(0, 10)}T00:00:00`)
@@ -69,7 +103,15 @@ function fmt(iso: string | null): string {
           <span v-if="def" class="pd__h-sub">{{ def.label }}</span>
         </h4>
         <template v-if="items.length">
-          <PipelineGateRow v-for="item in items" :key="item.key" :item="item" :editable="false" />
+          <p v-if="gateError" class="pd__gate-err">{{ gateError }}</p>
+          <PipelineGateRow
+            v-for="item in items"
+            :key="item.key"
+            :item="item"
+            :editable="canEdit"
+            @cycle="cycleGate(item)"
+            @set-value="(v) => setGateValue(item, v)"
+          />
           <div v-if="petitions.length" class="pd__pets">
             <div
               v-for="p in petitions"
@@ -269,5 +311,10 @@ function fmt(iso: string | null): string {
 }
 .pd__note--bad {
   border-left-color: var(--color-danger-500);
+}
+.pd__gate-err {
+  font-size: 12px;
+  color: var(--color-danger-500);
+  margin-bottom: 6px;
 }
 </style>
