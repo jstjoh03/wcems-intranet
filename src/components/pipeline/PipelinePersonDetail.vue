@@ -11,6 +11,7 @@ import {
   requirementStatus,
 } from '@/constants/pipelineGates'
 import { usePipeline } from '@/composables/usePipeline'
+import { useClinical } from '@/composables/useClinical'
 import PipelineGateRow from './PipelineGateRow.vue'
 
 /**
@@ -29,12 +30,13 @@ const props = defineProps<{
 }>()
 
 const { gatesFor, requirements, completionsFor, canEdit, saveRecord, setGate } = usePipeline()
+const { gateStatsFor } = useClinical()
 
 const record = computed(() => props.person.record)
 const transition = computed(() => activeTransitionFor(record.value))
 const def = computed(() => (transition.value ? TRANSITIONS[transition.value] : null))
 const gateRows = computed(() => gatesFor(record.value.id))
-const items = computed(() => gateItemsFor(record.value, gateRows.value))
+const items = computed(() => gateItemsFor(record.value, gateRows.value, gateStatsFor(props.person)))
 const petitions = computed(() => petitionItemsFor(record.value, gateRows.value))
 
 const juris = computed(() => jurisprudenceStatus(record.value))

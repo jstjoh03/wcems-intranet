@@ -29,7 +29,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const { phasesFor } = usePipeline()
-const { ftepTrackFor, gatesFor, manualRideouts } = useClinical()
+const { ftepTrackFor, gatesFor, manualRideouts, gateStatsFor } = useClinical()
 const ftep = useFtep()
 
 const record = computed(() => props.person?.record ?? null)
@@ -106,7 +106,7 @@ const needs = computed(() => {
   if (!record.value) return { items: [], pets: [] }
   const rows = gatesFor(record.value.id)
   return {
-    items: gateItemsFor(record.value, rows).filter(
+    items: gateItemsFor(record.value, rows, props.person ? gateStatsFor(props.person) : undefined).filter(
       (i) => i.status !== 'complete' && i.status !== 'na',
     ),
     pets: petitionItemsFor(record.value, rows).filter((i) => i.status !== 'complete'),

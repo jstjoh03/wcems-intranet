@@ -26,7 +26,7 @@ import type { FtepReport, PipelinePerson } from '@/types'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor, manualRideouts, gatesFor } = useClinical()
+const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor, manualRideouts, gateStatsFor, gatesFor } = useClinical()
 const { phasesFor } = usePipeline()
 const ftep = useFtep()
 
@@ -233,7 +233,7 @@ function toggleNeeds(id: string) {
 }
 function needsFor(p: PipelinePerson) {
   const rows = gatesFor(p.record.id)
-  const items = gateItemsFor(p.record, rows).filter((i) => i.status !== 'complete' && i.status !== 'na')
+  const items = gateItemsFor(p.record, rows, gateStatsFor(p)).filter((i) => i.status !== 'complete' && i.status !== 'na')
   const pets = petitionItemsFor(p.record, rows).filter((i) => i.status !== 'complete')
   return { items, pets, count: items.length + pets.length }
 }

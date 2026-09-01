@@ -102,6 +102,9 @@ const tabs = computed<{ key: TabKey; label: string }[]>(() => [
 ])
 
 const editing = ref(false)
+/* Report history (call evals, DORs, ICRs) collapses by default — 15+
+   legacy call evals were burying the exam card (Justin, 2026-09-01). */
+const historyOpen = ref(false)
 /* Keep the modal's person fresh across realtime reloads. */
 const editingLive = computed(() => (editing.value ? person.value : null))
 
@@ -136,7 +139,21 @@ const juris = computed(() => (person.value ? jurisprudenceStatus(person.value.re
 /* ── Protocol exams (editors assign / release / see results) ──────── */
 const exams = useExams()
 /* Editors viewing a file also drive cert auto-filing (clean passes). */
-useExamCertAutoFile()
+const { certNameFor } = useExamCertAutoFile()
+
+function examCertDoc(a: { userId: string } & Parameters<typeof certNameFor>[0]) {
+  const name = certNameFor(a)
+  return clindocs
+    .docsFor(a.userId)
+    .find((d) => (d.folder === 'protocol_exams' || d.folder === 'certs') && d.name === name)
+}
+
+async function viewExamCert(a: Parameters<typeof certNameFor>[0]) {
+  const doc = examCertDoc(a)
+  if (!doc) return
+  const res = await clindocs.openDoc(doc)
+  if (res.ok) window.open(res.url, '_blank', 'noopener')
+}
 const myExamAssignments = computed(() =>
   person.value ? exams.assignmentsFor(person.value.userId).filter((a) => a.status !== 'cancelled') : [],
 )
@@ -282,7 +299,9 @@ async function downloadPacket() {
 /* ── Documents tab ───────────────────────────────────────────────── */
 const clindocs = useClinicalDocs()
 const docFolder = ref<ClinicalDocFolder | 'all'>('all')
-const FOLDERS: ClinicalDocFolder[] = ['signed_forms', 'certs', 'ce_certs', 'counseling', 'generated', 'other']
+/* Derived from the label map so a new folder can never be forgotten
+   here (the Protocol exams chip was missing at first). */
+const FOLDERS = Object.keys(FOLDER_LABELS) as ClinicalDocFolder[]
 
 const myDocs = computed(() => {
   const p = person.value
@@ -537,7 +556,15 @@ function fmtDateTime(iso: string): string {
               <span class="cf__gate-v">{{ ftep.icrCount(person.userId) }} of {{ ftepTrackFor(person)!.icrTarget }} required</span>
             </div>
           </template>
-          <div v-for="r in myReports.slice(0, 8)" :key="r.id" class="cf__gate cf__gate--hist">
+          <button
+            v-if="myReports.length"
+            type="button"
+            class="cf__hist-toggle"
+            @click="historyOpen = !historyOpen"
+          >
+            {{ historyOpen ? 'Hide' : 'Show' }} report history ({{ myReports.length }})
+          </button>
+          <div v-for="r in (historyOpen ? myReports : [])" :key="r.id" class="cf__gate cf__gate--hist">
             <template v-if="r.payload.legacyManual">
               <span class="cf__gate-l">Call eval (Jotform) · {{ fmt(r.evalDate) }}</span>
               <span class="cf__gate-v"><template v-if="r.payload.legacyPhase">→ {{ r.payload.legacyPhase }} rung · </template>{{ r.payload.note ?? '' }}<template v-if="r.payload.note"> · </template>recorded by {{ personById(r.evaluatorId)?.fullName ?? '—' }} · original in Documents</span>
@@ -579,6 +606,13 @@ function fmtDateTime(iso: string): string {
               </template>
               <template v-else>{{ EXAM_STATUS_LABELS[a.status] ?? a.status }}</template>
             </span>
+            <button
+              v-if="a.status === 'submitted' && a.passed && examCertDoc(a)"
+              type="button"
+              class="cf__mini"
+              title="Open the completion certificate"
+              @click="viewExamCert(a)"
+            >View certificate</button>
             <button
               v-if="a.status === 'assigned'"
               type="button"
@@ -1135,4 +1169,18 @@ function fmtDateTime(iso: string): string {
   line-height: 1.55;
   margin-bottom: 14px;
 }
+.cf__hist-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin: 6px 0 2px;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-brand-600);
+  cursor: pointer;
+}
+.cf__hist-toggle:hover { color: var(--color-brand-700); text-decoration: underline; text-underline-offset: 3px; }
 </style>

@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import { usePipeline } from '@/composables/usePipeline'
+import { useFtep } from '@/composables/useFtep'
 import {
   activeTransitionFor,
   jurisprudenceStatus,
@@ -214,6 +215,18 @@ export function useClinical() {
    *  portal existed and typed into Edit record (e.g. Dodd's 4). Views
    *  max() this with submitted rideout DORs so manual credit checks
    *  the requirement off without fabricating report rows. */
+  /** Live report counts for count-based gates (call evals / ICRs) so
+   *  gateItemsFor can self-complete them. */
+  function gateStatsFor(p: PipelinePerson) {
+    const ftep = useFtep()
+    const track = ftepTrackFor(p)
+    if (!track) return {}
+    if (track.key === 'legacy')
+      return { callEvals: ftep.icrCount(p.userId, track.legacyPhase) }
+    if (track.icrTarget) return { scoredIcrs: ftep.icrCount(p.userId) }
+    return {}
+  }
+
   function manualRideouts(p: PipelinePerson): number {
     const row = gatesFor(p.record.id).find(
       (g) => g.transition === 'P2_P3' && g.gateKey === 'supervisor_rideouts',
@@ -273,6 +286,7 @@ export function useClinical() {
     attentionChip,
     ftepTrackFor,
     manualRideouts,
+    gateStatsFor,
     gatesFor,
   }
 }

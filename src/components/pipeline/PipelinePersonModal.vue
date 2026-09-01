@@ -15,6 +15,7 @@ import {
   type GateItem,
 } from '@/constants/pipelineGates'
 import { usePipeline } from '@/composables/usePipeline'
+import { useClinical } from '@/composables/useClinical'
 import { useAuthStore } from '@/stores/auth'
 import PipelineGateRow from './PipelineGateRow.vue'
 
@@ -46,12 +47,13 @@ const {
   addCompletion,
   removeCompletion,
 } = usePipeline()
+const { gateStatsFor } = useClinical()
 
 const record = computed(() => props.person.record)
 const transition = computed(() => activeTransitionFor(record.value))
 const def = computed(() => (transition.value ? TRANSITIONS[transition.value] : null))
 const gateRows = computed(() => gatesFor(record.value.id))
-const items = computed(() => gateItemsFor(record.value, gateRows.value))
+const items = computed(() => gateItemsFor(record.value, gateRows.value, gateStatsFor(props.person)))
 const petitions = computed(() => petitionItemsFor(record.value, gateRows.value))
 const allGatesDone = computed(
   () => items.value.length > 0 && items.value.every((i) => i.status === 'complete' || i.status === 'na'),

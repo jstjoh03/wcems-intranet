@@ -288,7 +288,20 @@ export function hasSystemAccess(certLevel: string | null): boolean {
   return /emt-p|^lp$/i.test(certLevel.trim())
 }
 
-export function gateItemsFor(r: PipelineRecord, rows: PipelineGateProgress[]): GateItem[] {
+/** Live progress counts computed from ftep_reports — callers pass them
+ *  so count-based metric gates self-complete instead of waiting on a
+ *  manual check-off (Perry hit 15/10 call evals while the gate still
+ *  read "10 required"). */
+export interface GateStats {
+  callEvals?: number
+  scoredIcrs?: number
+}
+
+export function gateItemsFor(
+  r: PipelineRecord,
+  rows: PipelineGateProgress[],
+  stats?: GateStats,
+): GateItem[] {
   const transition = activeTransitionFor(r)
   if (!transition) return []
   const def = TRANSITIONS[transition]
@@ -304,13 +317,24 @@ export function gateItemsFor(r: PipelineRecord, rows: PipelineGateProgress[]): G
       const n = row?.value?.match(/\d+/)
       if (n && parseInt(n[0], 10) >= 4) status = 'complete'
     }
+    /* Call-eval / ICR gates self-complete from the live report counts. */
+    if (g.key === 'call_evals' && status === 'pending' && (stats?.callEvals ?? 0) >= 10)
+      status = 'complete'
+    if (g.key === 'scored_icrs' && status === 'pending' && (stats?.scoredIcrs ?? 0) >= 10)
+      status = 'complete'
     return {
       key: g.key,
       label: g.label,
       hint: g.hint,
       kind: g.kind,
       status,
-      value: row?.value ?? null,
+      value:
+        row?.value ??
+        (g.key === 'call_evals' && stats?.callEvals != null
+          ? `${stats.callEvals}/10`
+          : g.key === 'scored_icrs' && stats?.scoredIcrs != null
+            ? `${stats.scoredIcrs}/10`
+            : null),
       completedAt: row?.completedAt ?? null,
       completedByName: row?.completedByName ?? null,
     }
