@@ -44,7 +44,15 @@ export default defineConfig({
         // Protocols section assets: the vendored pdfjs viewer and the
         // reference PDFs/images are fetched on demand, not precached
         // (mirrors the standalone protocols app's SW strategy).
-        globIgnores: ['pdfjs/**', 'protocols/**', '**/WongBaker.png', '**/Patch - Final.png'],
+        globIgnores: [
+          'pdfjs/**',
+          'protocols/**',
+          '**/WongBaker.png',
+          '**/Patch - Final.png',
+          // AHA roster/eval PDF templates (~2.5 MB of embedded base64,
+          // instructors-only) — fetched on demand, never precached.
+          '**/pdfTemplates-*.js',
+        ],
       },
     }),
   ],

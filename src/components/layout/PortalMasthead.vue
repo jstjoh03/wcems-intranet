@@ -5,6 +5,7 @@ import { Search, ChevronDown } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
 import { useClinicalAccess } from '@/composables/useClinicalAccess'
+import { useTrainingInstructor } from '@/training/composables/useTrainingInstructor'
 
 /**
  * Desktop masthead + primary nav (approved portal mockup v2): serif
@@ -38,6 +39,7 @@ const auth = useAuthStore()
 const route = useRoute()
 const { links } = useQuickLinks()
 const { clinicalNav } = useClinicalAccess()
+const { isInstructor: isTrainingInstructor } = useTrainingInstructor()
 
 const ADMIN_CHILDREN: NavChild[] = [
   { label: 'Manage Employees', to: '/admin/employees' },
@@ -70,6 +72,11 @@ const nav = computed<NavItem[]>(() => [
          moved off the menu (Justin, 2026-08-24) — it lives as a card on
          the Training page for evaluators. */
       { label: clinicalNav.value.label, to: clinicalNav.value.to },
+      /* AHA card classes + lectures management (ported training PWA) —
+         visible only to the training_instructors allowlist. */
+      ...(isTrainingInstructor.value
+        ? [{ label: 'Manage Card Classes & Lectures', to: '/training/manage' }]
+        : []),
     ],
   },
   { label: 'Policies', to: '/policies', match: '/policies' },

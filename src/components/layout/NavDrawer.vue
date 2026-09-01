@@ -30,6 +30,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
 import { useClinicalAccess } from '@/composables/useClinicalAccess'
+import { useTrainingInstructor } from '@/training/composables/useTrainingInstructor'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import Avatar from '@/components/primitives/Avatar.vue'
 
@@ -42,6 +43,7 @@ const auth = useAuthStore()
    Paycom, and the rest, admin-managed via Manage Quick Links. */
 const { links: systemLinks } = useQuickLinks()
 const { clinicalNav } = useClinicalAccess()
+const { isInstructor: isTrainingInstructor } = useTrainingInstructor()
 
 /* "On this page" anchors only make sense on the dashboard — every
    other route has its own content and no #section hashes. */
@@ -102,6 +104,9 @@ const pages = computed<NavItem[]>(() => [
      supervisors/FTOs → FTEP, crew → their own progress. Skills Day
      moved off the menu — evaluators reach it from the Training page. */
   { label: clinicalNav.value.label, to: clinicalNav.value.to, icon: TrendingUp },
+  ...(isTrainingInstructor.value
+    ? [{ label: 'Manage Card Classes & Lectures', to: '/training/manage', icon: GraduationCap }]
+    : []),
   { label: 'Policies', to: '/policies', icon: FileText },
   { label: 'Employee Directory', to: '/directory', icon: Contact },
   { label: 'Call Volume Insights', to: '/insights', icon: BarChart3 },

@@ -277,6 +277,96 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/admin/BadgeMakerView.vue'),
     meta: { adminOnly: true, chromeless: true },
   },
+  /* ── Training management (AHA card classes + lectures, ported from
+        the standalone training PWA — same tables, same edge functions).
+        Gated by the training_instructors allowlist, not app_users.role. */
+  {
+    path: '/training/manage',
+    name: 'training-manage',
+    component: () => import('@/training/views/DashboardView.vue'),
+    meta: { trainingInstructor: true },
+  },
+  {
+    path: '/training/manage/create',
+    name: 'training-create',
+    component: () => import('@/training/views/CreateSessionView.vue'),
+    meta: { trainingInstructor: true },
+  },
+  {
+    path: '/training/manage/controls',
+    name: 'controls',
+    component: () => import('@/training/views/SessionControlsView.vue'),
+    meta: { trainingInstructor: true },
+  },
+  {
+    path: '/training/manage/registrations',
+    name: 'registrations',
+    component: () => import('@/training/views/RegistrationsView.vue'),
+    meta: { trainingInstructor: true },
+  },
+  {
+    path: '/training/manage/hub',
+    name: 'training-archive',
+    component: () => import('@/training/views/TrainingHubView.vue'),
+    meta: { trainingInstructor: true },
+  },
+  {
+    path: '/training/manage/roster-export',
+    name: 'roster-export',
+    component: () => import('@/training/views/RosterExportView.vue'),
+    meta: { trainingInstructor: true },
+  },
+  {
+    path: '/training/manage/evals-export',
+    name: 'evals-export',
+    component: () => import('@/training/views/EvalsExportView.vue'),
+    meta: { trainingInstructor: true },
+  },
+  {
+    path: '/training/manage/access',
+    name: 'training-access',
+    component: () => import('@/training/views/InstructorsAdminView.vue'),
+    meta: { trainingInstructor: true, trainingAdmin: true },
+  },
+  /* Anonymous student pages — token/session validated server-side by
+     the training-public edge function. Paths must stay at the origin
+     root: every QR code and link embeds `${origin}/checkin?...` etc. */
+  {
+    path: '/register',
+    name: 'register',
+    component: () => import('@/training/views/RegisterView.vue'),
+    meta: { public: true },
+  },
+  {
+    path: '/checkin',
+    name: 'checkin',
+    component: () => import('@/training/views/CheckInView.vue'),
+    meta: { public: true },
+  },
+  {
+    path: '/eval',
+    name: 'eval',
+    component: () => import('@/training/views/EvalView.vue'),
+    meta: { public: true },
+  },
+  {
+    path: '/quiz',
+    name: 'quiz',
+    component: () => import('@/training/views/QuizView.vue'),
+    meta: { public: true },
+  },
+  {
+    path: '/engage',
+    name: 'engage',
+    component: () => import('@/training/views/EngageView.vue'),
+    meta: { public: true },
+  },
+  {
+    path: '/display',
+    name: 'display',
+    component: () => import('@/training/views/QrDisplayView.vue'),
+    meta: { public: true },
+  },
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
@@ -303,7 +393,7 @@ export const router = createRouter({
  * - Admin-only routes 404 for non-admins instead of redirecting (we
  *   don't want to leak which routes exist).
  */
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
   if (to.meta.public) return true
@@ -317,6 +407,17 @@ router.beforeEach((to) => {
 
   if (to.meta.adminOnly && !auth.isAdmin) {
     return { name: 'not-found' }
+  }
+
+  /* Training management (/training/manage/*) — gated by the
+     training_instructors allowlist, independent of app_users.role,
+     exactly as the standalone training PWA gated it. */
+  if (to.meta.trainingInstructor || to.meta.trainingAdmin) {
+    const { useAuthStore: useTrainingAuth } = await import('@/training/stores/auth')
+    const t = useTrainingAuth()
+    if (!t.ready) await t.init()
+    if (!t.isInstructor) return { name: 'training' }
+    if (to.meta.trainingAdmin && !t.isAdmin) return { name: 'training-manage' }
   }
 
   return true
