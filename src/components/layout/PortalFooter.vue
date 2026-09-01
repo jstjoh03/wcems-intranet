@@ -54,8 +54,9 @@ const systems = computed(() =>
         <div>
           <h6 class="pf__h">Contact</h6>
           <ul class="pf__list pf__list--plain">
-            <li>Station 201 — Hempstead, TX</li>
-            <li>Admin: 979-826-6035</li>
+            <li>Waller County EMS Admin</li>
+            <li>1134 Austin St, Hempstead, TX 77445</li>
+            <li>(979) 826-6063</li>
             <li>
               <a href="mailto:education@wallercountyems.com">education@wallercountyems.com</a>
             </li>
