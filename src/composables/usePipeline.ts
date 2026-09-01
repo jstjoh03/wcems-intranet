@@ -13,7 +13,6 @@ import type {
   PipelineTransition,
   RequirementCycle,
 } from '@/types'
-import { PHASE_LADDER } from '@/constants/pipelineGates'
 
 /**
  * Clinical Development pipeline state.
@@ -487,17 +486,19 @@ export function usePipeline() {
     })
   }
 
-  /** Promote: cleared ← working, working ← next rung (null past the top). */
+  /** Promote: cleared ← working. The next rung is NOT auto-enrolled —
+   *  past P2 there is nothing to automatically work toward
+   *  (FinalRelease is a cleared status; P3 is an opt-in flag), and
+   *  enrolling the next phase is a deliberate act via Edit record →
+   *  Enroll. */
   async function promote(person: PipelinePerson) {
     const r = person.record
     if (!r.workingPhase) return
-    const i = PHASE_LADDER.indexOf(r.workingPhase === 'P3' ? 'P2' : r.workingPhase)
-    const next = i >= 0 && i + 1 < PHASE_LADDER.length ? PHASE_LADDER[i + 1] : null
     await saveRecord({
       userId: person.userId,
-      clearedPhase: r.workingPhase,
-      workingPhase: next === 'FinalRelease' ? 'FinalRelease' : next,
-      workingStartedAt: next ? new Date().toISOString().slice(0, 10) : null,
+      clearedPhase: r.workingPhase === 'FinalRelease' ? 'FinalRelease' : r.workingPhase,
+      workingPhase: null,
+      workingStartedAt: null,
       workingTargetAt: null,
       pending: false,
     })

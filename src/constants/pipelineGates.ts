@@ -260,6 +260,10 @@ export function activeTransitionFor(r: PipelineRecord): PipelineTransition | nul
   if (r.inAemtUpgrade) return 'AEMT'
   if (r.inP3Process) return 'P2_P3'
   if (!r.workingPhase) return null
+  /* FinalRelease is a CLEARED status, never something you work toward —
+     guard it so a stray record can't fall into the P1C_P1 catch-all
+     (Perry got shown "enrolled in P1C -> P1" after a P2 promotion). */
+  if (r.workingPhase === 'FinalRelease') return null
   if (r.workingPhase === 'NEOP') return 'NEOP'
   if (r.workingPhase === 'P2') return r.legacyTrack ? 'P1_P2_LEGACY' : 'P1_P2'
   if (r.workingPhase === 'P3') return 'P2_P3'
