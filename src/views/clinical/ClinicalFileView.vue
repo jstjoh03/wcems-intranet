@@ -6,6 +6,7 @@ import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
 import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
+import { useExamCertAutoFile } from '@/composables/useExamCertAutoFile'
 import { useClinical } from '@/composables/useClinical'
 import { useClinicalDocs, FOLDER_LABELS, type ClinicalDocFolder } from '@/composables/useClinicalDocs'
 import { useExams } from '@/composables/useExams'
@@ -134,6 +135,8 @@ const juris = computed(() => (person.value ? jurisprudenceStatus(person.value.re
 
 /* ── Protocol exams (editors assign / release / see results) ──────── */
 const exams = useExams()
+/* Editors viewing a file also drive cert auto-filing (clean passes). */
+useExamCertAutoFile()
 const myExamAssignments = computed(() =>
   person.value ? exams.assignmentsFor(person.value.userId).filter((a) => a.status !== 'cancelled') : [],
 )

@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, watchEffect } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Play, XCircle, ExternalLink, ClipboardCheck, Award } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import { useClinical } from '@/composables/useClinical'
-import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useExams, type ExamAssignment } from '@/composables/useExams'
 import { useAuthStore } from '@/stores/auth'
-import { generateExamCertPdf } from '@/lib/examCertPdf'
+import { useExamCertAutoFile } from '@/composables/useExamCertAutoFile'
 
 /**
  * Protocol examinations manager (/clinical/exams, editors only) — the
@@ -102,66 +101,10 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-/* ── Completion certificates ────────────────────────────────────────
-   A clean pass files a certificate PDF (name, exam, score, date) into
-   the employee's Documents (Protocol exams folder, employee-visible). Runs from
-   the editor's session — the proctor has this page open during
-   administration — and dedupes by document name so realtime reloads
-   or a second editor can't double-file. The gate check-off itself
-   happens server-side in exam_submit. */
-const clindocs = useClinicalDocs()
+/* Completion certificates — shared auto-filer (also mounted on the
+   employee file, so a cert generates wherever an editor looks). */
+const { certFiled } = useExamCertAutoFile()
 
-function certNameFor(a: ExamAssignment): string {
-  const safe = nameOf(a.userId).replace(/\s+/g, '_').replace(/[^\w-]/g, '')
-  const d = exams.definitionById(a.examId)
-  const date = (a.submittedAt ?? '').slice(0, 10)
-  return `WCEMS_Exam_Certificate_${d?.slug ?? a.examId.slice(0, 8)}_${safe}_${date}.pdf`
-}
-
-function certFiled(a: ExamAssignment): boolean {
-  const name = certNameFor(a)
-  return clindocs
-    .docsFor(a.userId)
-    .some((d) => (d.folder === 'protocol_exams' || d.folder === 'certs') && d.name === name)
-}
-
-const certInFlight = new Set<string>()
-watchEffect(() => {
-  if (!canEdit.value || !clindocs.ready.value || !exams.ready.value) return
-  for (const a of exams.assignments.value) {
-    if (a.status !== 'submitted' || !a.passed || (a.criticalMissed?.length ?? 0) > 0) continue
-    const d = exams.definitionById(a.examId)
-    if (!d || !a.submittedAt || a.scorePct === null) continue
-    if (certFiled(a) || certInFlight.has(a.id)) continue
-    certInFlight.add(a.id)
-    void (async () => {
-      try {
-        const pdf = await generateExamCertPdf({
-          candidateName: nameOf(a.userId),
-          examTitle: d.title,
-          scorePct: a.scorePct!,
-          passingPct: d.passingPct,
-          submittedAt: a.submittedAt!,
-        })
-        const blob = pdf.output('blob') as Blob
-        const res = await clindocs.upload({
-          userId: a.userId,
-          folder: 'protocol_exams',
-          file: new File([blob], certNameFor(a), { type: 'application/pdf' }),
-          employeeVisible: true,
-          note: 'Protocol examination certificate (auto-filed on pass)',
-        })
-        if (!res.ok) {
-          console.error('[exams] cert auto-file failed:', res.error)
-          certInFlight.delete(a.id)
-        }
-      } catch (e) {
-        console.error('[exams] cert generation failed:', e)
-        certInFlight.delete(a.id)
-      }
-    })()
-  }
-})
 </script>
 
 <template>

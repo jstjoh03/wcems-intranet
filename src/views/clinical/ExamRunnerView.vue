@@ -234,6 +234,44 @@ const shownResult = computed(() => {
 })
 
 const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
+
+/* -- Missed-question review (post-submit) ---------------------------
+   Server-computed via the exam_review RPC: the questions missed, the
+   candidate's answer, and the protocol reference to study. The correct
+   answer is never returned - the bank is reused for retests. */
+interface ReviewItem {
+  no: number
+  section: string | null
+  text: string
+  options: Record<string, string>
+  type?: 'single' | 'multi'
+  image?: string | null
+  your: string | string[] | null
+  critical: boolean
+  ref: string | null
+}
+const reviewItems = ref<ReviewItem[] | null>(null)
+const reviewLoading = ref(false)
+const reviewError = ref<string | null>(null)
+
+async function loadReview() {
+  if (reviewLoading.value || reviewItems.value) return
+  reviewLoading.value = true
+  reviewError.value = null
+  const { data, error } = await supabase.rpc('exam_review', {
+    p_assignment: assignmentId.value,
+  })
+  reviewLoading.value = false
+  if (error) {
+    reviewError.value = error.message
+    return
+  }
+  reviewItems.value = (data ?? []) as ReviewItem[]
+}
+
+function isYourAnswer(item: ReviewItem, letter: string): boolean {
+  return Array.isArray(item.your) ? item.your.includes(letter) : item.your === letter
+}
 </script>
 
 <template>
@@ -271,6 +309,59 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
         </template>
       </p>
       <button type="button" class="ex__primary" @click="router.push('/clinical-development')">Back to My Progress</button>
+
+      <!-- Missed-question review -->
+      <div class="ex__review-missed">
+        <button
+          v-if="reviewItems === null"
+          type="button"
+          class="ex__reviewbtn"
+          :disabled="reviewLoading"
+          @click="loadReview"
+        >
+          {{ reviewLoading ? 'Loading…' : 'Review the questions you missed' }}
+        </button>
+        <div v-if="reviewError" class="ex__error">{{ reviewError }}</div>
+
+        <template v-if="reviewItems !== null">
+          <p v-if="reviewItems.length === 0" class="ex__rv-none">
+            Nothing to review — every question was answered correctly.
+          </p>
+          <template v-else>
+            <h2 class="display ex__rv-title">Missed questions ({{ reviewItems.length }})</h2>
+            <p class="ex__rv-sub">
+              Your answer is marked on each question, along with the protocol section to
+              study. Correct answers aren't shown — review the referenced protocol and
+              see the Clinical Department with questions.
+            </p>
+            <div v-for="item in reviewItems" :key="item.no" class="ex__rv-q">
+              <div class="ex__rv-head">
+                <b>Question {{ item.no }}</b>
+                <span v-if="item.section" class="ex__rv-sec">{{ item.section }}</span>
+                <span v-if="item.critical" class="ex__rv-crit">critical item</span>
+              </div>
+              <div class="ex__rv-text">{{ item.text }}</div>
+              <img
+                v-if="item.image && imageUrls[item.image]"
+                :src="imageUrls[item.image]"
+                class="ex__q-img"
+                alt="Question reference image"
+              />
+              <div
+                v-for="(text, letter) in item.options"
+                :key="letter"
+                class="ex__rv-opt"
+                :class="{ 'ex__rv-opt--yours': isYourAnswer(item, letter) }"
+              >
+                <span class="ex__opt-letter">{{ letter }}</span>
+                <span>{{ text }}</span>
+                <span v-if="isYourAnswer(item, letter)" class="ex__rv-yours">your answer</span>
+              </div>
+              <div v-if="item.ref" class="ex__rv-ref">Study: {{ item.ref }}</div>
+            </div>
+          </template>
+        </template>
+      </div>
     </div>
 
     <!-- Waiting / intro -->
@@ -581,4 +672,42 @@ const mine = computed(() => assignment.value?.userId === auth.appUser?.id)
 .ex__result-score--fail { color: var(--color-danger-500); }
 .ex__result-title { font-size: 24px; color: var(--color-brand-800); margin-top: 6px; }
 .ex__result-sub { max-width: 560px; margin: 12px auto 0; font-size: 13.5px; line-height: 1.65; color: var(--color-ink-soft); }
+
+/* -- Missed-question review ---------------------------------------- */
+.ex__review-missed { max-width: 720px; margin: 26px auto 0; text-align: left; }
+.ex__reviewbtn {
+  display: block; margin: 0 auto;
+  background: none; border: 1px solid var(--color-line); border-radius: 9px;
+  padding: 9px 18px; font-family: var(--font-sans);
+  font-size: 13px; font-weight: 600; color: var(--color-brand-600); cursor: pointer;
+}
+.ex__reviewbtn:hover:not(:disabled) { border-color: var(--color-accent-600); color: var(--color-brand-700); }
+.ex__reviewbtn:disabled { opacity: 0.6; }
+.ex__rv-none { text-align: center; font-size: 13px; color: var(--color-success-500); font-weight: 600; }
+.ex__rv-title { font-size: 20px; color: var(--color-brand-800); margin-bottom: 6px; }
+.ex__rv-sub { font-size: 12.5px; line-height: 1.6; color: var(--color-muted); margin-bottom: 14px; }
+.ex__rv-q {
+  background: var(--color-surface); border: 1px solid var(--color-line-soft);
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
+}
+.ex__rv-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; font-size: 13px; color: var(--color-ink); }
+.ex__rv-sec { font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-accent-700); }
+.ex__rv-crit {
+  font-size: 10px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  color: oklch(0.45 0.15 30); background: oklch(0.96 0.05 30);
+  border-radius: 999px; padding: 2px 8px;
+}
+.ex__rv-text { font-size: 13.5px; line-height: 1.55; color: var(--color-ink); margin-bottom: 8px; }
+.ex__rv-opt {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 6px 10px; border-radius: 8px; font-size: 13px; line-height: 1.5; color: var(--color-ink-soft);
+}
+.ex__rv-opt--yours { background: oklch(0.96 0.05 30); color: var(--color-ink); }
+.ex__rv-yours {
+  margin-left: auto; font-size: 10px; font-weight: 800; letter-spacing: 0.05em;
+  text-transform: uppercase; color: oklch(0.48 0.14 30); white-space: nowrap;
+}
+.ex__rv-ref {
+  margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--color-accent-700);
+}
 </style>
