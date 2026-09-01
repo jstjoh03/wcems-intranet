@@ -58,35 +58,43 @@ function fmtTimeLabel(hhmm: string): string {
 }
 
 async function loadWixPending() {
-  const today = new Date().toISOString().slice(0, 10)
-  const [slotRes, managedRes] = await Promise.all([
-    supabase
-      .from('training_sessions')
-      .select('id, service_id, title, local_start, total_capacity, location')
-      .eq('source', 'wix')
-      .gte('local_start', `${today}T00:00:00`)
-      .order('local_start'),
-    supabase.from('course_sessions').select('wix_event_id').not('wix_event_id', 'is', null),
-  ])
-  const managed = new Set(
-    (managedRes.data ?? []).map((r: { wix_event_id: string }) => r.wix_event_id),
-  )
-  wixPending.value = (slotRes.data ?? [])
-    .filter((r: { id: string }) => r.id.startsWith('wix:') && !managed.has(r.id.slice(4)))
-    .map((r: { id: string; service_id: string | null; title: string; local_start: string; total_capacity: number; location: string }) => {
-      const [d, t] = r.local_start.split('T')
-      const hhmm = (t ?? '').slice(0, 5)
-      return {
-        eventId: r.id.slice(4),
-        serviceId: r.service_id,
-        title: r.title,
-        classDate: d,
-        startTime: hhmm,
-        timeLabel: hhmm ? fmtTimeLabel(hhmm) : '',
-        capacity: r.total_capacity ?? 0,
-        location: r.location ?? '',
-      }
-    })
+  /* Ask Wix directly (from the start of TODAY, Central) — the synced
+     training_sessions mirror drops a slot once its start passes, so a
+     same-day class would vanish from the import list right when the
+     instructor needs it (Justin hit this with a BLS Renewal). */
+  if (!auth.accessToken) return
+  try {
+    const [wixRes, managedRes] = await Promise.all([
+      invokeEdge<{ classes: Array<{ eventId: string; serviceId: string | null; title: string; localStart: string; totalCapacity: number; location: string }> }>(
+        'training-wix-classes',
+        {},
+        { authToken: auth.accessToken },
+      ),
+      supabase.from('course_sessions').select('wix_event_id').not('wix_event_id', 'is', null),
+    ])
+    const managed = new Set(
+      (managedRes.data ?? []).map((r: { wix_event_id: string }) => r.wix_event_id),
+    )
+    wixPending.value = (wixRes.classes ?? [])
+      .filter((c) => !managed.has(c.eventId))
+      .sort((a, b) => a.localStart.localeCompare(b.localStart))
+      .map((c) => {
+        const [d, t] = c.localStart.split('T')
+        const hhmm = (t ?? '').slice(0, 5)
+        return {
+          eventId: c.eventId,
+          serviceId: c.serviceId,
+          title: c.title,
+          classDate: d,
+          startTime: hhmm,
+          timeLabel: hhmm ? fmtTimeLabel(hhmm) : '',
+          capacity: c.totalCapacity ?? 0,
+          location: c.location ?? '',
+        }
+      })
+  } catch (e) {
+    wixError.value = (e as Error).message
+  }
 }
 
 async function adoptWix(w: WixPendingRow) {

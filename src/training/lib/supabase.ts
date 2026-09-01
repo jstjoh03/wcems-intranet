@@ -25,6 +25,7 @@ export async function invokeEdge<T = unknown>(
     | 'training-create-session'
     | 'training-public'
     | 'training-wix-bookings'
+    | 'training-wix-classes'
     | 'training-cancel-session',
   body: Record<string, unknown>,
   opts: { authToken?: string | null } = {},
