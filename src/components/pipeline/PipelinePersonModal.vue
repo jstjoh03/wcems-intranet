@@ -550,7 +550,7 @@ async function saveForm() {
 }
 .pm {
   width: 100%;
-  max-width: 720px;
+  max-width: 860px;
   max-height: 92dvh;
   display: flex;
   flex-direction: column;

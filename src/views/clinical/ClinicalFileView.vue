@@ -13,6 +13,7 @@ import { useExams } from '@/composables/useExams'
 import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import { useSkillsDay } from '@/composables/useSkillsDay'
+import { usePipeline } from '@/composables/usePipeline'
 import { requirementStatus, activeTransitionFor, jurisprudenceStatus } from '@/constants/pipelineGates'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
 import type { PipelinePerson, PipelineRequirement } from '@/types'
@@ -45,6 +46,7 @@ const {
 } = useClinical()
 
 const skills = useSkillsDay()
+const { saveRecord } = usePipeline()
 const ftep = useFtep()
 
 const myReports = computed(() => {
@@ -135,6 +137,41 @@ const rideouts = computed(() => {
 })
 
 const juris = computed(() => (person.value ? jurisprudenceStatus(person.value.record) : null))
+
+/* No active progression = steady-state credentialed employee. The
+   Pipeline tab reorders around the credential summary, and the FTEP
+   rollups (0 DORs, empty averages) stay out of the way. */
+const isCredentialed = computed(
+  () => !!person.value && activeTransitionFor(person.value.record) === null,
+)
+
+/* Overview: quick compliance + activity snapshot. */
+const cardClassSummary = computed(() => {
+  if (!person.value) return null
+  const rows = cardReqs.value.map((req) => reqRow(req))
+  const current = rows.filter((r) => r.st.latest && r.st.state !== 'due').length
+  return { current, total: rows.length }
+})
+const lastReport = computed(() => myReports.value[0] ?? null)
+const lastExam = computed(() => {
+  const done = myExamAssignments.value
+    .filter((a) => a.status === 'submitted')
+    .sort((a, b) => (b.submittedAt ?? '').localeCompare(a.submittedAt ?? ''))
+  return done[0] ?? null
+})
+const docsCount = computed(() => (person.value ? clindocs.docsFor(person.value.userId).length : 0))
+
+const accessBusy = ref(false)
+async function toggleAccess(key: 'opIqAccess' | 'narcSafeAccess') {
+  const p = person.value
+  if (!p || !canEdit.value || accessBusy.value) return
+  accessBusy.value = true
+  try {
+    await saveRecord({ userId: p.userId, [key]: !p.record[key] })
+  } finally {
+    accessBusy.value = false
+  }
+}
 
 /* ── Protocol exams (editors assign / release / see results) ──────── */
 const exams = useExams()
@@ -431,15 +468,16 @@ function fmtDateTime(iso: string): string {
       <!-- Overview -->
       <section v-if="tab === 'ovr'" class="cf__grid2">
         <div class="cf__card">
-          <div class="cf__card-hd">Identity &amp; status</div>
+          <div class="cf__card-hd">Identity &amp; credential</div>
           <div class="cf__facts">
             <div class="cf__fact"><span>Cert level</span><b>{{ person.record.certLevel ?? '—' }}</b></div>
+            <div class="cf__fact"><span>Credential</span><b>{{ statusChip(person).text }}<template v-if="person.record.clearedPhase"> · {{ person.record.clearedPhase }}</template></b></div>
             <div class="cf__fact"><span>TX license</span><b>{{ person.record.txLicenseNumber ?? '—' }}<template v-if="person.record.txLicenseExpiresAt"> · exp {{ fmt(person.record.txLicenseExpiresAt) }}</template></b></div>
-            <div class="cf__fact"><span>Status</span><b>{{ statusChip(person).text }}</b></div>
             <div class="cf__fact" v-if="person.record.workingPhase"><span>Working phase</span><b>{{ person.record.workingPhase }}<template v-if="person.record.workingStartedAt"> — since {{ fmt(person.record.workingStartedAt) }}</template></b></div>
             <div class="cf__fact" v-if="person.record.ftoName"><span>FTO assigned</span><b>{{ person.record.ftoName }}</b></div>
             <div class="cf__fact" v-if="person.record.workingTargetAt"><span>Phase target</span><b>{{ fmt(person.record.workingTargetAt) }}</b></div>
-            <div class="cf__fact" v-if="person.record.estP2ReadyAt"><span>Est. P2 ready</span><b>{{ fmt(person.record.estP2ReadyAt) }}</b></div>
+            <div class="cf__fact" v-if="person.record.isFto"><span>Role</span><b>Field Training Officer</b></div>
+            <div class="cf__fact" v-if="person.record.pipActive"><span>PIP</span><b class="cf__late">Active<template v-if="person.record.pipReason"> — {{ person.record.pipReason }}</template></b></div>
             <div class="cf__fact" v-if="person.record.coverageNote"><span>Coverage</span><b>{{ person.record.coverageNote }}</b></div>
           </div>
         </div>
@@ -451,6 +489,24 @@ function fmtDateTime(iso: string): string {
           </div>
           <div v-if="attention.length === 0" class="cf__card-empty">
             <Check :size="14" :stroke-width="2" /> Nothing outstanding.
+          </div>
+        </div>
+        <div class="cf__card">
+          <div class="cf__card-hd">Compliance snapshot</div>
+          <div class="cf__facts">
+            <div class="cf__fact"><span>Card classes</span><b><template v-if="cardClassSummary">{{ cardClassSummary.current }} of {{ cardClassSummary.total }} current</template><template v-else>—</template></b></div>
+            <div class="cf__fact"><span>TX jurisprudence</span><b>{{ juris?.state === 'ok' ? fmt(person.record.txJurisprudenceAt) : juris?.state === 'due' ? 'DUE' : 'required this cycle' }}</b></div>
+            <div class="cf__fact"><span>Bloodborne pathogens</span><b>{{ person.record.bloodbornePathogenAt ? fmt(person.record.bloodbornePathogenAt) : '—' }}</b></div>
+            <div class="cf__fact cf__fact--tap" @click="toggleAccess('opIqAccess')"><span>Operative IQ</span><b :class="person.record.opIqAccess ? 'cf__ok' : ''">{{ person.record.opIqAccess ? 'held' : 'not held' }}<em v-if="canEdit" class="cf__tap-hint">tap to toggle</em></b></div>
+            <div class="cf__fact cf__fact--tap" @click="toggleAccess('narcSafeAccess')"><span>NarcSafe</span><b :class="person.record.narcSafeAccess ? 'cf__ok' : ''">{{ person.record.narcSafeAccess ? 'held' : 'not held' }}<em v-if="canEdit" class="cf__tap-hint">tap to toggle</em></b></div>
+          </div>
+        </div>
+        <div class="cf__card">
+          <div class="cf__card-hd">Recent activity</div>
+          <div class="cf__facts">
+            <div class="cf__fact"><span>Last FTEP report</span><b><template v-if="lastReport">{{ lastReport.kind.toUpperCase() }} · {{ fmt(lastReport.evalDate) }}</template><template v-else>none on file</template></b></div>
+            <div class="cf__fact"><span>Last protocol exam</span><b><template v-if="lastExam">{{ exams.definitionById(lastExam.examId)?.title ?? 'Exam' }} · {{ lastExam.scorePct }}% {{ lastExam.passed ? 'passed' : 'not passed' }}</template><template v-else>none on file</template></b></div>
+            <div class="cf__fact"><span>Documents on file</span><b>{{ docsCount }}</b></div>
           </div>
         </div>
       </section>
@@ -505,19 +561,18 @@ function fmtDateTime(iso: string): string {
       </section>
 
       <!-- Pipeline -->
-      <section v-if="tab === 'pipe'">
-        <div v-if="activeTransitionFor(person.record) === null && person.record.clearedPhase === 'FinalRelease'" class="cf__note">
-          Credentialed — no active progression. The gate record below is the historical credentialing path.
-        </div>
-        <div v-if="myReports.length || activeTransitionFor(person.record)" class="cf__card">
-          <div class="cf__card-hd">FTEP records
+      <section v-if="tab === 'pipe'" class="cf__pipe" :class="{ 'cf__pipe--cred': isCredentialed }">
+        <div v-if="myReports.length || activeTransitionFor(person.record)" class="cf__card" :style="isCredentialed ? 'order: 3' : ''">
+          <div class="cf__card-hd">{{ isCredentialed ? 'FTEP archive' : 'FTEP records' }}
             <span v-if="ftepTrackFor(person)" class="cf__trackchip" :class="`cf__trackchip--${ftepTrackFor(person)!.key}`">{{ ftepTrackFor(person)!.label }}</span>
-            <span style="margin-left:auto;font-size:11.5px;color:var(--color-muted);font-weight:600">auto-computed from submitted reports</span>
+            <span v-if="!isCredentialed" style="margin-left:auto;font-size:11.5px;color:var(--color-muted);font-weight:600">auto-computed from submitted reports</span>
+            <span v-else style="margin-left:auto;font-size:11.5px;color:var(--color-muted);font-weight:600">every DOR, ICR &amp; call eval from their training file</span>
           </div>
-          <div class="cf__stepper">
+          <div v-if="!isCredentialed" class="cf__stepper">
             <FtepPhaseStepper :person="person" :editable="canEdit" />
           </div>
-          <template v-if="ftepTrackFor(person)?.key === 'rideup'">
+          <template v-if="isCredentialed"><!-- archive only: history toggle below --></template>
+          <template v-else-if="ftepTrackFor(person)?.key === 'rideup'">
             <div class="cf__gate">
               <span class="cf__tick" :class="rideouts.count >= 4 ? 'cf__tick--ok' : 'cf__tick--open'">
                 <Check v-if="rideouts.count >= 4" :size="12" :stroke-width="2.5" /><template v-else>·</template>
@@ -591,7 +646,7 @@ function fmtDateTime(iso: string): string {
           </div>
         </div>
         <!-- Protocol exams (editors) -->
-        <div v-if="canEdit" class="cf__card">
+        <div v-if="canEdit" class="cf__card" :style="isCredentialed ? 'order: 2' : ''">
           <div class="cf__card-hd">Protocol examinations</div>
           <div v-for="a in myExamAssignments" :key="a.id" class="cf__gate">
             <span class="cf__tick" :class="a.status === 'submitted' && a.passed ? 'cf__tick--ok' : 'cf__tick--open'">
@@ -642,7 +697,9 @@ function fmtDateTime(iso: string): string {
           </div>
         </div>
 
-        <PipelinePersonDetail :person="person" />
+        <div :style="isCredentialed ? 'order: 1' : ''">
+          <PipelinePersonDetail :person="person" />
+        </div>
       </section>
 
       <!-- Skills -->
@@ -1183,4 +1240,21 @@ function fmtDateTime(iso: string): string {
   cursor: pointer;
 }
 .cf__hist-toggle:hover { color: var(--color-brand-700); text-decoration: underline; text-underline-offset: 3px; }
+.cf__pipe--cred {
+  display: flex;
+  flex-direction: column;
+}
+.cf__pipe--cred > * { min-width: 0; }
+.cf__fact--tap { cursor: pointer; }
+.cf__fact--tap:hover b { color: var(--color-brand-600); }
+.cf__tap-hint {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted-soft);
+}
+.cf__ok { color: var(--color-success-500); }
 </style>

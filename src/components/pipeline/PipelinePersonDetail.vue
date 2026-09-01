@@ -61,6 +61,26 @@ const petitions = computed(() => petitionItemsFor(record.value, gateRows.value))
 
 const juris = computed(() => jurisprudenceStatus(record.value))
 
+/* Credentialed summary — shown when there is no active progression.
+   Effective date comes from the credential_effective sign-off gate on
+   the most recent completed transition. */
+const CRED_LABELS: Record<string, string> = {
+  P1: 'P1 — Attendant',
+  P2: 'P2 — In-Charge (final credential)',
+  FinalRelease: 'Final Release',
+}
+const credentialSummary = computed(() => {
+  if (transition.value || !record.value.clearedPhase) return null
+  const eff = [...gateRows.value]
+    .filter((g) => g.gateKey === 'credential_effective' && (g.value || g.completedAt))
+    .sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''))[0]
+  return {
+    label: CRED_LABELS[record.value.clearedPhase] ?? record.value.clearedPhase,
+    effective: eff?.value ?? eff?.completedAt ?? null,
+    final: record.value.clearedPhase === 'P2' || record.value.clearedPhase === 'FinalRelease',
+  }
+})
+
 /** Per-licensure-cycle catalog items (HEART, sex trafficking, …) that
  *  apply to this person's level — shown with the same "required
  *  before <license expiry>" tag the CDO sees, so the employee knows
@@ -153,12 +173,21 @@ function fmt(iso: string | null): string {
             </div>
           </div>
         </template>
+        <div v-else-if="credentialSummary" class="pd__cred">
+          <span class="pd__cred-badge">✓</span>
+          <span class="pd__cred-main">
+            <b>Credentialed — {{ credentialSummary.label }}</b>
+            <em v-if="credentialSummary.effective">effective {{ fmt(credentialSummary.effective) }}</em>
+            <em v-else>effective date not recorded — set it in the requirements below</em>
+            <em v-if="credentialSummary.final">No further phases required — P3 is optional, not a credential.</em>
+          </span>
+        </div>
         <p v-else class="pd__none">
-          No active progression — {{ record.clearedPhase === 'FinalRelease' ? 'fully credentialed.' : 'not currently in a phase.' }}
+          No active progression — not currently in a phase.
         </p>
         <template v-for="h in history" :key="h.transition">
           <h4 class="pd__h pd__h--hist">
-            Credentialing history
+            {{ transition ? 'Credentialing history' : 'Requirements met' }}
             <span class="pd__h-sub">{{ h.label }}</span>
           </h4>
           <PipelineGateRow
@@ -364,5 +393,40 @@ function fmt(iso: string | null): string {
   margin-top: 18px;
   padding-top: 12px;
   border-top: 1px solid var(--color-line-soft);
+}
+.pd__cred {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 12px 14px;
+  margin-bottom: 6px;
+  background: var(--color-success-50, oklch(0.96 0.03 150));
+  border: 1px solid oklch(0.85 0.07 150);
+  border-radius: 10px;
+}
+.pd__cred-badge {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-success-500);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+}
+.pd__cred-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13.5px;
+  color: var(--color-ink);
+}
+.pd__cred-main em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--color-ink-soft);
 }
 </style>

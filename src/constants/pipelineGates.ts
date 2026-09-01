@@ -26,8 +26,9 @@ export interface GateDef {
   label: string
   /** Target shown next to the label (e.g. "10 required"). */
   hint?: string
-  /** metric gates get a free-text value input ("3.7 / 3.5"). */
-  kind: 'metric' | 'checkoff' | 'exam'
+  /** metric gates get a free-text value input ("3.7 / 3.5");
+   *  date gates get a date picker (value = YYYY-MM-DD). */
+  kind: 'metric' | 'checkoff' | 'exam' | 'date'
 }
 
 export interface TransitionDef {
@@ -47,6 +48,7 @@ export interface TransitionDef {
 const exam = (key: string, label: string): GateDef => ({ key, label, kind: 'exam' })
 const check = (key: string, label: string, hint?: string): GateDef => ({ key, label, hint, kind: 'checkoff' })
 const metric = (key: string, label: string, hint?: string): GateDef => ({ key, label, hint, kind: 'metric' })
+const dateGate = (key: string, label: string, hint?: string): GateDef => ({ key, label, hint, kind: 'date' })
 
 /* Credential sign-off package — the paperwork that closes a
    credentialing transition (Justin, 2026-09-01). Letters of
@@ -55,7 +57,7 @@ const SIGNOFF_GATES = (withLetters: boolean): GateDef[] => [
   ...(withLetters
     ? [metric('rec_letters', 'Letters of recommendation', '2 required')]
     : []),
-  metric('credential_effective', 'New credential effective', 'date the new level takes effect'),
+  dateGate('credential_effective', 'New credential effective'),
   check('form_filed', 'Credentialing form signed & filed'),
   check('badge_issued', 'New badge issued'),
 ]
@@ -365,6 +367,8 @@ export function gateItemsForTransition(
       const n = row?.value?.match(/\d+/)
       if (n && parseInt(n[0], 10) >= 4) status = 'complete'
     }
+    /* A date gate with a date filled in is complete. */
+    if (g.kind === 'date' && status === 'pending' && row?.value) status = 'complete'
     /* Letters of recommendation: typing "2" (or more) checks it off. */
     if (g.key === 'rec_letters' && status === 'pending') {
       const n = row?.value?.match(/\d+/)

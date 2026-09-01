@@ -32,6 +32,12 @@ function commitValue() {
   if (v !== (props.item.value ?? '')) emit('set-value', v)
 }
 
+function fmtDate(iso: string): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function icon(): string {
   switch (props.item.status) {
     case 'complete':
@@ -74,9 +80,17 @@ function icon(): string {
       @blur="commitValue"
       @keydown.enter="($event.target as HTMLInputElement).blur()"
     />
+    <input
+      v-else-if="editable && item.kind === 'date'"
+      v-model="draft"
+      class="gate__input gate__input--date"
+      type="date"
+      @change="commitValue"
+    />
     <span v-else class="gate__value">
       <template v-if="item.status === 'untracked'">not yet tracked</template>
       <template v-else-if="item.status === 'na'">n/a</template>
+      <template v-else-if="item.kind === 'date' && item.value">{{ fmtDate(item.value) }}</template>
       <template v-else>{{ item.value || item.completedAt || (item.status === 'complete' ? 'done' : 'pending') }}</template>
     </span>
   </div>
@@ -160,5 +174,9 @@ button.gate__ic:hover {
 .gate__input:focus {
   outline: none;
   border-color: var(--color-accent-600);
+}
+.gate__input--date {
+  width: 140px;
+  font-family: var(--font-sans);
 }
 </style>
