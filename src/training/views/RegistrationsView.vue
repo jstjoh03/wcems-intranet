@@ -356,7 +356,7 @@ async function submitAdd() {
       <div v-if="!sessions.recentSessions.length" class="listcard__empty">
         <CalendarDays :size="26" :stroke-width="1.5" />
         <p>No active sessions yet — create one to start collecting registrations.</p>
-        <RouterLink to="/create" class="btn btn-primary">Create Session</RouterLink>
+        <RouterLink to="/training/manage/create" class="btn btn-primary">Create Session</RouterLink>
       </div>
       <table v-else class="stbl">
         <thead>

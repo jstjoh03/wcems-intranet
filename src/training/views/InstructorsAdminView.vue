@@ -732,7 +732,7 @@ async function toggleActive(i: Instructor) {
       <div>
         <strong>Field-staff access is automatic.</strong>
         Anyone on the
-        <RouterLink to="/employees" class="callout__link">
+        <RouterLink to="/clinical/people" class="callout__link">
           Employees roster
         </RouterLink>
         can sign in and reach their own training file at <code>/my-progress</code>.
