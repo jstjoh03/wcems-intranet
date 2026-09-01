@@ -4,12 +4,15 @@ import type { PipelinePerson } from '@/types'
 import {
   TRANSITIONS,
   activeTransitionFor,
+  completedTransitionsFor,
   gateItemsFor,
+  gateItemsForTransition,
   hasSystemAccess,
   petitionItemsFor,
   jurisprudenceStatus,
   requirementStatus,
 } from '@/constants/pipelineGates'
+import type { PipelineTransition } from '@/types'
 import { usePipeline } from '@/composables/usePipeline'
 import { useClinical } from '@/composables/useClinical'
 import PipelineGateRow from './PipelineGateRow.vue'
@@ -30,13 +33,30 @@ const props = defineProps<{
 }>()
 
 const { gatesFor, requirements, completionsFor, canEdit, saveRecord, setGate } = usePipeline()
-const { gateStatsFor } = useClinical()
+const { gateStatsFor, gateStatsForTransition } = useClinical()
 
 const record = computed(() => props.person.record)
 const transition = computed(() => activeTransitionFor(record.value))
 const def = computed(() => (transition.value ? TRANSITIONS[transition.value] : null))
 const gateRows = computed(() => gatesFor(record.value.id))
 const items = computed(() => gateItemsFor(record.value, gateRows.value, gateStatsFor(props.person)))
+
+/* Completed credentialing steps — the gate rows survive promotion, so
+   each finished transition renders its own read-back (still editable
+   for editors: sign-off paperwork is often documented AFTER the
+   promotion — letters received, form filed, badge issued). */
+const history = computed(() =>
+  completedTransitionsFor(record.value, gateRows.value).map((t) => ({
+    transition: t,
+    label: TRANSITIONS[t].label,
+    items: gateItemsForTransition(
+      record.value,
+      gateRows.value,
+      t,
+      gateStatsForTransition(props.person, t),
+    ),
+  })),
+)
 const petitions = computed(() => petitionItemsFor(record.value, gateRows.value))
 
 const juris = computed(() => jurisprudenceStatus(record.value))
@@ -60,8 +80,11 @@ const cycleItems = computed(() => {
    items toggle the held flag on the record; everything else cycles
    complete -> n/a -> pending. */
 const gateError = ref<string | null>(null)
-async function cycleGate(item: ReturnType<typeof gateItemsFor>[number]) {
-  if (!canEdit.value || !transition.value) return
+async function cycleGate(
+  item: ReturnType<typeof gateItemsFor>[number],
+  which: PipelineTransition | null = transition.value,
+) {
+  if (!canEdit.value || !which) return
   gateError.value = null
   try {
     if (item.kind === 'access') {
@@ -70,18 +93,22 @@ async function cycleGate(item: ReturnType<typeof gateItemsFor>[number]) {
       return
     }
     const next = item.status === 'complete' ? 'na' : item.status === 'na' ? 'pending' : 'complete'
-    await setGate(record.value.id, transition.value, item.key, next, item.value)
+    await setGate(record.value.id, which, item.key, next, item.value)
   } catch (err) {
     gateError.value = (err as Error).message
   }
 }
-async function setGateValue(item: ReturnType<typeof gateItemsFor>[number], value: string) {
-  if (!canEdit.value || !transition.value) return
+async function setGateValue(
+  item: ReturnType<typeof gateItemsFor>[number],
+  value: string,
+  which: PipelineTransition | null = transition.value,
+) {
+  if (!canEdit.value || !which) return
   gateError.value = null
   try {
     const status =
       item.status === 'complete' || item.status === 'na' ? item.status : 'pending'
-    await setGate(record.value.id, transition.value, item.key, status, value)
+    await setGate(record.value.id, which, item.key, status, value)
   } catch (err) {
     gateError.value = (err as Error).message
   }
@@ -129,6 +156,20 @@ function fmt(iso: string | null): string {
         <p v-else class="pd__none">
           No active progression — {{ record.clearedPhase === 'FinalRelease' ? 'fully credentialed.' : 'not currently in a phase.' }}
         </p>
+        <template v-for="h in history" :key="h.transition">
+          <h4 class="pd__h pd__h--hist">
+            Credentialing history
+            <span class="pd__h-sub">{{ h.label }}</span>
+          </h4>
+          <PipelineGateRow
+            v-for="item in h.items"
+            :key="`${h.transition}-${item.key}`"
+            :item="item"
+            :editable="canEdit"
+            @cycle="cycleGate(item, h.transition)"
+            @set-value="(v) => setGateValue(item, v, h.transition)"
+          />
+        </template>
       </div>
 
       <!-- Compliance & credentials -->
@@ -318,5 +359,10 @@ function fmt(iso: string | null): string {
   font-size: 12px;
   color: var(--color-danger-500);
   margin-bottom: 6px;
+}
+.pd__h--hist {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-line-soft);
 }
 </style>

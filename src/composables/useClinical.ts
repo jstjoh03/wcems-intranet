@@ -227,6 +227,17 @@ export function useClinical() {
     return {}
   }
 
+  /** Same, but for a SPECIFIC transition — used by the credentialing
+   *  history so a completed legacy rung still shows its eval count. */
+  function gateStatsForTransition(p: PipelinePerson, transition: string) {
+    const ftep = useFtep()
+    if (transition === 'P1_LEGACY') return { callEvals: ftep.icrCount(p.userId, 'P1') }
+    if (transition === 'P1_P2_LEGACY') return { callEvals: ftep.icrCount(p.userId, 'P2') }
+    if (transition === 'P1C_P1' || transition === 'P1_P2')
+      return { scoredIcrs: ftep.icrCount(p.userId) }
+    return {}
+  }
+
   function manualRideouts(p: PipelinePerson): number {
     const row = gatesFor(p.record.id).find(
       (g) => g.transition === 'P2_P3' && g.gateKey === 'supervisor_rideouts',
@@ -287,6 +298,7 @@ export function useClinical() {
     ftepTrackFor,
     manualRideouts,
     gateStatsFor,
+    gateStatsForTransition,
     gatesFor,
   }
 }

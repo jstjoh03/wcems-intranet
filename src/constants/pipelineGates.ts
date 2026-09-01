@@ -48,6 +48,18 @@ const exam = (key: string, label: string): GateDef => ({ key, label, kind: 'exam
 const check = (key: string, label: string, hint?: string): GateDef => ({ key, label, hint, kind: 'checkoff' })
 const metric = (key: string, label: string, hint?: string): GateDef => ({ key, label, hint, kind: 'metric' })
 
+/* Credential sign-off package — the paperwork that closes a
+   credentialing transition (Justin, 2026-09-01). Letters of
+   recommendation apply to the in-charge (P2) credential only. */
+const SIGNOFF_GATES = (withLetters: boolean): GateDef[] => [
+  ...(withLetters
+    ? [metric('rec_letters', 'Letters of recommendation', '2 required')]
+    : []),
+  metric('credential_effective', 'New credential effective', 'date the new level takes effect'),
+  check('form_filed', 'Credentialing form signed & filed'),
+  check('badge_issued', 'New badge issued'),
+]
+
 export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
   NEOP: {
     transition: 'NEOP',
@@ -73,6 +85,7 @@ export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
       exam('protocol_exam', 'Protocol exam'),
       exam('oral_board', 'Oral board'),
       exam('mega_code', 'Mega code'),
+      ...SIGNOFF_GATES(false),
     ],
     petitionChain: ['FTO', 'Supervisor', 'CDO', 'Asst Chief'],
     includesAccess: true,
@@ -88,6 +101,7 @@ export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
       exam('protocol_exam', 'Protocol exam'),
       exam('oral_board', 'Oral board'),
       exam('mega_code', 'Mega code'),
+      ...SIGNOFF_GATES(true),
     ],
     petitionChain: ['Supervisor', 'CDO', 'Asst Chief'],
     includesAccess: true,
@@ -108,6 +122,7 @@ export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
       metric('call_evals', 'Call evaluations', '10 required, narrative format'),
       exam('mega_code', 'Mega code'),
       exam('protocol_test', 'Protocol test'),
+      ...SIGNOFF_GATES(false),
     ],
     petitionChain: [],
     includesAccess: true,
@@ -120,6 +135,7 @@ export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
       metric('call_evals', 'Call evaluations', '10 required, narrative format'),
       exam('mega_code', 'Mega code'),
       exam('protocol_test', 'Protocol test'),
+      ...SIGNOFF_GATES(true),
     ],
     petitionChain: [],
     includesAccess: true,
@@ -145,6 +161,7 @@ export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
       check('skills_checklists', 'AEMT skills checklists'),
       check('med_admin_signoff', 'Medication administration sign-off'),
       exam('protocol_exam', 'Protocol exam'),
+      ...SIGNOFF_GATES(false),
     ],
     petitionChain: [],
     includesAccess: true,
@@ -308,6 +325,33 @@ export function gateItemsFor(
 ): GateItem[] {
   const transition = activeTransitionFor(r)
   if (!transition) return []
+  return gateItemsForTransition(r, rows, transition, stats)
+}
+
+/** Canonical career order for rendering credentialing history. */
+const TRANSITION_ORDER: PipelineTransition[] = [
+  'NEOP', 'P1C_P1', 'P1_LEGACY', 'P1_P2', 'P1_P2_LEGACY', 'AEMT', 'P2_P3',
+]
+
+/** Transitions with recorded gate rows that are NOT the active one —
+ *  the completed (or paused) credentialing steps, so promotion never
+ *  erases the visual history of mega codes, protocol tests, and
+ *  sign-off paperwork (Justin, 2026-09-01). */
+export function completedTransitionsFor(
+  r: PipelineRecord,
+  rows: PipelineGateProgress[],
+): PipelineTransition[] {
+  const active = activeTransitionFor(r)
+  const seen = new Set(rows.map((g) => g.transition))
+  return TRANSITION_ORDER.filter((t) => seen.has(t) && t !== active)
+}
+
+export function gateItemsForTransition(
+  r: PipelineRecord,
+  rows: PipelineGateProgress[],
+  transition: PipelineTransition,
+  stats?: GateStats,
+): GateItem[] {
   const def = TRANSITIONS[transition]
   const byKey = new Map(rows.filter((g) => g.transition === transition).map((g) => [g.gateKey, g]))
 
@@ -320,6 +364,11 @@ export function gateItemsFor(
     if (g.key === 'supervisor_rideouts' && status === 'pending') {
       const n = row?.value?.match(/\d+/)
       if (n && parseInt(n[0], 10) >= 4) status = 'complete'
+    }
+    /* Letters of recommendation: typing "2" (or more) checks it off. */
+    if (g.key === 'rec_letters' && status === 'pending') {
+      const n = row?.value?.match(/\d+/)
+      if (n && parseInt(n[0], 10) >= 2) status = 'complete'
     }
     /* Call-eval / ICR gates self-complete from the live report counts. */
     if (g.key === 'call_evals' && status === 'pending' && (stats?.callEvals ?? 0) >= 10)
