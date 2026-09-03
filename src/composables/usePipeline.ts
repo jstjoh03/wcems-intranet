@@ -54,6 +54,7 @@ interface RecordRow {
   bloodborne_pathogen_at: string | null
   op_iq_access: boolean
   narc_safe_access: boolean
+  clinical_excluded: boolean | null
   op_iq_granted_at: string | null
   narc_safe_granted_at: string | null
   est_p2_ready_at: string | null
@@ -89,7 +90,7 @@ const RECORD_SELECT =
   'id, user_id, cleared_phase, working_phase, working_started_at, working_target_at, ' +
   'pending, pip_active, pip_started_at, pip_reason, in_p3_process, in_aemt_upgrade, legacy_track, ' +
   'level, is_fto, fto_name, cert_level, tx_license_number, tx_license_expires_at, ' +
-  'tx_jurisprudence_at, bloodborne_pathogen_at, op_iq_access, narc_safe_access, ' +
+  'tx_jurisprudence_at, bloodborne_pathogen_at, op_iq_access, narc_safe_access, clinical_excluded, ' +
   'op_iq_granted_at, narc_safe_granted_at, ' +
   'est_p2_ready_at, coverage_note, blocker_note, notes, updated_at, ' +
   'person:app_users!pipeline_records_user_id_fkey(id, full_name, shift, station, title, photo_url, active, account_type)'
@@ -123,6 +124,7 @@ function rowToRecord(r: RecordRow): PipelineRecord {
     bloodbornePathogenAt: r.bloodborne_pathogen_at,
     opIqAccess: r.op_iq_access,
     narcSafeAccess: r.narc_safe_access,
+    clinicalExcluded: r.clinical_excluded ?? false,
     opIqGrantedAt: r.op_iq_granted_at,
     narcSafeGrantedAt: r.narc_safe_granted_at,
     estP2ReadyAt: r.est_p2_ready_at,
@@ -188,6 +190,7 @@ function seedDevFixture() {
     bloodbornePathogenAt: null,
     opIqAccess: false,
     narcSafeAccess: false,
+    clinicalExcluded: false,
     opIqGrantedAt: null,
     narcSafeGrantedAt: null,
     estP2ReadyAt: null,
@@ -358,6 +361,7 @@ function recordPatch(input: SaveRecordInput): Record<string, unknown> {
     bloodbornePathogenAt: 'bloodborne_pathogen_at',
     opIqAccess: 'op_iq_access',
     narcSafeAccess: 'narc_safe_access',
+    clinicalExcluded: 'clinical_excluded',
     opIqGrantedAt: 'op_iq_granted_at',
     narcSafeGrantedAt: 'narc_safe_granted_at',
     estP2ReadyAt: 'est_p2_ready_at',

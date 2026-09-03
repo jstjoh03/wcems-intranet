@@ -37,12 +37,14 @@ export function useClinical() {
   /** Everyone with a clinical file — active people with a clinical cert. */
   const clinicalPeople = computed<PipelinePerson[]>(() =>
     people.value.filter(
-      (p) => p.active && p.record.certLevel && p.record.certLevel !== 'N/A',
+      (p) => p.active && !p.record.clinicalExcluded && p.record.certLevel && p.record.certLevel !== 'N/A',
     ),
   )
 
+  /* Searches ALL records, not just the clinical scope — an excluded
+     person's file must stay reachable so they can be re-included. */
   function personById(userId: string): PipelinePerson | null {
-    return clinicalPeople.value.find((p) => p.userId === userId) ?? null
+    return people.value.find((p) => p.userId === userId) ?? null
   }
 
   function licDays(p: PipelinePerson): number | null {

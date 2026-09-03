@@ -96,6 +96,20 @@ function buildEmail(firstName: string, items: NotifyItem[]): { subject: string; 
       </tr>`
     })
     .join('')
+  /* Two closings: dated items point at their deadline; "no card on
+     file" items have no date to point at, so they get their own line. */
+  const hasDated = items.some((it) => it.when)
+  const hasUndated = items.some((it) => !it.when)
+  const guidance = [
+    `<p><b>Already completed one of these?</b> Upload a copy of the card or certificate in <b>Paycom</b> today and it will be picked up on our next records import.</p>`,
+    hasDated
+      ? `<p>Items showing a date must be renewed <b>before that date</b> to remain in compliance.</p>`
+      : '',
+    hasUndated
+      ? `<p>Items marked <b>"no card on file"</b> mean we currently have no record of a valid certification for you — please upload your card in Paycom right away, or reply to this email to get scheduled for the next available class.</p>`
+      : '',
+    `<p>Maintaining current certifications is a <b>condition of clinical practice</b> with Waller County EMS, so please treat this as time-sensitive. Reply to this email if you have questions or need help getting scheduled.</p>`,
+  ].join('\n    ')
   const html = `
   <div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.55;color:#273142;max-width:640px;">
     <div style="border-bottom:3px solid #182644;padding-bottom:10px;margin-bottom:16px;">
@@ -103,16 +117,16 @@ function buildEmail(firstName: string, items: NotifyItem[]): { subject: string; 
       <div style="font-size:11px;letter-spacing:0.14em;color:#a8842c;font-weight:600;">CLINICAL DEVELOPMENT</div>
     </div>
     <p>Hi ${esc(firstName)},</p>
-    <p>A review of your clinical file shows the following item${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} attention:</p>
+    <p>A compliance review of your clinical file shows the following item${items.length === 1 ? '' : 's'} require${items.length === 1 ? 's' : ''} action:</p>
     <table style="border-collapse:collapse;width:100%;margin:6px 0 14px;">${rows}</table>
-    <p><b>Already completed one of these?</b> Upload a copy of the card or certificate in <b>Paycom</b> and it will be picked up on our next records import. Otherwise, please plan to complete the items before the dates listed — reply to this email if you need help getting scheduled.</p>
+    ${guidance}
     <p style="margin-top:18px;">Thank you,<br/>
     <b>Clinical Development</b><br/>
     Waller County EMS<br/>
     <a href="mailto:${SENDER}" style="color:#182644;">${SENDER}</a></p>
   </div>`
   return {
-    subject: `Action needed: ${items.length} item${items.length === 1 ? '' : 's'} on your clinical file`,
+    subject: `Compliance action required: ${items.length} item${items.length === 1 ? '' : 's'} on your clinical file`,
     html,
   }
 }

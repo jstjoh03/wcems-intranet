@@ -237,6 +237,21 @@ async function doPromote() {
 
 /* Inline record dates (jurisprudence / BBP) — editable right on the
    row instead of inside the full-record modal. */
+async function toggleExcluded() {
+  const p = person.value
+  if (!p || !canEdit.value) return
+  actionsOpen.value = false
+  const excluding = !p.record.clinicalExcluded
+  if (
+    excluding &&
+    !confirm(
+      `Exclude ${p.fullName} from clinical tracking? They drop off the clinical roster, Action Center and compliance emails until re-included from this page.`,
+    )
+  )
+    return
+  await saveRecord({ userId: p.userId, clinicalExcluded: excluding })
+}
+
 const dateBusy = ref(false)
 async function setRecordDate(key: 'txJurisprudenceAt' | 'bloodbornePathogenAt', ev: Event) {
   const p = person.value
@@ -524,6 +539,7 @@ function fmtDateTime(iso: string): string {
           <span class="cf__chip">{{ statusChip(person).text }}</span>
           <span v-if="person.record.isFto" class="cf__chip cf__chip--gold">FTO</span>
           <span v-if="person.record.pipActive" class="cf__chip cf__chip--warn">PIP</span>
+          <span v-if="person.record.clinicalExcluded" class="cf__chip cf__chip--warn">NOT TRACKED</span>
         </div>
         <div v-if="canEdit" class="cf__actionswrap">
           <button type="button" class="cf__edit" @click="actionsOpen = !actionsOpen">
@@ -537,6 +553,9 @@ function fmtDateTime(iso: string): string {
               Promote — clear {{ person.record.workingPhase }}
             </button>
             <button type="button" class="cf__menu-it" @click="editing = true; actionsOpen = false">Edit full record</button>
+            <button type="button" class="cf__menu-it cf__menu-it--dim" @click="toggleExcluded">
+              {{ person.record.clinicalExcluded ? 'Include in clinical tracking' : 'Exclude from clinical tracking' }}
+            </button>
           </div>
         </div>
       </header>
@@ -1447,4 +1466,5 @@ function fmtDateTime(iso: string): string {
   color: var(--color-ink);
 }
 .cf__inline-date:focus { outline: none; border-color: var(--color-accent-strong, #a8842c); }
+.cf__menu-it--dim { color: var(--color-muted); font-weight: 500; }
 </style>

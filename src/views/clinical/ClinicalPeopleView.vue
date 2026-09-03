@@ -20,6 +20,7 @@ const {
   canEdit,
   canViewBoard,
   clinicalPeople,
+  people,
   attentionFor,
   missingRequired,
   statusChip,
@@ -62,6 +63,12 @@ function matchesTile(p: PipelinePerson): boolean {
     default: return true
   }
 }
+
+const excludedPeople = computed(() =>
+  people.value
+    .filter((p) => p.active && p.record.clinicalExcluded)
+    .sort((a, b) => a.fullName.localeCompare(b.fullName)),
+)
 
 const rows = computed(() =>
   clinicalPeople.value
@@ -179,6 +186,16 @@ function licText(p: PipelinePerson): { text: string; late: boolean } {
           </tbody>
         </table>
       </div>
+      <p v-if="excludedPeople.length" class="cp__excluded">
+        Not tracked (volunteer / medical direction):
+        <button
+          v-for="p in excludedPeople"
+          :key="p.userId"
+          type="button"
+          class="cp__excluded-link"
+          @click="open(p)"
+        >{{ p.fullName }}</button>
+      </p>
     </template>
   </div>
 </template>
@@ -326,4 +343,20 @@ function licText(p: PipelinePerson): { text: string; late: boolean } {
 .cp__chip--hold { background: var(--color-surface-soft); color: var(--color-muted); border: 1px dashed var(--color-line); }
 .cp__chip--due { background: oklch(0.95 0.04 30); color: oklch(0.45 0.15 30); }
 .cp__chip--warn { background: oklch(0.96 0.05 80); color: oklch(0.48 0.11 75); }
+.cp__excluded {
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.cp__excluded-link {
+  border: none;
+  background: none;
+  padding: 0 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.cp__excluded-link:hover { color: var(--color-ink); }
 </style>

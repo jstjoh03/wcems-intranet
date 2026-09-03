@@ -437,6 +437,9 @@ export interface PipelineRecord {
    *  detail (credentialed staff predate date-keeping). */
   opIqAccess: boolean
   narcSafeAccess: boolean
+  /** FT/PT field staff only are tracked; volunteers/medical direction
+   *  are excluded in-app (employment_type cannot carry the distinction). */
+  clinicalExcluded: boolean
   opIqGrantedAt: string | null
   narcSafeGrantedAt: string | null
   estP2ReadyAt: string | null
