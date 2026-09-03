@@ -105,7 +105,7 @@ function buildEmail(firstName: string, items: NotifyItem[]): { subject: string; 
     <p>Hi ${esc(firstName)},</p>
     <p>A review of your clinical file shows the following item${items.length === 1 ? '' : 's'} need${items.length === 1 ? 's' : ''} attention:</p>
     <table style="border-collapse:collapse;width:100%;margin:6px 0 14px;">${rows}</table>
-    <p>If you have already completed any of these, reply to this email with a photo or PDF of the card or certificate and we will update your file. Otherwise, please plan to complete them before the dates listed — reach out if you need help getting scheduled.</p>
+    <p><b>Already completed one of these?</b> Upload a copy of the card or certificate in <b>Paycom</b> and it will be picked up on our next records import. Otherwise, please plan to complete the items before the dates listed — reply to this email if you need help getting scheduled.</p>
     <p style="margin-top:18px;">Thank you,<br/>
     <b>Clinical Development</b><br/>
     Waller County EMS<br/>
