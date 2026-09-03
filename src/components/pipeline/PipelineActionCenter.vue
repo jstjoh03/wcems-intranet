@@ -9,6 +9,7 @@ import {
   requirementStatus,
 } from '@/constants/pipelineGates'
 import { usePipeline } from '@/composables/usePipeline'
+import { generateComplianceReportPdf } from '@/lib/complianceReportPdf'
 import { supabase } from '@/lib/supabase'
 
 /**
@@ -265,6 +266,121 @@ async function runImport(mode: ImportMode, apply: boolean) {
   }
 }
 
+/* ── Compliance report + employee notifications ────────────────────
+   The report prints the queues above on letterhead; the email flow
+   sends each affected person ONE email listing their own items, from
+   education@wallercountyems.com via the cert-notify edge function
+   (addresses resolved server-side from app_users). */
+
+const showNotify = ref(false)
+const REPORT_KEYS = ['lms', 'missing', 'cards', 'lic']
+const EMAIL_KEYS = ['missing', 'cards', 'lic']
+
+const reportBusy = ref(false)
+async function complianceReport(mode: 'view' | 'download') {
+  if (reportBusy.value) return
+  reportBusy.value = true
+  try {
+    const secs = groups.value
+      .filter((g) => REPORT_KEYS.includes(g.key))
+      .map((g) => ({
+        title: g.title,
+        hint: g.hint,
+        rows: g.items.map((i) => ({
+          name: i.person.fullName,
+          item: i.item,
+          status: i.status,
+          when: i.when,
+        })),
+      }))
+    const doc = await generateComplianceReportPdf(secs)
+    if (mode === 'view') window.open(doc.output('bloburl'), '_blank', 'noopener')
+    else doc.save(`WCEMS_Compliance_Report_${new Date().toISOString().slice(0, 10)}.pdf`)
+  } finally {
+    reportBusy.value = false
+  }
+}
+
+interface NotifyRecipient {
+  userId: string
+  name: string
+  items: Array<{ item: string; status: string; when: string | null }>
+}
+const emailRecipients = computed<NotifyRecipient[]>(() => {
+  const map = new Map<string, NotifyRecipient>()
+  for (const g of groups.value.filter((g) => EMAIL_KEYS.includes(g.key))) {
+    for (const it of g.items) {
+      let e = map.get(it.person.userId)
+      if (!e) {
+        e = { userId: it.person.userId, name: it.person.fullName, items: [] }
+        map.set(it.person.userId, e)
+      }
+      e.items.push({ item: it.item, status: it.status, when: it.when })
+    }
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
+})
+
+const notifyBusy = ref(false)
+const notifyError = ref<string | null>(null)
+const notifyLines = ref<string[]>([])
+
+async function callNotify(extra: Record<string, unknown>) {
+  if (notifyBusy.value || emailRecipients.value.length === 0) return
+  notifyBusy.value = true
+  notifyError.value = null
+  try {
+    const { data: sess } = await supabase.auth.getSession()
+    const token = sess.session?.access_token
+    if (!token) throw new Error('Not signed in.')
+    const base = import.meta.env.VITE_SUPABASE_URL as string
+    const res = await fetch(`${base}/functions/v1/cert-notify`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...extra,
+        people: emailRecipients.value.map((r) => ({ userId: r.userId, items: r.items })),
+      }),
+    })
+    const data = await res.json()
+    if (!data.ok) throw new Error(String(data.error ?? 'Send failed'))
+    const out: string[] = []
+    if (data.dryRun) {
+      out.push(`${data.recipients.length} recipients resolved (nothing sent) — from ${data.sender}`)
+      for (const r of data.recipients as Array<{ name: string; email: string; itemCount: number }>) {
+        out.push(`  · ${r.name} <${r.email}> — ${r.itemCount} item${r.itemCount === 1 ? '' : 's'}`)
+      }
+    } else {
+      out.push(`${data.sentCount} email${data.sentCount === 1 ? '' : 's'} sent${data.test ? ' to YOUR inbox (test mode)' : ''} — from ${data.sender}`)
+      for (const f of (data.failed ?? []) as Array<{ name: string; error: string }>) {
+        out.push(`  FAILED · ${f.name}: ${f.error}`)
+      }
+    }
+    for (const sk of (data.skipped ?? []) as Array<{ name: string | null; reason: string }>) {
+      out.push(`  skipped · ${sk.name ?? 'unknown'} — ${sk.reason}`)
+    }
+    notifyLines.value = out
+  } catch (e) {
+    notifyError.value = (e as Error).message
+  } finally {
+    notifyBusy.value = false
+  }
+}
+
+function previewRecipients() {
+  void callNotify({ dryRun: true })
+}
+function sendTest() {
+  const n = emailRecipients.value.length
+  if (!confirm(`Send ${n} TEST email${n === 1 ? '' : 's'} to YOUR OWN inbox (one per affected employee, none to them)?`)) return
+  void callNotify({ test: true })
+}
+function sendAll() {
+  const n = emailRecipients.value.length
+  if (!confirm(`Email ${n} employee${n === 1 ? '' : 's'} from education@wallercountyems.com, each listing their own outstanding items?`)) return
+  void callNotify({})
+}
+
 /** Flatten the report into readable lines, skipping empty lists. */
 const reportLines = computed<string[]>(() => {
   const r = importReport.value
@@ -305,6 +421,12 @@ const reportLines = computed<string[]>(() => {
         v-if="canEdit && !collapsed"
         type="button"
         class="ac__manage"
+        @click.stop="showNotify = !showNotify"
+      >{{ showNotify ? 'Done' : 'Report & notify' }}</button>
+      <button
+        v-if="canEdit && !collapsed"
+        type="button"
+        class="ac__manage"
         @click.stop="showImports = !showImports"
       >{{ showImports ? 'Done' : 'Import reports' }}</button>
       <button
@@ -336,6 +458,36 @@ const reportLines = computed<string[]>(() => {
           </select>
           <button type="button" class="btn" :disabled="newReq.busy || !newReq.name.trim()" @click="submitRequirement">Add</button>
         </div>
+      </div>
+
+      <!-- Compliance report + employee notifications -->
+      <div v-if="showNotify && canEdit" class="ac__imports">
+        <div class="ac__imp-row">
+          <div class="ac__imp-copy">
+            <strong>Compliance report</strong>
+            <span>Everything above — missing required certs, expiring/lapsed cards, LMS items and licenses — on letterhead for printing or filing.</span>
+          </div>
+          <div class="ac__imp-btns">
+            <button type="button" class="btn" :disabled="reportBusy" @click="complianceReport('view')">View</button>
+            <button type="button" class="btn btn--primary" :disabled="reportBusy" @click="complianceReport('download')">Download PDF</button>
+          </div>
+        </div>
+        <div class="ac__imp-row">
+          <div class="ac__imp-copy">
+            <strong>Email affected employees</strong>
+            <span>
+              Each of the <b>{{ emailRecipients.length }}</b> people with a missing, expired or expiring cert (or a license ≤ 90 days out) gets one email listing their own items, sent from education@wallercountyems.com. Preview first; the test sends every email to your inbox only.
+            </span>
+          </div>
+          <div class="ac__imp-btns">
+            <button type="button" class="btn" :disabled="notifyBusy || emailRecipients.length === 0" @click="previewRecipients">Preview recipients</button>
+            <button type="button" class="btn" :disabled="notifyBusy || emailRecipients.length === 0" @click="sendTest">Send test to me</button>
+            <button type="button" class="btn btn--primary" :disabled="notifyBusy || emailRecipients.length === 0" @click="sendAll">Email {{ emailRecipients.length }} employees</button>
+          </div>
+        </div>
+        <div v-if="notifyBusy" class="ac__imp-status">Working…</div>
+        <div v-if="notifyError" class="ac__imp-error">{{ notifyError }}</div>
+        <pre v-if="notifyLines.length" class="ac__imp-report">{{ notifyLines.join('\n') }}</pre>
       </div>
 
       <!-- Report imports -->
