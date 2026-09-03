@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Check, Download, Pencil, Plus, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Check, ChevronDown, Download, Pencil, Plus, Trash2 } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
@@ -14,7 +14,7 @@ import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import { useSkillsDay } from '@/composables/useSkillsDay'
 import { usePipeline } from '@/composables/usePipeline'
-import { requirementStatus, activeTransitionFor, jurisprudenceStatus } from '@/constants/pipelineGates'
+import { requirementStatus, activeTransitionFor, jurisprudenceStatus, ENROLLMENT_TRACKS } from '@/constants/pipelineGates'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
 import type { PipelinePerson, PipelineRequirement } from '@/types'
 
@@ -46,7 +46,7 @@ const {
 } = useClinical()
 
 const skills = useSkillsDay()
-const { saveRecord } = usePipeline()
+const { saveRecord, promote } = usePipeline()
 const ftep = useFtep()
 
 const myReports = computed(() => {
@@ -170,6 +170,83 @@ async function toggleAccess(key: 'opIqAccess' | 'narcSafeAccess') {
     await saveRecord({ userId: p.userId, [key]: !p.record[key] })
   } finally {
     accessBusy.value = false
+  }
+}
+
+/* Header actions menu — enroll / promote / edit without opening the
+   full-record modal. */
+const actionsOpen = ref(false)
+const enrollOpen = ref(false)
+const enroll = reactive({
+  trackKey: '',
+  startedAt: new Date().toISOString().slice(0, 10),
+  targetAt: '',
+  targetTouched: false,
+  busy: false,
+})
+const enrollTrack = computed(() => ENROLLMENT_TRACKS.find((t) => t.key === enroll.trackKey) ?? null)
+watch(
+  () => [enroll.trackKey, enroll.startedAt],
+  () => {
+    if (enroll.targetTouched || !enrollTrack.value || !enroll.startedAt) return
+    const d = new Date(`${enroll.startedAt}T00:00:00`)
+    d.setDate(d.getDate() + enrollTrack.value.days)
+    enroll.targetAt = d.toISOString().slice(0, 10)
+  },
+)
+function openEnroll() {
+  actionsOpen.value = false
+  enroll.trackKey = ''
+  enroll.startedAt = new Date().toISOString().slice(0, 10)
+  enroll.targetAt = ''
+  enroll.targetTouched = false
+  enroll.busy = false
+  enrollOpen.value = true
+}
+async function saveEnroll() {
+  const p = person.value
+  const track = enrollTrack.value
+  if (!p || !track || enroll.busy) return
+  enroll.busy = true
+  try {
+    await saveRecord({
+      userId: p.userId,
+      ...track.patch,
+      workingStartedAt: enroll.startedAt || null,
+      workingTargetAt: enroll.targetAt || null,
+      pending: false,
+    })
+    enrollOpen.value = false
+  } finally {
+    enroll.busy = false
+  }
+}
+const promoteBusy = ref(false)
+async function doPromote() {
+  const p = person.value
+  if (!p?.record.workingPhase || promoteBusy.value) return
+  actionsOpen.value = false
+  if (!confirm(`Promote ${p.fullName}: cleared ${p.record.workingPhase}?`)) return
+  promoteBusy.value = true
+  try {
+    await promote(p)
+  } finally {
+    promoteBusy.value = false
+  }
+}
+
+/* Inline record dates (jurisprudence / BBP) — editable right on the
+   row instead of inside the full-record modal. */
+const dateBusy = ref(false)
+async function setRecordDate(key: 'txJurisprudenceAt' | 'bloodbornePathogenAt', ev: Event) {
+  const p = person.value
+  if (!p || !canEdit.value || dateBusy.value) return
+  const value = (ev.target as HTMLInputElement).value
+  dateBusy.value = true
+  try {
+    await saveRecord({ userId: p.userId, [key]: value || null })
+  } finally {
+    dateBusy.value = false
   }
 }
 
@@ -448,11 +525,37 @@ function fmtDateTime(iso: string): string {
           <span v-if="person.record.isFto" class="cf__chip cf__chip--gold">FTO</span>
           <span v-if="person.record.pipActive" class="cf__chip cf__chip--warn">PIP</span>
         </div>
-        <button v-if="canEdit" type="button" class="cf__edit" @click="editing = true">
-          <Pencil :size="13" :stroke-width="2" />
-          Edit record
-        </button>
+        <div v-if="canEdit" class="cf__actionswrap">
+          <button type="button" class="cf__edit" @click="actionsOpen = !actionsOpen">
+            <Pencil :size="13" :stroke-width="2" />
+            Actions
+            <ChevronDown :size="13" :stroke-width="2" />
+          </button>
+          <div v-if="actionsOpen" class="cf__menu">
+            <button type="button" class="cf__menu-it" @click="openEnroll">Enroll in a program track…</button>
+            <button v-if="person.record.workingPhase" type="button" class="cf__menu-it" @click="doPromote">
+              Promote — clear {{ person.record.workingPhase }}
+            </button>
+            <button type="button" class="cf__menu-it" @click="editing = true; actionsOpen = false">Edit full record</button>
+          </div>
+        </div>
       </header>
+      <div v-if="actionsOpen" class="cf__menu-veil" @click="actionsOpen = false"></div>
+
+      <div v-if="enrollOpen && canEdit" class="cf__enroll">
+        <span class="cf__enroll-t">Enroll in a program track</span>
+        <select v-model="enroll.trackKey" class="cf__enroll-sel">
+          <option value="" disabled>Select track…</option>
+          <option v-for="t in ENROLLMENT_TRACKS" :key="t.key" :value="t.key">{{ t.label }}</option>
+        </select>
+        <label class="cf__enroll-f">Start <input v-model="enroll.startedAt" type="date" class="cf__inline-date" /></label>
+        <label class="cf__enroll-f">Target <input v-model="enroll.targetAt" type="date" class="cf__inline-date" @input="enroll.targetTouched = true" /></label>
+        <span v-if="enrollTrack?.hint" class="cf__enroll-hint">{{ enrollTrack.hint }}</span>
+        <span class="cf__enroll-btns">
+          <button type="button" class="cf__mini cf__mini--primary" :disabled="!enrollTrack || enroll.busy" @click="saveEnroll">Enroll</button>
+          <button type="button" class="cf__mini" @click="enrollOpen = false">Cancel</button>
+        </span>
+      </div>
 
       <nav class="cf__tabs" aria-label="File sections">
         <button
@@ -495,8 +598,18 @@ function fmtDateTime(iso: string): string {
           <div class="cf__card-hd">Compliance snapshot</div>
           <div class="cf__facts">
             <div class="cf__fact"><span>Card classes</span><b><template v-if="cardClassSummary">{{ cardClassSummary.current }} of {{ cardClassSummary.total }} current</template><template v-else>—</template></b></div>
-            <div class="cf__fact"><span>TX jurisprudence</span><b>{{ juris?.state === 'ok' ? fmt(person.record.txJurisprudenceAt) : juris?.state === 'due' ? 'DUE' : 'required this cycle' }}</b></div>
-            <div class="cf__fact"><span>Bloodborne pathogens</span><b>{{ person.record.bloodbornePathogenAt ? fmt(person.record.bloodbornePathogenAt) : '—' }}</b></div>
+            <div class="cf__fact"><span>TX jurisprudence</span>
+              <b v-if="!canEdit">{{ juris?.state === 'ok' ? fmt(person.record.txJurisprudenceAt) : juris?.state === 'due' ? 'DUE' : 'required this cycle' }}</b>
+              <span v-else class="cf__fact-edit">
+                <b v-if="juris?.state === 'due'" class="cf__late">DUE</b>
+                <b v-else-if="juris?.state === 'required'">required this cycle</b>
+                <input class="cf__inline-date" type="date" :value="person.record.txJurisprudenceAt ?? ''" @change="setRecordDate('txJurisprudenceAt', $event)" />
+              </span>
+            </div>
+            <div class="cf__fact"><span>Bloodborne pathogens</span>
+              <b v-if="!canEdit">{{ person.record.bloodbornePathogenAt ? fmt(person.record.bloodbornePathogenAt) : '—' }}</b>
+              <input v-else class="cf__inline-date" type="date" :value="person.record.bloodbornePathogenAt ?? ''" @change="setRecordDate('bloodbornePathogenAt', $event)" />
+            </div>
             <div class="cf__fact cf__fact--tap" @click="toggleAccess('opIqAccess')"><span>Operative IQ</span><b :class="person.record.opIqAccess ? 'cf__ok' : ''">{{ person.record.opIqAccess ? 'held' : 'not held' }}<em v-if="canEdit" class="cf__tap-hint">tap to toggle</em></b></div>
             <div class="cf__fact cf__fact--tap" @click="toggleAccess('narcSafeAccess')"><span>NarcSafe</span><b :class="person.record.narcSafeAccess ? 'cf__ok' : ''">{{ person.record.narcSafeAccess ? 'held' : 'not held' }}<em v-if="canEdit" class="cf__tap-hint">tap to toggle</em></b></div>
           </div>
@@ -812,7 +925,9 @@ function fmtDateTime(iso: string): string {
               <Check v-if="person.record.bloodbornePathogenAt" :size="12" :stroke-width="2.5" /><template v-else>·</template>
             </span>
             <span class="cf__gate-l">Bloodborne / Airborne Pathogens</span>
-            <span class="cf__gate-v">{{ person.record.bloodbornePathogenAt ? fmt(person.record.bloodbornePathogenAt) : 'not on file' }}</span>
+            <span class="cf__gate-v">
+              <input class="cf__inline-date" type="date" :value="person.record.bloodbornePathogenAt ?? ''" @change="setRecordDate('bloodbornePathogenAt', $event)" />
+            </span>
           </div>
           <div v-for="req in annualReqs" :key="req.id" class="cf__gate">
             <span class="cf__tick" :class="reqRow(req).st.latest && reqRow(req).st.state === 'ok' ? 'cf__tick--ok' : 'cf__tick--open'">
@@ -835,9 +950,10 @@ function fmtDateTime(iso: string): string {
             </span>
             <span class="cf__gate-l">TX EMS Jurisprudence</span>
             <span class="cf__gate-v">
-              <template v-if="juris?.state === 'ok'">{{ fmt(person.record.txJurisprudenceAt) }}<template v-if="juris?.requiredBefore"> · cycle ends {{ fmt(juris.requiredBefore) }}</template></template>
-              <b v-else-if="juris?.state === 'due'" class="cf__late">due — required before {{ juris.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal' }}</b>
-              <template v-else>required before {{ juris?.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal' }}</template>
+              <template v-if="juris?.state === 'ok'"><template v-if="juris?.requiredBefore">cycle ends {{ fmt(juris.requiredBefore) }} · </template></template>
+              <b v-else-if="juris?.state === 'due'" class="cf__late">due — required before {{ juris.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal' }}&nbsp;</b>
+              <template v-else>required before {{ juris?.requiredBefore ? fmt(juris.requiredBefore) : 'license renewal' }} · </template>
+              <input class="cf__inline-date" type="date" :value="person.record.txJurisprudenceAt ?? ''" @change="setRecordDate('txJurisprudenceAt', $event)" />
             </span>
           </div>
           <div v-for="req in cycleReqs" :key="req.id" class="cf__gate">
@@ -1257,4 +1373,78 @@ function fmtDateTime(iso: string): string {
   color: var(--color-muted-soft);
 }
 .cf__ok { color: var(--color-success-500); }
+.cf__actionswrap { position: relative; z-index: 31; }
+.cf__menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 240px;
+  z-index: 31;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgb(16 24 40 / 0.16);
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+}
+.cf__menu-it {
+  text-align: left;
+  padding: 9px 11px;
+  border: 0;
+  background: none;
+  border-radius: 7px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+.cf__menu-it:hover { background: var(--color-surface-soft); }
+.cf__menu-veil { position: fixed; inset: 0; z-index: 30; }
+.cf__enroll {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent-strong, #a8842c);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--color-ink);
+}
+.cf__enroll-t { font-weight: 700; }
+.cf__enroll-sel {
+  padding: 6px 9px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  max-width: 340px;
+}
+.cf__enroll-f {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+}
+.cf__enroll-hint { font-size: 12px; color: var(--color-muted); }
+.cf__enroll-btns { display: inline-flex; gap: 8px; margin-left: auto; }
+.cf__fact-edit { display: inline-flex; align-items: center; gap: 8px; }
+.cf__inline-date {
+  padding: 3px 7px;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.cf__inline-date:focus { outline: none; border-color: var(--color-accent-strong, #a8842c); }
 </style>

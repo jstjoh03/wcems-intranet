@@ -553,10 +553,17 @@ export function cycleItemStatus(
   const expDate = new Date(`${exp}T00:00:00`)
   const cycleStart = new Date(expDate)
   cycleStart.setFullYear(cycleStart.getFullYear() - 4)
-  const inCycle =
-    !!completedAt && new Date(`${completedAt}T00:00:00`).getTime() >= cycleStart.getTime()
-  if (inCycle) return { state: 'ok', requiredBefore: exp }
+  const done = completedAt ? new Date(`${completedAt}T00:00:00`).getTime() : null
+  if (done !== null && done >= cycleStart.getTime()) return { state: 'ok', requiredBefore: exp }
   const days = Math.ceil((expDate.getTime() - today.getTime()) / 86_400_000)
+  /* A completion inside the due-window run-up to the renewal that
+   *  started this cycle was done FOR that renewal — it satisfies the
+   *  cycle. (People complete jurisprudence just before renewing; the
+   *  new expiry then pushes the computed cycle start past the date.)
+   *  It stops counting once the NEXT renewal's due window opens. */
+  const renewalRunUp = cycleStart.getTime() - DUE_WINDOW_DAYS * 86_400_000
+  if (done !== null && done >= renewalRunUp && days > DUE_WINDOW_DAYS)
+    return { state: 'ok', requiredBefore: exp }
   return { state: days <= DUE_WINDOW_DAYS ? 'due' : 'required', requiredBefore: exp }
 }
 
