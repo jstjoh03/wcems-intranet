@@ -47,6 +47,8 @@ const ALIASES: Record<string, string> = {
   'ron thibodeaux': 'ronald thibodeaux',
   /* Paycom/EMS1 legal names → the portal's nickname forms. */
   'aletha kankel-howell': 'aletha howell',
+  /* Paycom still carries Heather Fojt's previous last name. */
+  'heather riley': 'heather fojt',
   'darry-davis luther': 'darry luther',
   'edward delany': 'ed delany',
   'joshua webb': 'josh webb',
