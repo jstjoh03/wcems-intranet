@@ -15,6 +15,7 @@
 // POST body flags (all optional):
 //   { test: true }      digest goes ONLY to Justin
 //   { force: true }     send the digest even if today isn't last Monday
+//   { month: 9 }        digest that month instead of next month (1-12)
 //   { digest: false }   skip the email
 //   { calendar: false } skip the calendar sync
 //
@@ -221,7 +222,7 @@ Deno.serve(async (req: Request) => {
   if (!secret || req.headers.get('x-sync-secret') !== secret)
     return Response.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 
-  let flags: { test?: boolean; force?: boolean; digest?: boolean; calendar?: boolean } = {}
+  let flags: { test?: boolean; force?: boolean; month?: number; digest?: boolean; calendar?: boolean } = {}
   try {
     flags = await req.json()
   } catch {
@@ -247,7 +248,8 @@ Deno.serve(async (req: Request) => {
   if (flags.digest !== false) {
     const due = isLastMondayOfMonth(today)
     if (due || flags.force) {
-      const nextM = today.m === 12 ? 1 : today.m + 1
+      const override = flags.month && flags.month >= 1 && flags.month <= 12 ? flags.month : null
+      const nextM = override ?? (today.m === 12 ? 1 : today.m + 1)
       const monthName = MONTHS[nextM - 1]
       const celebrants = (people as Person[])
         .filter((p) => Number(p.date_of_birth.slice(5, 7)) === nextM)
