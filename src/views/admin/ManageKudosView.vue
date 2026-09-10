@@ -108,9 +108,16 @@ async function removeRow(r: KudosRow) {
   armedDelete.value = null
   deleteBusy.value = true
   try {
-    const { error } = await supabase.from('kudos_submissions').delete().eq('id', r.id)
-    if (error) loadError.value = error.message
-    else rows.value = rows.value.filter((x) => x.id !== r.id)
+    const { error, count } = await supabase
+      .from('kudos_submissions')
+      .delete({ count: 'exact' })
+      .eq('id', r.id)
+    if (error) loadError.value = `Delete failed: ${error.message}`
+    else if (!count) loadError.value = 'Delete failed: no row removed (permissions).'
+    else {
+      loadError.value = null
+      rows.value = rows.value.filter((x) => x.id !== r.id)
+    }
   } finally {
     deleteBusy.value = false
   }
@@ -138,8 +145,8 @@ const count = computed(() => rows.value.length)
 
     <template v-else>
       <div v-if="loading" class="mk__quiet">Loading…</div>
-      <div v-else-if="loadError" class="mk__error">{{ loadError }}</div>
-      <div v-else-if="rows.length === 0" class="mk__quiet">
+      <div v-if="loadError" class="mk__error">{{ loadError }}</div>
+      <div v-if="!loading && !loadError && rows.length === 0" class="mk__quiet">
         No kudos yet — submissions appear here the moment the Jotform is filled out.
       </div>
 
