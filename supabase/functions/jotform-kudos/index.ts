@@ -20,7 +20,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const env = Deno.env
 
 const SENDER = 'office@wallercountyems.com'
-const NOTIFY = ['justin.stjohn@wallercountyems.com']
+const NOTIFY = ['justin.stjohn@wallercountyems.com', 'april.mancini@wallercountyems.com']
 
 /* The live Kudos form (261249366820056) uses generic field names —
    map them to readable labels; anything unmapped falls back to the
@@ -176,7 +176,7 @@ Deno.serve(async (req: Request) => {
     </div>
     <p>A new kudos submission just came in${formTitle ? ` on <b>${esc(formTitle)}</b>` : ''}:</p>
     <table style="border-collapse:collapse;width:100%;margin:6px 0 14px;">${rows || '<tr><td>No answer fields were parsed — see the stored raw payload.</td></tr>'}</table>
-    <p style="font-size:12px;color:#8a8f99;">Stored in the portal (kudos_submissions${inserted ? ` · ${inserted.id}` : ''}) for the record.</p>
+    <p style="font-size:12px;color:#8a8f99;">Saved to the portal — review it or <a href="https://employee.wallercountyems.com/admin/kudos" style="color:#182644;">turn it into a spotlight</a> under Admin &rarr; Kudos.</p>
   </div>`
   const recipient = `${fields["Recipient's first name"] ?? ''} ${fields["Recipient's last name"] ?? ''}`.trim()
   const sender = `${fields['Your first name'] ?? ''} ${fields['Your last name'] ?? ''}`.trim()

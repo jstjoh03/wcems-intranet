@@ -12,7 +12,12 @@ const fileSizeHint = computed(() =>
     : 'Up to 8 MB. JPG / PNG / WebP. Optional — the spotlight reads fine without one.',
 )
 
-const props = defineProps<{ open: boolean }>()
+const props = defineProps<{
+  open: boolean
+  /** When set (kudos → spotlight), the editor opens with these values
+   *  instead of the current spotlight's. */
+  prefill?: { personNames: string[]; blurb: string; story: string } | null
+}>()
 const emit = defineEmits<{ close: [] }>()
 
 const { current, publish, clear } = useSpotlight()
@@ -39,6 +44,12 @@ async function loadRoster() {
     fullName: r.full_name,
     title: r.title,
   }))
+  /* Prefilled opens (kudos → spotlight) get the role from the roster
+     title once it's available. */
+  if (!role.value.trim() && selectedNames.value.length) {
+    const first = roster.value.find((r) => r.fullName === selectedNames.value[0])
+    if (first?.title) role.value = first.title
+  }
 }
 
 /* Add the picked person as a chip; first pick prefills the role from
@@ -92,17 +103,27 @@ watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      selectedNames.value = current.value?.personNames?.length
-        ? [...current.value.personNames]
-        : current.value?.personName
-          ? [current.value.personName]
-          : []
-      freeText.value = selectedNames.value.join(', ')
-      picker.value = ''
-      role.value = current.value?.role ?? ''
-      tenure.value = current.value?.tenure ?? ''
-      blurb.value = current.value?.blurb ?? ''
-      story.value = current.value?.story ?? ''
+      if (props.prefill) {
+        selectedNames.value = [...props.prefill.personNames]
+        freeText.value = selectedNames.value.join(', ')
+        picker.value = ''
+        role.value = ''
+        tenure.value = ''
+        blurb.value = props.prefill.blurb
+        story.value = props.prefill.story
+      } else {
+        selectedNames.value = current.value?.personNames?.length
+          ? [...current.value.personNames]
+          : current.value?.personName
+            ? [current.value.personName]
+            : []
+        freeText.value = selectedNames.value.join(', ')
+        picker.value = ''
+        role.value = current.value?.role ?? ''
+        tenure.value = current.value?.tenure ?? ''
+        blurb.value = current.value?.blurb ?? ''
+        story.value = current.value?.story ?? ''
+      }
       photo.value = null
       removeExistingPhoto.value = false
       void loadRoster()

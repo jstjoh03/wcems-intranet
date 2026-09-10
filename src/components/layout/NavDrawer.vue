@@ -22,6 +22,7 @@ import {
   ChevronDown,
   ShieldCheck,
   BookOpen,
+  Heart,
   HeartHandshake,
   TrendingUp,
   IdCard,
@@ -124,6 +125,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Policies', to: '/admin/policies', icon: FileText },
   { label: 'Manage Admin Staff', to: '/admin/admin-staff', icon: Building2 },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
+  { label: 'Kudos', to: '/admin/kudos', icon: Heart },
   { label: 'Badge Maker', to: '/admin/badge-maker', icon: IdCard },
   { label: 'Usage', to: '/admin/usage', icon: Activity },
 ]
