@@ -22,8 +22,22 @@ const env = Deno.env
 const SENDER = 'office@wallercountyems.com'
 const NOTIFY = ['justin.stjohn@wallercountyems.com']
 
+/* The live Kudos form (261249366820056) uses generic field names —
+   map them to readable labels; anything unmapped falls back to the
+   generic prettifier so form edits keep working. */
+const LABELS: Record<string, string> = {
+  textbox1: 'Your first name',
+  textbox2: 'Your last name',
+  email3: 'Your email',
+  textbox5: "Recipient's first name",
+  textbox6: "Recipient's last name",
+  email7: "Recipient's email",
+  textarea8: 'Kudos',
+}
+
 function prettyLabel(key: string): string {
   const m = key.match(/^q\d+_(.+)$/)
+  if (m && LABELS[m[1]]) return LABELS[m[1]]
   const base = (m ? m[1] : key)
     .replace(/[_-]+/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -164,9 +178,14 @@ Deno.serve(async (req: Request) => {
     <table style="border-collapse:collapse;width:100%;margin:6px 0 14px;">${rows || '<tr><td>No answer fields were parsed — see the stored raw payload.</td></tr>'}</table>
     <p style="font-size:12px;color:#8a8f99;">Stored in the portal (kudos_submissions${inserted ? ` · ${inserted.id}` : ''}) for the record.</p>
   </div>`
+  const recipient = `${fields["Recipient's first name"] ?? ''} ${fields["Recipient's last name"] ?? ''}`.trim()
+  const sender = `${fields['Your first name'] ?? ''} ${fields['Your last name'] ?? ''}`.trim()
+  const subject = recipient
+    ? `Kudos for ${recipient}${sender ? ` — from ${sender}` : ''}`
+    : 'Kudos submission received'
   let emailed = true
   try {
-    await sendMail('Kudos submission received', html)
+    await sendMail(subject, html)
   } catch {
     emailed = false
   }
