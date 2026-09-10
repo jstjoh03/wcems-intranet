@@ -43,7 +43,7 @@ export function useExamCertAutoFile() {
   watchEffect(() => {
     if (!canEdit.value || !clindocs.ready.value || !exams.ready.value) return
     for (const a of exams.assignments.value) {
-      if (a.status !== 'submitted' || !a.passed || (a.criticalMissed?.length ?? 0) > 0) continue
+      if (a.status !== 'submitted' || !a.passed) continue
       const d = exams.definitionById(a.examId)
       if (!d || !a.submittedAt || a.scorePct === null) continue
       /* Roster identity must be loaded, or the cert would read "Staff". */

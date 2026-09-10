@@ -12,6 +12,8 @@ import { useClinicalDocs, FOLDER_LABELS, type ClinicalDocFolder } from '@/compos
 import { useExams } from '@/composables/useExams'
 import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
+import { generateCompletedExamPdf } from '@/lib/examPrintPdf'
+import { supabase } from '@/lib/supabase'
 import { useSkillsDay } from '@/composables/useSkillsDay'
 import { usePipeline } from '@/composables/usePipeline'
 import { requirementStatus, activeTransitionFor, jurisprudenceStatus, ENROLLMENT_TRACKS } from '@/constants/pipelineGates'
@@ -269,6 +271,37 @@ async function setRecordDate(key: 'txJurisprudenceAt' | 'bloodbornePathogenAt', 
 const exams = useExams()
 /* Editors viewing a file also drive cert auto-filing (clean passes). */
 const { certNameFor } = useExamCertAutoFile()
+
+/* Printable completed exam (admin) — see ClinicalExamsView twin. */
+const examPrintBusy = ref<string | null>(null)
+async function printExam(a: (typeof myExamAssignments)['value'][number]) {
+  const d = exams.definitionById(a.examId)
+  const p = person.value
+  if (!d || !p || examPrintBusy.value) return
+  examPrintBusy.value = a.id
+  try {
+    const { data, error } = await supabase.rpc('exam_review', { p_assignment: a.id })
+    if (error) throw new Error(error.message)
+    const missed = new Set<number>((data ?? []).map((r: { no: number }) => Number(r.no)))
+    const doc = await generateCompletedExamPdf({
+      definition: d,
+      assignment: a,
+      candidateName: p.fullName,
+      missed,
+      imageUrlFor: async (q) => {
+        if (!q.image || !d.slug) return null
+        const { data: u } = await supabase.storage.from('exam-assets').createSignedUrl(`${d.slug}/${q.image}`, 600)
+        return u?.signedUrl ?? null
+      },
+    })
+    const safe = p.fullName.replace(/[^A-Za-z0-9]+/g, '_')
+    doc.save(`WCEMS_Completed_Exam_${d.slug ?? 'exam'}_${safe}_${(a.submittedAt ?? '').slice(0, 10)}.pdf`)
+  } catch (e) {
+    alert(`Could not build the exam printout: ${(e as Error).message}`)
+  } finally {
+    examPrintBusy.value = null
+  }
+}
 
 function examCertDoc(a: { userId: string } & Parameters<typeof certNameFor>[0]) {
   const name = certNameFor(a)
@@ -788,7 +821,7 @@ function fmtDateTime(iso: string): string {
             <span class="cf__gate-v">
               <template v-if="a.status === 'submitted'">
                 {{ a.scorePct?.toFixed(1) }}% — <b :class="a.passed ? '' : 'cf__late'">{{ a.passed ? 'passed' : 'not passed' }}</b>
-                <template v-if="(a.criticalMissed?.length ?? 0) > 0"> · <b class="cf__late">{{ a.criticalMissed!.length }} critical item{{ a.criticalMissed!.length === 1 ? '' : 's' }} missed — targeted retest required</b></template>
+                <template v-if="(a.criticalMissed?.length ?? 0) > 0"> · {{ a.criticalMissed!.length }} critical item{{ a.criticalMissed!.length === 1 ? '' : 's' }} missed (for review)</template>
                 · {{ fmt((a.submittedAt ?? '').slice(0, 10)) }}
               </template>
               <template v-else>{{ EXAM_STATUS_LABELS[a.status] ?? a.status }}</template>
@@ -800,6 +833,14 @@ function fmtDateTime(iso: string): string {
               title="Open the completion certificate"
               @click="viewExamCert(a)"
             >View certificate</button>
+            <button
+              v-if="a.status === 'submitted'"
+              type="button"
+              class="cf__mini"
+              :disabled="examPrintBusy === a.id"
+              title="Download the completed exam — chosen answers with incorrect questions marked"
+              @click="printExam(a)"
+            >{{ examPrintBusy === a.id ? 'Building…' : 'Completed exam' }}</button>
             <button
               v-if="a.status === 'assigned'"
               type="button"

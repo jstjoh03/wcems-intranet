@@ -295,17 +295,19 @@ function isYourAnswer(item: ReviewItem, letter: string): boolean {
       </h1>
       <p class="ex__result-sub">
         Passing standard: {{ shownResult.passingPct ?? definition.passingPct }}%.
-        <template v-if="shownResult.passed && shownResult.criticalMissed.length === 0">
-          Clean pass — the protocol requirement on your credentialing checklist has been checked off
+        <template v-if="shownResult.passed">
+          The protocol requirement on your credentialing checklist has been checked off
           automatically, and a completion certificate will be added to your employee documents.
-        </template>
-        <template v-else-if="shownResult.criticalMissed.length > 0">
-          {{ shownResult.criticalMissed.length }} flagged medication-dose item{{ shownResult.criticalMissed.length === 1 ? ' was' : 's were' }} missed —
-          per policy this requires remediation and a targeted retest of that content area{{ shownResult.passed ? ', even with a passing overall score' : '' }}.
-          The Clinical Department will follow up.
+          <template v-if="shownResult.criticalMissed.length > 0">
+            {{ shownResult.criticalMissed.length }} flagged medication-dose item{{ shownResult.criticalMissed.length === 1 ? ' was' : 's were' }} missed —
+            take a minute to review {{ shownResult.criticalMissed.length === 1 ? 'it' : 'them' }} below with the protocol references.
+          </template>
         </template>
         <template v-else>
           The Clinical Department will follow up on next steps.
+          <template v-if="shownResult.criticalMissed.length > 0">
+            {{ shownResult.criticalMissed.length }} flagged medication-dose item{{ shownResult.criticalMissed.length === 1 ? ' was' : 's were' }} among the misses.
+          </template>
         </template>
       </p>
       <button type="button" class="ex__primary" @click="router.push('/clinical-development')">Back to My Progress</button>

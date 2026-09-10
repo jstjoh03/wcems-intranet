@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Play, XCircle, ExternalLink, ClipboardCheck, Award } from 'lucide-vue-next'
+import { Play, XCircle, ExternalLink, ClipboardCheck, Award, Download } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useExams, type ExamAssignment } from '@/composables/useExams'
 import { useAuthStore } from '@/stores/auth'
 import { useExamCertAutoFile } from '@/composables/useExamCertAutoFile'
+import { supabase } from '@/lib/supabase'
+import { generateCompletedExamPdf } from '@/lib/examPrintPdf'
 
 /**
  * Protocol examinations manager (/clinical/exams, editors only) — the
@@ -78,6 +80,39 @@ function isMine(a: ExamAssignment): boolean {
   return a.userId === auth.appUser?.id
 }
 
+/* Printable completed exam — questions, the candidate's chosen
+   answers, incorrect questions marked. Correct answers are never
+   included (the missed set comes from the exam_review RPC; the key
+   stays server-side). */
+const printBusy = ref<string | null>(null)
+async function printExam(a: ExamAssignment) {
+  const d = exams.definitionById(a.examId)
+  if (!d || printBusy.value) return
+  printBusy.value = a.id
+  try {
+    const { data, error } = await supabase.rpc('exam_review', { p_assignment: a.id })
+    if (error) throw new Error(error.message)
+    const missed = new Set<number>((data ?? []).map((r: { no: number }) => Number(r.no)))
+    const doc = await generateCompletedExamPdf({
+      definition: d,
+      assignment: a,
+      candidateName: nameOf(a.userId),
+      missed,
+      imageUrlFor: async (q) => {
+        if (!q.image || !d.slug) return null
+        const { data: u } = await supabase.storage.from('exam-assets').createSignedUrl(`${d.slug}/${q.image}`, 600)
+        return u?.signedUrl ?? null
+      },
+    })
+    const safe = nameOf(a.userId).replace(/[^A-Za-z0-9]+/g, '_')
+    doc.save(`WCEMS_Completed_Exam_${d.slug ?? 'exam'}_${safe}_${(a.submittedAt ?? '').slice(0, 10)}.pdf`)
+  } catch (e) {
+    alert(`Could not build the exam printout: ${(e as Error).message}`)
+  } finally {
+    printBusy.value = null
+  }
+}
+
 async function release(a: ExamAssignment) {
   if (busy.value) return
   busy.value = a.id
@@ -115,7 +150,7 @@ const { certFiled } = useExamCertAutoFile()
       <div>
         <h1 class="display ce__title">Protocol examinations</h1>
         <div class="ce__sub">
-          Assign → release when the candidate is seated → auto-graded on submit. A clean pass
+          Assign → release when the candidate is seated → auto-graded on submit. A pass
           checks the protocol-test gate on their active transition automatically.
         </div>
       </div>
@@ -207,16 +242,23 @@ const { certFiled } = useExamCertAutoFile()
           <span class="ce__score">{{ a.scorePct !== null ? `${a.scorePct}%` : '—' }}</span>
           <span
             class="ce__pass"
-            :class="a.passed && !(a.criticalMissed?.length) ? 'ce__pass--ok' : 'ce__pass--no'"
+            :class="a.passed ? 'ce__pass--ok' : 'ce__pass--no'"
           >
-            <ClipboardCheck v-if="a.passed && !(a.criticalMissed?.length)" :size="12" :stroke-width="2.5" />
-            {{ a.passed ? ((a.criticalMissed?.length) ? 'Pass — critical retest' : 'Pass') : 'Fail' }}
+            <ClipboardCheck v-if="a.passed" :size="12" :stroke-width="2.5" />
+            {{ a.passed ? 'Pass' : 'Fail' }}
           </span>
+          <button
+            type="button"
+            class="ce__dl"
+            :disabled="printBusy === a.id"
+            title="Download the completed exam — chosen answers with incorrect questions marked"
+            @click="printExam(a)"
+          ><Download :size="11" :stroke-width="2" /> {{ printBusy === a.id ? 'Building…' : 'Completed exam' }}</button>
           <span v-if="certFiled(a)" class="ce__cert" title="Completion certificate filed to the employee's Documents">
             <Award :size="11" :stroke-width="2" /> cert filed
           </span>
           <span v-if="a.criticalMissed?.length" class="ce__crit">
-            critical missed: Q{{ a.criticalMissed.join(', Q') }}
+            critical item{{ a.criticalMissed.length === 1 ? '' : 's' }} missed (for review): Q{{ a.criticalMissed.join(', Q') }}
           </span>
         </div>
         <div v-if="results.length === 0" class="ce__quiet ce__quiet--pad">No submissions yet.</div>
@@ -301,6 +343,21 @@ const { certFiled } = useExamCertAutoFile()
 .ce__pass--ok { background: var(--color-success-50); color: var(--color-success-500); }
 .ce__pass--no { background: oklch(0.96 0.05 30); color: oklch(0.48 0.15 30); }
 .ce__crit { flex-basis: 100%; font-size: 11px; color: oklch(0.48 0.13 45); }
+.ce__dl {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-brand-600);
+  background: none;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.ce__dl:hover { border-color: var(--color-brand-600); }
+.ce__dl:disabled { opacity: 0.5; cursor: default; }
 .ce__cert {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 10.5px; font-weight: 700; color: var(--color-accent-strong, #a8842c);
