@@ -135,9 +135,8 @@ const count = computed(() => rows.value.length)
         <span v-if="count" class="mk__count">{{ count }}</span>
       </div>
       <p class="mk__sub">
-        Every submission from the kudos Jotform lands here automatically (and emails you and April).
-        A great write-up becomes the dashboard spotlight in one step — the editor opens prefilled,
-        polish and publish.
+        Submissions from the kudos form arrive here automatically. A great write-up can become
+        the dashboard spotlight in one step — the editor opens prefilled, ready to polish and publish.
       </p>
     </header>
 
