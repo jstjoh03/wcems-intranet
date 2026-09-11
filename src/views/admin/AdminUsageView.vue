@@ -9,6 +9,12 @@ import { useUsageMetrics, type DailyPoint } from '@/composables/useUsageMetrics'
 const auth = useAuthStore()
 const {
   overview,
+  detailUser,
+  detailRoutes,
+  detailDaily,
+  detailLoading,
+  loadUserDetail,
+  closeUserDetail,
   daily,
   hourly,
   engagement,
@@ -205,6 +211,38 @@ const buckets = computed(() => {
 const showDormant = ref(false)
 
 const sectionMax = computed(() => Math.max(1, ...sections.value.map((s) => s.views)))
+
+/* ── Per-person drill-down ────────────────────────────────────────── */
+const personQuery = ref('')
+const personOptions = computed(() =>
+  [...engagement.value].sort((a, b) => a.full_name.localeCompare(b.full_name)),
+)
+function pickPerson() {
+  const hit = personOptions.value.find(
+    (p) => p.full_name.toLowerCase() === personQuery.value.trim().toLowerCase(),
+  )
+  if (hit) void loadUserDetail(hit.user_id, hit.full_name)
+}
+function openPerson(id: string, name: string) {
+  personQuery.value = name
+  void loadUserDetail(id, name)
+  requestAnimationFrame(() => document.getElementById('person-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+const detailChart = computed(() => {
+  const byDay = new Map(detailDaily.value.map((d) => [d.day, d.views]))
+  const pts: Array<{ key: string; value: number; label: string }> = []
+  for (let i = 29; i >= 0; i--) {
+    const day = centralDateISO(i)
+    const v = byDay.get(day) ?? 0
+    pts.push({ key: day, value: v, label: `${dayLabel(day)} — ${v} views` })
+  }
+  return buildBars(pts)
+})
+const detailRouteMax = computed(() => Math.max(1, ...detailRoutes.value.map((r) => r.views)))
+const detailTotals = computed(() => ({
+  views: detailDaily.value.reduce((n, d) => n + d.views, 0),
+  days: detailDaily.value.filter((d) => d.views > 0).length,
+}))
 </script>
 
 <template>
@@ -440,7 +478,7 @@ const sectionMax = computed(() => Math.max(1, ...sections.value.map((s) => s.vie
             </tr>
           </thead>
           <tbody>
-            <tr v-for="u in topUsers" :key="u.user_id">
+            <tr v-for="u in topUsers" :key="u.user_id" class="usage__rowlink" @click="openPerson(u.user_id, u.full_name)">
               <td>{{ u.full_name }}</td>
               <td><span class="usage__chip">{{ u.role }}</span></td>
               <td class="num">{{ u.views }}</td>
@@ -448,6 +486,72 @@ const sectionMax = computed(() => Math.max(1, ...sections.value.map((s) => s.vie
             </tr>
           </tbody>
         </table>
+      </AppCard>
+
+      <!-- PER-PERSON DRILL-DOWN -->
+      <AppCard id="person-detail" class="usage__panel">
+        <Eyebrow class="mb-2">Person drill-down · last 30 days</Eyebrow>
+        <div class="usage__pickrow">
+          <input
+            v-model="personQuery"
+            list="usage-people"
+            type="text"
+            class="usage__pick"
+            placeholder="Type a name… (or click a row above)"
+            @change="pickPerson"
+          />
+          <datalist id="usage-people">
+            <option v-for="p in personOptions" :key="p.user_id" :value="p.full_name" />
+          </datalist>
+          <button v-if="detailUser" type="button" class="btn btn-ghost" @click="closeUserDetail(); personQuery = ''">Clear</button>
+        </div>
+
+        <p v-if="!detailUser" class="usage__empty">
+          Pick anyone on the roster to see the pages they actually use and their day-by-day activity.
+        </p>
+        <template v-else>
+          <div class="usage__dhead">
+            <span class="usage__dname">{{ detailUser.name }}</span>
+            <span class="usage__hint">
+              {{ detailTotals.views }} views · active {{ detailTotals.days }} of 30 days
+            </span>
+            <span v-if="detailLoading" class="usage__hint">loading…</span>
+          </div>
+
+          <div class="usage__chartwrap" @mouseleave="hideTip">
+            <svg :viewBox="`0 0 ${CHART_W} ${CHART_H}`" class="usage__chart" role="img" :aria-label="`Daily views for ${detailUser.name}`">
+              <line :x1="PAD_L" :x2="CHART_W - 4" :y1="CHART_H - PAD_B" :y2="CHART_H - PAD_B" class="usage__axis" />
+              <rect
+                v-for="bar in detailChart.bars"
+                :key="bar.key"
+                :x="bar.x" :y="bar.y" :width="bar.w" :height="bar.h"
+                rx="2"
+                class="usage__bar"
+                @mousemove="showTip('person', bar, $event)"
+              />
+              <text
+                v-for="(bar, i) in detailChart.bars"
+                :key="`l-${bar.key}`"
+                v-show="xLabelEvery(i, detailChart.bars.length, 7)"
+                :x="bar.x + bar.w / 2" :y="CHART_H - 5"
+                class="usage__tick" text-anchor="middle"
+              >{{ dayLabel(bar.key) }}</text>
+            </svg>
+            <div v-if="tip && tip.chart === 'person'" class="usage__tip" :style="{ left: tip.x + 'px', top: tip.y + 'px' }">
+              {{ tip.text }}
+            </div>
+          </div>
+
+          <div class="usage__bars usage__bars--tight">
+            <div v-for="r in detailRoutes" :key="r.route" class="usage__brow">
+              <span class="usage__blabel"><code class="usage__path">{{ r.route }}</code></span>
+              <span class="usage__btrack"><span class="usage__bfill" :style="{ width: (r.views / detailRouteMax) * 100 + '%' }"></span></span>
+              <span class="usage__bnum">{{ r.views }}</span>
+              <span class="usage__bhint">{{ relativeTime(r.last_at) }}</span>
+            </div>
+            <p v-if="!detailRoutes.length && !detailLoading" class="usage__empty">No page views in the last 30 days.</p>
+          </div>
+        </template>
       </AppCard>
 
       <!-- NEVER SIGNED IN -->
@@ -789,4 +893,21 @@ const sectionMax = computed(() => Math.max(1, ...sections.value.map((s) => s.vie
 .usage__list-item:last-child {
   border-bottom: none;
 }
+.usage__rowlink { cursor: pointer; }
+.usage__rowlink:hover td { background: var(--color-surface-soft); }
+.usage__pickrow { display: flex; gap: 8px; margin-bottom: 12px; }
+.usage__pick {
+  flex: 1;
+  max-width: 320px;
+  font-size: 13px;
+  padding: 7px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.usage__pick:focus { outline: none; border-color: var(--color-accent-strong, #a8842c); }
+.usage__dhead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.usage__dname { font-weight: 700; font-size: 15px; color: var(--color-ink); }
+.usage__bars--tight { margin-top: 12px; }
 </style>

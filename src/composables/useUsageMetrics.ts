@@ -102,6 +102,12 @@ function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 86400000).toISOString()
 }
 
+export interface UserRouteRow {
+  route: string
+  views: number
+  last_at: string | null
+}
+
 export function useUsageMetrics() {
   const overview = ref<UsageOverview | null>(null)
   const daily = ref<DailyPoint[]>([])
@@ -111,6 +117,10 @@ export function useUsageMetrics() {
   const topRoutes = ref<TopRoute[]>([])
   const topUsers = ref<TopUser[]>([])
   const neverSignedIn = ref<NeverSignedInUser[]>([])
+  const detailUser = ref<{ id: string; name: string } | null>(null)
+  const detailRoutes = ref<UserRouteRow[]>([])
+  const detailDaily = ref<Array<{ day: string; views: number }>>([])
+  const detailLoading = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
 
@@ -255,6 +265,51 @@ export function useUsageMetrics() {
     }
   }
 
+  async function loadUserDetail(userId: string, name: string) {
+    detailUser.value = { id: userId, name }
+    detailLoading.value = true
+    const auth2 = useAuthStore()
+    if (auth2.usingDevStub) {
+      detailRoutes.value = [
+        { route: '/', views: 42, last_at: new Date().toISOString() },
+        { route: '/protocols', views: 31, last_at: new Date(Date.now() - 86400000).toISOString() },
+        { route: '/clinical-development', views: 12, last_at: new Date(Date.now() - 3 * 86400000).toISOString() },
+        { route: '/directory', views: 6, last_at: new Date(Date.now() - 5 * 86400000).toISOString() },
+      ]
+      detailDaily.value = Array.from({ length: 30 }, (_, i) => ({
+        day: new Date(Date.now() - (29 - i) * 86400000).toISOString().slice(0, 10),
+        views: (i * 13) % 7 === 0 ? 0 : 2 + ((i * 5) % 9),
+      }))
+      detailLoading.value = false
+      return
+    }
+    try {
+      const [routesRes, dailyRes] = await Promise.all([
+        supabase.rpc('admin_usage_user_routes', { p_user: userId, days: 30, max_rows: 20 }),
+        supabase.rpc('admin_usage_user_daily', { p_user: userId, days: 30 }),
+      ])
+      if (routesRes.error || dailyRes.error) {
+        error.value = (routesRes.error ?? dailyRes.error)!.message
+      }
+      detailRoutes.value = ((routesRes.data ?? []) as UserRouteRow[]).map((r) => ({
+        ...r,
+        views: Number(r.views),
+      }))
+      detailDaily.value = ((dailyRes.data ?? []) as Array<{ day: string; views: number }>).map((d) => ({
+        day: d.day,
+        views: Number(d.views),
+      }))
+    } finally {
+      detailLoading.value = false
+    }
+  }
+
+  function closeUserDetail() {
+    detailUser.value = null
+    detailRoutes.value = []
+    detailDaily.value = []
+  }
+
   const reachPct = computed(() => {
     const o = overview.value
     if (!o || o.roster === 0) return 0
@@ -285,6 +340,12 @@ export function useUsageMetrics() {
     engagement,
     sections,
     weekCompare,
+    detailUser,
+    detailRoutes,
+    detailDaily,
+    detailLoading,
+    loadUserDetail,
+    closeUserDetail,
     topRoutes,
     topUsers,
     neverSignedIn,
