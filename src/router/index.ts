@@ -165,6 +165,16 @@ const routes: RouteRecordRaw[] = [
     name: 'clinical-development',
     component: () => import('@/views/ClinicalDevelopmentView.vue'),
   },
+  /* ── Scheduling module (Aladtec replacement) ─────────────────────
+     Soft-launched: reachable by URL only, no nav entry until the
+     parallel run against Aladtec finishes. The view itself gates to
+     Global admins / Schedulers during the build; RLS enforces
+     server-side. */
+  {
+    path: '/schedule',
+    name: 'schedule',
+    component: () => import('@/views/schedule/ScheduleView.vue'),
+  },
   /* ── Redesigned Clinical Development section (phase 1) ───────────
      Soft-launched: reachable by URL for board viewers while the
      legacy board above stays in the nav. Views redirect non-viewers
