@@ -25,7 +25,7 @@ import { useAuthStore } from '@/stores/auth'
 // ── types ────────────────────────────────────────────────────────────
 
 export type Platoon = 'A' | 'B' | 'C'
-export type SchedLevel = 'global_admin' | 'scheduler' | 'supervisor' | 'member'
+export type SchedLevel = 'global_admin' | 'scheduler' | 'supervisor' | 'member' | 'none'
 
 export interface SchedUnit {
   id: string
@@ -577,14 +577,18 @@ export function dayModel(dateIso: string): DayModel {
     }
 
     const extras = dayEntries
-      .filter((e) => e.unitId === unit.id && (e.kind === 'extra' || e.kind === 'student'))
+      .filter(
+        (e) =>
+          e.unitId === unit.id &&
+          (e.kind === 'extra' || e.kind === 'student' || e.kind === 'event'),
+      )
       .sort((a, b) => a.startAt.localeCompare(b.startAt))
       .map((e) => {
         const who = displayName(e.userId)
         return {
           entryId: e.id,
           userId: e.userId,
-          name: who.name,
+          name: who.name || e.studentProgram || e.note || 'Open slot',
           credential: who.credential,
           start: hhmm(e.startAt),
           end: hhmm(e.endAt),
@@ -605,7 +609,7 @@ export function dayModel(dateIso: string): DayModel {
       return {
         entryId: e.id,
         userId: e.userId,
-        name: who.name,
+        name: who.name || e.studentProgram || e.note || 'Open slot',
         credential: who.credential,
         start: hhmm(e.startAt),
         end: hhmm(e.endAt),
@@ -658,6 +662,427 @@ export function daySummary(dateIso: string, myUserId: string | null) {
     }
   }
   return { platoon, open, mine, myStart, myEnd }
+}
+
+// ── shift lookups for request forms ─────────────────────────────────
+
+export interface UpcomingShift {
+  dateIso: string
+  seatId: string
+  unitCode: string
+  seatLabel: string
+}
+
+/** Days in [fromIso, fromIso+days) where the user holds a seat. */
+function upcomingShiftsFor(userId: string, fromIso: string, days = 45): UpcomingShift[] {
+  const out: UpcomingShift[] = []
+  const unitByid = new Map(units.value.map((u) => [u.id, u]))
+  for (let i = 0; i < days; i++) {
+    const iso = addDaysIso(fromIso, i)
+    const platoon = platoonFor(iso)
+    const dayEntries = entries.value.filter((e) => e.workDate === iso)
+    for (const seat of seats.value.filter((s) => s.active)) {
+      const overrides = dayEntries.filter(
+        (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
+      )
+      const holds =
+        overrides.length > 0
+          ? overrides.some((e) => e.userId === userId)
+          : rotationOccupant(seat.id, platoon, iso) === userId
+      if (holds) {
+        const u = unitByid.get(seat.unitId)
+        out.push({ dateIso: iso, seatId: seat.id, unitCode: u?.code ?? '', seatLabel: seat.label })
+      }
+    }
+  }
+  return out
+}
+
+export interface OpenSeatInfo {
+  seatId: string
+  unitCode: string
+  seatLabel: string
+  entryId: string | null
+  start: string
+  end: string
+}
+
+function openSeatsFor(dateIso: string): OpenSeatInfo[] {
+  const model = dayModel(dateIso)
+  const out: OpenSeatInfo[] = []
+  for (const um of model.units) {
+    for (const sm of um.seats) {
+      for (const row of sm.rows) {
+        if (row.open) {
+          out.push({
+            seatId: sm.seat.id,
+            unitCode: um.unit.code,
+            seatLabel: sm.seat.label,
+            entryId: row.entryId,
+            start: row.start,
+            end: row.end,
+          })
+        }
+      }
+    }
+  }
+  return out
+}
+
+/** 'HHmm' or 'HH:mm' → 'HH:mm'. */
+function normTime(t: string): string {
+  const clean = t.replace(':', '').padStart(4, '0')
+  return `${clean.slice(0, 2)}:${clean.slice(2)}`
+}
+
+/**
+ * Split the 0600→0600 work date around a requested window. `until` at or
+ * before `from` rolls to the next day (0600–0600 = full shift).
+ */
+function shiftWindow(dateIso: string, from: string, until: string) {
+  const f = normTime(from)
+  const u = normTime(until)
+  const dayStart = centralTs(dateIso, '06:00')
+  const dayEnd = centralTs(addDaysIso(dateIso, 1), '06:00')
+  const reqStart = f >= '06:00' ? centralTs(dateIso, f) : centralTs(addDaysIso(dateIso, 1), f)
+  let reqEnd = u > '06:00' && u > f && f >= '06:00'
+    ? centralTs(dateIso, u)
+    : centralTs(addDaysIso(dateIso, 1), u)
+  if (u === '06:00' || reqEnd <= reqStart) reqEnd = dayEnd
+  const before = reqStart > dayStart ? { start: dayStart, end: reqStart } : null
+  const after = reqEnd < dayEnd ? { start: reqEnd, end: dayEnd } : null
+  return { dayStart, dayEnd, reqStart, reqEnd, before, after }
+}
+
+// ── request mutations ────────────────────────────────────────────────
+
+interface TimeOffDay {
+  dateIso: string
+  from: string // 'HH:mm' | '06:00' for full
+  until: string
+  seatId: string | null
+}
+
+async function createTimeOffRequests(
+  offType: string,
+  daysReq: TimeOffDay[],
+  comments: string,
+): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me) return 'Not signed in'
+  const rows = daysReq.map((d) => {
+    const w = shiftWindow(d.dateIso, d.from, d.until)
+    return {
+      type: 'time_off',
+      requester_id: me,
+      seat_id: d.seatId,
+      work_date: d.dateIso,
+      start_at: w.reqStart,
+      end_at: w.reqEnd,
+      off_type: offType,
+      comments: comments || null,
+    }
+  })
+  const res = await supabase.from('sched_requests').insert(rows)
+  if (res.error) return res.error.message
+  await loadRequests()
+  return null
+}
+
+async function createExtraRequest(opts: {
+  dateIso: string
+  from: string
+  until: string
+  unitId: string | null
+  positionLabel: string
+  timeType: string
+  comments: string
+}): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me) return 'Not signed in'
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const unit = units.value.find((u) => u.id === opts.unitId)
+  const res = await supabase.from('sched_requests').insert({
+    type: 'extra_hours',
+    requester_id: me,
+    work_date: opts.dateIso,
+    start_at: w.reqStart,
+    end_at: w.reqEnd,
+    time_type: opts.timeType,
+    unit_code: unit?.code ?? null,
+    position_label: opts.positionLabel || null,
+    comments: opts.comments || null,
+  })
+  if (res.error) return res.error.message
+  await loadRequests()
+  return null
+}
+
+async function createPickupRequest(opts: {
+  dateIso: string
+  seatId: string
+  entryId: string | null
+  from: string
+  until: string
+  comments: string
+}): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me) return 'Not signed in'
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const seat = seats.value.find((s) => s.id === opts.seatId)
+  const unit = units.value.find((u) => u.id === seat?.unitId)
+  const res = await supabase.from('sched_requests').insert({
+    type: 'pickup',
+    requester_id: me,
+    seat_id: opts.seatId,
+    entry_id: opts.entryId,
+    work_date: opts.dateIso,
+    start_at: w.reqStart,
+    end_at: w.reqEnd,
+    unit_code: unit?.code ?? null,
+    position_label: seat?.label ?? null,
+    comments: opts.comments || null,
+  })
+  if (res.error) return res.error.message
+  await loadRequests()
+  return null
+}
+
+async function cancelRequest(id: string): Promise<string | null> {
+  const res = await supabase
+    .from('sched_requests')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('status', 'pending')
+  if (res.error) return res.error.message
+  await loadRequests()
+  return null
+}
+
+/** Find the seat a user effectively holds on a date (entry override first,
+ *  then rotation), or null if they aren't on the board that day. */
+function seatHeldBy(userId: string, dateIso: string): string | null {
+  const dayEntries = entries.value.filter((e) => e.workDate === dateIso)
+  for (const e of dayEntries) {
+    if (e.seatId && e.userId === userId && e.kind !== 'timeoff' && e.status !== 'off') return e.seatId
+  }
+  const platoon = platoonFor(dateIso)
+  for (const seat of seats.value.filter((s) => s.active)) {
+    const hasOverride = dayEntries.some(
+      (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
+    )
+    if (!hasOverride && rotationOccupant(seat.id, platoon, dateIso) === userId) return seat.id
+  }
+  return null
+}
+
+/**
+ * Approve a request and apply it to the calendar. Denial just records the
+ * decision. Approval writes deviation entries:
+ *  - time_off: requested window becomes an OPEN entry on the seat, any
+ *    remainder stays with the person; plus an off-record row for reports.
+ *  - pickup: the requester fills the open window (existing open entry is
+ *    claimed when it matches, otherwise entries are written around it).
+ *  - extra_hours: a standalone extra entry on the unit.
+ */
+async function decideRequest(
+  req: SchedRequest,
+  approve: boolean,
+  note: string,
+): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id ?? null
+
+  if (approve) {
+    if (req.type === 'time_off' && req.workDate) {
+      const seatId = req.seatId ?? seatHeldBy(req.requesterId, req.workDate)
+      const w = {
+        dayStart: centralTs(req.workDate, '06:00'),
+        dayEnd: centralTs(addDaysIso(req.workDate, 1), '06:00'),
+      }
+      const rows: Record<string, unknown>[] = []
+      if (seatId) {
+        rows.push({
+          work_date: req.workDate,
+          seat_id: seatId,
+          user_id: null,
+          start_at: req.startAt,
+          end_at: req.endAt,
+          kind: 'giveaway_cover',
+          status: 'open',
+          source_request: req.id,
+        })
+        if (req.startAt && req.startAt > w.dayStart) {
+          rows.push({
+            work_date: req.workDate,
+            seat_id: seatId,
+            user_id: req.requesterId,
+            start_at: w.dayStart,
+            end_at: req.startAt,
+            kind: 'rotation',
+            status: 'scheduled',
+            source_request: req.id,
+          })
+        }
+        if (req.endAt && req.endAt < w.dayEnd) {
+          rows.push({
+            work_date: req.workDate,
+            seat_id: seatId,
+            user_id: req.requesterId,
+            start_at: req.endAt,
+            end_at: w.dayEnd,
+            kind: 'rotation',
+            status: 'scheduled',
+            source_request: req.id,
+          })
+        }
+      }
+      rows.push({
+        work_date: req.workDate,
+        seat_id: seatId,
+        user_id: req.requesterId,
+        start_at: req.startAt,
+        end_at: req.endAt,
+        kind: 'timeoff',
+        status: 'off',
+        off_type: req.offType,
+        source_request: req.id,
+      })
+      const ins = await supabase.from('sched_entries').insert(rows)
+      if (ins.error) return ins.error.message
+    } else if (req.type === 'extra_hours' && req.workDate) {
+      const unit = units.value.find((u) => u.code === req.unitCode)
+      const ins = await supabase.from('sched_entries').insert({
+        work_date: req.workDate,
+        unit_id: unit?.id ?? null,
+        user_id: req.requesterId,
+        start_at: req.startAt,
+        end_at: req.endAt,
+        kind: 'extra',
+        status: 'scheduled',
+        time_type: req.timeType ?? 'regular',
+        note: req.positionLabel,
+        source_request: req.id,
+      })
+      if (ins.error) return ins.error.message
+    } else if (req.type === 'pickup' && req.workDate && req.seatId) {
+      if (req.entryId) {
+        // An explicit open entry exists. Claim it when the window matches;
+        // otherwise claim the requested slice and leave the rest open.
+        const openEntry = entries.value.find((e) => e.id === req.entryId)
+        if (openEntry && openEntry.startAt === req.startAt && openEntry.endAt === req.endAt) {
+          const upd = await supabase
+            .from('sched_entries')
+            .update({
+              user_id: req.requesterId,
+              status: 'scheduled',
+              kind: 'pickup',
+              source_request: req.id,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', req.entryId)
+          if (upd.error) return upd.error.message
+        } else if (openEntry) {
+          const rows: Record<string, unknown>[] = [
+            {
+              work_date: req.workDate,
+              seat_id: req.seatId,
+              user_id: req.requesterId,
+              start_at: req.startAt,
+              end_at: req.endAt,
+              kind: 'pickup',
+              status: 'scheduled',
+              source_request: req.id,
+            },
+          ]
+          if (req.startAt && openEntry.startAt < req.startAt) {
+            rows.push({
+              work_date: req.workDate,
+              seat_id: req.seatId,
+              user_id: null,
+              start_at: openEntry.startAt,
+              end_at: req.startAt,
+              kind: openEntry.kind,
+              status: 'open',
+            })
+          }
+          if (req.endAt && openEntry.endAt > req.endAt) {
+            rows.push({
+              work_date: req.workDate,
+              seat_id: req.seatId,
+              user_id: null,
+              start_at: req.endAt,
+              end_at: openEntry.endAt,
+              kind: openEntry.kind,
+              status: 'open',
+            })
+          }
+          const ins = await supabase.from('sched_entries').insert(rows)
+          if (ins.error) return ins.error.message
+          const del = await supabase.from('sched_entries').delete().eq('id', req.entryId)
+          if (del.error) return del.error.message
+        }
+      } else {
+        // Rotation-open seat (no entry rows yet).
+        const dayStart = centralTs(req.workDate, '06:00')
+        const dayEnd = centralTs(addDaysIso(req.workDate, 1), '06:00')
+        const rows: Record<string, unknown>[] = [
+          {
+            work_date: req.workDate,
+            seat_id: req.seatId,
+            user_id: req.requesterId,
+            start_at: req.startAt,
+            end_at: req.endAt,
+            kind: 'pickup',
+            status: 'scheduled',
+            source_request: req.id,
+          },
+        ]
+        if (req.startAt && req.startAt > dayStart) {
+          rows.push({
+            work_date: req.workDate,
+            seat_id: req.seatId,
+            user_id: null,
+            start_at: dayStart,
+            end_at: req.startAt,
+            kind: 'rotation',
+            status: 'open',
+          })
+        }
+        if (req.endAt && req.endAt < dayEnd) {
+          rows.push({
+            work_date: req.workDate,
+            seat_id: req.seatId,
+            user_id: null,
+            start_at: req.endAt,
+            end_at: dayEnd,
+            kind: 'rotation',
+            status: 'open',
+          })
+        }
+        const ins = await supabase.from('sched_entries').insert(rows)
+        if (ins.error) return ins.error.message
+      }
+    }
+  }
+
+  const upd = await supabase
+    .from('sched_requests')
+    .update({
+      status: approve ? 'approved' : 'denied',
+      decided_by: me,
+      decided_at: new Date().toISOString(),
+      decision_note: note || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.id)
+  if (upd.error) return upd.error.message
+
+  await Promise.all([loadRequests(), rangeStart.value ? loadRange(rangeStart.value, rangeEnd.value) : Promise.resolve()])
+  return null
 }
 
 // ── mutations (editor-gated by RLS; callers re-load after) ──────────
@@ -716,7 +1141,10 @@ async function saveUnitOrder(orderedIds: string[]): Promise<string | null> {
   return null
 }
 
-async function setAccess(userId: string, lvl: 'global_admin' | 'scheduler' | null): Promise<string | null> {
+async function setAccess(
+  userId: string,
+  lvl: 'global_admin' | 'scheduler' | 'none' | null,
+): Promise<string | null> {
   if (lvl === null) {
     const res = await supabase.from('sched_access').delete().eq('user_id', userId)
     if (res.error) return res.error.message
@@ -806,5 +1234,13 @@ export function useSchedule() {
     saveUnitOrder,
     setAccess,
     fetchAccessList,
+    // requests
+    upcomingShiftsFor,
+    openSeatsFor,
+    createTimeOffRequests,
+    createExtraRequest,
+    createPickupRequest,
+    cancelRequest,
+    decideRequest,
   }
 }

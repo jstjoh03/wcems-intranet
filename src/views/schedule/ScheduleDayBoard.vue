@@ -67,7 +67,9 @@ const stations = computed(() => {
         </template>
 
         <div v-for="ex in um.extras" :key="ex.entryId ?? ex.name" class="db__row db__row--extra">
-          <span class="db__seat">{{ ex.kind === 'student' ? 'Student' : 'Extra' }}</span>
+          <span class="db__seat">{{
+            ex.kind === 'student' ? 'Student' : ex.kind === 'event' ? 'Event' : 'Extra'
+          }}</span>
           <span class="db__name">
             {{ ex.name }}<span v-if="ex.credential" class="db__cred">, {{ ex.credential }}</span>
           </span>

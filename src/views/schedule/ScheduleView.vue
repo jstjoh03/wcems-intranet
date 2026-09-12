@@ -4,6 +4,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSchedule'
 import ScheduleMonthBoard from './ScheduleMonthBoard.vue'
 import ScheduleDayBoard from './ScheduleDayBoard.vue'
+import ScheduleWeekBoard from './ScheduleWeekBoard.vue'
+import SchedulePeriodBoard from './SchedulePeriodBoard.vue'
+import ScheduleRequestsPanel from './ScheduleRequestsPanel.vue'
+import ScheduleMembersPanel from './ScheduleMembersPanel.vue'
 import ScheduleSetupPanel from './ScheduleSetupPanel.vue'
 
 /**
@@ -16,9 +20,21 @@ const route = useRoute()
 const router = useRouter()
 const sched = useSchedule()
 
-type Tab = 'month' | 'day' | 'setup'
+type Tab = 'month' | 'day' | 'week' | 'period' | 'requests' | 'members' | 'setup'
 const tab = ref<Tab>('month')
 const dateIso = ref(todayCentralIso())
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'month', label: 'Month' },
+  { key: 'day', label: 'Day' },
+  { key: 'week', label: 'Week' },
+  { key: 'period', label: 'Pay period' },
+  { key: 'requests', label: 'Requests' },
+  { key: 'members', label: 'Members' },
+  { key: 'setup', label: 'Setup' },
+]
+
+const showsDateNav = computed(() => tab.value === 'month' || tab.value === 'day' || tab.value === 'week')
 
 const monthAnchor = computed(() => dateIso.value.slice(0, 7)) // YYYY-MM
 
@@ -36,6 +52,19 @@ const dayLabel = computed(() =>
     day: 'numeric',
     year: 'numeric',
   }),
+)
+
+const weekLabel = computed(() => {
+  const d = new Date(`${dateIso.value}T00:00:00`)
+  const start = addDaysIso(dateIso.value, -d.getDay())
+  const end = addDaysIso(start, 6)
+  const fmt = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return `Week of ${fmt(start)} – ${fmt(end)}`
+})
+
+const periodTitle = computed(() =>
+  tab.value === 'month' ? monthLabel.value : tab.value === 'week' ? weekLabel.value : dayLabel.value,
 )
 
 function shiftMonth(delta: number) {
@@ -72,6 +101,10 @@ async function loadVisibleRange() {
   await sched.loadRange(start, end)
 }
 
+async function onPeriodRange(start: string, end: string) {
+  await sched.loadRange(start, end)
+}
+
 onMounted(async () => {
   await sched.ensureLoaded()
   if (typeof route.query.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.d)) {
@@ -82,6 +115,13 @@ onMounted(async () => {
 
 watch(monthAnchor, () => {
   void loadVisibleRange()
+})
+
+watch(tab, (t, prev) => {
+  // returning from the pay-period board, restore the month-window load
+  if (prev === 'period' && (t === 'month' || t === 'day' || t === 'week')) {
+    void loadVisibleRange()
+  }
 })
 
 watch(dateIso, (v) => {
@@ -109,38 +149,38 @@ watch(dateIso, (v) => {
         </div>
         <div class="sched__tabs" role="tablist">
           <button
-            v-for="t in (['month', 'day', 'setup'] as const)"
-            :key="t"
+            v-for="t in TABS"
+            :key="t.key"
             class="sched__tab"
-            :class="{ 'sched__tab--on': tab === t }"
+            :class="{ 'sched__tab--on': tab === t.key }"
             role="tab"
-            :aria-selected="tab === t"
-            @click="tab = t"
+            :aria-selected="tab === t.key"
+            @click="tab = t.key"
           >
-            {{ t === 'month' ? 'Month' : t === 'day' ? 'Day' : 'Setup' }}
+            {{ t.label }}
           </button>
         </div>
       </header>
 
-      <div v-if="tab !== 'setup'" class="sched__nav">
+      <div v-if="showsDateNav" class="sched__nav">
         <div class="sched__nav-arrows">
           <button
             class="sched__nav-btn"
-            :aria-label="tab === 'month' ? 'Previous month' : 'Previous day'"
-            @click="tab === 'month' ? shiftMonth(-1) : shiftDay(-1)"
+            aria-label="Previous"
+            @click="tab === 'month' ? shiftMonth(-1) : tab === 'week' ? shiftDay(-7) : shiftDay(-1)"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
           </button>
           <button class="sched__nav-btn sched__nav-btn--today" @click="goToday">Today</button>
           <button
             class="sched__nav-btn"
-            :aria-label="tab === 'month' ? 'Next month' : 'Next day'"
-            @click="tab === 'month' ? shiftMonth(1) : shiftDay(1)"
+            aria-label="Next"
+            @click="tab === 'month' ? shiftMonth(1) : tab === 'week' ? shiftDay(7) : shiftDay(1)"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
           </button>
         </div>
-        <h2 class="sched__period">{{ tab === 'month' ? monthLabel : dayLabel }}</h2>
+        <h2 class="sched__period">{{ periodTitle }}</h2>
         <label class="sched__jump">
           <span class="sr-only">Jump to date</span>
           <input v-model="dateIso" type="date" class="sched__jump-input" />
@@ -151,6 +191,14 @@ watch(dateIso, (v) => {
 
       <ScheduleMonthBoard v-if="tab === 'month'" :month="monthAnchor" @open-day="openDay" />
       <ScheduleDayBoard v-else-if="tab === 'day'" :date-iso="dateIso" />
+      <ScheduleWeekBoard v-else-if="tab === 'week'" :date-iso="dateIso" @open-day="openDay" />
+      <SchedulePeriodBoard
+        v-else-if="tab === 'period'"
+        @open-day="openDay"
+        @range="onPeriodRange"
+      />
+      <ScheduleRequestsPanel v-else-if="tab === 'requests'" />
+      <ScheduleMembersPanel v-else-if="tab === 'members'" />
       <ScheduleSetupPanel v-else />
     </template>
   </div>

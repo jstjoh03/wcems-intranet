@@ -102,44 +102,9 @@ async function moveUnit(unitId: string, delta: number) {
   orderSaving.value = false
 }
 
-// ── access levels ────────────────────────────────────────────────────
-
-const access = ref<Map<string, string>>(new Map())
-const accessLoaded = ref(false)
-
 onMounted(async () => {
   await sched.ensureLoaded()
-  const rows = await sched.fetchAccessList()
-  access.value = new Map(rows.map((r) => [r.userId, r.level]))
-  accessLoaded.value = true
 })
-
-const LEVEL_LABELS: Record<string, string> = {
-  global_admin: 'Global admin',
-  scheduler: 'Scheduler',
-  supervisor: 'Supervisor',
-  member: 'Member',
-}
-
-function effectiveLevel(p: { id: string; role: string }): string {
-  const granted = access.value.get(p.id)
-  if (granted) return granted
-  if (p.role === 'admin' || p.role === 'supervisor') return 'supervisor'
-  return 'member'
-}
-
-async function changeAccess(userId: string, ev: Event) {
-  const val = (ev.target as HTMLSelectElement).value
-  const lvl = val === 'global_admin' || val === 'scheduler' ? val : null
-  const err = await sched.setAccess(userId, lvl)
-  if (err) {
-    saveError.value = err
-    return
-  }
-  if (lvl) access.value.set(userId, lvl)
-  else access.value.delete(userId)
-  access.value = new Map(access.value)
-}
 </script>
 
 <template>
@@ -215,41 +180,7 @@ async function changeAccess(userId: string, ev: Event) {
       </div>
     </section>
 
-    <section class="setup__section">
-      <h2 class="setup__h">Access levels</h2>
-      <p class="setup__sub">
-        Global admins manage everything including this list; Schedulers edit the schedule and
-        students. Supervisors (from portal roles) can view everything and send page-outs.
-        Everyone else is a Member.
-      </p>
-      <table class="setup__table setup__table--access" v-if="accessLoaded">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Level</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="p in sched.people.value" :key="p.id">
-            <td>{{ p.fullName }}</td>
-            <td>{{ LEVEL_LABELS[effectiveLevel(p)] }}</td>
-            <td>
-              <select
-                v-if="sched.isGlobalAdmin.value"
-                class="setup__select setup__select--sm"
-                :value="access.get(p.id) ?? ''"
-                @change="changeAccess(p.id, $event)"
-              >
-                <option value="">Default ({{ p.role === 'admin' || p.role === 'supervisor' ? 'Supervisor' : 'Member' }})</option>
-                <option value="scheduler">Scheduler</option>
-                <option value="global_admin">Global admin</option>
-              </select>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+    <p class="setup__sub">Access levels are managed on the Members tab.</p>
   </div>
 </template>
 
@@ -403,10 +334,6 @@ async function changeAccess(userId: string, ev: Event) {
   max-width: 220px;
 }
 
-.setup__select--sm {
-  font-size: 0.8rem;
-}
-
 .setup__from {
   display: flex;
   align-items: center;
@@ -446,7 +373,4 @@ async function changeAccess(userId: string, ev: Event) {
   color: white;
 }
 
-.setup__table--access {
-  max-width: 640px;
-}
 </style>
