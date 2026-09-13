@@ -7,6 +7,7 @@ import ScheduleDayBoard from './ScheduleDayBoard.vue'
 import ScheduleWeekBoard from './ScheduleWeekBoard.vue'
 import SchedulePeriodBoard from './SchedulePeriodBoard.vue'
 import ScheduleRequestsPanel from './ScheduleRequestsPanel.vue'
+import ScheduleTradesPanel from './ScheduleTradesPanel.vue'
 import ScheduleMembersPanel from './ScheduleMembersPanel.vue'
 import ScheduleSetupPanel from './ScheduleSetupPanel.vue'
 
@@ -20,7 +21,7 @@ const route = useRoute()
 const router = useRouter()
 const sched = useSchedule()
 
-type Tab = 'month' | 'day' | 'week' | 'period' | 'requests' | 'members' | 'setup'
+type Tab = 'month' | 'day' | 'week' | 'period' | 'requests' | 'trades' | 'members' | 'setup'
 const tab = ref<Tab>('month')
 const dateIso = ref(todayCentralIso())
 
@@ -30,6 +31,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'week', label: 'Week' },
   { key: 'period', label: 'Pay period' },
   { key: 'requests', label: 'Requests' },
+  { key: 'trades', label: 'Trades' },
   { key: 'members', label: 'Members' },
   { key: 'setup', label: 'Setup' },
 ]
@@ -198,6 +200,7 @@ watch(dateIso, (v) => {
         @range="onPeriodRange"
       />
       <ScheduleRequestsPanel v-else-if="tab === 'requests'" />
+      <ScheduleTradesPanel v-else-if="tab === 'trades'" />
       <ScheduleMembersPanel v-else-if="tab === 'members'" />
       <ScheduleSetupPanel v-else />
     </template>

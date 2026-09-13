@@ -80,6 +80,10 @@ export interface SchedRequest {
   counterpartyId: string | null
   entryId: string | null
   counterEntryId: string | null
+  counterSeatId: string | null
+  counterWorkDate: string | null
+  counterStartAt: string | null
+  counterEndAt: string | null
   seatId: string | null
   workDate: string | null
   startAt: string | null
@@ -102,6 +106,29 @@ export interface SchedPerson {
   shift: string | null
   role: string
   credential: string | null
+  title: string | null
+  email: string | null
+  phone: string | null
+}
+
+export interface TradeOffer {
+  id: string
+  requestId: string
+  userId: string
+  offerSeatId: string | null
+  offerWorkDate: string | null
+  offerStartAt: string | null
+  offerEndAt: string | null
+  note: string | null
+  status: string
+}
+
+export interface MemberSettings {
+  userId: string
+  qualOverrides: Record<string, 'allow' | 'deny'>
+  unitExclusions: string[]
+  notify: Record<string, unknown>
+  smsOptIn: boolean
 }
 
 export interface DayNote {
@@ -146,11 +173,30 @@ export interface UnitModel {
   notes: DayNote[]
 }
 
+export interface SchedEventRec {
+  id: string
+  label: string
+  onDate: string
+  startTime: string
+  endTime: string
+  notes: string | null
+}
+
+/** One special event on a day: its own box under the set schedule. */
+export interface DayEventBox {
+  label: string
+  eventId: string | null
+  start: string | null // 'HHmm' when known
+  end: string | null
+  rows: SeatRow[] // assigned staff + open event seats
+}
+
 export interface DayModel {
   dateIso: string
   platoon: Platoon
   units: UnitModel[]
-  unattached: SeatRow[] // extras/students/events with no unit
+  events: DayEventBox[]
+  unattached: SeatRow[] // extras/students with no unit
   notes: DayNote[] // day-level notes (no unit)
   openCount: number
 }
@@ -193,7 +239,8 @@ export function addDaysIso(dateIso: string, n: number): string {
 
 // ── pay periods (14 days anchored 2026-09-01) ────────────────────────
 
-const PAY_ANCHOR = '2026-09-01'
+// Sunday–Saturday biweekly periods: Aug 30 – Sep 12, Sep 13 – 26, …
+const PAY_ANCHOR = '2026-08-30'
 const PAY_DAYS = 14
 
 export interface PayPeriod {
@@ -277,6 +324,7 @@ const entries = ref<SchedEntry[]>([]) // loaded range
 const requests = ref<SchedRequest[]>([])
 const availability = ref<Availability[]>([])
 const dayNotes = ref<DayNote[]>([])
+const schedEvents = ref<SchedEventRec[]>([])
 const people = ref<SchedPerson[]>([])
 const level = ref<SchedLevel>('member')
 const loaded = ref(false)
@@ -309,17 +357,18 @@ async function loadCore(): Promise<void> {
     loaded.value = true
     return
   }
-  const [uRes, sRes, rRes, pRes, lvlRes] = await Promise.all([
+  const [uRes, sRes, rRes, pRes, lvlRes, cRes] = await Promise.all([
     supabase.from('sched_units').select('*').order('sort_order'),
     supabase.from('sched_seats').select('*').order('sort_order'),
     supabase.from('sched_rotation_assignments').select('*'),
     supabase
       .from('app_users')
-      .select('id, full_name, shift, role, title, account_type, active, employment_type')
+      .select('id, full_name, shift, role, title, email, phone, account_type, active, employment_type')
       .eq('account_type', 'person')
       .eq('active', true)
       .order('full_name'),
     supabase.rpc('sched_level'),
+    supabase.from('sched_credentials').select('user_id, credential'),
   ])
   const err = uRes.error ?? sRes.error ?? rRes.error ?? pRes.error ?? lvlRes.error
   if (err) {
@@ -350,12 +399,18 @@ async function loadCore(): Promise<void> {
     effectiveFrom: r.effective_from,
     effectiveTo: r.effective_to,
   }))
+  const credByUser = new Map<string, string>(
+    ((cRes.data ?? []) as { user_id: string; credential: string }[]).map((r) => [r.user_id, r.credential]),
+  )
   people.value = (pRes.data ?? []).map((r) => ({
     id: r.id,
     fullName: r.full_name,
     shift: r.shift,
     role: r.role,
-    credential: credentialFromTitle(r.title),
+    credential: credByUser.get(r.id) ?? defaultInternalCredential(r.role, r.title),
+    title: r.title,
+    email: r.email,
+    phone: r.phone,
   }))
   level.value = (lvlRes.data as SchedLevel) ?? 'member'
   loaded.value = true
@@ -394,18 +449,24 @@ function seedDevStub(): void {
   }
   seats.value = out
   people.value = [
-    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'EMT-P' },
-    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT-B' },
+    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101' },
+    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102' },
   ]
 }
 
-/** 'Paramedic' → 'EMT-P' style suffix shown after names, from app_users.title. */
-function credentialFromTitle(title: string | null): string | null {
+export const INTERNAL_CREDENTIALS = [
+  'Supervisor', 'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'EMT-FTO', 'P2-FTO', 'P3-FTO',
+] as const
+
+/** Best-effort default when no internal credential has been set on the
+ *  Members tab: supervisors by role, otherwise mapped from title. */
+function defaultInternalCredential(role: string, title: string | null): string | null {
+  if (role === 'supervisor') return 'Supervisor'
   if (!title) return null
   const t = title.toLowerCase()
-  if (t.includes('paramedic')) return 'EMT-P'
-  if (t.includes('aemt') || t.includes('advanced')) return 'AEMT'
-  if (t.includes('emt')) return 'EMT-B'
+  if (t.includes('paramedic')) return 'P2'
+  if (t.includes('aemt') || t.includes('adv')) return 'AEMT'
+  if (t.includes('emt')) return 'EMT'
   return null
 }
 
@@ -416,7 +477,7 @@ async function loadRange(startIso: string, endIso: string): Promise<void> {
     rangeEnd.value = endIso
     return
   }
-  const [eRes, nRes, aRes] = await Promise.all([
+  const [eRes, nRes, aRes, evRes] = await Promise.all([
     supabase
       .from('sched_entries')
       .select('*')
@@ -424,12 +485,21 @@ async function loadRange(startIso: string, endIso: string): Promise<void> {
       .lte('work_date', endIso),
     supabase.from('sched_day_notes').select('*').gte('on_date', startIso).lte('on_date', endIso),
     supabase.from('sched_availability').select('*').gte('on_date', startIso).lte('on_date', endIso),
+    supabase.from('sched_events').select('*').gte('on_date', startIso).lte('on_date', endIso),
   ])
-  const err = eRes.error ?? nRes.error ?? aRes.error
+  const err = eRes.error ?? nRes.error ?? aRes.error ?? evRes.error
   if (err) {
     loadError.value = err.message
     return
   }
+  schedEvents.value = (evRes.data ?? []).map((r) => ({
+    id: r.id,
+    label: r.label,
+    onDate: r.on_date,
+    startTime: String(r.start_time).slice(0, 5),
+    endTime: String(r.end_time).slice(0, 5),
+    notes: r.notes,
+  }))
   entries.value = (eRes.data ?? []).map(mapEntry)
   dayNotes.value = (nRes.data ?? []).map((r) => ({
     id: r.id,
@@ -490,6 +560,10 @@ async function loadRequests(): Promise<void> {
     counterpartyId: r.counterparty_id,
     entryId: r.entry_id,
     counterEntryId: r.counter_entry_id,
+    counterSeatId: r.counter_seat_id,
+    counterWorkDate: r.counter_work_date,
+    counterStartAt: r.counter_start_at,
+    counterEndAt: r.counter_end_at,
     seatId: r.seat_id,
     workDate: r.work_date,
     startAt: r.start_at,
@@ -577,11 +651,7 @@ export function dayModel(dateIso: string): DayModel {
     }
 
     const extras = dayEntries
-      .filter(
-        (e) =>
-          e.unitId === unit.id &&
-          (e.kind === 'extra' || e.kind === 'student' || e.kind === 'event'),
-      )
+      .filter((e) => e.unitId === unit.id && (e.kind === 'extra' || e.kind === 'student'))
       .sort((a, b) => a.startAt.localeCompare(b.startAt))
       .map((e) => {
         const who = displayName(e.userId)
@@ -603,7 +673,7 @@ export function dayModel(dateIso: string): DayModel {
   }
 
   const unattached = dayEntries
-    .filter((e) => e.unitId === null && (e.kind === 'extra' || e.kind === 'student' || e.kind === 'event'))
+    .filter((e) => e.unitId === null && (e.kind === 'extra' || e.kind === 'student'))
     .map((e) => {
       const who = displayName(e.userId)
       return {
@@ -619,8 +689,59 @@ export function dayModel(dateIso: string): DayModel {
       }
     })
 
+  // Special events: their own boxes under the set schedule. Staffing
+  // entries group by label (note); listed sched_events with no staffing
+  // that day still get a box.
+  const eventBoxes: DayEventBox[] = []
+  const staffing = dayEntries.filter((e) => e.kind === 'event')
+  const byLabel = new Map<string, SchedEntry[]>()
+  for (const e of staffing) {
+    const label = e.note || 'Special event'
+    if (!byLabel.has(label)) byLabel.set(label, [])
+    byLabel.get(label)!.push(e)
+  }
+  const listings = schedEvents.value.filter((ev) => ev.onDate === dateIso)
+  for (const [label, rows] of byLabel) {
+    const listing = listings.find((ev) => ev.label === label)
+    eventBoxes.push({
+      label,
+      eventId: listing?.id ?? null,
+      start: listing ? listing.startTime.replace(':', '') : null,
+      end: listing ? listing.endTime.replace(':', '') : null,
+      rows: rows
+        .sort((a, b) => a.startAt.localeCompare(b.startAt))
+        .map((e) => {
+          const who = displayName(e.userId)
+          const open = e.userId === null && e.status === 'open'
+          if (open) openCount++
+          return {
+            entryId: e.id,
+            userId: e.userId,
+            name: open ? (e.studentProgram || 'Open') : (who.name || e.studentProgram || 'Open'),
+            credential: who.credential,
+            start: hhmm(e.startAt),
+            end: hhmm(e.endAt),
+            kind: e.kind,
+            open,
+            isRotation: false,
+          }
+        }),
+    })
+  }
+  for (const ev of listings) {
+    if (!byLabel.has(ev.label)) {
+      eventBoxes.push({
+        label: ev.label,
+        eventId: ev.id,
+        start: ev.startTime.replace(':', ''),
+        end: ev.endTime.replace(':', ''),
+        rows: [],
+      })
+    }
+  }
+
   const notes = dayNotes.value.filter((n) => n.onDate === dateIso && n.unitId === null)
-  return { dateIso, platoon, units: unitModels, unattached, notes, openCount }
+  return { dateIso, platoon, units: unitModels, events: eventBoxes, unattached, notes, openCount }
 }
 
 /** Lightweight month-cell summary without building full unit models. */
@@ -822,11 +943,12 @@ async function createExtraRequest(opts: {
 
 async function createPickupRequest(opts: {
   dateIso: string
-  seatId: string
+  seatId: string | null // null = special-event slot (entryId required)
   entryId: string | null
   from: string
   until: string
   comments: string
+  positionLabel?: string
 }): Promise<string | null> {
   const auth = useAuthStore()
   const me = auth.appUser?.id
@@ -843,11 +965,399 @@ async function createPickupRequest(opts: {
     start_at: w.reqStart,
     end_at: w.reqEnd,
     unit_code: unit?.code ?? null,
+    position_label: seat?.label ?? opts.positionLabel ?? null,
+    comments: opts.comments || null,
+  })
+  if (res.error) return res.error.message
+  await loadRequests()
+  return null
+}
+
+// ── trades board (giveaways + swaps) ─────────────────────────────────
+
+const tradeOffers = ref<TradeOffer[]>([])
+
+async function loadTradeOffers(): Promise<void> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return
+  const res = await supabase
+    .from('sched_trade_offers')
+    .select('*')
+    .order('created_at')
+    .limit(500)
+  if (res.error) {
+    loadError.value = res.error.message
+    return
+  }
+  tradeOffers.value = (res.data ?? []).map((r) => ({
+    id: r.id,
+    requestId: r.request_id,
+    userId: r.user_id,
+    offerSeatId: r.offer_seat_id,
+    offerWorkDate: r.offer_work_date,
+    offerStartAt: r.offer_start_at,
+    offerEndAt: r.offer_end_at,
+    note: r.note,
+    status: r.status,
+  }))
+}
+
+async function createTradePosting(opts: {
+  type: 'giveaway' | 'trade'
+  dateIso: string
+  seatId: string
+  from: string
+  until: string
+  comments: string
+}): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me) return 'Not signed in'
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const seat = seats.value.find((s) => s.id === opts.seatId)
+  const unit = units.value.find((u) => u.id === seat?.unitId)
+  const res = await supabase.from('sched_requests').insert({
+    type: opts.type,
+    requester_id: me,
+    seat_id: opts.seatId,
+    work_date: opts.dateIso,
+    start_at: w.reqStart,
+    end_at: w.reqEnd,
+    unit_code: unit?.code ?? null,
     position_label: seat?.label ?? null,
     comments: opts.comments || null,
   })
   if (res.error) return res.error.message
   await loadRequests()
+  return null
+}
+
+async function makeOffer(opts: {
+  requestId: string
+  offerShift: { dateIso: string; seatId: string } | null
+  note: string
+}): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me) return 'Not signed in'
+  let offerFields: Record<string, unknown> = {}
+  if (opts.offerShift) {
+    const w = shiftWindow(opts.offerShift.dateIso, '06:00', '06:00')
+    offerFields = {
+      offer_seat_id: opts.offerShift.seatId,
+      offer_work_date: opts.offerShift.dateIso,
+      offer_start_at: w.reqStart,
+      offer_end_at: w.reqEnd,
+    }
+  }
+  const res = await supabase.from('sched_trade_offers').insert({
+    request_id: opts.requestId,
+    user_id: me,
+    note: opts.note || null,
+    ...offerFields,
+  })
+  if (res.error) {
+    return res.error.message.includes('duplicate')
+      ? 'You already have an offer on this posting.'
+      : res.error.message
+  }
+  await loadTradeOffers()
+  return null
+}
+
+async function withdrawOffer(offerId: string): Promise<string | null> {
+  const res = await supabase
+    .from('sched_trade_offers')
+    .update({ status: 'withdrawn' })
+    .eq('id', offerId)
+  if (res.error) return res.error.message
+  await loadTradeOffers()
+  return null
+}
+
+/** Poster accepts one offer → request moves to the Chief's queue. */
+async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string | null> {
+  const up1 = await supabase
+    .from('sched_trade_offers')
+    .update({ status: 'accepted' })
+    .eq('id', offer.id)
+  if (up1.error) return up1.error.message
+  const up2 = await supabase
+    .from('sched_requests')
+    .update({
+      counterparty_id: offer.userId,
+      counter_seat_id: offer.offerSeatId,
+      counter_work_date: offer.offerWorkDate,
+      counter_start_at: offer.offerStartAt,
+      counter_end_at: offer.offerEndAt,
+      status: 'partner_accepted',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.id)
+  if (up2.error) return up2.error.message
+  await Promise.all([loadRequests(), loadTradeOffers()])
+  return null
+}
+
+async function declineOffer(offerId: string): Promise<string | null> {
+  const res = await supabase
+    .from('sched_trade_offers')
+    .update({ status: 'declined' })
+    .eq('id', offerId)
+  if (res.error) return res.error.message
+  await loadTradeOffers()
+  return null
+}
+
+/** Write the seat override(s) that hand a shift window to a new person,
+ *  keeping any remainder with the original occupant. */
+async function coverShift(
+  workDate: string,
+  seatId: string,
+  fromUserId: string,
+  toUserId: string,
+  startAt: string,
+  endAt: string,
+  kind: string,
+  note: string,
+  sourceRequest: string,
+): Promise<string | null> {
+  const dayStart = centralTs(workDate, '06:00')
+  const dayEnd = centralTs(addDaysIso(workDate, 1), '06:00')
+  const rows: Record<string, unknown>[] = [
+    {
+      work_date: workDate,
+      seat_id: seatId,
+      user_id: toUserId,
+      start_at: startAt,
+      end_at: endAt,
+      kind,
+      status: 'scheduled',
+      note,
+      source_request: sourceRequest,
+    },
+  ]
+  if (startAt > dayStart) {
+    rows.push({
+      work_date: workDate, seat_id: seatId, user_id: fromUserId,
+      start_at: dayStart, end_at: startAt, kind: 'rotation', status: 'scheduled',
+      source_request: sourceRequest,
+    })
+  }
+  if (endAt < dayEnd) {
+    rows.push({
+      work_date: workDate, seat_id: seatId, user_id: fromUserId,
+      start_at: endAt, end_at: dayEnd, kind: 'rotation', status: 'scheduled',
+      source_request: sourceRequest,
+    })
+  }
+  const ins = await supabase.from('sched_entries').insert(rows)
+  return ins.error ? ins.error.message : null
+}
+
+/** Editor path: put someone straight onto an open seat (no request). */
+async function assignOpenSeat(opts: {
+  dateIso: string
+  seatId: string
+  entryId: string | null
+  userId: string
+  from: string
+  until: string
+}): Promise<string | null> {
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  if (opts.entryId) {
+    const openEntry = entries.value.find((e) => e.id === opts.entryId)
+    if (openEntry && openEntry.startAt === w.reqStart && openEntry.endAt === w.reqEnd) {
+      const upd = await supabase
+        .from('sched_entries')
+        .update({
+          user_id: opts.userId,
+          status: 'scheduled',
+          kind: 'pickup',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', opts.entryId)
+      if (upd.error) return upd.error.message
+    } else if (openEntry) {
+      const rows: Record<string, unknown>[] = [
+        { work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
+          start_at: w.reqStart, end_at: w.reqEnd, kind: 'pickup', status: 'scheduled' },
+      ]
+      if (openEntry.startAt < w.reqStart) {
+        rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
+          start_at: openEntry.startAt, end_at: w.reqStart, kind: openEntry.kind, status: 'open' })
+      }
+      if (openEntry.endAt > w.reqEnd) {
+        rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
+          start_at: w.reqEnd, end_at: openEntry.endAt, kind: openEntry.kind, status: 'open' })
+      }
+      const ins = await supabase.from('sched_entries').insert(rows)
+      if (ins.error) return ins.error.message
+      const del = await supabase.from('sched_entries').delete().eq('id', opts.entryId)
+      if (del.error) return del.error.message
+    }
+  } else {
+    const rows: Record<string, unknown>[] = [
+      { work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
+        start_at: w.reqStart, end_at: w.reqEnd, kind: 'pickup', status: 'scheduled' },
+    ]
+    if (w.before) {
+      rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
+        start_at: w.before.start, end_at: w.before.end, kind: 'rotation', status: 'open' })
+    }
+    if (w.after) {
+      rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
+        start_at: w.after.start, end_at: w.after.end, kind: 'rotation', status: 'open' })
+    }
+    const ins = await supabase.from('sched_entries').insert(rows)
+    if (ins.error) return ins.error.message
+  }
+  if (rangeStart.value) await loadRange(rangeStart.value, rangeEnd.value)
+  return null
+}
+
+// ── editor tools: events, students, notes ────────────────────────────
+
+async function reloadRangeIfLoaded(): Promise<void> {
+  if (rangeStart.value) await loadRange(rangeStart.value, rangeEnd.value)
+}
+
+async function addEvent(opts: {
+  dateIso: string
+  label: string
+  from: string
+  until: string
+  paramedicSlots: number
+  attendantSlots: number
+  notes: string
+}): Promise<string | null> {
+  const auth = useAuthStore()
+  const ins = await supabase.from('sched_events').insert({
+    label: opts.label,
+    on_date: opts.dateIso,
+    start_time: normTime(opts.from),
+    end_time: normTime(opts.until),
+    seats_total: opts.paramedicSlots + opts.attendantSlots,
+    notes: opts.notes || null,
+    created_by: auth.appUser?.id ?? null,
+  })
+  if (ins.error) return ins.error.message
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const rows: Record<string, unknown>[] = []
+  for (let i = 0; i < opts.paramedicSlots; i++) {
+    rows.push({ work_date: opts.dateIso, user_id: null, start_at: w.reqStart, end_at: w.reqEnd,
+      kind: 'event', status: 'open', student_program: 'Paramedic', note: opts.label })
+  }
+  for (let i = 0; i < opts.attendantSlots; i++) {
+    rows.push({ work_date: opts.dateIso, user_id: null, start_at: w.reqStart, end_at: w.reqEnd,
+      kind: 'event', status: 'open', student_program: 'Attendant', note: opts.label })
+  }
+  if (rows.length > 0) {
+    const eres = await supabase.from('sched_entries').insert(rows)
+    if (eres.error) return eres.error.message
+  }
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Delete an event box: its staffing/open rows and its listing. */
+async function deleteEventBox(dateIso: string, label: string, eventId: string | null): Promise<string | null> {
+  const del = await supabase
+    .from('sched_entries')
+    .delete()
+    .eq('work_date', dateIso)
+    .eq('kind', 'event')
+    .eq('note', label)
+  if (del.error) return del.error.message
+  if (eventId) {
+    const del2 = await supabase.from('sched_events').delete().eq('id', eventId)
+    if (del2.error) return del2.error.message
+  } else {
+    await supabase.from('sched_events').delete().eq('on_date', dateIso).eq('label', label)
+  }
+  await reloadRangeIfLoaded()
+  return null
+}
+
+async function assignEventSlot(entryId: string, userId: string | null): Promise<string | null> {
+  const res = await supabase
+    .from('sched_entries')
+    .update({
+      user_id: userId,
+      status: userId ? 'scheduled' : 'open',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', entryId)
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+async function addEventSlot(dateIso: string, label: string, title: string, from: string, until: string): Promise<string | null> {
+  const w = shiftWindow(dateIso, from, until)
+  const res = await supabase.from('sched_entries').insert({
+    work_date: dateIso, user_id: null, start_at: w.reqStart, end_at: w.reqEnd,
+    kind: 'event', status: 'open', student_program: title, note: label,
+  })
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+async function removeEntry(entryId: string): Promise<string | null> {
+  const res = await supabase.from('sched_entries').delete().eq('id', entryId)
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+async function addStudent(opts: {
+  dateIso: string
+  unitId: string
+  program: string
+  comment: string
+  from: string
+  until: string
+}): Promise<string | null> {
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const res = await supabase.from('sched_entries').insert({
+    work_date: opts.dateIso,
+    unit_id: opts.unitId,
+    user_id: null,
+    start_at: w.reqStart,
+    end_at: w.reqEnd,
+    kind: 'student',
+    status: 'scheduled',
+    student_program: opts.comment ? `${opts.program} (${opts.comment})` : opts.program,
+  })
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+async function addDayNote(opts: {
+  dateIso: string
+  unitId: string | null
+  note: string
+  includeInReminders: boolean
+}): Promise<string | null> {
+  const auth = useAuthStore()
+  const res = await supabase.from('sched_day_notes').insert({
+    on_date: opts.dateIso,
+    unit_id: opts.unitId,
+    note: opts.note,
+    include_in_reminders: opts.includeInReminders,
+    created_by: auth.appUser?.id ?? null,
+  })
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+async function deleteDayNote(id: string): Promise<string | null> {
+  const res = await supabase.from('sched_day_notes').delete().eq('id', id)
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
   return null
 }
 
@@ -968,6 +1478,48 @@ async function decideRequest(
         source_request: req.id,
       })
       if (ins.error) return ins.error.message
+    } else if (req.type === 'giveaway' && req.workDate && req.seatId) {
+      if (!req.counterpartyId) return 'No accepted claimant on this giveaway yet.'
+      const giver = personById.value.get(req.requesterId)?.fullName ?? 'requester'
+      const err = await coverShift(
+        req.workDate, req.seatId, req.requesterId, req.counterpartyId,
+        req.startAt ?? centralTs(req.workDate, '06:00'),
+        req.endAt ?? centralTs(addDaysIso(req.workDate, 1), '06:00'),
+        'giveaway_cover', `Covering for ${giver}`, req.id,
+      )
+      if (err) return err
+    } else if (req.type === 'trade' && req.workDate && req.seatId) {
+      if (!req.counterpartyId || !req.counterWorkDate || !req.counterSeatId) {
+        return 'No accepted swap partner on this trade yet.'
+      }
+      const a = personById.value.get(req.requesterId)?.fullName ?? 'requester'
+      const b = personById.value.get(req.counterpartyId)?.fullName ?? 'partner'
+      let err = await coverShift(
+        req.workDate, req.seatId, req.requesterId, req.counterpartyId,
+        req.startAt ?? centralTs(req.workDate, '06:00'),
+        req.endAt ?? centralTs(addDaysIso(req.workDate, 1), '06:00'),
+        'trade', `Trade for ${a}`, req.id,
+      )
+      if (err) return err
+      err = await coverShift(
+        req.counterWorkDate, req.counterSeatId, req.counterpartyId, req.requesterId,
+        req.counterStartAt ?? centralTs(req.counterWorkDate, '06:00'),
+        req.counterEndAt ?? centralTs(addDaysIso(req.counterWorkDate, 1), '06:00'),
+        'trade', `Trade for ${b}`, req.id,
+      )
+      if (err) return err
+    } else if (req.type === 'pickup' && req.entryId && !req.seatId) {
+      // special-event slot claim
+      const upd = await supabase
+        .from('sched_entries')
+        .update({
+          user_id: req.requesterId,
+          status: 'scheduled',
+          source_request: req.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', req.entryId)
+      if (upd.error) return upd.error.message
     } else if (req.type === 'pickup' && req.workDate && req.seatId) {
       if (req.entryId) {
         // An explicit open entry exists. Claim it when the window matches;
@@ -1098,6 +1650,22 @@ async function assignRotation(
   userId: string | null,
   effectiveFrom: string,
 ): Promise<string | null> {
+  // Protection: one person, one seat at a time. Block if they already
+  // hold ANY other seat (any platoon) for an overlapping period.
+  if (userId !== null) {
+    const clash = rotation.value.find(
+      (a) =>
+        a.userId === userId &&
+        !(a.seatId === seatId && a.platoon === platoon) &&
+        (a.effectiveTo === null || a.effectiveTo >= effectiveFrom),
+    )
+    if (clash) {
+      const seat = seats.value.find((s) => s.id === clash.seatId)
+      const unit = units.value.find((u) => u.id === seat?.unitId)
+      const who = personById.value.get(userId)?.fullName ?? 'This person'
+      return `${who} already holds ${unit?.code ?? '?'} ${seat?.label ?? ''} on ${clash.platoon} Shift (from ${clash.effectiveFrom}${clash.effectiveTo ? ` to ${clash.effectiveTo}` : ''}). End or reassign that seat first.`
+    }
+  }
   const overlapping = rotation.value.filter(
     (a) =>
       a.seatId === seatId &&
@@ -1220,6 +1788,56 @@ async function setAccess(
   return null
 }
 
+async function fetchMemberSettings(userId: string): Promise<MemberSettings> {
+  const empty: MemberSettings = { userId, qualOverrides: {}, unitExclusions: [], notify: {}, smsOptIn: false }
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return empty
+  const res = await supabase
+    .from('sched_member_settings')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (res.error || !res.data) return empty
+  return {
+    userId,
+    qualOverrides: (res.data.qual_overrides ?? {}) as Record<string, 'allow' | 'deny'>,
+    unitExclusions: res.data.unit_exclusions ?? [],
+    notify: res.data.notify ?? {},
+    smsOptIn: !!res.data.sms_opt_in,
+  }
+}
+
+async function setCredential(userId: string, credential: string | null): Promise<string | null> {
+  const auth = useAuthStore()
+  if (credential === null) {
+    const res = await supabase.from('sched_credentials').delete().eq('user_id', userId)
+    if (res.error) return res.error.message
+  } else {
+    const res = await supabase.from('sched_credentials').upsert(
+      { user_id: userId, credential, updated_by: auth.appUser?.id ?? null, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' },
+    )
+    if (res.error) return res.error.message
+  }
+  await loadCore()
+  return null
+}
+
+async function saveMemberSettings(s: MemberSettings): Promise<string | null> {
+  const res = await supabase.from('sched_member_settings').upsert(
+    {
+      user_id: s.userId,
+      qual_overrides: s.qualOverrides,
+      unit_exclusions: s.unitExclusions,
+      notify: s.notify,
+      sms_opt_in: s.smsOptIn,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id' },
+  )
+  return res.error ? res.error.message : null
+}
+
 async function fetchAccessList(): Promise<{ userId: string; level: string }[]> {
   const auth = useAuthStore()
   if (auth.usingDevStub) return []
@@ -1305,7 +1923,30 @@ export function useSchedule() {
     createTimeOffRequests,
     createExtraRequest,
     createPickupRequest,
+    assignOpenSeat,
     cancelRequest,
     decideRequest,
+    // editor tools
+    schedEvents,
+    addEvent,
+    deleteEventBox,
+    assignEventSlot,
+    addEventSlot,
+    removeEntry,
+    addStudent,
+    addDayNote,
+    deleteDayNote,
+    // trades
+    tradeOffers,
+    loadTradeOffers,
+    createTradePosting,
+    makeOffer,
+    withdrawOffer,
+    acceptOffer,
+    declineOffer,
+    // member settings
+    fetchMemberSettings,
+    saveMemberSettings,
+    setCredential,
   }
 }

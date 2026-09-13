@@ -6,7 +6,6 @@ import {
   hhmm,
   type SchedRequest,
   type UpcomingShift,
-  type OpenSeatInfo,
 } from '@/composables/useSchedule'
 
 /**
@@ -25,7 +24,9 @@ onMounted(async () => {
 
 // ── new request form ─────────────────────────────────────────────────
 
-type FormKind = '' | 'time_off' | 'extra_hours' | 'pickup'
+/* Pickups are filed by clicking the open shift on the calendar — no
+   form here; they still surface in the approval queue below. */
+type FormKind = '' | 'time_off' | 'extra_hours'
 const formKind = ref<FormKind>('')
 const formError = ref<string | null>(null)
 const formBusy = ref(false)
@@ -71,31 +72,12 @@ const exUnit = ref('')
 const exPosition = ref('')
 const exTimeType = ref('regular')
 
-// pickup
-const puDate = ref(todayCentralIso())
-const puSeat = ref('')
-const puFrom = ref('06:00')
-const puUntil = ref('06:00')
-const puOpenSeats = ref<OpenSeatInfo[]>([])
-
-async function refreshOpenSeats() {
-  // make sure entries for that date are loaded before listing opens
-  await sched.loadRange(puDate.value, puDate.value)
-  puOpenSeats.value = sched.openSeatsFor(puDate.value)
-  puSeat.value = puOpenSeats.value[0] ? seatKey(puOpenSeats.value[0]) : ''
-}
-
-function seatKey(s: OpenSeatInfo): string {
-  return `${s.seatId}|${s.entryId ?? ''}`
-}
-
 function pickForm(kind: FormKind) {
   formKind.value = kind
   formError.value = null
   formDone.value = null
   comments.value = ''
   if (kind === 'time_off') loadDayPicks()
-  if (kind === 'pickup') void refreshOpenSeats()
 }
 
 async function submit() {
@@ -129,20 +111,6 @@ async function submit() {
         timeType: exTimeType.value,
         comments: comments.value,
       })
-    } else if (formKind.value === 'pickup') {
-      const sel = puOpenSeats.value.find((s) => seatKey(s) === puSeat.value)
-      if (!sel) {
-        err = 'Pick an open shift.'
-      } else {
-        err = await sched.createPickupRequest({
-          dateIso: puDate.value,
-          seatId: sel.seatId,
-          entryId: sel.entryId,
-          from: puFrom.value,
-          until: puUntil.value,
-          comments: comments.value,
-        })
-      }
     }
   } finally {
     formBusy.value = false
@@ -231,7 +199,7 @@ async function cancel(r: SchedRequest) {
       <h2 class="rq__h">New request</h2>
       <div class="rq__kinds">
         <button
-          v-for="[k, label] in ([['time_off', 'Time off'], ['extra_hours', 'Extra hours'], ['pickup', 'Pick up open shift']] as const)"
+          v-for="[k, label] in ([['time_off', 'Time off'], ['extra_hours', 'Extra hours']] as const)"
           :key="k"
           class="rq__kind"
           :class="{ 'rq__kind--on': formKind === k }"
@@ -239,6 +207,7 @@ async function cancel(r: SchedRequest) {
         >
           {{ label }}
         </button>
+        <span class="rq__muted">To pick up an open shift, click it on the calendar. Giveaways and swaps live on the Trades tab.</span>
       </div>
 
       <p v-if="formDone" class="rq__done">{{ formDone }}</p>
@@ -312,32 +281,6 @@ async function cancel(r: SchedRequest) {
                 <option value="instructor">Instructor</option>
                 <option value="meeting">Meeting</option>
               </select>
-            </label>
-          </div>
-        </template>
-
-        <template v-else-if="formKind === 'pickup'">
-          <div class="rq__grid">
-            <label class="rq__field">
-              <span class="rq__label">Date</span>
-              <input v-model="puDate" type="date" class="rq__input" @change="refreshOpenSeats" />
-            </label>
-            <label class="rq__field">
-              <span class="rq__label">Open shift</span>
-              <select v-model="puSeat" class="rq__input">
-                <option v-if="puOpenSeats.length === 0" value="" disabled>No open shifts that day</option>
-                <option v-for="s in puOpenSeats" :key="seatKey(s)" :value="seatKey(s)">
-                  {{ s.unitCode }} {{ s.seatLabel }} · {{ s.start }} – {{ s.end }}
-                </option>
-              </select>
-            </label>
-            <label class="rq__field">
-              <span class="rq__label">From</span>
-              <input v-model="puFrom" type="time" class="rq__input" />
-            </label>
-            <label class="rq__field">
-              <span class="rq__label">Until</span>
-              <input v-model="puUntil" type="time" class="rq__input" />
             </label>
           </div>
         </template>

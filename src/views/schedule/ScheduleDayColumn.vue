@@ -54,6 +54,16 @@ const header = computed(() =>
         <span class="dc__time">{{ ex.start }}-{{ ex.end }}</span>
       </div>
     </div>
+
+    <div v-for="ev in model.events" :key="ev.label" class="dc__event">
+      <p class="dc__event-name">{{ ev.label }}</p>
+      <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="dc__row">
+        <span class="dc__name" :class="{ 'dc__name--open': row.open }">
+          {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
+        </span>
+        <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -148,12 +158,11 @@ const header = computed(() =>
 }
 
 .dc__name {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--color-ink);
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere; /* full last names wrap instead of clipping */
 }
 
 .dc__name--open {
@@ -174,5 +183,18 @@ const header = computed(() =>
 
 .dc__row--extra .dc__name {
   color: var(--color-accent-700);
+}
+
+.dc__event {
+  padding: 0.3rem 0.55rem 0.35rem;
+  border-top: 1px solid oklch(0.9 0.04 86.8);
+  background: oklch(0.99 0.008 86.8);
+}
+
+.dc__event-name {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-accent-700);
+  margin: 0 0 0.15rem;
 }
 </style>

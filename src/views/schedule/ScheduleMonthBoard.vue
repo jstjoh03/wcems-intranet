@@ -48,10 +48,6 @@ const weeks = computed<Cell[][]>(() => {
   return out
 })
 
-/** A row is worth a time label only when it isn't the standard full shift. */
-function showTime(start: string, end: string): boolean {
-  return !(start === '0600' && end === '0600')
-}
 </script>
 
 <template>
@@ -88,7 +84,7 @@ function showTime(start: string, end: string): boolean {
                 <span v-else class="mb__name">
                   {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
                 </span>
-                <span v-if="showTime(row.start, row.end)" class="mb__time">{{ row.start }}-{{ row.end }}</span>
+                <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
               </div>
             </template>
             <div v-for="ex in um.extras" :key="ex.entryId ?? ex.name" class="mb__row mb__row--extra">
@@ -100,6 +96,17 @@ function showTime(start: string, end: string): boolean {
             <span class="mb__name">{{ ex.name }}</span>
             <span class="mb__time">{{ ex.start }}-{{ ex.end }}</span>
           </div>
+
+          <div v-for="ev in c.model.events" :key="ev.label" class="mb__event">
+            <p class="mb__eventname">
+              {{ ev.label }}
+              <span v-if="ev.start" class="mb__time">{{ ev.start }}-{{ ev.end }}</span>
+            </p>
+            <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="mb__row">
+              <span class="mb__name" :class="{ 'mb__name--open': row.open }">{{ row.name }}</span>
+              <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -108,7 +115,7 @@ function showTime(start: string, end: string): boolean {
       <span class="mb__platoon" data-platoon="A"><span class="mb__dot" />A Shift</span>
       <span class="mb__platoon" data-platoon="B"><span class="mb__dot" />B Shift</span>
       <span class="mb__platoon" data-platoon="C"><span class="mb__dot" />C Shift</span>
-      <span class="mb__legend-note">48/96 rotation · 0600 changeover · times shown only when not 0600–0600</span>
+      <span class="mb__legend-note">48/96 rotation · 0600 changeover</span>
     </div>
   </div>
 </template>
@@ -280,6 +287,25 @@ function showTime(start: string, end: string): boolean {
 
 .mb__row--extra .mb__name {
   color: var(--color-accent-700);
+}
+
+.mb__event {
+  margin-top: 0.25rem;
+  border: 1px solid oklch(0.88 0.05 86.8);
+  background: oklch(0.985 0.012 86.8);
+  border-radius: 7px;
+  padding: 0.2rem 0.35rem 0.25rem;
+}
+
+.mb__eventname {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.3rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: var(--color-accent-700);
+  margin: 0 0 0.05rem;
 }
 
 .mb__legend {
