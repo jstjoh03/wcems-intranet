@@ -457,7 +457,7 @@ function seedDevStub(): void {
       out.push({ id: `dev-s-${u.code}-0`, unitId: u.id, label: 'Supervisor', qualRule: 'supervisor', sortOrder: 0, active: true })
     } else {
       const lead = u.code === 'M231' ? 'AIC / Medic' : 'Paramedic'
-      out.push({ id: `dev-s-${u.code}-0`, unitId: u.id, label: lead, qualRule: u.code === 'M231' ? 'aic_or_p2' : 'p2', sortOrder: 0, active: true })
+      out.push({ id: `dev-s-${u.code}-0`, unitId: u.id, label: lead, qualRule: u.code === 'M231' ? 'aemt_or_higher' : 'p2', sortOrder: 0, active: true })
       out.push({ id: `dev-s-${u.code}-1`, unitId: u.id, label: 'Attendant', qualRule: 'any_field', sortOrder: 1, active: true })
     }
   }
@@ -471,6 +471,17 @@ function seedDevStub(): void {
 export const INTERNAL_CREDENTIALS = [
   'Supervisor', 'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'EMT-FTO', 'P2-FTO', 'P3-FTO',
 ] as const
+
+/** Which internal credentials satisfy each seat qualification rule.
+ *  aemt_or_higher (M231 AIC seat): any AEMT or higher — AEMT, any
+ *  paramedic level, or a Supervisor. */
+export const QUAL_RULE_CREDENTIALS: Record<string, readonly string[]> = {
+  p2: ['P2', 'P3', 'P2-FTO', 'P3-FTO', 'Supervisor'],
+  aemt_or_higher: ['AEMT', 'P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', 'Supervisor'],
+  supervisor: ['Supervisor'],
+  any_field: [...INTERNAL_CREDENTIALS],
+  any: [...INTERNAL_CREDENTIALS],
+}
 
 /** Best-effort default when no internal credential has been set on the
  *  Members tab: supervisors by role, otherwise mapped from title. */
@@ -1830,7 +1841,7 @@ async function addUnit(opts: {
       ? [{ label: 'Supervisor', qual_rule: 'supervisor', sort_order: 0 }]
       : opts.preset === 'aic'
         ? [
-            { label: 'AIC / Medic', qual_rule: 'aic_or_p2', sort_order: 0 },
+            { label: 'AIC / Medic', qual_rule: 'aemt_or_higher', sort_order: 0 },
             { label: 'Attendant', qual_rule: 'any_field', sort_order: 1 },
           ]
         : [

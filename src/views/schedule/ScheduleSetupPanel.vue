@@ -87,7 +87,7 @@ interface TplRow {
 
 const QUAL_LABELS: Record<string, string> = {
   p2: 'P2',
-  aic_or_p2: 'AIC or P2',
+  aemt_or_higher: 'AEMT or higher',
   any_field: 'any field cert',
   supervisor: 'Supervisor',
   any: 'any',

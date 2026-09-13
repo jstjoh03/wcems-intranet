@@ -78,7 +78,7 @@ const detailSaved = ref(false)
 /** Positions a member can be qualified for; keys match seat qual rules. */
 const POSITIONS: { key: string; label: string }[] = [
   { key: 'p2', label: 'Paramedic (in charge)' },
-  { key: 'aic_or_p2', label: 'AIC / Medic' },
+  { key: 'aemt_or_higher', label: 'AIC / Medic (AEMT or higher)' },
   { key: 'any_field', label: 'Attendant' },
   { key: 'supervisor', label: 'Supervisor' },
 ]
