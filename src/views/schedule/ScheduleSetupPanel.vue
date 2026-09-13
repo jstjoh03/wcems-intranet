@@ -5,26 +5,30 @@ import {
   todayCentralIso,
   type Platoon,
   type SchedSeat,
-  type SchedUnit,
+  type UnitPreset,
 } from '@/composables/useSchedule'
 
 /**
- * Setup — rotation template, unit display order, and scheduler access.
- * Template edits are effective-dated: assigning a person to a seat from a
- * date forward closes the previous assignment the day before, so past
- * days keep showing who actually held the seat.
+ * Setup — mirrors the approved mockup: one compact rotation-template
+ * table (all seats × A/B/C, click a cell to reassign with an effective
+ * date), a scheduled-changes list beneath it, and the Units & display
+ * order panel alongside.
  */
 
 const sched = useSchedule()
 const PLATOONS: Platoon[] = ['A', 'B', 'C']
 
-// ── rotation template editing ────────────────────────────────────────
+onMounted(async () => {
+  await sched.ensureLoaded()
+})
+
+// ── rotation template ────────────────────────────────────────────────
 
 const editing = ref<{ seatId: string; platoon: Platoon } | null>(null)
-const editUserId = ref<string>('')
+const editUserId = ref('')
 const editFrom = ref(todayCentralIso())
 const saving = ref(false)
-const saveError = ref<string | null>(null)
+const err = ref<string | null>(null)
 
 function currentOccupant(seatId: string, platoon: Platoon): string | null {
   const today = todayCentralIso()
@@ -38,6 +42,11 @@ function currentOccupant(seatId: string, platoon: Platoon): string | null {
   return best?.userId ?? null
 }
 
+function occupantName(seatId: string, platoon: Platoon): string {
+  const id = currentOccupant(seatId, platoon)
+  return id ? (sched.personById.value.get(id)?.fullName ?? 'Unknown') : ''
+}
+
 function upcoming(seatId: string, platoon: Platoon) {
   const today = todayCentralIso()
   return sched.rotation.value
@@ -45,49 +54,100 @@ function upcoming(seatId: string, platoon: Platoon) {
     .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
 }
 
-function occupantName(seatId: string, platoon: Platoon): string {
-  const id = currentOccupant(seatId, platoon)
-  if (!id) return ''
-  return sched.personById.value.get(id)?.fullName ?? 'Unknown'
-}
-
 function startEdit(seatId: string, platoon: Platoon) {
   editing.value = { seatId, platoon }
   editUserId.value = currentOccupant(seatId, platoon) ?? ''
   editFrom.value = todayCentralIso()
-  saveError.value = null
+  err.value = null
 }
 
 async function saveEdit() {
   if (!editing.value) return
   saving.value = true
-  saveError.value = null
-  const err = await sched.assignRotation(
+  err.value = null
+  const e = await sched.assignRotation(
     editing.value.seatId,
     editing.value.platoon,
     editUserId.value || null,
     editFrom.value,
   )
   saving.value = false
-  if (err) {
-    saveError.value = err
+  if (e) {
+    err.value = e
     return
   }
   editing.value = null
 }
 
-const unitsWithSeats = computed(() =>
-  sched.units.value
-    .filter((u) => u.active)
-    .map((u: SchedUnit) => ({
-      unit: u,
-      seats: sched.seats.value
-        .filter((s: SchedSeat) => s.unitId === u.id && s.active)
-        .sort((a, b) => a.sortOrder - b.sortOrder),
-    })),
-)
+interface TplRow {
+  seat: SchedSeat
+  unitCode: string
+  firstOfUnit: boolean
+}
 
-// ── unit order ───────────────────────────────────────────────────────
+const QUAL_LABELS: Record<string, string> = {
+  p2: 'P2',
+  aic_or_p2: 'AIC or P2',
+  any_field: 'any field cert',
+  supervisor: 'Supervisor',
+  any: 'any',
+}
+
+const tplRows = computed<TplRow[]>(() => {
+  const out: TplRow[] = []
+  for (const u of sched.units.value.filter((x) => x.active)) {
+    const seats = sched.seats.value
+      .filter((s) => s.unitId === u.id && s.active)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+    seats.forEach((seat, i) => out.push({ seat, unitCode: u.code, firstOfUnit: i === 0 }))
+  }
+  return out
+})
+
+// ── scheduled changes ────────────────────────────────────────────────
+
+const scheduledChanges = computed(() => {
+  const today = todayCentralIso()
+  return sched.rotation.value
+    .filter((a) => a.effectiveFrom > today)
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+    .map((a) => {
+      const seat = sched.seats.value.find((s) => s.id === a.seatId)
+      const unit = sched.units.value.find((u) => u.id === seat?.unitId)
+      const prior = currentOccupant(a.seatId, a.platoon)
+      const days = Math.round(
+        (new Date(`${a.effectiveFrom}T00:00:00`).getTime() -
+          new Date(`${today}T00:00:00`).getTime()) /
+          86_400_000,
+      )
+      return {
+        id: a.id,
+        label: `${unit?.code ?? ''} ${seat?.label ?? ''} · ${a.platoon} Shift`,
+        detail: `${prior ? (sched.personById.value.get(prior)?.fullName ?? 'Unknown') : 'Open'} → ${
+          a.userId ? (sched.personById.value.get(a.userId)?.fullName ?? 'Unknown') : 'open'
+        } · effective ${fmtDate(a.effectiveFrom)}${a.effectiveTo ? ` – ${fmtDate(a.effectiveTo)}` : ' · indefinite'}`,
+        days,
+      }
+    })
+})
+
+function fmtDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+const cancelArm = ref<string | null>(null)
+
+async function cancelChange(id: string) {
+  if (cancelArm.value !== id) {
+    cancelArm.value = id
+    return
+  }
+  cancelArm.value = null
+  const e = await sched.removeRotationAssignment(id)
+  if (e) err.value = e
+}
+
+// ── units panel ──────────────────────────────────────────────────────
 
 const orderSaving = ref(false)
 
@@ -102,192 +162,312 @@ async function moveUnit(unitId: string, delta: number) {
   orderSaving.value = false
 }
 
-onMounted(async () => {
-  await sched.ensureLoaded()
-})
+function seatSummary(unitId: string): string {
+  return sched.seats.value
+    .filter((s) => s.unitId === unitId && s.active)
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((s) => s.label)
+    .join(' + ')
+}
+
+const addingUnit = ref(false)
+const nuCode = ref('')
+const nuLabel = ref('')
+const nuStation = ref('')
+const nuPreset = ref<UnitPreset>('medic')
+const nuBusy = ref(false)
+
+async function submitUnit() {
+  if (!nuCode.value.trim()) {
+    err.value = 'Unit code is required.'
+    return
+  }
+  nuBusy.value = true
+  err.value = null
+  const e = await sched.addUnit({
+    code: nuCode.value.trim().toUpperCase(),
+    label: nuLabel.value.trim(),
+    station: nuStation.value.trim(),
+    preset: nuPreset.value,
+  })
+  nuBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  addingUnit.value = false
+  nuCode.value = nuLabel.value = nuStation.value = ''
+  nuPreset.value = 'medic'
+}
 </script>
 
 <template>
   <div class="setup">
-    <p v-if="saveError" class="setup__error">{{ saveError }}</p>
+    <p v-if="err" class="setup__error">{{ err }}</p>
 
-    <section class="setup__section">
-      <h2 class="setup__h">Rotation template</h2>
-      <p class="setup__sub">
-        Who holds each seat on each platoon. Changes take effect from the date you pick —
-        earlier days keep the previous assignment.
-      </p>
+    <div class="setup__cols">
+      <div class="setup__main">
+        <section class="setup__card">
+          <div class="setup__card-head">
+            <h2 class="setup__h">Rotation template — who holds each seat, per shift</h2>
+          </div>
 
-      <div v-for="uw in unitsWithSeats" :key="uw.unit.id" class="setup__unit">
-        <div class="setup__unit-head">
-          <span class="setup__unit-code">{{ uw.unit.code }}</span>
-          <span class="setup__unit-station">{{ uw.unit.station }}</span>
-          <span class="setup__unit-order">
-            <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move up" @click="moveUnit(uw.unit.id, -1)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
-            </button>
-            <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move down" @click="moveUnit(uw.unit.id, 1)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-            </button>
-          </span>
-        </div>
-
-        <table class="setup__table">
-          <thead>
-            <tr>
-              <th>Seat</th>
-              <th v-for="p in PLATOONS" :key="p">{{ p }} Shift</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="seat in uw.seats" :key="seat.id">
-              <td class="setup__seatname">{{ seat.label }}</td>
-              <td v-for="p in PLATOONS" :key="p">
-                <template v-if="editing && editing.seatId === seat.id && editing.platoon === p">
-                  <div class="setup__editcell">
-                    <select v-model="editUserId" class="setup__select">
-                      <option value="">— open seat —</option>
-                      <option v-for="person in sched.people.value" :key="person.id" :value="person.id">
-                        {{ person.fullName }}
-                      </option>
-                    </select>
-                    <label class="setup__from">
-                      <span>Effective</span>
-                      <input v-model="editFrom" type="date" class="setup__date" />
-                    </label>
-                    <div class="setup__editbtns">
-                      <button class="setup__btn setup__btn--primary" :disabled="saving" @click="saveEdit">
-                        {{ saving ? 'Saving…' : 'Save' }}
+          <div class="setup__scroll">
+            <table class="setup__table">
+              <thead>
+                <tr>
+                  <th class="setup__th-seat">Seat</th>
+                  <th v-for="p in PLATOONS" :key="p" class="setup__th" :data-platoon="p">
+                    {{ p }} Shift
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="row in tplRows"
+                  :key="row.seat.id"
+                  :class="{ 'setup__tr--unit': row.firstOfUnit }"
+                >
+                  <td class="setup__seatcell">
+                    <span class="setup__unitcode">{{ row.unitCode }}</span>
+                    <span class="setup__seatlabel">{{ row.seat.label }}</span>
+                    <span class="setup__qual">qual: {{ QUAL_LABELS[row.seat.qualRule] ?? row.seat.qualRule }}</span>
+                  </td>
+                  <td v-for="p in PLATOONS" :key="p" class="setup__cell">
+                    <template v-if="editing && editing.seatId === row.seat.id && editing.platoon === p">
+                      <div class="setup__editcell">
+                        <select v-model="editUserId" class="setup__select">
+                          <option value="">— open seat —</option>
+                          <option v-for="person in sched.people.value" :key="person.id" :value="person.id">
+                            {{ person.fullName }}
+                          </option>
+                        </select>
+                        <label class="setup__from">
+                          <span>Effective</span>
+                          <input v-model="editFrom" type="date" class="setup__date" />
+                        </label>
+                        <div class="setup__editbtns">
+                          <button class="setup__btn setup__btn--primary" :disabled="saving" @click="saveEdit">
+                            {{ saving ? 'Saving…' : 'Save' }}
+                          </button>
+                          <button class="setup__btn" :disabled="saving" @click="editing = null">Cancel</button>
+                        </div>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <button class="setup__cellbtn" @click="startEdit(row.seat.id, p)">
+                        <span v-if="occupantName(row.seat.id, p)">{{ occupantName(row.seat.id, p) }}</span>
+                        <span v-else class="setup__open">Open</span>
+                        <span
+                          v-for="up in upcoming(row.seat.id, p)"
+                          :key="up.id"
+                          class="setup__upcoming"
+                        >
+                          → {{ up.userId ? (sched.personById.value.get(up.userId)?.fullName ?? 'Unknown') : 'open' }}
+                          eff. {{ fmtDate(up.effectiveFrom) }}
+                        </span>
                       </button>
-                      <button class="setup__btn" :disabled="saving" @click="editing = null">Cancel</button>
-                    </div>
-                  </div>
-                </template>
-                <template v-else>
-                  <button class="setup__cellbtn" @click="startEdit(seat.id, p)">
-                    <span v-if="occupantName(seat.id, p)">{{ occupantName(seat.id, p) }}</span>
-                    <span v-else class="setup__open">Open</span>
-                  </button>
-                  <p v-for="up in upcoming(seat.id, p)" :key="up.id" class="setup__upcoming">
-                    {{ up.userId ? (sched.personById.value.get(up.userId)?.fullName ?? 'Unknown') : 'Open' }}
-                    from {{ up.effectiveFrom }}
-                  </p>
-                </template>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+                    </template>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
-    <p class="setup__sub">Access levels are managed on the Members tab.</p>
+          <p class="setup__foot">
+            Click any cell to reassign with an <strong>effective date</strong> (earlier days keep
+            the previous assignment; a vacancy posts as open seats automatically). Seat
+            qualifications enforce from the clinical pipeline.
+          </p>
+        </section>
+
+        <section class="setup__card">
+          <h2 class="setup__h">Scheduled template changes</h2>
+          <p v-if="scheduledChanges.length === 0" class="setup__muted">
+            None scheduled — changes with a future effective date appear here.
+          </p>
+          <div v-for="ch in scheduledChanges" :key="ch.id" class="setup__change">
+            <div class="setup__change-main">
+              <p class="setup__change-label">{{ ch.label }}</p>
+              <p class="setup__change-detail">{{ ch.detail }}</p>
+            </div>
+            <span class="setup__chip">Takes effect in {{ ch.days }} {{ ch.days === 1 ? 'day' : 'days' }}</span>
+            <button class="setup__btn setup__btn--danger" @click="cancelChange(ch.id)">
+              {{ cancelArm === ch.id ? 'Confirm cancel' : 'Cancel' }}
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <aside class="setup__side">
+        <section class="setup__card">
+          <div class="setup__card-head">
+            <h2 class="setup__h">Units &amp; display order</h2>
+            <button class="setup__btn" @click="addingUnit = !addingUnit">
+              {{ addingUnit ? 'Close' : 'Add unit' }}
+            </button>
+          </div>
+
+          <form v-if="addingUnit" class="setup__addunit" @submit.prevent="submitUnit">
+            <div class="setup__addgrid">
+              <label class="setup__field">
+                <span>Code</span>
+                <input v-model="nuCode" type="text" class="setup__input" placeholder="M251" />
+              </label>
+              <label class="setup__field">
+                <span>Label</span>
+                <input v-model="nuLabel" type="text" class="setup__input" placeholder="Medic 251" />
+              </label>
+              <label class="setup__field">
+                <span>Station</span>
+                <input v-model="nuStation" type="text" class="setup__input" placeholder="Station 201 · Hempstead" />
+              </label>
+              <label class="setup__field">
+                <span>Seats</span>
+                <select v-model="nuPreset" class="setup__select">
+                  <option value="medic">Paramedic + Attendant</option>
+                  <option value="aic">AIC/Medic + Attendant</option>
+                  <option value="supervisor">Supervisor</option>
+                </select>
+              </label>
+            </div>
+            <button type="submit" class="setup__btn setup__btn--primary" :disabled="nuBusy">
+              {{ nuBusy ? 'Adding…' : 'Add unit' }}
+            </button>
+          </form>
+
+          <div
+            v-for="u in sched.units.value.filter((x) => x.active)"
+            :key="u.id"
+            class="setup__unitrow"
+          >
+            <div class="setup__unitinfo">
+              <span class="setup__unitcode">{{ u.code }}</span>
+              <span class="setup__unitseats">{{ seatSummary(u.id) }}</span>
+              <span v-if="u.station" class="setup__unitstation">{{ u.station }}</span>
+            </div>
+            <span class="setup__unit-order">
+              <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move up" @click="moveUnit(u.id, -1)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
+              </button>
+              <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move down" @click="moveUnit(u.id, 1)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+              </button>
+            </span>
+          </div>
+        </section>
+
+        <section class="setup__card">
+          <h2 class="setup__h">Access</h2>
+          <p class="setup__muted">Access levels are managed on the Members tab.</p>
+        </section>
+      </aside>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.setup__section {
-  margin-bottom: 2rem;
-}
-
-.setup__h {
-  font-family: var(--font-display);
-  font-size: 1.25rem;
-  color: var(--color-brand-800);
-  margin: 0 0 0.25rem;
-}
-
-.setup__sub {
-  font-size: 0.85rem;
-  color: var(--color-muted);
-  margin: 0 0 0.9rem;
-  max-width: 60ch;
-}
-
 .setup__error {
   color: var(--color-danger-500);
   font-size: 0.85rem;
+  margin: 0 0 0.6rem;
 }
 
-.setup__unit {
+.setup__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.setup__card {
   border: 1px solid var(--color-line);
   border-radius: 12px;
   background: var(--color-surface);
-  padding: 0.7rem 0.9rem;
-  margin-bottom: 0.8rem;
+  padding: 0.8rem 0.95rem;
   box-shadow: var(--shadow-sm);
+  margin-bottom: 1rem;
 }
 
-.setup__unit-head {
+.setup__card-head {
   display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
   margin-bottom: 0.5rem;
 }
 
-.setup__unit-code {
+.setup__h {
+  font-size: 11px;
   font-weight: 700;
-  color: var(--color-brand-700);
-}
-
-.setup__unit-station {
-  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--color-muted);
+  margin: 0;
 }
 
-.setup__unit-order {
-  margin-left: auto;
-  display: inline-flex;
-  gap: 3px;
-}
-
-.setup__order-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: var(--color-surface);
-  color: var(--color-muted);
-  cursor: pointer;
-}
-
-.setup__order-btn svg {
-  width: 13px;
-  height: 13px;
+.setup__scroll {
+  overflow-x: auto;
 }
 
 .setup__table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.88rem;
+  font-size: 0.85rem;
 }
 
-.setup__table th {
+.setup__th-seat,
+.setup__th {
   text-align: left;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-muted);
-  padding: 0.3rem 0.5rem;
+  padding: 0.35rem 0.5rem;
   border-bottom: 1px solid var(--color-line);
 }
 
+.setup__th[data-platoon='A'] {
+  border-top: 3px solid oklch(0.55 0.2 27);
+}
+
+.setup__th[data-platoon='B'] {
+  border-top: 3px solid oklch(0.5 0.16 255);
+}
+
+.setup__th[data-platoon='C'] {
+  border-top: 3px solid oklch(0.55 0.15 150);
+}
+
 .setup__table td {
-  padding: 0.35rem 0.5rem;
+  padding: 0.3rem 0.5rem;
   border-bottom: 1px solid var(--color-line-soft);
   vertical-align: top;
 }
 
-.setup__table tr:last-child td {
-  border-bottom: 0;
+.setup__tr--unit td {
+  border-top: 1px solid var(--color-line);
 }
 
-.setup__seatname {
-  color: var(--color-muted);
+.setup__seatcell {
   white-space: nowrap;
+}
+
+.setup__unitcode {
+  font-weight: 700;
+  color: var(--color-brand-700);
+  margin-right: 0.35rem;
+}
+
+.setup__seatlabel {
+  color: var(--color-ink);
+}
+
+.setup__qual {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--color-muted);
 }
 
 .setup__cellbtn {
@@ -300,6 +480,8 @@ onMounted(async () => {
   border-radius: 6px;
   cursor: pointer;
   text-align: left;
+  display: block;
+  width: 100%;
 }
 
 .setup__cellbtn:hover {
@@ -312,26 +494,28 @@ onMounted(async () => {
 }
 
 .setup__upcoming {
-  font-size: 0.72rem;
+  display: block;
+  font-size: 0.7rem;
   color: var(--color-accent-700);
-  margin: 0.15rem 0 0;
+  margin-top: 0.1rem;
 }
 
 .setup__editcell {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  min-width: 190px;
+  min-width: 185px;
 }
 
-.setup__select {
+.setup__select,
+.setup__input {
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   padding: 0.3rem 0.4rem;
   border: 1px solid var(--color-line);
   border-radius: 7px;
   background: var(--color-surface);
-  max-width: 220px;
+  max-width: 230px;
 }
 
 .setup__from {
@@ -357,7 +541,7 @@ onMounted(async () => {
 
 .setup__btn {
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 600;
   padding: 0.28rem 0.7rem;
   border: 1px solid var(--color-line);
@@ -365,6 +549,7 @@ onMounted(async () => {
   background: var(--color-surface);
   color: var(--color-ink-soft);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .setup__btn--primary {
@@ -373,4 +558,142 @@ onMounted(async () => {
   color: white;
 }
 
+.setup__btn--danger {
+  color: var(--color-danger-500);
+}
+
+.setup__foot {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  margin: 0.6rem 0 0;
+}
+
+.setup__muted {
+  font-size: 0.82rem;
+  color: var(--color-muted);
+  margin: 0;
+}
+
+.setup__change {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.setup__change:last-child {
+  border-bottom: 0;
+}
+
+.setup__change-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.setup__change-label {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.setup__change-detail {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  margin: 0.05rem 0 0;
+}
+
+.setup__chip {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-accent-700);
+  border: 1px solid oklch(0.85 0.06 86.8);
+  background: oklch(0.98 0.02 86.8);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+
+.setup__addunit {
+  border-bottom: 1px solid var(--color-line-soft);
+  padding-bottom: 0.7rem;
+  margin-bottom: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.setup__addgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+}
+
+.setup__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.72rem;
+  color: var(--color-muted);
+}
+
+.setup__unitrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.setup__unitrow:last-child {
+  border-bottom: 0;
+}
+
+.setup__unitinfo {
+  min-width: 0;
+}
+
+.setup__unitseats {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  margin-left: 0.15rem;
+}
+
+.setup__unitstation {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--color-muted-soft);
+}
+
+.setup__unit-order {
+  display: inline-flex;
+  gap: 3px;
+  flex: none;
+}
+
+.setup__order-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.setup__order-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+@media (max-width: 980px) {
+  .setup__cols {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

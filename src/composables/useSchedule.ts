@@ -1129,6 +1129,69 @@ async function assignRotation(
   return null
 }
 
+/**
+ * Cancel a scheduled (or standing) assignment, then repair the chain for
+ * that seat/platoon so effective_to always points at the next change
+ * minus one day (open-ended on the last).
+ */
+async function removeRotationAssignment(id: string): Promise<string | null> {
+  const target = rotation.value.find((a) => a.id === id)
+  if (!target) return 'Assignment not found'
+  const del = await supabase.from('sched_rotation_assignments').delete().eq('id', id)
+  if (del.error) return del.error.message
+  const chain = rotation.value
+    .filter((a) => a.seatId === target.seatId && a.platoon === target.platoon && a.id !== id)
+    .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+  for (let i = 0; i < chain.length; i++) {
+    const want = i + 1 < chain.length ? addDaysIso(chain[i + 1].effectiveFrom, -1) : null
+    if (chain[i].effectiveTo !== want) {
+      const upd = await supabase
+        .from('sched_rotation_assignments')
+        .update({ effective_to: want })
+        .eq('id', chain[i].id)
+      if (upd.error) return upd.error.message
+    }
+  }
+  await loadCore()
+  return null
+}
+
+export type UnitPreset = 'medic' | 'aic' | 'supervisor'
+
+async function addUnit(opts: {
+  code: string
+  label: string
+  station: string
+  preset: UnitPreset
+}): Promise<string | null> {
+  const maxOrder = Math.max(0, ...units.value.map((u) => u.sortOrder))
+  const ins = await supabase
+    .from('sched_units')
+    .insert({ code: opts.code, label: opts.label, station: opts.station, sort_order: maxOrder + 1 })
+    .select('id')
+    .single()
+  if (ins.error) return ins.error.message
+  const unitId = ins.data.id as string
+  const seatsToAdd =
+    opts.preset === 'supervisor'
+      ? [{ label: 'Supervisor', qual_rule: 'supervisor', sort_order: 0 }]
+      : opts.preset === 'aic'
+        ? [
+            { label: 'AIC / Medic', qual_rule: 'aic_or_p2', sort_order: 0 },
+            { label: 'Attendant', qual_rule: 'any_field', sort_order: 1 },
+          ]
+        : [
+            { label: 'Paramedic', qual_rule: 'p2', sort_order: 0 },
+            { label: 'Attendant', qual_rule: 'any_field', sort_order: 1 },
+          ]
+  const sres = await supabase
+    .from('sched_seats')
+    .insert(seatsToAdd.map((s) => ({ ...s, unit_id: unitId })))
+  if (sres.error) return sres.error.message
+  await loadCore()
+  return null
+}
+
 async function saveUnitOrder(orderedIds: string[]): Promise<string | null> {
   for (let i = 0; i < orderedIds.length; i++) {
     const res = await supabase
@@ -1231,6 +1294,8 @@ export function useSchedule() {
     displayName,
     // mutations
     assignRotation,
+    removeRotationAssignment,
+    addUnit,
     saveUnitOrder,
     setAccess,
     fetchAccessList,
