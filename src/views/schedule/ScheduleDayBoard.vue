@@ -415,6 +415,9 @@ async function removeNote(id: string) {
       <div v-for="ev in model.events" :key="ev.label" class="db__event">
         <div class="db__event-head">
           <span class="db__event-name">{{ ev.label }}</span>
+          <span v-if="ev.notes" class="db__noteicon" :title="ev.notes">
+            <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
+          </span>
           <span v-if="ev.start" class="db__time">{{ ev.start }} – {{ ev.end }}</span>
           <span v-if="sched.canEdit.value" class="db__event-tools">
             <button class="db__tool db__tool--sm" @click="addSlotTo(ev, 'Paramedic')">+ Paramedic</button>
@@ -447,6 +450,49 @@ async function removeNote(id: string) {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
               </button>
             </template>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="model.extraHours.length > 0" class="db__station">
+      <h3 class="db__station-name db__station-name--extra">Extra Hours</h3>
+      <div class="db__labeled">
+        <div v-for="r in model.extraHours" :key="r.entryId" class="db__row">
+          <span class="db__seat">{{ r.sub || 'Extra' }}</span>
+          <span class="db__name">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+          <span class="db__time">
+            {{ r.start }} – {{ r.end }}
+            <button v-if="sched.canEdit.value" class="db__x" aria-label="Remove" @click="clearRow(r.entryId)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="model.trades.length > 0" class="db__station">
+      <h3 class="db__station-name db__station-name--trade">Trades</h3>
+      <div class="db__labeled">
+        <div v-for="r in model.trades" :key="r.entryId" class="db__row">
+          <span class="db__seat">{{ r.sub }}</span>
+          <span class="db__name">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+          <span class="db__time">{{ r.start }} – {{ r.end }}</span>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="model.timeOff.length > 0" class="db__station">
+      <h3 class="db__station-name db__station-name--off">Time Off</h3>
+      <div class="db__labeled">
+        <div v-for="r in model.timeOff" :key="r.entryId" class="db__row">
+          <span class="db__seat">{{ r.sub }}</span>
+          <span class="db__name">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+          <span class="db__time">
+            {{ r.start }} – {{ r.end }}
+            <button v-if="sched.canEdit.value" class="db__x" aria-label="Remove" @click="clearRow(r.entryId)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+            </button>
           </span>
         </div>
       </div>
@@ -862,6 +908,42 @@ async function removeNote(id: string) {
   margin-left: auto;
   display: inline-flex;
   gap: 0.35rem;
+}
+
+.db__noteicon {
+  display: inline-flex;
+  cursor: help;
+}
+
+.db__noteicon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.db__station-name--extra {
+  color: var(--color-brand-700);
+}
+
+.db__station-name--trade {
+  color: var(--color-success-500);
+}
+
+.db__station-name--off {
+  color: oklch(0.5 0.13 60);
+}
+
+.db__labeled {
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-surface);
+  padding: 0.3rem 0.8rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.db__labeled .db__seat {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .db__empty {

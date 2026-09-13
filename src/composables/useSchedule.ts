@@ -188,7 +188,18 @@ export interface DayEventBox {
   eventId: string | null
   start: string | null // 'HHmm' when known
   end: string | null
+  notes: string | null // hover detail set when the event was created
   rows: SeatRow[] // assigned staff + open event seats
+}
+
+/** Row in a labeled day section (Extra Hours / Time Off / Trades). */
+export interface LabeledRow {
+  entryId: string
+  name: string
+  credential: string | null
+  start: string
+  end: string
+  sub: string // second line: 'M272 / Paramedic', 'Vacation Time', 'For X'
 }
 
 export interface DayModel {
@@ -196,7 +207,10 @@ export interface DayModel {
   platoon: Platoon
   units: UnitModel[]
   events: DayEventBox[]
-  unattached: SeatRow[] // extras/students with no unit
+  extraHours: LabeledRow[]
+  timeOff: LabeledRow[]
+  trades: LabeledRow[]
+  unattached: SeatRow[] // students with no unit
   notes: DayNote[] // day-level notes (no unit)
   openCount: number
 }
@@ -650,8 +664,10 @@ export function dayModel(dateIso: string): DayModel {
       seatModels.push({ seat, rows })
     }
 
+    // Only students ride inside the unit block; approved extra hours get
+    // their own labeled section below the schedule (Aladtec style).
     const extras = dayEntries
-      .filter((e) => e.unitId === unit.id && (e.kind === 'extra' || e.kind === 'student'))
+      .filter((e) => e.unitId === unit.id && e.kind === 'student')
       .sort((a, b) => a.startAt.localeCompare(b.startAt))
       .map((e) => {
         const who = displayName(e.userId)
@@ -673,7 +689,7 @@ export function dayModel(dateIso: string): DayModel {
   }
 
   const unattached = dayEntries
-    .filter((e) => e.unitId === null && (e.kind === 'extra' || e.kind === 'student'))
+    .filter((e) => e.unitId === null && e.kind === 'student')
     .map((e) => {
       const who = displayName(e.userId)
       return {
@@ -708,6 +724,7 @@ export function dayModel(dateIso: string): DayModel {
       eventId: listing?.id ?? null,
       start: listing ? listing.startTime.replace(':', '') : null,
       end: listing ? listing.endTime.replace(':', '') : null,
+      notes: listing?.notes ?? null,
       rows: rows
         .sort((a, b) => a.startAt.localeCompare(b.startAt))
         .map((e) => {
@@ -735,13 +752,81 @@ export function dayModel(dateIso: string): DayModel {
         eventId: ev.id,
         start: ev.startTime.replace(':', ''),
         end: ev.endTime.replace(':', ''),
+        notes: ev.notes,
         rows: [],
       })
     }
   }
 
+  // Labeled day sections, Aladtec style.
+  const unitCodeById = new Map(units.value.map((u) => [u.id, u.code]))
+  const extraHours: LabeledRow[] = dayEntries
+    .filter((e) => e.kind === 'extra')
+    .sort((a, b) => a.startAt.localeCompare(b.startAt))
+    .map((e) => {
+      const who = displayName(e.userId)
+      const unitCode = e.unitId ? unitCodeById.get(e.unitId) : null
+      const sub = [unitCode, e.note].filter(Boolean).join(' / ')
+      return {
+        entryId: e.id,
+        name: who.name || 'Unknown',
+        credential: who.credential,
+        start: hhmm(e.startAt),
+        end: hhmm(e.endAt),
+        sub,
+      }
+    })
+
+  const OFF_LABELS: Record<string, string> = {
+    vacation: 'Vacation Time',
+    sick: 'Sick Time',
+    unpaid: 'Unpaid Time Off',
+    bereavement: 'Bereavement',
+    other: 'Time Off',
+  }
+  const timeOff: LabeledRow[] = dayEntries
+    .filter((e) => e.kind === 'timeoff')
+    .sort((a, b) => a.startAt.localeCompare(b.startAt))
+    .map((e) => {
+      const who = displayName(e.userId)
+      return {
+        entryId: e.id,
+        name: who.name || 'Unknown',
+        credential: who.credential,
+        start: hhmm(e.startAt),
+        end: hhmm(e.endAt),
+        sub: e.note || OFF_LABELS[e.offType ?? 'other'] || 'Time Off',
+      }
+    })
+
+  const trades: LabeledRow[] = dayEntries
+    .filter((e) => e.kind === 'trade' && e.userId !== null)
+    .sort((a, b) => a.startAt.localeCompare(b.startAt))
+    .map((e) => {
+      const who = displayName(e.userId)
+      return {
+        entryId: e.id,
+        name: who.name || 'Unknown',
+        credential: who.credential,
+        start: hhmm(e.startAt),
+        end: hhmm(e.endAt),
+        sub: (e.note ?? '').replace(/^Trade for /, 'For '),
+      }
+    })
+
   const notes = dayNotes.value.filter((n) => n.onDate === dateIso && n.unitId === null)
-  return { dateIso, platoon, units: unitModels, events: eventBoxes, unattached, notes, openCount }
+  return {
+    dateIso,
+    platoon,
+    units: unitModels,
+    events: eventBoxes,
+    extraHours,
+    timeOff,
+    trades,
+    unattached,
+    notes,
+    openCount,
+  }
 }
 
 /** Lightweight month-cell summary without building full unit models. */

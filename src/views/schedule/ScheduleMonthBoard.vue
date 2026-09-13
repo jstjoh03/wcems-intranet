@@ -100,11 +100,47 @@ const weeks = computed<Cell[][]>(() => {
           <div v-for="ev in c.model.events" :key="ev.label" class="mb__event">
             <p class="mb__eventname">
               <span class="mb__eventlabel">{{ ev.label }}</span>
+              <span v-if="ev.notes" class="mb__noteicon" :title="ev.notes">
+                <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
+              </span>
               <span v-if="ev.start" class="mb__time">{{ ev.start }}-{{ ev.end }}</span>
             </p>
             <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="mb__row">
               <span class="mb__name" :class="{ 'mb__name--open': row.open }">{{ row.name }}</span>
               <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
+            </div>
+          </div>
+
+          <div v-if="c.model.extraHours.length" class="mb__section mb__section--extra">
+            <p class="mb__section-h">Extra Hours</p>
+            <div v-for="r in c.model.extraHours" :key="r.entryId" class="mb__lrow">
+              <div class="mb__row">
+                <span class="mb__name">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
+              </div>
+              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
+            </div>
+          </div>
+
+          <div v-if="c.model.trades.length" class="mb__section mb__section--trade">
+            <p class="mb__section-h">Trades</p>
+            <div v-for="r in c.model.trades" :key="r.entryId" class="mb__lrow">
+              <div class="mb__row">
+                <span class="mb__name">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
+              </div>
+              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
+            </div>
+          </div>
+
+          <div v-if="c.model.timeOff.length" class="mb__section mb__section--off">
+            <p class="mb__section-h">Time Off</p>
+            <div v-for="r in c.model.timeOff" :key="r.entryId" class="mb__lrow">
+              <div class="mb__row">
+                <span class="mb__name">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
+              </div>
+              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
             </div>
           </div>
         </div>
@@ -317,6 +353,72 @@ const weeks = computed<Cell[][]>(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.mb__noteicon {
+  flex: none;
+  display: inline-flex;
+  cursor: help;
+}
+
+.mb__noteicon svg {
+  width: 11px;
+  height: 11px;
+}
+
+.mb__section {
+  margin-top: 0.25rem;
+  border-radius: 7px;
+  padding: 0 0.35rem 0.25rem;
+  border: 1px solid var(--color-line);
+}
+
+.mb__section-h {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin: 0 -0.35rem 0.1rem;
+  padding: 0.15rem 0.35rem;
+  border-radius: 6px 6px 0 0;
+}
+
+.mb__section--extra {
+  border-color: oklch(0.85 0.06 250);
+}
+
+.mb__section--extra .mb__section-h {
+  background: var(--color-brand-50);
+  color: var(--color-brand-700);
+}
+
+.mb__section--trade {
+  border-color: oklch(0.85 0.07 150);
+}
+
+.mb__section--trade .mb__section-h {
+  background: var(--color-success-50);
+  color: var(--color-success-500);
+}
+
+.mb__section--off {
+  border-color: oklch(0.88 0.06 60);
+}
+
+.mb__section--off .mb__section-h {
+  background: var(--color-warning-50);
+  color: oklch(0.5 0.13 60);
+}
+
+.mb__lrow {
+  padding: 0.05rem 0;
+}
+
+.mb__sub {
+  font-size: 0.6rem;
+  color: var(--color-muted);
+  margin: 0;
+  line-height: 1.25;
 }
 
 .mb__legend {

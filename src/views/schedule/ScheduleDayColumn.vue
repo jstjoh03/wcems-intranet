@@ -56,12 +56,47 @@ const header = computed(() =>
     </div>
 
     <div v-for="ev in model.events" :key="ev.label" class="dc__event">
-      <p class="dc__event-name">{{ ev.label }}</p>
+      <p class="dc__event-name" :title="ev.notes ?? undefined">
+        {{ ev.label }}<span v-if="ev.notes" class="dc__noteicon" />
+      </p>
       <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="dc__row">
         <span class="dc__name" :class="{ 'dc__name--open': row.open }">
           {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
         </span>
         <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
+      </div>
+    </div>
+
+    <div v-if="model.extraHours.length" class="dc__section dc__section--extra">
+      <p class="dc__section-h">Extra Hours</p>
+      <div v-for="r in model.extraHours" :key="r.entryId">
+        <div class="dc__row">
+          <span class="dc__name">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
+          <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
+        </div>
+        <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
+      </div>
+    </div>
+
+    <div v-if="model.trades.length" class="dc__section dc__section--trade">
+      <p class="dc__section-h">Trades</p>
+      <div v-for="r in model.trades" :key="r.entryId">
+        <div class="dc__row">
+          <span class="dc__name">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
+          <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
+        </div>
+        <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
+      </div>
+    </div>
+
+    <div v-if="model.timeOff.length" class="dc__section dc__section--off">
+      <p class="dc__section-h">Time Off</p>
+      <div v-for="r in model.timeOff" :key="r.entryId">
+        <div class="dc__row">
+          <span class="dc__name">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
+          <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
+        </div>
+        <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
       </div>
     </div>
   </div>
@@ -199,5 +234,48 @@ const header = computed(() =>
   font-weight: 700;
   color: var(--color-accent-700);
   margin: 0 0 0.15rem;
+}
+
+.dc__noteicon {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 5px;
+  border-radius: 2px;
+  background: oklch(0.88 0.1 86.8);
+  border: 1px solid oklch(0.6 0.11 86.8);
+  cursor: help;
+}
+
+.dc__section {
+  padding: 0.25rem 0.55rem 0.3rem;
+  border-top: 1px solid var(--color-line-soft);
+}
+
+.dc__section-h {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin: 0 0 0.1rem;
+}
+
+.dc__section--extra .dc__section-h {
+  color: var(--color-brand-700);
+}
+
+.dc__section--trade .dc__section-h {
+  color: var(--color-success-500);
+}
+
+.dc__section--off .dc__section-h {
+  color: oklch(0.5 0.13 60);
+}
+
+.dc__sub {
+  font-size: 0.62rem;
+  color: var(--color-muted);
+  margin: 0;
+  line-height: 1.25;
 }
 </style>
