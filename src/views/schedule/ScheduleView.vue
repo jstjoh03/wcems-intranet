@@ -209,9 +209,10 @@ watch(dateIso, (v) => {
 
 <style scoped>
 .sched {
-  max-width: 1120px;
+  /* Wide like the mockup — the month/week grids need the room. */
+  max-width: 1720px;
   margin: 0 auto;
-  padding: 1.25rem 1rem 3rem;
+  padding: 1.25rem 1.25rem 3rem;
 }
 
 .sched__head {

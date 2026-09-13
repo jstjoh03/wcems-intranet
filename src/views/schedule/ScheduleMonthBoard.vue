@@ -261,12 +261,11 @@ const weeks = computed<Cell[][]>(() => {
 }
 
 .mb__name {
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   color: var(--color-ink);
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere; /* full names beat clipped ones */
 }
 
 .mb__name--open {
@@ -279,10 +278,11 @@ const weeks = computed<Cell[][]>(() => {
 }
 
 .mb__time {
-  font-size: 0.62rem;
+  font-size: 0.6rem;
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  flex: none;
 }
 
 .mb__row--extra .mb__name {
