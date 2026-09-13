@@ -99,7 +99,7 @@ const weeks = computed<Cell[][]>(() => {
 
           <div v-for="ev in c.model.events" :key="ev.label" class="mb__event">
             <p class="mb__eventname">
-              {{ ev.label }}
+              <span class="mb__eventlabel">{{ ev.label }}</span>
               <span v-if="ev.start" class="mb__time">{{ ev.start }}-{{ ev.end }}</span>
             </p>
             <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="mb__row">
@@ -261,11 +261,15 @@ const weeks = computed<Cell[][]>(() => {
 }
 
 .mb__name {
+  /* Aladtec behavior: one line always — long names ellipsize, the
+     time never moves or wraps. */
   font-size: 0.7rem;
   color: var(--color-ink);
   min-width: 0;
-  line-height: 1.3;
-  overflow-wrap: anywhere; /* full names beat clipped ones */
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mb__name--open {
@@ -306,6 +310,13 @@ const weeks = computed<Cell[][]>(() => {
   font-weight: 700;
   color: var(--color-accent-700);
   margin: 0 0 0.05rem;
+}
+
+.mb__eventlabel {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .mb__legend {

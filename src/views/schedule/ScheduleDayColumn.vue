@@ -158,11 +158,14 @@ const header = computed(() =>
 }
 
 .dc__name {
-  font-size: 0.72rem;
+  /* Aladtec behavior: one line, ellipsize when long, time stays put. */
+  font-size: 0.75rem;
   color: var(--color-ink);
   min-width: 0;
-  line-height: 1.3;
-  overflow-wrap: anywhere; /* full last names wrap instead of clipping */
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dc__name--open {
