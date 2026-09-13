@@ -472,15 +472,49 @@ export const INTERNAL_CREDENTIALS = [
   'Supervisor', 'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'EMT-FTO', 'P2-FTO', 'P3-FTO',
 ] as const
 
-/** Which internal credentials satisfy each seat qualification rule.
- *  aemt_or_higher (M231 AIC seat): any AEMT or higher — AEMT, any
- *  paramedic level, or a Supervisor. */
+/** Which internal credentials satisfy each seat rule for SELF-SERVICE
+ *  (pickups, trade claims). Supervisors hold any seat. P1s may cover a
+ *  Paramedic-in-charge seat ONLY by Chief assignment — never listed
+ *  here for p2, so they cannot pick those up themselves; the Chief's
+ *  direct-assign path is the approval and bypasses this list. */
 export const QUAL_RULE_CREDENTIALS: Record<string, readonly string[]> = {
   p2: ['P2', 'P3', 'P2-FTO', 'P3-FTO', 'Supervisor'],
   aemt_or_higher: ['AEMT', 'P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', 'Supervisor'],
   supervisor: ['Supervisor'],
   any_field: [...INTERNAL_CREDENTIALS],
   any: [...INTERNAL_CREDENTIALS],
+}
+
+/**
+ * Can this member fill this seat on their own (request a pickup, claim
+ * a giveaway)? Honors Members-tab overrides: an explicit "Qualified"
+ * grant opens a seat their credential wouldn't, "Excluded" closes one
+ * it would; unit exclusions always block.
+ */
+async function canFillSeat(
+  userId: string,
+  seatId: string,
+): Promise<{ ok: boolean; reason: string | null }> {
+  const seat = seats.value.find((s) => s.id === seatId)
+  if (!seat) return { ok: true, reason: null }
+  const unit = units.value.find((u) => u.id === seat.unitId)
+  const person = personById.value.get(userId)
+  const settings = await fetchMemberSettings(userId)
+  if (unit && settings.unitExclusions.includes(unit.id)) {
+    return { ok: false, reason: `You are excluded from ${unit.code}.` }
+  }
+  const override = settings.qualOverrides[seat.qualRule]
+  if (override === 'allow') return { ok: true, reason: null }
+  if (override === 'deny') {
+    return { ok: false, reason: `You are excluded from ${seat.label} seats.` }
+  }
+  const allowed = QUAL_RULE_CREDENTIALS[seat.qualRule] ?? []
+  const cred = person?.credential ?? null
+  if (cred && allowed.includes(cred)) return { ok: true, reason: null }
+  return {
+    ok: false,
+    reason: `Your credential (${cred ?? 'not set'}) does not qualify for this ${seat.label} seat. The Chief can still assign it directly.`,
+  }
 }
 
 /** Best-effort default when no internal credential has been set on the
@@ -1049,6 +1083,10 @@ async function createPickupRequest(opts: {
   const auth = useAuthStore()
   const me = auth.appUser?.id
   if (!me) return 'Not signed in'
+  if (opts.seatId) {
+    const q = await canFillSeat(me, opts.seatId)
+    if (!q.ok) return q.reason
+  }
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
   const seat = seats.value.find((s) => s.id === opts.seatId)
   const unit = units.value.find((u) => u.id === seat?.unitId)
@@ -1136,6 +1174,12 @@ async function makeOffer(opts: {
   const auth = useAuthStore()
   const me = auth.appUser?.id
   if (!me) return 'Not signed in'
+  // taking/covering the posted shift means filling the poster's seat
+  const posting = requests.value.find((r) => r.id === opts.requestId)
+  if (posting?.seatId) {
+    const q = await canFillSeat(me, posting.seatId)
+    if (!q.ok) return q.reason
+  }
   let offerFields: Record<string, unknown> = {}
   if (opts.offerShift) {
     const w = shiftWindow(opts.offerShift.dateIso, '06:00', '06:00')
@@ -2020,6 +2064,7 @@ export function useSchedule() {
     createExtraRequest,
     createPickupRequest,
     assignOpenSeat,
+    canFillSeat,
     cancelRequest,
     decideRequest,
     // editor tools
