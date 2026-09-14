@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useSchedule, type SeatRow, type DayEventBox } from '@/composables/useSchedule'
+import {
+  useSchedule,
+  platoonFor,
+  type SeatRow,
+  type DayEventBox,
+  type OpenSeatInfo,
+} from '@/composables/useSchedule'
 
 /**
  * Day board — one work date (0600 → 0600). Unit groups with seat rows,
@@ -48,6 +54,14 @@ function toInput(hhmm4: string): string {
   return `${hhmm4.slice(0, 2)}:${hhmm4.slice(2)}`
 }
 
+function fmtLong(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+}
+
 function openSeatSlot(seatId: string, label: string, row: SeatRow) {
   slot.value = { seatId, entryId: row.entryId, label, start: row.start, end: row.end }
   slotFrom.value = toInput(row.start)
@@ -89,7 +103,25 @@ async function submitPickup() {
 }
 
 async function assignDirect() {
-  if (!slot.value || !slotAssignee.value) return
+  if (!slot.value || !slotAssignee.value || busy.value) return
+  busy.value = true
+  // Chief scheduling someone who marked themselves unavailable → warn.
+  const un = await sched.checkUnavailable(slotAssignee.value, props.dateIso)
+  busy.value = false
+  if (un && !conflictAcknowledged.value) {
+    const who = sched.personById.value.get(slotAssignee.value)?.fullName ?? 'This member'
+    conflict.value = {
+      name: who,
+      reason: un.reason,
+      proceed: async () => {
+        conflictAcknowledged.value = true
+        conflict.value = null
+        await assignDirect()
+        conflictAcknowledged.value = false
+      },
+    }
+    return
+  }
   busy.value = true
   err.value = null
   let e: string | null
@@ -114,6 +146,192 @@ async function assignDirect() {
   }
   slot.value = null
   notice.value = 'Assigned.'
+}
+
+// ── Chief day editor: click an assigned person ───────────────────────
+
+interface EditCtx {
+  seatId: string
+  seatLabel: string
+  unitCode: string
+  userId: string
+  personName: string
+  row: SeatRow
+}
+const edit = ref<EditCtx | null>(null)
+type EditAction = '' | 'off' | 'remove' | 'move' | 'replace'
+const editAction = ref<EditAction>('')
+const editOffType = ref('vacation')
+const editFrom = ref('06:00')
+const editUntil = ref('06:00')
+const editScope = ref<'day' | 'permanent'>('day')
+const editReplaceWith = ref('')
+const editMoveTo = ref('')
+const editOpenSeats = ref<OpenSeatInfo[]>([])
+const conflict = ref<{ name: string; reason: string | null; proceed: () => Promise<void> } | null>(null)
+const conflictAcknowledged = ref(false)
+
+function openDayEdit(unitCode: string, seatId: string, seatLabel: string, row: SeatRow) {
+  if (!sched.canEdit.value || !row.userId) return
+  edit.value = {
+    seatId,
+    seatLabel,
+    unitCode,
+    userId: row.userId,
+    personName: row.name,
+    row,
+  }
+  editAction.value = ''
+  editOffType.value = 'vacation'
+  editFrom.value = toInput(row.start)
+  editUntil.value = toInput(row.end)
+  editScope.value = 'day'
+  editReplaceWith.value = ''
+  editMoveTo.value = ''
+  conflict.value = null
+  err.value = notice.value = null
+  editOpenSeats.value = sched.openSeatsFor(props.dateIso).filter((s) => s.seatId !== seatId)
+}
+
+async function runEdit() {
+  if (!edit.value) return
+  const ctx = edit.value
+  busy.value = true
+  err.value = null
+  let e: string | null = null
+  try {
+    if (editAction.value === 'off') {
+      e = await sched.dayMarkOff({
+        dateIso: props.dateIso,
+        seatId: ctx.seatId,
+        userId: ctx.userId,
+        offType: editOffType.value,
+        from: editFrom.value,
+        until: editUntil.value,
+      })
+    } else if (editAction.value === 'remove') {
+      if (editScope.value === 'permanent') {
+        e = await sched.assignRotation(ctx.seatId, platoonFor(props.dateIso), null, props.dateIso)
+        // template change covers rotation days; entry-backed today needs
+        // the day-scope removal too
+        if (!e && sched.holdsViaOverride(ctx.userId, ctx.seatId, props.dateIso)) {
+          e = await sched.dayRemove({ dateIso: props.dateIso, seatId: ctx.seatId, userId: ctx.userId })
+        }
+      } else {
+        e = await sched.dayRemove({ dateIso: props.dateIso, seatId: ctx.seatId, userId: ctx.userId })
+      }
+    } else if (editAction.value === 'move') {
+      const target = editOpenSeats.value.find((s) => `${s.seatId}|${s.entryId ?? ''}` === editMoveTo.value)
+      if (!target) e = 'Pick an open seat to move them to.'
+      else {
+        e = await sched.dayMove({
+          dateIso: props.dateIso,
+          fromSeatId: ctx.seatId,
+          toSeatId: target.seatId,
+          toEntryId: target.entryId,
+          userId: ctx.userId,
+          from: toInput(target.start),
+          until: toInput(target.end),
+        })
+      }
+    } else if (editAction.value === 'replace') {
+      if (!editReplaceWith.value) {
+        e = 'Pick a replacement.'
+      } else {
+        const un = await sched.checkUnavailable(editReplaceWith.value, props.dateIso)
+        if (un) {
+          const who = sched.personById.value.get(editReplaceWith.value)?.fullName ?? 'This member'
+          conflict.value = {
+            name: who,
+            reason: un.reason,
+            proceed: async () => {
+              await applyReplace(ctx)
+            },
+          }
+          busy.value = false
+          return
+        }
+        await applyReplace(ctx)
+        busy.value = false
+        return
+      }
+    }
+  } finally {
+    busy.value = false
+  }
+  if (e) {
+    err.value = e
+    return
+  }
+  edit.value = null
+  notice.value = 'Done.'
+}
+
+async function applyReplace(ctx: EditCtx) {
+  let e: string | null
+  if (editScope.value === 'permanent') {
+    e = await sched.assignRotation(
+      ctx.seatId,
+      platoonFor(props.dateIso),
+      editReplaceWith.value,
+      props.dateIso,
+    )
+    // entry-backed today: also swap the day's rows
+    if (!e && sched.holdsViaOverride(ctx.userId, ctx.seatId, props.dateIso)) {
+      e = await sched.dayReplace({
+        dateIso: props.dateIso,
+        seatId: ctx.seatId,
+        fromUserId: ctx.userId,
+        toUserId: editReplaceWith.value,
+        from: '06:00',
+        until: '06:00',
+      })
+    }
+  } else {
+    e = await sched.dayReplace({
+      dateIso: props.dateIso,
+      seatId: ctx.seatId,
+      fromUserId: ctx.userId,
+      toUserId: editReplaceWith.value,
+      from: editFrom.value,
+      until: editUntil.value,
+    })
+  }
+  if (e) {
+    err.value = e
+    return
+  }
+  conflict.value = null
+  edit.value = null
+  notice.value = 'Done.'
+}
+
+async function conflictProceed() {
+  if (!conflict.value) return
+  busy.value = true
+  await conflict.value.proceed()
+  busy.value = false
+}
+
+async function conflictLeaveOpen() {
+  if (!edit.value) return
+  busy.value = true
+  // open only the window the blocked replace was for, not the whole day
+  const e = await sched.dayOpenWindow({
+    dateIso: props.dateIso,
+    seatId: edit.value.seatId,
+    userId: edit.value.userId,
+    from: editFrom.value,
+    until: editUntil.value,
+  })
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  conflict.value = null
+  edit.value = null
+  notice.value = 'Seat posted as open.'
 }
 
 // ── editor: add event ────────────────────────────────────────────────
@@ -380,6 +598,15 @@ async function removeNote(id: string) {
             >
               {{ sm.seat.label }}
             </button>
+            <button
+              v-else-if="sched.canEdit.value"
+              class="db__name db__name--btn"
+              title="Edit this person's day"
+              @click="openDayEdit(um.unit.code, sm.seat.id, sm.seat.label, row)"
+            >
+              {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
+              <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
+            </button>
             <span v-else class="db__name">
               {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
               <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
@@ -512,8 +739,106 @@ async function removeNote(id: string) {
       from the effective date forward.
     </p>
 
+    <!-- Chief day-edit modal -->
+    <div v-if="edit && !conflict" class="db__overlay" @click.self="edit = null">
+      <div class="db__modal">
+        <h3 class="db__modal-title">{{ edit.personName }}</h3>
+        <p class="db__modal-sub">{{ edit.unitCode }} {{ edit.seatLabel }} · {{ edit.row.start }} – {{ edit.row.end }}</p>
+
+        <div class="db__editactions">
+          <button
+            v-for="[k, label] in ([['off','Mark time off'],['remove','Remove from day'],['move','Move to open seat'],['replace','Replace with…']] as const)"
+            :key="k"
+            class="db__btn"
+            :class="{ 'db__btn--primary': editAction === k }"
+            @click="editAction = editAction === k ? '' : k"
+          >
+            {{ label }}
+          </button>
+        </div>
+
+        <template v-if="editAction === 'off'">
+          <select v-model="editOffType" class="db__input">
+            <option value="vacation">Vacation</option>
+            <option value="sick">Sick</option>
+            <option value="unpaid">Unpaid time off</option>
+            <option value="bereavement">Bereavement</option>
+            <option value="other">Other</option>
+          </select>
+          <div class="db__times">
+            <label>From <input v-model="editFrom" type="time" class="db__input db__input--time" /></label>
+            <label>Until <input v-model="editUntil" type="time" class="db__input db__input--time" /></label>
+          </div>
+        </template>
+
+        <template v-else-if="editAction === 'remove'">
+          <div class="db__scope">
+            <label><input v-model="editScope" type="radio" value="day" /> This day only</label>
+            <label><input v-model="editScope" type="radio" value="permanent" /> Permanent from this date (template change)</label>
+          </div>
+        </template>
+
+        <template v-else-if="editAction === 'move'">
+          <select v-model="editMoveTo" class="db__input">
+            <option value="" disabled>— open seats today —</option>
+            <option v-for="s in editOpenSeats" :key="s.seatId + (s.entryId ?? '')" :value="`${s.seatId}|${s.entryId ?? ''}`">
+              {{ s.unitCode }} {{ s.seatLabel }} · {{ s.start }} – {{ s.end }}
+            </option>
+          </select>
+          <p v-if="editOpenSeats.length === 0" class="db__empty">No open seats today.</p>
+        </template>
+
+        <template v-else-if="editAction === 'replace'">
+          <select v-model="editReplaceWith" class="db__input">
+            <option value="">— choose a member —</option>
+            <option v-for="p in sched.people.value.filter((x) => x.id !== edit!.userId)" :key="p.id" :value="p.id">
+              {{ p.fullName }}<template v-if="p.credential"> - {{ p.credential }}</template>
+            </option>
+          </select>
+          <div class="db__times">
+            <label>From <input v-model="editFrom" type="time" class="db__input db__input--time" /></label>
+            <label>Until <input v-model="editUntil" type="time" class="db__input db__input--time" /></label>
+          </div>
+          <div class="db__scope">
+            <label><input v-model="editScope" type="radio" value="day" /> This day only</label>
+            <label><input v-model="editScope" type="radio" value="permanent" /> Permanent from this date (template change)</label>
+          </div>
+        </template>
+
+        <p v-if="err" class="db__error">{{ err }}</p>
+        <button
+          v-if="editAction"
+          class="db__btn db__btn--primary"
+          :disabled="busy"
+          @click="runEdit"
+        >
+          {{ busy ? 'Working…' : 'Apply' }}
+        </button>
+        <button class="db__btn db__btn--ghost" @click="edit = null">Close</button>
+      </div>
+    </div>
+
+    <!-- unavailability conflict warning -->
+    <div v-if="conflict" class="db__overlay">
+      <div class="db__modal">
+        <h3 class="db__modal-title">{{ conflict.name }} is unavailable</h3>
+        <p class="db__modal-sub">
+          {{ conflict.name }} marked {{ fmtLong(dateIso) }} unavailable{{ conflict.reason ? ` — "${conflict.reason}"` : '' }}.
+          Scheduling them anyway overrides that.
+        </p>
+        <p v-if="err" class="db__error">{{ err }}</p>
+        <button class="db__btn db__btn--primary" :disabled="busy" @click="conflictProceed">
+          Schedule anyway
+        </button>
+        <button v-if="edit" class="db__btn" :disabled="busy" @click="conflictLeaveOpen">
+          Post the seat as open instead
+        </button>
+        <button class="db__btn db__btn--ghost" @click="conflict = null">Pick someone else</button>
+      </div>
+    </div>
+
     <!-- open seat / slot modal -->
-    <div v-if="slot" class="db__overlay" @click.self="slot = null">
+    <div v-if="slot && !conflict" class="db__overlay" @click.self="slot = null">
       <div class="db__modal">
         <h3 class="db__modal-title">{{ slot.label }}</h3>
         <p class="db__modal-sub">{{ slot.start }} – {{ slot.end }}</p>
@@ -522,6 +847,7 @@ async function removeNote(id: string) {
           <label>Until <input v-model="slotUntil" type="time" class="db__input db__input--time" /></label>
         </div>
         <input v-model="slotComments" type="text" class="db__input" placeholder="Comments (optional)" />
+        <p v-if="err" class="db__error">{{ err }}</p>
         <button class="db__btn db__btn--primary" :disabled="busy" @click="submitPickup">
           Request this shift
         </button>
@@ -1003,6 +1329,26 @@ async function removeNote(id: string) {
   text-transform: uppercase;
   color: var(--color-muted);
   margin-top: 0.2rem;
+}
+
+.db__editactions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.4rem;
+}
+
+.db__scope {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  color: var(--color-ink-soft);
+}
+
+.db__scope label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 @media (max-width: 560px) {

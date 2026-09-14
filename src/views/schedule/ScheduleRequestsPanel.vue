@@ -6,6 +6,7 @@ import {
   hhmm,
   type SchedRequest,
   type UpcomingShift,
+  type Availability,
 } from '@/composables/useSchedule'
 
 /**
@@ -52,6 +53,23 @@ interface DayPick {
 }
 const dayPicks = ref<DayPick[]>([])
 
+/* Three ways to take time off: from your scheduled shifts (approval
+   required), a custom date (approval required), or marking a rotation
+   day off as UNAVAILABLE — saved instantly, no approval; the Chief gets
+   a conflict warning if they try to schedule you that day. */
+type OffMode = 'shifts' | 'custom' | 'unavailable'
+const offMode = ref<OffMode>('shifts')
+const customDate = ref(todayCentralIso())
+const customFrom = ref('06:00')
+const customUntil = ref('06:00')
+const unavailDate = ref(todayCentralIso())
+const unavailReason = ref('')
+const myUnavailable = ref<Availability[]>([])
+
+async function refreshUnavailable() {
+  myUnavailable.value = await sched.listMyUnavailable()
+}
+
 function loadDayPicks() {
   const me = sched.myUserId.value
   if (!me) return
@@ -62,6 +80,29 @@ function loadDayPicks() {
     from: '06:00',
     until: '06:00',
   }))
+  void refreshUnavailable()
+}
+
+async function submitUnavailable() {
+  formError.value = null
+  formBusy.value = true
+  const e = await sched.markUnavailable(unavailDate.value, unavailReason.value)
+  formBusy.value = false
+  if (e) {
+    formError.value = e
+    return
+  }
+  unavailReason.value = ''
+  formDone.value = 'Saved — no approval needed. The Chief is warned before scheduling you that day.'
+  await refreshUnavailable()
+}
+
+async function removeUnavailable(id: string) {
+  formBusy.value = true
+  const e = await sched.clearUnavailable(id)
+  formBusy.value = false
+  if (e) formError.value = e
+  await refreshUnavailable()
 }
 
 // extra hours
@@ -85,7 +126,13 @@ async function submit() {
   formBusy.value = true
   let err: string | null = null
   try {
-    if (formKind.value === 'time_off') {
+    if (formKind.value === 'time_off' && offMode.value === 'custom') {
+      err = await sched.createTimeOffRequests(
+        offType.value,
+        [{ dateIso: customDate.value, from: customFrom.value, until: customUntil.value, seatId: null }],
+        comments.value,
+      )
+    } else if (formKind.value === 'time_off') {
       const daysSel = dayPicks.value.filter((d) => d.checked)
       if (daysSel.length === 0) {
         err = 'Select at least one day.'
@@ -215,6 +262,70 @@ async function cancel(r: SchedRequest) {
 
       <form v-if="formKind" class="rq__form" @submit.prevent="submit">
         <template v-if="formKind === 'time_off'">
+          <div class="rq__kinds">
+            <button
+              v-for="[m, label] in ([['shifts', 'From my scheduled shifts'], ['custom', 'Custom date'], ['unavailable', 'Mark a day off unavailable']] as const)"
+              :key="m"
+              type="button"
+              class="rq__kind"
+              :class="{ 'rq__kind--on': offMode === m }"
+              @click="offMode = m"
+            >
+              {{ label }}
+            </button>
+          </div>
+
+          <template v-if="offMode === 'unavailable'">
+            <p class="rq__muted">
+              Protects a rotation day off — saved instantly, no approval. The Chief sees a
+              warning before scheduling you on that day.
+            </p>
+            <div class="rq__grid">
+              <label class="rq__field">
+                <span class="rq__label">Date</span>
+                <input v-model="unavailDate" type="date" class="rq__input" />
+              </label>
+              <label class="rq__field">
+                <span class="rq__label">Reason (optional)</span>
+                <input v-model="unavailReason" type="text" class="rq__input" />
+              </label>
+            </div>
+            <button type="button" class="rq__submit" :disabled="formBusy" @click="submitUnavailable">
+              {{ formBusy ? 'Saving…' : 'Mark unavailable' }}
+            </button>
+            <div v-if="myUnavailable.length" class="rq__unavail">
+              <p class="rq__label">Your unavailable days</p>
+              <div v-for="a in myUnavailable" :key="a.id" class="rq__day rq__day--flex">
+                <span>{{ new Date(a.onDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }}<span v-if="a.reason" class="rq__muted"> · {{ a.reason }}</span></span>
+                <button type="button" class="rq__minor" @click="removeUnavailable(a.id)">Remove</button>
+              </div>
+            </div>
+          </template>
+
+          <template v-else-if="offMode === 'custom'">
+            <label class="rq__field">
+              <span class="rq__label">Type</span>
+              <select v-model="offType" class="rq__input">
+                <option v-for="[v, label] in OFF_TYPES" :key="v" :value="v">{{ label }}</option>
+              </select>
+            </label>
+            <div class="rq__grid">
+              <label class="rq__field">
+                <span class="rq__label">Date</span>
+                <input v-model="customDate" type="date" class="rq__input" />
+              </label>
+              <label class="rq__field">
+                <span class="rq__label">From</span>
+                <input v-model="customFrom" type="time" class="rq__input" />
+              </label>
+              <label class="rq__field">
+                <span class="rq__label">Until</span>
+                <input v-model="customUntil" type="time" class="rq__input" />
+              </label>
+            </div>
+          </template>
+
+          <template v-else>
           <label class="rq__field">
             <span class="rq__label">Type</span>
             <select v-model="offType" class="rq__input">
@@ -247,6 +358,7 @@ async function cancel(r: SchedRequest) {
               <label>Until <input v-model="d.until" type="time" class="rq__input rq__input--time" /></label>
             </div>
           </div>
+          </template>
         </template>
 
         <template v-else-if="formKind === 'extra_hours'">
@@ -285,19 +397,21 @@ async function cancel(r: SchedRequest) {
           </div>
         </template>
 
-        <label class="rq__field">
-          <span class="rq__label">Comments</span>
-          <input
-            v-model="comments"
-            type="text"
-            class="rq__input"
-            placeholder="Optional — e.g. late call run number"
-          />
-        </label>
+        <template v-if="formKind !== 'time_off' || offMode !== 'unavailable'">
+          <label class="rq__field">
+            <span class="rq__label">Comments</span>
+            <input
+              v-model="comments"
+              type="text"
+              class="rq__input"
+              placeholder="Optional — e.g. late call run number"
+            />
+          </label>
 
-        <button type="submit" class="rq__submit" :disabled="formBusy">
-          {{ formBusy ? 'Submitting…' : 'Submit request' }}
-        </button>
+          <button type="submit" class="rq__submit" :disabled="formBusy">
+            {{ formBusy ? 'Submitting…' : 'Submit request' }}
+          </button>
+        </template>
       </form>
     </section>
 
@@ -442,6 +556,19 @@ async function cancel(r: SchedRequest) {
 
 .rq__day:last-of-type {
   border-bottom: 0;
+}
+
+.rq__day--flex {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.86rem;
+  color: var(--color-ink);
+}
+
+.rq__unavail {
+  margin-top: 0.3rem;
 }
 
 .rq__day-main {

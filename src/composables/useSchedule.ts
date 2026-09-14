@@ -329,6 +329,15 @@ export function hoursBetween(startTs: string, endTs: string): number {
   return (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
 }
 
+/** Epoch millis for comparisons. NEVER compare timestamp STRINGS from
+ *  mixed sources: PostgREST returns '+00:00' while toISOString() gives
+ *  '.000Z', and at the same instant '+00:00' < '.000Z' lexically. */
+export function tsMs(ts: string): number {
+  return new Date(ts).getTime()
+}
+
+const MIN_SEG_MS = 60_000 // ignore sub-minute slivers
+
 // ── module state (singleton across views) ────────────────────────────
 
 const units = ref<SchedUnit[]>([])
@@ -988,7 +997,8 @@ function normTime(t: string): string {
 
 /**
  * Split the 0600→0600 work date around a requested window. `until` at or
- * before `from` rolls to the next day (0600–0600 = full shift).
+ * before `from` rolls to the next day (0600–0600 = full shift), and the
+ * window is always clamped inside the work date.
  */
 function shiftWindow(dateIso: string, from: string, until: string) {
   const f = normTime(from)
@@ -999,9 +1009,10 @@ function shiftWindow(dateIso: string, from: string, until: string) {
   let reqEnd = u > '06:00' && u > f && f >= '06:00'
     ? centralTs(dateIso, u)
     : centralTs(addDaysIso(dateIso, 1), u)
-  if (u === '06:00' || reqEnd <= reqStart) reqEnd = dayEnd
-  const before = reqStart > dayStart ? { start: dayStart, end: reqStart } : null
-  const after = reqEnd < dayEnd ? { start: reqEnd, end: dayEnd } : null
+  if (u === '06:00' || tsMs(reqEnd) <= tsMs(reqStart)) reqEnd = dayEnd
+  if (tsMs(reqEnd) > tsMs(dayEnd)) reqEnd = dayEnd
+  const before = tsMs(reqStart) > tsMs(dayStart) ? { start: dayStart, end: reqStart } : null
+  const after = tsMs(reqEnd) < tsMs(dayEnd) ? { start: reqEnd, end: dayEnd } : null
   return { dayStart, dayEnd, reqStart, reqEnd, before, after }
 }
 
@@ -1249,8 +1260,144 @@ async function declineOffer(offerId: string): Promise<string | null> {
   return null
 }
 
-/** Write the seat override(s) that hand a shift window to a new person,
- *  keeping any remainder with the original occupant. */
+interface Seg {
+  start: number
+  end: number
+}
+
+/**
+ * Remove a person's coverage on a seat for a window [winStart, winEnd)
+ * (epoch ms). Their overlapping override rows are deleted and re-inserted
+ * trimmed to the parts outside the window; when they hold the seat via
+ * bare rotation (no overrides on the seat at all), the held window is the
+ * whole work date and explicit remainder rows are written. Returns the
+ * segments of the window they ACTUALLY held — callers write open / off /
+ * cover rows only for those, never for hours someone else covers.
+ */
+async function carveSeatWindow(
+  dateIso: string,
+  seatId: string,
+  userId: string,
+  winStart: number,
+  winEnd: number,
+): Promise<{ segs: Seg[]; error: string | null }> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return { segs: [], error: 'Not available in the dev preview.' }
+  // Read the seat's rows FRESH — approvals can target dates outside the
+  // loaded range, and a stale view must never decide what gets deleted.
+  const fres = await supabase
+    .from('sched_entries')
+    .select('*')
+    .eq('work_date', dateIso)
+    .eq('seat_id', seatId)
+  if (fres.error) return { segs: [], error: fres.error.message }
+  const seatEntries = (fres.data ?? [])
+    .map(mapEntry)
+    .filter((e) => e.kind !== 'timeoff' && e.status !== 'off')
+  const mine = seatEntries.filter((e) => e.userId === userId)
+  const segs: Seg[] = []
+
+  if (mine.length === 0) {
+    // Bare rotation holder only when the seat has NO overrides at all.
+    if (
+      seatEntries.length === 0 &&
+      rotationOccupant(seatId, platoonFor(dateIso), dateIso) === userId
+    ) {
+      const dayStart = tsMs(centralTs(dateIso, '06:00'))
+      const dayEnd = tsMs(centralTs(addDaysIso(dateIso, 1), '06:00'))
+      const s = Math.max(dayStart, winStart)
+      const en = Math.min(dayEnd, winEnd)
+      if (en - s >= MIN_SEG_MS) {
+        const keep: Record<string, unknown>[] = []
+        if (s - dayStart >= MIN_SEG_MS) {
+          keep.push({ work_date: dateIso, seat_id: seatId, user_id: userId,
+            start_at: new Date(dayStart).toISOString(), end_at: new Date(s).toISOString(),
+            kind: 'rotation', status: 'scheduled' })
+        }
+        if (dayEnd - en >= MIN_SEG_MS) {
+          keep.push({ work_date: dateIso, seat_id: seatId, user_id: userId,
+            start_at: new Date(en).toISOString(), end_at: new Date(dayEnd).toISOString(),
+            kind: 'rotation', status: 'scheduled' })
+        }
+        if (keep.length > 0) {
+          const ins = await supabase.from('sched_entries').insert(keep)
+          if (ins.error) return { segs: [], error: ins.error.message }
+        }
+        segs.push({ start: s, end: en })
+      }
+    }
+    return { segs, error: null }
+  }
+
+  for (const e of mine) {
+    const es = tsMs(e.startAt)
+    const ee = tsMs(e.endAt)
+    const s = Math.max(es, winStart)
+    const en = Math.min(ee, winEnd)
+    if (en - s < MIN_SEG_MS) continue // no real overlap — leave the row alone
+    const del = await supabase.from('sched_entries').delete().eq('id', e.id)
+    if (del.error) return { segs, error: del.error.message }
+    const keep: Record<string, unknown>[] = []
+    if (s - es >= MIN_SEG_MS) {
+      keep.push({ work_date: dateIso, seat_id: seatId, user_id: userId,
+        start_at: e.startAt, end_at: new Date(s).toISOString(),
+        kind: e.kind, status: e.status, note: e.note })
+    }
+    if (ee - en >= MIN_SEG_MS) {
+      keep.push({ work_date: dateIso, seat_id: seatId, user_id: userId,
+        start_at: new Date(en).toISOString(), end_at: e.endAt,
+        kind: e.kind, status: e.status, note: e.note })
+    }
+    if (keep.length > 0) {
+      const ins = await supabase.from('sched_entries').insert(keep)
+      if (ins.error) return { segs, error: ins.error.message }
+    }
+    segs.push({ start: s, end: en })
+  }
+  return { segs, error: null }
+}
+
+/**
+ * Put a person off for a window of their work date. Their coverage in
+ * the window is carved out (splits and partials handled) and each hour
+ * they actually held posts as an OPEN entry; an off-record row for the
+ * requested window is written for reports either way. Used by time-off
+ * approval and the Chief's day editor.
+ */
+async function applyTimeOff(
+  workDate: string,
+  seatId: string | null,
+  userId: string,
+  offType: string | null,
+  startAt: string,
+  endAt: string,
+  sourceRequest: string | null,
+): Promise<string | null> {
+  const rows: Record<string, unknown>[] = []
+  if (seatId) {
+    const { segs, error } = await carveSeatWindow(workDate, seatId, userId, tsMs(startAt), tsMs(endAt))
+    if (error) return error
+    for (const seg of segs) {
+      rows.push({
+        work_date: workDate, seat_id: seatId, user_id: null,
+        start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
+        kind: 'giveaway_cover', status: 'open', source_request: sourceRequest,
+      })
+    }
+  }
+  rows.push({
+    work_date: workDate, seat_id: seatId, user_id: userId,
+    start_at: startAt, end_at: endAt, kind: 'timeoff', status: 'off',
+    off_type: offType, source_request: sourceRequest,
+  })
+  const ins = await supabase.from('sched_entries').insert(rows)
+  return ins.error ? ins.error.message : null
+}
+
+/** Hand a shift window from one person to another on a seat. The
+ *  outgoing person's coverage in the window is carved out (splits and
+ *  override rows handled — nothing left behind), and the new person
+ *  covers exactly the hours that were carved. */
 async function coverShift(
   workDate: string,
   seatId: string,
@@ -1260,42 +1407,33 @@ async function coverShift(
   endAt: string,
   kind: string,
   note: string,
-  sourceRequest: string,
+  sourceRequest: string | null,
 ): Promise<string | null> {
-  const dayStart = centralTs(workDate, '06:00')
-  const dayEnd = centralTs(addDaysIso(workDate, 1), '06:00')
-  const rows: Record<string, unknown>[] = [
-    {
-      work_date: workDate,
-      seat_id: seatId,
-      user_id: toUserId,
-      start_at: startAt,
-      end_at: endAt,
-      kind,
-      status: 'scheduled',
-      note,
-      source_request: sourceRequest,
-    },
-  ]
-  if (startAt > dayStart) {
-    rows.push({
-      work_date: workDate, seat_id: seatId, user_id: fromUserId,
-      start_at: dayStart, end_at: startAt, kind: 'rotation', status: 'scheduled',
-      source_request: sourceRequest,
-    })
+  const { segs, error } = await carveSeatWindow(
+    workDate, seatId, fromUserId, tsMs(startAt), tsMs(endAt),
+  )
+  if (error) return error
+  if (segs.length === 0) {
+    return 'They no longer hold that shift window — the board has changed.'
   }
-  if (endAt < dayEnd) {
-    rows.push({
-      work_date: workDate, seat_id: seatId, user_id: fromUserId,
-      start_at: endAt, end_at: dayEnd, kind: 'rotation', status: 'scheduled',
-      source_request: sourceRequest,
-    })
-  }
+  const rows = segs.map((seg) => ({
+    work_date: workDate,
+    seat_id: seatId,
+    user_id: toUserId,
+    start_at: new Date(seg.start).toISOString(),
+    end_at: new Date(seg.end).toISOString(),
+    kind,
+    status: 'scheduled',
+    note,
+    source_request: sourceRequest,
+  }))
   const ins = await supabase.from('sched_entries').insert(rows)
   return ins.error ? ins.error.message : null
 }
 
-/** Editor path: put someone straight onto an open seat (no request). */
+/** Editor path: put someone straight onto an open seat (no request).
+ *  The open entry is re-validated FRESH from the database so a stale
+ *  view errors loudly instead of silently dropping or double-booking. */
 async function assignOpenSeat(opts: {
   dateIso: string
   seatId: string
@@ -1304,10 +1442,29 @@ async function assignOpenSeat(opts: {
   from: string
   until: string
 }): Promise<string | null> {
+  const STALE = 'That open shift is no longer available — the board has changed. Refresh and try again.'
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
   if (opts.entryId) {
-    const openEntry = entries.value.find((e) => e.id === opts.entryId)
-    if (openEntry && openEntry.startAt === w.reqStart && openEntry.endAt === w.reqEnd) {
+    const fres = await supabase
+      .from('sched_entries')
+      .select('*')
+      .eq('id', opts.entryId)
+      .maybeSingle()
+    if (fres.error) return fres.error.message
+    if (!fres.data || fres.data.status !== 'open') {
+      await reloadRangeIfLoaded()
+      return STALE
+    }
+    const openEntry = mapEntry(fres.data)
+    const oStart = tsMs(openEntry.startAt)
+    const oEnd = tsMs(openEntry.endAt)
+    const rStart = Math.max(oStart, tsMs(w.reqStart))
+    const rEnd = Math.min(oEnd, tsMs(w.reqEnd))
+    if (rEnd - rStart < MIN_SEG_MS) {
+      return 'The requested window does not overlap that open shift.'
+    }
+    if (rStart - oStart < MIN_SEG_MS && oEnd - rEnd < MIN_SEG_MS) {
+      // full window: claim the open row in place
       const upd = await supabase
         .from('sched_entries')
         .update({
@@ -1318,18 +1475,21 @@ async function assignOpenSeat(opts: {
         })
         .eq('id', opts.entryId)
       if (upd.error) return upd.error.message
-    } else if (openEntry) {
+    } else {
       const rows: Record<string, unknown>[] = [
         { work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
-          start_at: w.reqStart, end_at: w.reqEnd, kind: 'pickup', status: 'scheduled' },
+          start_at: new Date(rStart).toISOString(), end_at: new Date(rEnd).toISOString(),
+          kind: 'pickup', status: 'scheduled' },
       ]
-      if (openEntry.startAt < w.reqStart) {
+      if (rStart - oStart >= MIN_SEG_MS) {
         rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
-          start_at: openEntry.startAt, end_at: w.reqStart, kind: openEntry.kind, status: 'open' })
+          start_at: openEntry.startAt, end_at: new Date(rStart).toISOString(),
+          kind: openEntry.kind, status: 'open' })
       }
-      if (openEntry.endAt > w.reqEnd) {
+      if (oEnd - rEnd >= MIN_SEG_MS) {
         rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
-          start_at: w.reqEnd, end_at: openEntry.endAt, kind: openEntry.kind, status: 'open' })
+          start_at: new Date(rEnd).toISOString(), end_at: openEntry.endAt,
+          kind: openEntry.kind, status: 'open' })
       }
       const ins = await supabase.from('sched_entries').insert(rows)
       if (ins.error) return ins.error.message
@@ -1337,6 +1497,18 @@ async function assignOpenSeat(opts: {
       if (del.error) return del.error.message
     }
   } else {
+    // Rotation-open seat: verify no rows have appeared on it meanwhile.
+    const fres = await supabase
+      .from('sched_entries')
+      .select('id, status, kind')
+      .eq('work_date', opts.dateIso)
+      .eq('seat_id', opts.seatId)
+    if (fres.error) return fres.error.message
+    const liveRows = (fres.data ?? []).filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
+    if (liveRows.length > 0) {
+      await reloadRangeIfLoaded()
+      return STALE
+    }
     const rows: Record<string, unknown>[] = [
       { work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
         start_at: w.reqStart, end_at: w.reqEnd, kind: 'pickup', status: 'scheduled' },
@@ -1352,8 +1524,232 @@ async function assignOpenSeat(opts: {
     const ins = await supabase.from('sched_entries').insert(rows)
     if (ins.error) return ins.error.message
   }
-  if (rangeStart.value) await loadRange(rangeStart.value, rangeEnd.value)
+  await reloadRangeIfLoaded()
   return null
+}
+
+// ── Chief day editor ─────────────────────────────────────────────────
+
+/** Does this person hold this seat on this date via override ROWS (as
+ *  opposed to bare rotation)? Used to decide whether a permanent-scope
+ *  template change also needs a day-scope entry fix for today. */
+function holdsViaOverride(userId: string, seatId: string, dateIso: string): boolean {
+  return entries.value.some(
+    (e) =>
+      e.workDate === dateIso &&
+      e.seatId === seatId &&
+      e.userId === userId &&
+      e.kind !== 'timeoff' &&
+      e.status !== 'off',
+  )
+}
+
+/** Chief: mark an assigned person off for (part of) a day. */
+async function dayMarkOff(opts: {
+  dateIso: string
+  seatId: string
+  userId: string
+  offType: string
+  from: string
+  until: string
+}): Promise<string | null> {
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const { segs, error } = await carveSeatWindow(
+    opts.dateIso, opts.seatId, opts.userId, tsMs(w.reqStart), tsMs(w.reqEnd),
+  )
+  if (error) return error
+  if (segs.length === 0) {
+    await reloadRangeIfLoaded()
+    return 'They are not scheduled on that seat during that window.'
+  }
+  const rows: Record<string, unknown>[] = []
+  for (const seg of segs) {
+    rows.push({
+      work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
+      start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
+      kind: 'giveaway_cover', status: 'open',
+    })
+    rows.push({
+      work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
+      start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
+      kind: 'timeoff', status: 'off', off_type: opts.offType,
+    })
+  }
+  const ins = await supabase.from('sched_entries').insert(rows)
+  if (ins.error) return ins.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Chief: open (part of) a person's day with no off record — used by
+ *  remove-from-day and the conflict flow's "post the seat open". */
+async function dayOpenWindow(opts: {
+  dateIso: string
+  seatId: string
+  userId: string
+  from: string
+  until: string
+}): Promise<string | null> {
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const { segs, error } = await carveSeatWindow(
+    opts.dateIso, opts.seatId, opts.userId, tsMs(w.reqStart), tsMs(w.reqEnd),
+  )
+  if (error) return error
+  if (segs.length === 0) {
+    await reloadRangeIfLoaded()
+    return 'They are not scheduled on that seat during that window.'
+  }
+  const rows = segs.map((seg) => ({
+    work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
+    start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
+    kind: 'rotation', status: 'open',
+  }))
+  const ins = await supabase.from('sched_entries').insert(rows)
+  if (ins.error) return ins.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Chief: pull an assigned person off a seat for the whole day (no off
+ *  record) — the hours they held post as open. */
+async function dayRemove(opts: {
+  dateIso: string
+  seatId: string
+  userId: string
+}): Promise<string | null> {
+  return dayOpenWindow({ ...opts, from: '06:00', until: '06:00' })
+}
+
+/** Chief: replace the person on a seat for a window of the day. The
+ *  outgoing person's coverage is carved (never left behind), and the
+ *  replacement covers exactly the hours that were carved. */
+async function dayReplace(opts: {
+  dateIso: string
+  seatId: string
+  fromUserId: string
+  toUserId: string
+  from: string
+  until: string
+}): Promise<string | null> {
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const { segs, error } = await carveSeatWindow(
+    opts.dateIso, opts.seatId, opts.fromUserId, tsMs(w.reqStart), tsMs(w.reqEnd),
+  )
+  if (error) return error
+  if (segs.length === 0) {
+    await reloadRangeIfLoaded()
+    return 'They are not scheduled on that seat during that window.'
+  }
+  const rows = segs.map((seg) => ({
+    work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.toUserId,
+    start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
+    kind: 'pickup', status: 'scheduled', note: 'Assigned by scheduler',
+  }))
+  const ins = await supabase.from('sched_entries').insert(rows)
+  if (ins.error) return ins.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Chief: move a person onto an open seat for the day. The target is
+ *  validated fresh and assigned FIRST (for its actual open window); only
+ *  then does their own seat post open — a failed assign changes nothing. */
+async function dayMove(opts: {
+  dateIso: string
+  fromSeatId: string
+  toSeatId: string
+  toEntryId: string | null
+  userId: string
+  from: string
+  until: string
+}): Promise<string | null> {
+  const assignErr = await assignOpenSeat({
+    dateIso: opts.dateIso,
+    seatId: opts.toSeatId,
+    entryId: opts.toEntryId,
+    userId: opts.userId,
+    from: opts.from,
+    until: opts.until,
+  })
+  if (assignErr) return assignErr
+  const remErr = await dayRemove({
+    dateIso: opts.dateIso,
+    seatId: opts.fromSeatId,
+    userId: opts.userId,
+  })
+  if (remErr) {
+    return `Moved onto the new seat, but their old seat could not be opened: ${remErr}`
+  }
+  return null
+}
+
+// ── availability (protected days off; no approval) ───────────────────
+
+async function markUnavailable(dateIso: string, reason: string): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me) return 'Not signed in'
+  const res = await supabase.from('sched_availability').insert({
+    user_id: me,
+    on_date: dateIso,
+    reason: reason || null,
+  })
+  if (res.error) {
+    return res.error.message.includes('duplicate')
+      ? 'That day is already marked unavailable.'
+      : res.error.message
+  }
+  await reloadRangeIfLoaded()
+  return null
+}
+
+async function clearUnavailable(id: string): Promise<string | null> {
+  const res = await supabase.from('sched_availability').delete().eq('id', id)
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+async function listMyUnavailable(): Promise<Availability[]> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me || auth.usingDevStub) return []
+  const res = await supabase
+    .from('sched_availability')
+    .select('*')
+    .eq('user_id', me)
+    .gte('on_date', todayCentralIso())
+    .order('on_date')
+  return (res.data ?? []).map((r) => ({
+    id: r.id, userId: r.user_id, onDate: r.on_date,
+    startAt: r.start_at, endAt: r.end_at, reason: r.reason,
+  }))
+}
+
+/** Is this person marked unavailable on this date? (queried live so it
+ *  works outside the loaded range). FAIL-CLOSED: a query error returns a
+ *  synthetic conflict so the guard is never silently skipped — the Chief
+ *  can still override from the warning. */
+async function checkUnavailable(userId: string, dateIso: string): Promise<Availability | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return null
+  const res = await supabase
+    .from('sched_availability')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('on_date', dateIso)
+    .maybeSingle()
+  if (res.error) {
+    return {
+      id: '', userId, onDate: dateIso, startAt: null, endAt: null,
+      reason: 'availability could not be verified (connection error)',
+    }
+  }
+  if (!res.data) return null
+  return {
+    id: res.data.id, userId: res.data.user_id, onDate: res.data.on_date,
+    startAt: res.data.start_at, endAt: res.data.end_at, reason: res.data.reason,
+  }
 }
 
 // ── editor tools: events, students, notes ────────────────────────────
@@ -1549,60 +1945,16 @@ async function decideRequest(
   if (approve) {
     if (req.type === 'time_off' && req.workDate) {
       const seatId = req.seatId ?? seatHeldBy(req.requesterId, req.workDate)
-      const w = {
-        dayStart: centralTs(req.workDate, '06:00'),
-        dayEnd: centralTs(addDaysIso(req.workDate, 1), '06:00'),
-      }
-      const rows: Record<string, unknown>[] = []
-      if (seatId) {
-        rows.push({
-          work_date: req.workDate,
-          seat_id: seatId,
-          user_id: null,
-          start_at: req.startAt,
-          end_at: req.endAt,
-          kind: 'giveaway_cover',
-          status: 'open',
-          source_request: req.id,
-        })
-        if (req.startAt && req.startAt > w.dayStart) {
-          rows.push({
-            work_date: req.workDate,
-            seat_id: seatId,
-            user_id: req.requesterId,
-            start_at: w.dayStart,
-            end_at: req.startAt,
-            kind: 'rotation',
-            status: 'scheduled',
-            source_request: req.id,
-          })
-        }
-        if (req.endAt && req.endAt < w.dayEnd) {
-          rows.push({
-            work_date: req.workDate,
-            seat_id: seatId,
-            user_id: req.requesterId,
-            start_at: req.endAt,
-            end_at: w.dayEnd,
-            kind: 'rotation',
-            status: 'scheduled',
-            source_request: req.id,
-          })
-        }
-      }
-      rows.push({
-        work_date: req.workDate,
-        seat_id: seatId,
-        user_id: req.requesterId,
-        start_at: req.startAt,
-        end_at: req.endAt,
-        kind: 'timeoff',
-        status: 'off',
-        off_type: req.offType,
-        source_request: req.id,
-      })
-      const ins = await supabase.from('sched_entries').insert(rows)
-      if (ins.error) return ins.error.message
+      const err = await applyTimeOff(
+        req.workDate,
+        seatId,
+        req.requesterId,
+        req.offType,
+        req.startAt ?? centralTs(req.workDate, '06:00'),
+        req.endAt ?? centralTs(addDaysIso(req.workDate, 1), '06:00'),
+        req.id,
+      )
+      if (err) return err
     } else if (req.type === 'extra_hours' && req.workDate) {
       const unit = units.value.find((u) => u.code === req.unitCode)
       const ins = await supabase.from('sched_entries').insert({
@@ -2067,6 +2419,17 @@ export function useSchedule() {
     canFillSeat,
     cancelRequest,
     decideRequest,
+    // day editor + availability
+    dayMarkOff,
+    dayOpenWindow,
+    dayRemove,
+    dayReplace,
+    dayMove,
+    holdsViaOverride,
+    markUnavailable,
+    clearUnavailable,
+    listMyUnavailable,
+    checkUnavailable,
     // editor tools
     schedEvents,
     addEvent,
