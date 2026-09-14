@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -199,6 +199,54 @@ async function submitUnit() {
   nuCode.value = nuLabel.value = nuStation.value = ''
   nuPreset.value = 'medic'
 }
+
+// ── hour warnings & overtime (global admins) ─────────────────────────
+
+const wWarn = ref(60)
+const wConfirm = ref(72)
+const wWeekly = ref(84)
+const wOt = ref(40)
+const wBusy = ref(false)
+const wDone = ref<string | null>(null)
+const wInit = ref(false)
+
+watch(
+  () => sched.settings.value,
+  (s) => {
+    if (wInit.value) return
+    const w = (s['warnings'] ?? {}) as Record<string, unknown>
+    const p = (s['pay'] ?? {}) as Record<string, unknown>
+    if (Object.keys(w).length === 0 && Object.keys(p).length === 0) return
+    wWarn.value = Number(w.consecutive_warn_hours ?? 60)
+    wConfirm.value = Number(w.consecutive_confirm_hours ?? 72)
+    wWeekly.value = Number(w.weekly_warn_hours ?? 84)
+    wOt.value = Number(p.ot_week_hours ?? 40)
+    wInit.value = true
+  },
+  { immediate: true, deep: true },
+)
+
+async function saveWarnCfg() {
+  wBusy.value = true
+  wDone.value = null
+  err.value = null
+  const w = {
+    ...(sched.settings.value['warnings'] ?? {}),
+    consecutive_warn_hours: wWarn.value,
+    consecutive_confirm_hours: wConfirm.value,
+    weekly_warn_hours: wWeekly.value,
+  }
+  const e1 = await sched.saveSetting('warnings', w)
+  const p = { ...(sched.settings.value['pay'] ?? {}), ot_week_hours: wOt.value }
+  const e2 = e1 ? null : await sched.saveSetting('pay', p)
+  wBusy.value = false
+  const e = e1 ?? e2
+  if (e) {
+    err.value = e
+    return
+  }
+  wDone.value = 'Saved — new thresholds apply to every check immediately.'
+}
 </script>
 
 <template>
@@ -357,6 +405,37 @@ async function submitUnit() {
           </div>
         </section>
 
+        <section v-if="sched.isGlobalAdmin.value" class="setup__card">
+          <h2 class="setup__h">Hour warnings &amp; overtime</h2>
+          <p class="setup__muted">
+            Pickups, extra hours, trades, and direct assignments that push someone past these
+            thresholds get flagged — the admin sign-off level requires an extra confirmation
+            to approve.
+          </p>
+          <div class="setup__warngrid">
+            <label class="setup__field">
+              <span>Consecutive hours — warn</span>
+              <input v-model.number="wWarn" type="number" min="0" max="240" class="setup__input" />
+            </label>
+            <label class="setup__field">
+              <span>Consecutive — admin sign-off</span>
+              <input v-model.number="wConfirm" type="number" min="0" max="240" class="setup__input" />
+            </label>
+            <label class="setup__field">
+              <span>Weekly hours — warn</span>
+              <input v-model.number="wWeekly" type="number" min="0" max="168" class="setup__input" />
+            </label>
+            <label class="setup__field">
+              <span>Overtime after (hrs/week)</span>
+              <input v-model.number="wOt" type="number" min="0" max="168" class="setup__input" />
+            </label>
+          </div>
+          <p v-if="wDone" class="setup__done">{{ wDone }}</p>
+          <button class="setup__btn setup__btn--primary" :disabled="wBusy" @click="saveWarnCfg">
+            {{ wBusy ? 'Saving…' : 'Save thresholds' }}
+          </button>
+        </section>
+
         <section class="setup__card">
           <h2 class="setup__h">Access</h2>
           <p class="setup__muted">Access levels are managed on the Members tab.</p>
@@ -371,6 +450,19 @@ async function submitUnit() {
   color: var(--color-danger-500);
   font-size: 0.85rem;
   margin: 0 0 0.6rem;
+}
+
+.setup__done {
+  color: var(--color-success-500);
+  font-size: 0.82rem;
+  margin: 0.4rem 0;
+}
+
+.setup__warngrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin: 0.6rem 0;
 }
 
 .setup__cols {

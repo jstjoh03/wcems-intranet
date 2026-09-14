@@ -1,23 +1,20 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import {
-  useSchedule,
-  platoonFor,
-  type SeatRow,
-  type DayEventBox,
-  type OpenSeatInfo,
-} from '@/composables/useSchedule'
+import { useSchedule } from '@/composables/useSchedule'
+import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 /**
  * Day board — one work date (0600 → 0600). Unit groups with seat rows,
- * then SPECIAL EVENTS in their own boxes (event name, assigned staff,
- * open event seats). Open seats/slots are clickable: crew file a pickup
- * request; editors can also assign someone directly. Editors add events,
- * students, and day/unit notes from here.
+ * then SPECIAL EVENTS in their own boxes. All editing goes through the
+ * shared modals (ScheduleEditModals in ScheduleView): open seats/slots
+ * are clickable for pickups and direct assigns, assigned people open the
+ * Chief's day editor, students open the student editor, and events open
+ * the event manager — the same behavior as every other view.
  */
 
 const props = defineProps<{ dateIso: string }>()
 const sched = useSchedule()
+const editor = useScheduleEditor()
 
 const model = computed(() => sched.dayModel(props.dateIso))
 
@@ -32,449 +29,18 @@ const stations = computed(() => {
 })
 
 const err = ref<string | null>(null)
-const notice = ref<string | null>(null)
 const busy = ref(false)
 
-// ── open seat / event slot modal ─────────────────────────────────────
-
-interface SlotCtx {
-  seatId: string | null
-  entryId: string | null
-  label: string
-  start: string // 'HHmm'
-  end: string
-}
-const slot = ref<SlotCtx | null>(null)
-const slotFrom = ref('06:00')
-const slotUntil = ref('06:00')
-const slotComments = ref('')
-const slotAssignee = ref('')
-
-function toInput(hhmm4: string): string {
-  return `${hhmm4.slice(0, 2)}:${hhmm4.slice(2)}`
-}
-
-function fmtLong(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  })
-}
-
-function openSeatSlot(seatId: string, label: string, row: SeatRow) {
-  slot.value = { seatId, entryId: row.entryId, label, start: row.start, end: row.end }
-  slotFrom.value = toInput(row.start)
-  slotUntil.value = toInput(row.end)
-  slotComments.value = ''
-  slotAssignee.value = ''
-  err.value = notice.value = null
-}
-
-function openEventSlot(ev: DayEventBox, row: SeatRow) {
-  slot.value = { seatId: null, entryId: row.entryId, label: `${ev.label} — ${row.name}`, start: row.start, end: row.end }
-  slotFrom.value = toInput(row.start)
-  slotUntil.value = toInput(row.end)
-  slotComments.value = ''
-  slotAssignee.value = ''
-  err.value = notice.value = null
-}
-
-async function submitPickup() {
-  if (!slot.value) return
-  busy.value = true
-  err.value = null
-  const e = await sched.createPickupRequest({
-    dateIso: props.dateIso,
-    seatId: slot.value.seatId,
-    entryId: slot.value.entryId,
-    from: slotFrom.value,
-    until: slotUntil.value,
-    comments: slotComments.value,
-    positionLabel: slot.value.label,
-  })
-  busy.value = false
-  if (e) {
-    err.value = e
-    return
-  }
-  slot.value = null
-  notice.value = 'Pickup request submitted — pending approval.'
-}
-
-async function assignDirect() {
-  if (!slot.value || !slotAssignee.value || busy.value) return
-  busy.value = true
-  // Chief scheduling someone who marked themselves unavailable → warn.
-  const un = await sched.checkUnavailable(slotAssignee.value, props.dateIso)
-  busy.value = false
-  if (un && !conflictAcknowledged.value) {
-    const who = sched.personById.value.get(slotAssignee.value)?.fullName ?? 'This member'
-    conflict.value = {
-      name: who,
-      reason: un.reason,
-      proceed: async () => {
-        conflictAcknowledged.value = true
-        conflict.value = null
-        await assignDirect()
-        conflictAcknowledged.value = false
-      },
-    }
-    return
-  }
-  busy.value = true
-  err.value = null
-  let e: string | null
-  if (slot.value.seatId) {
-    e = await sched.assignOpenSeat({
-      dateIso: props.dateIso,
-      seatId: slot.value.seatId,
-      entryId: slot.value.entryId,
-      userId: slotAssignee.value,
-      from: slotFrom.value,
-      until: slotUntil.value,
-    })
-  } else if (slot.value.entryId) {
-    e = await sched.assignEventSlot(slot.value.entryId, slotAssignee.value)
-  } else {
-    e = 'Nothing to assign.'
-  }
-  busy.value = false
-  if (e) {
-    err.value = e
-    return
-  }
-  slot.value = null
-  notice.value = 'Assigned.'
-}
-
-// ── Chief day editor: click an assigned person ───────────────────────
-
-interface EditCtx {
-  seatId: string
-  seatLabel: string
-  unitCode: string
-  userId: string
-  personName: string
-  row: SeatRow
-}
-const edit = ref<EditCtx | null>(null)
-type EditAction = '' | 'off' | 'remove' | 'move' | 'replace'
-const editAction = ref<EditAction>('')
-const editOffType = ref('vacation')
-const editFrom = ref('06:00')
-const editUntil = ref('06:00')
-const editScope = ref<'day' | 'permanent'>('day')
-const editReplaceWith = ref('')
-const editMoveTo = ref('')
-const editOpenSeats = ref<OpenSeatInfo[]>([])
-const conflict = ref<{ name: string; reason: string | null; proceed: () => Promise<void> } | null>(null)
-const conflictAcknowledged = ref(false)
-
-function openDayEdit(unitCode: string, seatId: string, seatLabel: string, row: SeatRow) {
-  if (!sched.canEdit.value || !row.userId) return
-  edit.value = {
-    seatId,
-    seatLabel,
-    unitCode,
-    userId: row.userId,
-    personName: row.name,
-    row,
-  }
-  editAction.value = ''
-  editOffType.value = 'vacation'
-  editFrom.value = toInput(row.start)
-  editUntil.value = toInput(row.end)
-  editScope.value = 'day'
-  editReplaceWith.value = ''
-  editMoveTo.value = ''
-  conflict.value = null
-  err.value = notice.value = null
-  editOpenSeats.value = sched.openSeatsFor(props.dateIso).filter((s) => s.seatId !== seatId)
-}
-
-async function runEdit() {
-  if (!edit.value) return
-  const ctx = edit.value
-  busy.value = true
-  err.value = null
-  let e: string | null = null
-  try {
-    if (editAction.value === 'off') {
-      e = await sched.dayMarkOff({
-        dateIso: props.dateIso,
-        seatId: ctx.seatId,
-        userId: ctx.userId,
-        offType: editOffType.value,
-        from: editFrom.value,
-        until: editUntil.value,
-      })
-    } else if (editAction.value === 'remove') {
-      if (editScope.value === 'permanent') {
-        e = await sched.assignRotation(ctx.seatId, platoonFor(props.dateIso), null, props.dateIso)
-        // template change covers rotation days; entry-backed today needs
-        // the day-scope removal too
-        if (!e && sched.holdsViaOverride(ctx.userId, ctx.seatId, props.dateIso)) {
-          e = await sched.dayRemove({ dateIso: props.dateIso, seatId: ctx.seatId, userId: ctx.userId })
-        }
-      } else {
-        e = await sched.dayRemove({ dateIso: props.dateIso, seatId: ctx.seatId, userId: ctx.userId })
-      }
-    } else if (editAction.value === 'move') {
-      const target = editOpenSeats.value.find((s) => `${s.seatId}|${s.entryId ?? ''}` === editMoveTo.value)
-      if (!target) e = 'Pick an open seat to move them to.'
-      else {
-        e = await sched.dayMove({
-          dateIso: props.dateIso,
-          fromSeatId: ctx.seatId,
-          toSeatId: target.seatId,
-          toEntryId: target.entryId,
-          userId: ctx.userId,
-          from: toInput(target.start),
-          until: toInput(target.end),
-        })
-      }
-    } else if (editAction.value === 'replace') {
-      if (!editReplaceWith.value) {
-        e = 'Pick a replacement.'
-      } else {
-        const un = await sched.checkUnavailable(editReplaceWith.value, props.dateIso)
-        if (un) {
-          const who = sched.personById.value.get(editReplaceWith.value)?.fullName ?? 'This member'
-          conflict.value = {
-            name: who,
-            reason: un.reason,
-            proceed: async () => {
-              await applyReplace(ctx)
-            },
-          }
-          busy.value = false
-          return
-        }
-        await applyReplace(ctx)
-        busy.value = false
-        return
-      }
-    }
-  } finally {
-    busy.value = false
-  }
-  if (e) {
-    err.value = e
-    return
-  }
-  edit.value = null
-  notice.value = 'Done.'
-}
-
-async function applyReplace(ctx: EditCtx) {
-  let e: string | null
-  if (editScope.value === 'permanent') {
-    e = await sched.assignRotation(
-      ctx.seatId,
-      platoonFor(props.dateIso),
-      editReplaceWith.value,
-      props.dateIso,
-    )
-    // entry-backed today: also swap the day's rows
-    if (!e && sched.holdsViaOverride(ctx.userId, ctx.seatId, props.dateIso)) {
-      e = await sched.dayReplace({
-        dateIso: props.dateIso,
-        seatId: ctx.seatId,
-        fromUserId: ctx.userId,
-        toUserId: editReplaceWith.value,
-        from: '06:00',
-        until: '06:00',
-      })
-    }
-  } else {
-    e = await sched.dayReplace({
-      dateIso: props.dateIso,
-      seatId: ctx.seatId,
-      fromUserId: ctx.userId,
-      toUserId: editReplaceWith.value,
-      from: editFrom.value,
-      until: editUntil.value,
-    })
-  }
-  if (e) {
-    err.value = e
-    return
-  }
-  conflict.value = null
-  edit.value = null
-  notice.value = 'Done.'
-}
-
-async function conflictProceed() {
-  if (!conflict.value) return
-  busy.value = true
-  await conflict.value.proceed()
-  busy.value = false
-}
-
-async function conflictLeaveOpen() {
-  if (!edit.value) return
-  busy.value = true
-  // open only the window the blocked replace was for, not the whole day
-  const e = await sched.dayOpenWindow({
-    dateIso: props.dateIso,
-    seatId: edit.value.seatId,
-    userId: edit.value.userId,
-    from: editFrom.value,
-    until: editUntil.value,
-  })
-  busy.value = false
-  if (e) {
-    err.value = e
-    return
-  }
-  conflict.value = null
-  edit.value = null
-  notice.value = 'Seat posted as open.'
-}
-
-// ── editor: add event ────────────────────────────────────────────────
-
-const addingEvent = ref(false)
-const evLabel = ref('')
-const evFrom = ref('17:00')
-const evUntil = ref('21:00')
-const evMedics = ref(1)
-const evAttendants = ref(1)
-const evNotes = ref('')
-
-async function submitEvent() {
-  if (!evLabel.value.trim()) {
-    err.value = 'Event name is required.'
-    return
-  }
-  busy.value = true
-  err.value = null
-  const e = await sched.addEvent({
-    dateIso: props.dateIso,
-    label: evLabel.value.trim(),
-    from: evFrom.value,
-    until: evUntil.value,
-    paramedicSlots: Math.max(0, evMedics.value),
-    attendantSlots: Math.max(0, evAttendants.value),
-    notes: evNotes.value,
-  })
-  busy.value = false
-  if (e) {
-    err.value = e
-    return
-  }
-  addingEvent.value = false
-  evLabel.value = evNotes.value = ''
-}
-
-const deleteArm = ref<string | null>(null)
-
-async function deleteEvent(ev: DayEventBox) {
-  const key = `${ev.label}`
-  if (deleteArm.value !== key) {
-    deleteArm.value = key
-    return
-  }
-  deleteArm.value = null
-  busy.value = true
-  const e = await sched.deleteEventBox(props.dateIso, ev.label, ev.eventId)
-  busy.value = false
-  if (e) err.value = e
-}
-
-async function addSlotTo(ev: DayEventBox, title: string) {
-  busy.value = true
-  const from = ev.start ? toInput(ev.start) : '06:00'
-  const until = ev.end ? toInput(ev.end) : '06:00'
-  const e = await sched.addEventSlot(props.dateIso, ev.label, title, from, until)
-  busy.value = false
-  if (e) err.value = e
-}
-
 async function clearRow(entryId: string | null) {
-  if (!entryId) return
+  if (!entryId || busy.value) return
   busy.value = true
   const e = await sched.removeEntry(entryId)
   busy.value = false
   if (e) err.value = e
 }
 
-async function unassignEventRow(entryId: string | null) {
-  if (!entryId) return
-  busy.value = true
-  const e = await sched.assignEventSlot(entryId, null)
-  busy.value = false
-  if (e) err.value = e
-}
-
-// ── editor: add student ──────────────────────────────────────────────
-
-const studentOnUnit = ref<string | null>(null)
-const stProgram = ref('')
-const stComment = ref('')
-const stFrom = ref('06:00')
-const stUntil = ref('18:00')
-
-function startStudent(unitId: string) {
-  studentOnUnit.value = studentOnUnit.value === unitId ? null : unitId
-  stProgram.value = stComment.value = ''
-  stFrom.value = '06:00'
-  stUntil.value = '18:00'
-}
-
-async function submitStudent(unitId: string) {
-  if (!stProgram.value.trim()) {
-    err.value = 'School / program is required.'
-    return
-  }
-  busy.value = true
-  err.value = null
-  const e = await sched.addStudent({
-    dateIso: props.dateIso,
-    unitId,
-    program: stProgram.value.trim(),
-    comment: stComment.value.trim(),
-    from: stFrom.value,
-    until: stUntil.value,
-  })
-  busy.value = false
-  if (e) {
-    err.value = e
-    return
-  }
-  studentOnUnit.value = null
-}
-
-// ── editor: notes ────────────────────────────────────────────────────
-
-const addingNote = ref(false)
-const noteText = ref('')
-const noteUnit = ref('')
-const noteRemind = ref(false)
-
-async function submitNote() {
-  if (!noteText.value.trim()) return
-  busy.value = true
-  err.value = null
-  const e = await sched.addDayNote({
-    dateIso: props.dateIso,
-    unitId: noteUnit.value || null,
-    note: noteText.value.trim(),
-    includeInReminders: noteRemind.value,
-  })
-  busy.value = false
-  if (e) {
-    err.value = e
-    return
-  }
-  addingNote.value = false
-  noteText.value = ''
-  noteRemind.value = false
-}
-
 async function removeNote(id: string) {
+  if (busy.value) return
   busy.value = true
   const e = await sched.deleteDayNote(id)
   busy.value = false
@@ -492,54 +58,13 @@ async function removeNote(id: string) {
         {{ model.openCount }} open {{ model.openCount === 1 ? 'seat' : 'seats' }}
       </span>
       <span v-if="sched.canEdit.value" class="db__tools">
-        <button class="db__tool" @click="addingEvent = !addingEvent">Add event</button>
-        <button class="db__tool" @click="addingNote = !addingNote">Add note</button>
+        <button class="db__tool" @click="editor.openAdd(props.dateIso, 'event')">Add event</button>
+        <button class="db__tool" @click="editor.openAdd(props.dateIso, 'note')">Add note</button>
+        <button class="db__tool" @click="editor.openAdd(props.dateIso, 'student')">Add student</button>
       </span>
     </div>
 
-    <p v-if="notice" class="db__notice">{{ notice }}</p>
     <p v-if="err" class="db__error">{{ err }}</p>
-
-    <form v-if="addingEvent" class="db__form" @submit.prevent="submitEvent">
-      <div class="db__form-grid">
-        <label class="db__field db__field--wide">
-          <span>Event name</span>
-          <input v-model="evLabel" type="text" class="db__input" placeholder="Royal HS Football" />
-        </label>
-        <label class="db__field"><span>From</span><input v-model="evFrom" type="time" class="db__input" /></label>
-        <label class="db__field"><span>Until</span><input v-model="evUntil" type="time" class="db__input" /></label>
-        <label class="db__field"><span>Paramedic seats</span><input v-model.number="evMedics" type="number" min="0" max="10" class="db__input" /></label>
-        <label class="db__field"><span>Attendant seats</span><input v-model.number="evAttendants" type="number" min="0" max="10" class="db__input" /></label>
-      </div>
-      <label class="db__field"><span>Notes</span><input v-model="evNotes" type="text" class="db__input" placeholder="Optional" /></label>
-      <div class="db__formbtns">
-        <button type="submit" class="db__btn db__btn--primary" :disabled="busy">Create event</button>
-        <button type="button" class="db__btn" @click="addingEvent = false">Cancel</button>
-      </div>
-    </form>
-
-    <form v-if="addingNote" class="db__form" @submit.prevent="submitNote">
-      <div class="db__form-grid">
-        <label class="db__field db__field--wide">
-          <span>Note</span>
-          <input v-model="noteText" type="text" class="db__input" placeholder="Note for the day" />
-        </label>
-        <label class="db__field">
-          <span>Attach to</span>
-          <select v-model="noteUnit" class="db__input">
-            <option value="">Whole day</option>
-            <option v-for="u in sched.units.value" :key="u.id" :value="u.id">{{ u.code }}</option>
-          </select>
-        </label>
-      </div>
-      <label class="db__check">
-        <input v-model="noteRemind" type="checkbox" /> Include in shift reminders
-      </label>
-      <div class="db__formbtns">
-        <button type="submit" class="db__btn db__btn--primary" :disabled="busy">Save note</button>
-        <button type="button" class="db__btn" @click="addingNote = false">Cancel</button>
-      </div>
-    </form>
 
     <div v-for="n in model.notes" :key="n.id" class="db__daynote">
       <span>{{ n.note }}</span>
@@ -558,23 +83,11 @@ async function removeNote(id: string) {
           <button
             v-if="sched.canEdit.value"
             class="db__tool db__tool--sm"
-            @click="startStudent(um.unit.id)"
+            @click="editor.openAdd(props.dateIso, 'student', um.unit.id)"
           >
             + Student
           </button>
         </div>
-
-        <form
-          v-if="studentOnUnit === um.unit.id"
-          class="db__form db__form--inline"
-          @submit.prevent="submitStudent(um.unit.id)"
-        >
-          <input v-model="stProgram" type="text" class="db__input" placeholder="School / program" />
-          <input v-model="stComment" type="text" class="db__input" placeholder="Student name (optional)" />
-          <label>From <input v-model="stFrom" type="time" class="db__input db__input--time" /></label>
-          <label>Until <input v-model="stUntil" type="time" class="db__input db__input--time" /></label>
-          <button type="submit" class="db__btn db__btn--primary" :disabled="busy">Add</button>
-        </form>
 
         <div v-for="n in um.notes" :key="n.id" class="db__unitnote">
           <span>{{ n.note }}</span>
@@ -594,7 +107,7 @@ async function removeNote(id: string) {
             <button
               v-if="row.open"
               class="db__name db__name--open db__name--btn"
-              @click="openSeatSlot(sm.seat.id, sm.seat.label, row)"
+              @click="editor.openSlot(props.dateIso, sm.seat.id, sm.seat.label, row)"
             >
               {{ sm.seat.label }}
             </button>
@@ -602,7 +115,7 @@ async function removeNote(id: string) {
               v-else-if="sched.canEdit.value"
               class="db__name db__name--btn"
               title="Edit this person's day"
-              @click="openDayEdit(um.unit.code, sm.seat.id, sm.seat.label, row)"
+              @click="editor.openPerson(props.dateIso, um.unit.code, sm.seat.id, sm.seat.label, row)"
             >
               {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
               <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
@@ -617,8 +130,22 @@ async function removeNote(id: string) {
 
         <div v-for="ex in um.extras" :key="ex.entryId ?? ex.name" class="db__row db__row--extra">
           <span class="db__seat">{{ ex.kind === 'student' ? 'Student' : 'Extra' }}</span>
-          <span class="db__name">
+          <button
+            v-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
+            class="db__name db__name--btn"
+            title="Edit this student"
+            @click="editor.openStudent(props.dateIso, ex)"
+          >
             {{ ex.name }}<span v-if="ex.credential" class="db__cred"> - {{ ex.credential }}</span>
+            <span v-if="ex.note" class="db__noteicon" :title="ex.note">
+              <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
+            </span>
+          </button>
+          <span v-else class="db__name">
+            {{ ex.name }}<span v-if="ex.credential" class="db__cred"> - {{ ex.credential }}</span>
+            <span v-if="ex.note" class="db__noteicon" :title="ex.note">
+              <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
+            </span>
           </span>
           <span class="db__time">
             {{ ex.start }} – {{ ex.end }}
@@ -647,10 +174,8 @@ async function removeNote(id: string) {
           </span>
           <span v-if="ev.start" class="db__time">{{ ev.start }} – {{ ev.end }}</span>
           <span v-if="sched.canEdit.value" class="db__event-tools">
-            <button class="db__tool db__tool--sm" @click="addSlotTo(ev, 'Paramedic')">+ Paramedic</button>
-            <button class="db__tool db__tool--sm" @click="addSlotTo(ev, 'Attendant')">+ Attendant</button>
-            <button class="db__tool db__tool--sm db__tool--danger" @click="deleteEvent(ev)">
-              {{ deleteArm === ev.label ? 'Confirm delete' : 'Delete event' }}
+            <button class="db__tool db__tool--sm" @click="editor.openEvent(props.dateIso, ev)">
+              Manage event
             </button>
           </span>
         </div>
@@ -660,24 +185,22 @@ async function removeNote(id: string) {
           <button
             v-if="row.open"
             class="db__name db__name--open db__name--btn"
-            @click="openEventSlot(ev, row)"
+            @click="editor.openEventSlot(props.dateIso, ev, row)"
           >
             {{ row.name }} — open
+          </button>
+          <button
+            v-else-if="sched.canEdit.value"
+            class="db__name db__name--btn"
+            title="Manage this event"
+            @click="editor.openEvent(props.dateIso, ev)"
+          >
+            {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
           </button>
           <span v-else class="db__name">
             {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
           </span>
-          <span class="db__time">
-            {{ row.start }} – {{ row.end }}
-            <template v-if="sched.canEdit.value && row.entryId">
-              <button v-if="!row.open" class="db__x" aria-label="Unassign" title="Unassign" @click="unassignEventRow(row.entryId)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="m17 8 5 5" /><path d="m22 8-5 5" /></svg>
-              </button>
-              <button class="db__x" aria-label="Remove slot" title="Remove slot" @click="clearRow(row.entryId)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-              </button>
-            </template>
-          </span>
+          <span class="db__time">{{ row.start }} – {{ row.end }}</span>
         </div>
       </div>
     </section>
@@ -729,7 +252,15 @@ async function removeNote(id: string) {
       <h3 class="db__station-name">Other assignments</h3>
       <div v-for="ex in model.unattached" :key="ex.entryId ?? ex.name" class="db__row db__row--extra">
         <span class="db__seat">{{ ex.kind === 'student' ? 'Student' : 'Extra' }}</span>
-        <span class="db__name">{{ ex.name }}</span>
+        <button
+          v-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
+          class="db__name db__name--btn"
+          title="Edit this student"
+          @click="editor.openStudent(props.dateIso, ex)"
+        >
+          {{ ex.name }}
+        </button>
+        <span v-else class="db__name">{{ ex.name }}</span>
         <span class="db__time">{{ ex.start }} – {{ ex.end }}</span>
       </div>
     </section>
@@ -738,134 +269,6 @@ async function removeNote(id: string) {
       No rotation template yet — assign crews to seats under Setup and the calendar fills in
       from the effective date forward.
     </p>
-
-    <!-- Chief day-edit modal -->
-    <div v-if="edit && !conflict" class="db__overlay" @click.self="edit = null">
-      <div class="db__modal">
-        <h3 class="db__modal-title">{{ edit.personName }}</h3>
-        <p class="db__modal-sub">{{ edit.unitCode }} {{ edit.seatLabel }} · {{ edit.row.start }} – {{ edit.row.end }}</p>
-
-        <div class="db__editactions">
-          <button
-            v-for="[k, label] in ([['off','Mark time off'],['remove','Remove from day'],['move','Move to open seat'],['replace','Replace with…']] as const)"
-            :key="k"
-            class="db__btn"
-            :class="{ 'db__btn--primary': editAction === k }"
-            @click="editAction = editAction === k ? '' : k"
-          >
-            {{ label }}
-          </button>
-        </div>
-
-        <template v-if="editAction === 'off'">
-          <select v-model="editOffType" class="db__input">
-            <option value="vacation">Vacation</option>
-            <option value="sick">Sick</option>
-            <option value="unpaid">Unpaid time off</option>
-            <option value="bereavement">Bereavement</option>
-            <option value="other">Other</option>
-          </select>
-          <div class="db__times">
-            <label>From <input v-model="editFrom" type="time" class="db__input db__input--time" /></label>
-            <label>Until <input v-model="editUntil" type="time" class="db__input db__input--time" /></label>
-          </div>
-        </template>
-
-        <template v-else-if="editAction === 'remove'">
-          <div class="db__scope">
-            <label><input v-model="editScope" type="radio" value="day" /> This day only</label>
-            <label><input v-model="editScope" type="radio" value="permanent" /> Permanent from this date (template change)</label>
-          </div>
-        </template>
-
-        <template v-else-if="editAction === 'move'">
-          <select v-model="editMoveTo" class="db__input">
-            <option value="" disabled>— open seats today —</option>
-            <option v-for="s in editOpenSeats" :key="s.seatId + (s.entryId ?? '')" :value="`${s.seatId}|${s.entryId ?? ''}`">
-              {{ s.unitCode }} {{ s.seatLabel }} · {{ s.start }} – {{ s.end }}
-            </option>
-          </select>
-          <p v-if="editOpenSeats.length === 0" class="db__empty">No open seats today.</p>
-        </template>
-
-        <template v-else-if="editAction === 'replace'">
-          <select v-model="editReplaceWith" class="db__input">
-            <option value="">— choose a member —</option>
-            <option v-for="p in sched.people.value.filter((x) => x.id !== edit!.userId)" :key="p.id" :value="p.id">
-              {{ p.fullName }}<template v-if="p.credential"> - {{ p.credential }}</template>
-            </option>
-          </select>
-          <div class="db__times">
-            <label>From <input v-model="editFrom" type="time" class="db__input db__input--time" /></label>
-            <label>Until <input v-model="editUntil" type="time" class="db__input db__input--time" /></label>
-          </div>
-          <div class="db__scope">
-            <label><input v-model="editScope" type="radio" value="day" /> This day only</label>
-            <label><input v-model="editScope" type="radio" value="permanent" /> Permanent from this date (template change)</label>
-          </div>
-        </template>
-
-        <p v-if="err" class="db__error">{{ err }}</p>
-        <button
-          v-if="editAction"
-          class="db__btn db__btn--primary"
-          :disabled="busy"
-          @click="runEdit"
-        >
-          {{ busy ? 'Working…' : 'Apply' }}
-        </button>
-        <button class="db__btn db__btn--ghost" @click="edit = null">Close</button>
-      </div>
-    </div>
-
-    <!-- unavailability conflict warning -->
-    <div v-if="conflict" class="db__overlay">
-      <div class="db__modal">
-        <h3 class="db__modal-title">{{ conflict.name }} is unavailable</h3>
-        <p class="db__modal-sub">
-          {{ conflict.name }} marked {{ fmtLong(dateIso) }} unavailable{{ conflict.reason ? ` — "${conflict.reason}"` : '' }}.
-          Scheduling them anyway overrides that.
-        </p>
-        <p v-if="err" class="db__error">{{ err }}</p>
-        <button class="db__btn db__btn--primary" :disabled="busy" @click="conflictProceed">
-          Schedule anyway
-        </button>
-        <button v-if="edit" class="db__btn" :disabled="busy" @click="conflictLeaveOpen">
-          Post the seat as open instead
-        </button>
-        <button class="db__btn db__btn--ghost" @click="conflict = null">Pick someone else</button>
-      </div>
-    </div>
-
-    <!-- open seat / slot modal -->
-    <div v-if="slot && !conflict" class="db__overlay" @click.self="slot = null">
-      <div class="db__modal">
-        <h3 class="db__modal-title">{{ slot.label }}</h3>
-        <p class="db__modal-sub">{{ slot.start }} – {{ slot.end }}</p>
-        <div class="db__times">
-          <label>From <input v-model="slotFrom" type="time" class="db__input db__input--time" /></label>
-          <label>Until <input v-model="slotUntil" type="time" class="db__input db__input--time" /></label>
-        </div>
-        <input v-model="slotComments" type="text" class="db__input" placeholder="Comments (optional)" />
-        <p v-if="err" class="db__error">{{ err }}</p>
-        <button class="db__btn db__btn--primary" :disabled="busy" @click="submitPickup">
-          Request this shift
-        </button>
-
-        <template v-if="sched.canEdit.value">
-          <div class="db__modal-div">or assign directly</div>
-          <select v-model="slotAssignee" class="db__input">
-            <option value="">— choose a member —</option>
-            <option v-for="p in sched.people.value" :key="p.id" :value="p.id">
-              {{ p.fullName }}<template v-if="p.credential"> - {{ p.credential }}</template>
-            </option>
-          </select>
-          <button class="db__btn" :disabled="busy || !slotAssignee" @click="assignDirect">Assign</button>
-        </template>
-
-        <button class="db__btn db__btn--ghost" @click="slot = null">Close</button>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -943,107 +346,9 @@ async function removeNote(id: string) {
   padding: 0.18rem 0.5rem;
 }
 
-.db__tool--danger {
-  color: var(--color-danger-500);
-}
-
-.db__notice {
-  color: var(--color-success-500);
-  font-size: 0.85rem;
-}
-
 .db__error {
   color: var(--color-danger-500);
   font-size: 0.85rem;
-}
-
-.db__form {
-  border: 1px solid var(--color-line);
-  border-radius: 10px;
-  background: var(--color-surface);
-  padding: 0.7rem 0.8rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-bottom: 0.8rem;
-}
-
-.db__form--inline {
-  flex-direction: row;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  font-size: 0.78rem;
-  color: var(--color-muted);
-  margin: 0.4rem 0;
-}
-
-.db__form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 0.5rem;
-}
-
-.db__field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  font-size: 0.7rem;
-  color: var(--color-muted);
-}
-
-.db__field--wide {
-  grid-column: span 2;
-}
-
-.db__input {
-  font: inherit;
-  font-size: 0.85rem;
-  padding: 0.32rem 0.45rem;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: var(--color-surface);
-  color: var(--color-ink);
-}
-
-.db__input--time {
-  width: 105px;
-}
-
-.db__check {
-  font-size: 0.82rem;
-  color: var(--color-ink-soft);
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.db__formbtns {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.db__btn {
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  padding: 0.32rem 0.8rem;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: var(--color-surface);
-  color: var(--color-ink-soft);
-  cursor: pointer;
-}
-
-.db__btn--primary {
-  background: var(--color-brand-700);
-  border-color: var(--color-brand-700);
-  color: white;
-}
-
-.db__btn--ghost {
-  border: 0;
-  color: var(--color-muted);
 }
 
 .db__daynote,
@@ -1275,80 +580,6 @@ async function removeNote(id: string) {
 .db__empty {
   color: var(--color-muted);
   font-size: 0.85rem;
-}
-
-.db__overlay {
-  position: fixed;
-  inset: 0;
-  background: oklch(0.18 0.015 260 / 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
-  padding: 1rem;
-}
-
-.db__modal {
-  background: var(--color-surface);
-  border-radius: 14px;
-  box-shadow: var(--shadow-lg);
-  padding: 1.1rem 1.2rem;
-  width: min(380px, 100%);
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.db__modal-title {
-  font-family: var(--font-display);
-  font-size: 1.15rem;
-  color: var(--color-brand-800);
-  margin: 0;
-}
-
-.db__modal-sub {
-  font-size: 0.82rem;
-  color: var(--color-muted);
-  margin: -0.3rem 0 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.db__times {
-  display: flex;
-  gap: 0.7rem;
-  font-size: 0.8rem;
-  color: var(--color-muted);
-  align-items: center;
-}
-
-.db__modal-div {
-  text-align: center;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-  margin-top: 0.2rem;
-}
-
-.db__editactions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.4rem;
-}
-
-.db__scope {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  font-size: 0.82rem;
-  color: var(--color-ink-soft);
-}
-
-.db__scope label {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
 }
 
 @media (max-width: 560px) {

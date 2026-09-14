@@ -159,6 +159,7 @@ export interface SeatRow {
   kind: string // 'rotation' | 'pickup' | ...
   open: boolean
   isRotation: boolean // circled-R marker: on regular rotation
+  note: string | null // free-text note (students carry theirs here)
 }
 
 export interface SeatModel {
@@ -349,6 +350,7 @@ const availability = ref<Availability[]>([])
 const dayNotes = ref<DayNote[]>([])
 const schedEvents = ref<SchedEventRec[]>([])
 const people = ref<SchedPerson[]>([])
+const settings = ref<Record<string, Record<string, unknown>>>({})
 const level = ref<SchedLevel>('member')
 const loaded = ref(false)
 const loading = ref(false)
@@ -380,7 +382,7 @@ async function loadCore(): Promise<void> {
     loaded.value = true
     return
   }
-  const [uRes, sRes, rRes, pRes, lvlRes, cRes] = await Promise.all([
+  const [uRes, sRes, rRes, pRes, lvlRes, cRes, setRes] = await Promise.all([
     supabase.from('sched_units').select('*').order('sort_order'),
     supabase.from('sched_seats').select('*').order('sort_order'),
     supabase.from('sched_rotation_assignments').select('*'),
@@ -392,6 +394,7 @@ async function loadCore(): Promise<void> {
       .order('full_name'),
     supabase.rpc('sched_level'),
     supabase.from('sched_credentials').select('user_id, credential'),
+    supabase.from('sched_settings').select('key, value'),
   ])
   const err = uRes.error ?? sRes.error ?? rRes.error ?? pRes.error ?? lvlRes.error
   if (err) {
@@ -435,11 +438,20 @@ async function loadCore(): Promise<void> {
     email: r.email,
     phone: r.phone,
   }))
+  const setMap: Record<string, Record<string, unknown>> = {}
+  for (const r of (setRes.data ?? []) as { key: string; value: Record<string, unknown> }[]) {
+    setMap[r.key] = r.value ?? {}
+  }
+  settings.value = setMap
   level.value = (lvlRes.data as SchedLevel) ?? 'member'
   loaded.value = true
 }
 
 function seedDevStub(): void {
+  settings.value = {
+    pay: { period_days: 14, period_anchor: PAY_ANCHOR, workday_start: '06:00', ot_week_hours: 40 },
+    warnings: { consecutive_warn_hours: 60, consecutive_confirm_hours: 72, weekly_warn_hours: 84 },
+  }
   const DEV_UNITS: [string, string, string][] = [
     ['S201', 'Station 201 Supervisor', 'Station 201 · Hempstead'],
     ['M211', 'Medic 211', 'Station 201 · Hempstead'],
@@ -694,6 +706,7 @@ export function dayModel(dateIso: string): DayModel {
             kind: e.kind,
             open,
             isRotation: false,
+            note: null,
           }
         })
       } else {
@@ -712,6 +725,7 @@ export function dayModel(dateIso: string): DayModel {
             kind: 'rotation',
             open,
             isRotation: !open,
+            note: null,
           },
         ]
       }
@@ -728,13 +742,14 @@ export function dayModel(dateIso: string): DayModel {
         return {
           entryId: e.id,
           userId: e.userId,
-          name: who.name || e.studentProgram || e.note || 'Open slot',
+          name: who.name || e.studentProgram || 'Open slot',
           credential: who.credential,
           start: hhmm(e.startAt),
           end: hhmm(e.endAt),
           kind: e.kind,
           open: false,
           isRotation: false,
+          note: e.note,
         }
       })
 
@@ -749,13 +764,14 @@ export function dayModel(dateIso: string): DayModel {
       return {
         entryId: e.id,
         userId: e.userId,
-        name: who.name || e.studentProgram || e.note || 'Open slot',
+        name: who.name || e.studentProgram || 'Open slot',
         credential: who.credential,
         start: hhmm(e.startAt),
         end: hhmm(e.endAt),
         kind: e.kind,
         open: false,
         isRotation: false,
+        note: e.note,
       }
     })
 
@@ -795,6 +811,7 @@ export function dayModel(dateIso: string): DayModel {
             kind: e.kind,
             open,
             isRotation: false,
+            note: null,
           }
         }),
     })
@@ -1016,6 +1033,236 @@ function shiftWindow(dateIso: string, from: string, until: string) {
   return { dayStart, dayEnd, reqStart, reqEnd, before, after }
 }
 
+// ── hours engine (threshold warnings) ────────────────────────────────
+
+interface Seg {
+  start: number
+  end: number
+}
+
+export interface HoursWarning {
+  code: 'consecutive' | 'consecutive_confirm' | 'weekly' | 'ot' | 'check_failed'
+  hours: number
+  limit: number
+  message: string
+}
+
+export interface HoursInfo {
+  weekHours: number // Sun–Sat week of the added shift, would-be total
+  periodHours: number // pay period, would-be total
+  consecutiveHours: number // longest continuous on-duty run touching the addition
+  warnings: HoursWarning[]
+}
+
+/** Thresholds from sched_settings (Chief-editable in Setup). */
+function warningThresholds() {
+  const w = (settings.value['warnings'] ?? {}) as Record<string, unknown>
+  const p = (settings.value['pay'] ?? {}) as Record<string, unknown>
+  return {
+    consecutiveWarn: Number(w.consecutive_warn_hours ?? 60),
+    consecutiveConfirm: Number(w.consecutive_confirm_hours ?? 72),
+    weeklyWarn: Number(w.weekly_warn_hours ?? 84),
+    otWeek: Number(p.ot_week_hours ?? 40),
+  }
+}
+
+/** A user's held on-duty segments for one work date, computed from raw
+ *  entry rows with the same overlay semantics as dayModel: entry rows on
+ *  a seat replace its rotation occupant; extras/events/students add on. */
+function segsForUserOnDate(dateIso: string, userId: string, rows: SchedEntry[]): Seg[] {
+  const dayRows = rows.filter((e) => e.workDate === dateIso)
+  const platoon = platoonFor(dateIso)
+  const out: Seg[] = []
+  for (const seat of seats.value.filter((s) => s.active)) {
+    const seatRows = dayRows.filter(
+      (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
+    )
+    if (seatRows.length > 0) {
+      for (const e of seatRows) {
+        if (e.userId === userId && e.status === 'scheduled') {
+          out.push({ start: tsMs(e.startAt), end: tsMs(e.endAt) })
+        }
+      }
+    } else if (rotationOccupant(seat.id, platoon, dateIso) === userId) {
+      out.push({
+        start: tsMs(centralTs(dateIso, '06:00')),
+        end: tsMs(centralTs(addDaysIso(dateIso, 1), '06:00')),
+      })
+    }
+  }
+  for (const e of dayRows) {
+    if (
+      e.seatId === null &&
+      e.userId === userId &&
+      e.status === 'scheduled' &&
+      (e.kind === 'extra' || e.kind === 'event' || e.kind === 'student')
+    ) {
+      out.push({ start: tsMs(e.startAt), end: tsMs(e.endAt) })
+    }
+  }
+  return out
+}
+
+/** Merge overlapping/abutting segments (sub-minute gaps count as joined). */
+function mergeSegs(segs: Seg[]): Seg[] {
+  const sorted = [...segs].sort((a, b) => a.start - b.start)
+  const out: Seg[] = []
+  for (const seg of sorted) {
+    if (seg.end - seg.start < MIN_SEG_MS) continue
+    const last = out[out.length - 1]
+    if (last && seg.start <= last.end + MIN_SEG_MS) last.end = Math.max(last.end, seg.end)
+    else out.push({ ...seg })
+  }
+  return out
+}
+
+function segHours(segs: Seg[]): number {
+  return segs.reduce((t, s) => t + (s.end - s.start), 0) / 3_600_000
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10
+}
+
+/**
+ * Would-be hours if `adds` (extra shift windows, ISO timestamps on their
+ * work dates) land on this person's schedule: weekly (Sun–Sat), pay
+ * period, and longest consecutive on-duty run touching the addition.
+ * Entries are fetched FRESH for the surrounding weeks so the numbers
+ * hold regardless of what range the boards have loaded. Warnings come
+ * from the Chief-set thresholds; a query failure returns a visible
+ * 'check_failed' warning instead of silently passing.
+ */
+async function hoursCheck(
+  userId: string,
+  adds: { dateIso: string; startAt: string; endAt: string }[],
+  subjectName = 'They',
+): Promise<HoursInfo> {
+  const zero: HoursInfo = { weekHours: 0, periodHours: 0, consecutiveHours: 0, warnings: [] }
+  const auth = useAuthStore()
+  if (auth.usingDevStub || adds.length === 0) return zero
+  const t = warningThresholds()
+  const anchor = adds[0].dateIso
+  const weekStart = addDaysIso(anchor, -new Date(`${anchor}T00:00:00`).getDay())
+  const weekEnd = addDaysIso(weekStart, 6)
+  const period = payPeriodFor(anchor)
+  const sortedDates = adds.map((a) => a.dateIso).sort()
+  const fetchStart = [weekStart, period.start, addDaysIso(sortedDates[0], -5)].sort()[0]
+  const fetchEnd = [weekEnd, period.end, addDaysIso(sortedDates[sortedDates.length - 1], 5)]
+    .sort()
+    .pop()!
+  const res = await supabase
+    .from('sched_entries')
+    .select('*')
+    .gte('work_date', fetchStart)
+    .lte('work_date', fetchEnd)
+  if (res.error) {
+    return {
+      ...zero,
+      warnings: [
+        {
+          code: 'check_failed',
+          hours: 0,
+          limit: 0,
+          message: 'Hour totals could not be verified (connection error) — thresholds were not checked.',
+        },
+      ],
+    }
+  }
+  const rows = (res.data ?? []).map(mapEntry)
+  // union of existing + added segments, bucketed by work date
+  const byDate = new Map<string, Seg[]>()
+  for (let iso = fetchStart; iso <= fetchEnd; iso = addDaysIso(iso, 1)) {
+    byDate.set(iso, segsForUserOnDate(iso, userId, rows))
+  }
+  for (const a of adds) {
+    const list = byDate.get(a.dateIso) ?? []
+    list.push({ start: tsMs(a.startAt), end: tsMs(a.endAt) })
+    byDate.set(a.dateIso, list)
+  }
+  let weekHours = 0
+  let periodHours = 0
+  const all: Seg[] = []
+  for (const [iso, segs] of byDate) {
+    const merged = mergeSegs(segs)
+    const h = segHours(merged)
+    if (iso >= weekStart && iso <= weekEnd) weekHours += h
+    if (iso >= period.start && iso <= period.end) periodHours += h
+    all.push(...merged)
+  }
+  const runs = mergeSegs(all)
+  let consecutiveHours = 0
+  for (const a of adds) {
+    const s = tsMs(a.startAt)
+    const en = tsMs(a.endAt)
+    for (const r of runs) {
+      if (s < r.end && en > r.start) {
+        consecutiveHours = Math.max(consecutiveHours, (r.end - r.start) / 3_600_000)
+      }
+    }
+  }
+  const cons = round1(consecutiveHours)
+  const wk = round1(weekHours)
+  const warnings: HoursWarning[] = []
+  if (consecutiveHours >= t.consecutiveConfirm) {
+    warnings.push({
+      code: 'consecutive_confirm',
+      hours: cons,
+      limit: t.consecutiveConfirm,
+      message: `${subjectName} would be on duty ${cons} consecutive hours — at or past the ${t.consecutiveConfirm}-hour mark that needs admin sign-off.`,
+    })
+  } else if (consecutiveHours >= t.consecutiveWarn) {
+    warnings.push({
+      code: 'consecutive',
+      hours: cons,
+      limit: t.consecutiveWarn,
+      message: `${subjectName} would be on duty ${cons} consecutive hours (warning starts at ${t.consecutiveWarn}).`,
+    })
+  }
+  if (weekHours >= t.weeklyWarn) {
+    warnings.push({
+      code: 'weekly',
+      hours: wk,
+      limit: t.weeklyWarn,
+      message: `${subjectName} would reach ${wk} hours this week (warning starts at ${t.weeklyWarn}).`,
+    })
+  } else if (weekHours > t.otWeek) {
+    warnings.push({
+      code: 'ot',
+      hours: wk,
+      limit: t.otWeek,
+      message: `${subjectName} would be over ${t.otWeek} hours this week — overtime.`,
+    })
+  }
+  return { weekHours: wk, periodHours: round1(periodHours), consecutiveHours: cons, warnings }
+}
+
+/** hoursCheck for a 'HH:mm' window on a work date (rolls past midnight
+ *  and clamps like every other window in the module). */
+async function hoursCheckWindow(
+  userId: string,
+  dateIso: string,
+  from: string,
+  until: string,
+  subjectName = 'They',
+): Promise<HoursInfo> {
+  const w = shiftWindow(dateIso, from, until)
+  return hoursCheck(userId, [{ dateIso, startAt: w.reqStart, endAt: w.reqEnd }], subjectName)
+}
+
+/** Persist one settings key (global admins only, enforced by RLS). */
+async function saveSetting(key: string, value: Record<string, unknown>): Promise<string | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return 'Not available in the dev preview.'
+  const res = await supabase.from('sched_settings').upsert(
+    { key, value, updated_by: auth.appUser?.id ?? null, updated_at: new Date().toISOString() },
+    { onConflict: 'key' },
+  )
+  if (res.error) return res.error.message
+  settings.value = { ...settings.value, [key]: value }
+  return null
+}
+
 // ── request mutations ────────────────────────────────────────────────
 
 interface TimeOffDay {
@@ -1060,6 +1307,7 @@ async function createExtraRequest(opts: {
   positionLabel: string
   timeType: string
   comments: string
+  warnings?: HoursWarning[]
 }): Promise<string | null> {
   const auth = useAuthStore()
   const me = auth.appUser?.id
@@ -1076,6 +1324,7 @@ async function createExtraRequest(opts: {
     unit_code: unit?.code ?? null,
     position_label: opts.positionLabel || null,
     comments: opts.comments || null,
+    warnings: opts.warnings ?? [],
   })
   if (res.error) return res.error.message
   await loadRequests()
@@ -1090,6 +1339,7 @@ async function createPickupRequest(opts: {
   until: string
   comments: string
   positionLabel?: string
+  warnings?: HoursWarning[]
 }): Promise<string | null> {
   const auth = useAuthStore()
   const me = auth.appUser?.id
@@ -1112,6 +1362,7 @@ async function createPickupRequest(opts: {
     unit_code: unit?.code ?? null,
     position_label: seat?.label ?? opts.positionLabel ?? null,
     comments: opts.comments || null,
+    warnings: opts.warnings ?? [],
   })
   if (res.error) return res.error.message
   await loadRequests()
@@ -1226,8 +1477,29 @@ async function withdrawOffer(offerId: string): Promise<string | null> {
   return null
 }
 
-/** Poster accepts one offer → request moves to the Chief's queue. */
+/** Poster accepts one offer → request moves to the Chief's queue.
+ *  Hour-threshold warnings for whoever GAINS hours are computed here and
+ *  stored on the request so the Chief's approval card shows them. */
 async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string | null> {
+  const warnings: HoursWarning[] = []
+  if (req.workDate && req.startAt && req.endAt) {
+    const who = personById.value.get(offer.userId)?.fullName ?? 'The claimant'
+    const info = await hoursCheck(
+      offer.userId,
+      [{ dateIso: req.workDate, startAt: req.startAt, endAt: req.endAt }],
+      who,
+    )
+    warnings.push(...info.warnings)
+  }
+  if (offer.offerWorkDate && offer.offerStartAt && offer.offerEndAt) {
+    const who = personById.value.get(req.requesterId)?.fullName ?? 'The poster'
+    const info = await hoursCheck(
+      req.requesterId,
+      [{ dateIso: offer.offerWorkDate, startAt: offer.offerStartAt, endAt: offer.offerEndAt }],
+      who,
+    )
+    warnings.push(...info.warnings)
+  }
   const up1 = await supabase
     .from('sched_trade_offers')
     .update({ status: 'accepted' })
@@ -1242,6 +1514,7 @@ async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string
       counter_start_at: offer.offerStartAt,
       counter_end_at: offer.offerEndAt,
       status: 'partner_accepted',
+      warnings,
       updated_at: new Date().toISOString(),
     })
     .eq('id', req.id)
@@ -1258,11 +1531,6 @@ async function declineOffer(offerId: string): Promise<string | null> {
   if (res.error) return res.error.message
   await loadTradeOffers()
   return null
-}
-
-interface Seg {
-  start: number
-  end: number
 }
 
 /**
@@ -1842,6 +2110,63 @@ async function addEventSlot(dateIso: string, label: string, title: string, from:
 
 async function removeEntry(entryId: string): Promise<string | null> {
   const res = await supabase.from('sched_entries').delete().eq('id', entryId)
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Attach/update the hover note on an established event. Boxes that came
+ *  from staffing rows alone (no sched_events listing yet, e.g. imported
+ *  history) get a listing created so the note has somewhere to live. */
+async function setEventNotes(
+  dateIso: string,
+  label: string,
+  eventId: string | null,
+  startHHmm: string | null, // box times, 'HHmm' — used only when creating a listing
+  endHHmm: string | null,
+  notes: string,
+): Promise<string | null> {
+  const auth = useAuthStore()
+  const val = notes.trim() || null
+  if (eventId) {
+    const res = await supabase.from('sched_events').update({ notes: val }).eq('id', eventId)
+    if (res.error) return res.error.message
+  } else {
+    const res = await supabase.from('sched_events').insert({
+      label,
+      on_date: dateIso,
+      start_time: startHHmm ? normTime(startHHmm) : '06:00',
+      end_time: endHHmm ? normTime(endHHmm) : '06:00',
+      seats_total: 0,
+      notes: val,
+      created_by: auth.appUser?.id ?? null,
+    })
+    if (res.error) return res.error.message
+  }
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Edit a student ride-along in place: label, note, and times. */
+async function updateStudentEntry(opts: {
+  entryId: string
+  dateIso: string
+  label: string
+  note: string
+  from: string
+  until: string
+}): Promise<string | null> {
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const res = await supabase
+    .from('sched_entries')
+    .update({
+      student_program: opts.label.trim() || null,
+      note: opts.note.trim() || null,
+      start_at: w.reqStart,
+      end_at: w.reqEnd,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', opts.entryId)
   if (res.error) return res.error.message
   await reloadRangeIfLoaded()
   return null
@@ -2438,8 +2763,16 @@ export function useSchedule() {
     addEventSlot,
     removeEntry,
     addStudent,
+    updateStudentEntry,
+    setEventNotes,
     addDayNote,
     deleteDayNote,
+    // hours engine + settings
+    settings,
+    warningThresholds,
+    hoursCheck,
+    hoursCheckWindow,
+    saveSetting,
     // trades
     tradeOffers,
     loadTradeOffers,

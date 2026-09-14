@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -7,6 +7,7 @@ import {
   type SchedRequest,
   type UpcomingShift,
   type Availability,
+  type HoursWarning,
 } from '@/composables/useSchedule'
 
 /**
@@ -113,11 +114,25 @@ const exUnit = ref('')
 const exPosition = ref('')
 const exTimeType = ref('regular')
 
+/* Hour-threshold warnings, computed on first submit; the member has to
+   acknowledge them before the request actually goes in, and what they
+   acknowledged is stored on the request for the Chief. */
+const hourWarn = ref<HoursWarning[] | null>(null)
+
+watch([exDate, exFrom, exUntil], () => {
+  hourWarn.value = null
+})
+
+const hourWarnConfirm = computed(() =>
+  (hourWarn.value ?? []).some((w) => w.code === 'consecutive_confirm'),
+)
+
 function pickForm(kind: FormKind) {
   formKind.value = kind
   formError.value = null
   formDone.value = null
   comments.value = ''
+  hourWarn.value = null
   if (kind === 'time_off') loadDayPicks()
 }
 
@@ -125,6 +140,7 @@ async function submit() {
   formError.value = null
   formBusy.value = true
   let err: string | null = null
+  let awaitingAck = false
   try {
     if (formKind.value === 'time_off' && offMode.value === 'custom') {
       err = await sched.createTimeOffRequests(
@@ -149,19 +165,34 @@ async function submit() {
         )
       }
     } else if (formKind.value === 'extra_hours') {
-      err = await sched.createExtraRequest({
-        dateIso: exDate.value,
-        from: exFrom.value,
-        until: exUntil.value,
-        unitId: exUnit.value || null,
-        positionLabel: exPosition.value,
-        timeType: exTimeType.value,
-        comments: comments.value,
-      })
+      if (hourWarn.value === null) {
+        const me = sched.myUserId.value
+        if (me) {
+          const info = await sched.hoursCheckWindow(me, exDate.value, exFrom.value, exUntil.value, 'You')
+          if (info.warnings.length > 0) {
+            hourWarn.value = info.warnings
+            awaitingAck = true
+          }
+        }
+        if (!awaitingAck) hourWarn.value = []
+      }
+      if (!awaitingAck) {
+        err = await sched.createExtraRequest({
+          dateIso: exDate.value,
+          from: exFrom.value,
+          until: exUntil.value,
+          unitId: exUnit.value || null,
+          positionLabel: exPosition.value,
+          timeType: exTimeType.value,
+          comments: comments.value,
+          warnings: hourWarn.value ?? [],
+        })
+      }
     }
   } finally {
     formBusy.value = false
   }
+  if (awaitingAck) return
   if (err) {
     formError.value = err
     return
@@ -221,8 +252,108 @@ const pendingQueue = computed(() =>
   sched.requests.value.filter((r) => r.status === 'pending' || r.status === 'partner_accepted'),
 )
 
+// ── hours context for the approval queue ─────────────────────────────
+
+/** Warnings stored on a request at submit/accept time. */
+function reqWarnings(r: SchedRequest): HoursWarning[] {
+  return (r.warnings as HoursWarning[]).filter(
+    (w) => w && typeof w === 'object' && 'code' in w && 'message' in w,
+  )
+}
+
+function chipText(w: HoursWarning): string {
+  if (w.code === 'consecutive' || w.code === 'consecutive_confirm') return `${w.hours}h consecutive`
+  if (w.code === 'weekly') return `${w.hours}h week`
+  if (w.code === 'ot') return 'Overtime'
+  return 'Hours unverified'
+}
+
+interface CardHours {
+  lines: string[]
+  warnings: HoursWarning[]
+}
+
+/** Live would-be hours for whoever GAINS time if the request is approved,
+ *  recomputed when the queue loads so stale submit-time numbers don't
+ *  decide anything. */
+const cardHours = ref<Record<string, CardHours>>({})
+
+async function computeCardHours() {
+  if (!sched.canEdit.value) return
+  const queue = pendingQueue.value
+  const results = await Promise.all(
+    queue.map(async (r) => {
+      const subs: { userId: string; dateIso: string; startAt: string; endAt: string; name: string }[] = []
+      if ((r.type === 'pickup' || r.type === 'extra_hours') && r.workDate && r.startAt && r.endAt) {
+        subs.push({ userId: r.requesterId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name: requesterName(r) })
+      } else if (r.type === 'giveaway' && r.counterpartyId && r.workDate && r.startAt && r.endAt) {
+        const name = sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Claimant'
+        subs.push({ userId: r.counterpartyId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name })
+      } else if (r.type === 'trade') {
+        if (r.counterpartyId && r.workDate && r.startAt && r.endAt) {
+          const name = sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Partner'
+          subs.push({ userId: r.counterpartyId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name })
+        }
+        if (r.counterpartyId && r.counterWorkDate && r.counterStartAt && r.counterEndAt) {
+          subs.push({
+            userId: r.requesterId,
+            dateIso: r.counterWorkDate,
+            startAt: r.counterStartAt,
+            endAt: r.counterEndAt,
+            name: requesterName(r),
+          })
+        }
+      }
+      if (subs.length === 0) return null
+      const lines: string[] = []
+      const warnings: HoursWarning[] = []
+      for (const s of subs) {
+        const info = await sched.hoursCheck(
+          s.userId,
+          [{ dateIso: s.dateIso, startAt: s.startAt, endAt: s.endAt }],
+          s.name,
+        )
+        lines.push(
+          `${s.name}: ${info.weekHours}h week · ${info.periodHours}h period · ${info.consecutiveHours}h consecutive`,
+        )
+        warnings.push(...info.warnings)
+      }
+      return [r.id, { lines, warnings }] as const
+    }),
+  )
+  const out: Record<string, CardHours> = {}
+  for (const entry of results) {
+    if (entry) out[entry[0]] = entry[1]
+  }
+  cardHours.value = out
+}
+
+watch(pendingQueue, () => void computeCardHours(), { immediate: true })
+
+/** Chips shown on a Chief card: live warnings win over stored ones. */
+function cardChips(r: SchedRequest): HoursWarning[] {
+  const live = cardHours.value[r.id]?.warnings ?? []
+  const stored = reqWarnings(r)
+  const seen = new Set(live.map((w) => w.code))
+  return [...live, ...stored.filter((w) => !seen.has(w.code))]
+}
+
 const busyId = ref<string | null>(null)
 const decideError = ref<string | null>(null)
+const confirmApprove = ref<string | null>(null)
+
+function approveClicked(r: SchedRequest) {
+  const chips = cardChips(r)
+  const needsConfirm = chips.some(
+    (w) => w.code === 'consecutive_confirm' || w.code === 'check_failed',
+  )
+  if (needsConfirm && confirmApprove.value !== r.id) {
+    confirmApprove.value = r.id
+    return
+  }
+  confirmApprove.value = null
+  void decide(r, true)
+}
 
 async function decide(r: SchedRequest, approve: boolean) {
   decideError.value = null
@@ -408,8 +539,23 @@ async function cancel(r: SchedRequest) {
             />
           </label>
 
+          <div v-if="hourWarn && hourWarn.length" class="rq__warnbox">
+            <p class="rq__warnhead">Before you submit:</p>
+            <ul class="rq__warnlist">
+              <li v-for="(w, i) in hourWarn" :key="i">{{ w.message }}</li>
+            </ul>
+          </div>
+
           <button type="submit" class="rq__submit" :disabled="formBusy">
-            {{ formBusy ? 'Submitting…' : 'Submit request' }}
+            {{
+              formBusy
+                ? 'Submitting…'
+                : hourWarn && hourWarn.length
+                  ? hourWarnConfirm
+                    ? 'I understand — request admin approval'
+                    : 'Submit anyway'
+                  : 'Submit request'
+            }}
           </button>
         </template>
       </form>
@@ -425,13 +571,46 @@ async function cancel(r: SchedRequest) {
             {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}
           </p>
           <p class="rq__card-line">{{ requestLine(r) }}</p>
+          <p v-for="(line, i) in cardHours[r.id]?.lines ?? []" :key="i" class="rq__hoursline">
+            {{ line }}
+          </p>
+          <div v-if="cardChips(r).length" class="rq__chips">
+            <span
+              v-for="(w, i) in cardChips(r)"
+              :key="i"
+              class="rq__chip"
+              :data-code="w.code"
+              :title="w.message"
+            >
+              {{ chipText(w) }}
+            </span>
+          </div>
           <p v-if="r.comments" class="rq__card-comments">"{{ r.comments }}"</p>
+          <p v-if="confirmApprove === r.id" class="rq__confirmnote">
+            This crosses an hour threshold that needs admin sign-off — approve anyway?
+          </p>
         </div>
         <div class="rq__card-actions">
-          <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="decide(r, true)">
-            Approve
+          <button
+            class="rq__btn rq__btn--approve"
+            :disabled="busyId === r.id"
+            @click="approveClicked(r)"
+          >
+            {{ confirmApprove === r.id ? 'Approve anyway' : 'Approve' }}
           </button>
-          <button class="rq__btn rq__btn--deny" :disabled="busyId === r.id" @click="decide(r, false)">
+          <button
+            v-if="confirmApprove === r.id"
+            class="rq__btn"
+            @click="confirmApprove = null"
+          >
+            Back
+          </button>
+          <button
+            v-else
+            class="rq__btn rq__btn--deny"
+            :disabled="busyId === r.id"
+            @click="decide(r, false)"
+          >
             Deny
           </button>
         </div>
@@ -445,6 +624,17 @@ async function cancel(r: SchedRequest) {
         <div class="rq__card-main">
           <p class="rq__card-title">{{ TYPE_LABELS[r.type] }}</p>
           <p class="rq__card-line">{{ requestLine(r) }}</p>
+          <div v-if="reqWarnings(r).length" class="rq__chips">
+            <span
+              v-for="(w, i) in reqWarnings(r)"
+              :key="i"
+              class="rq__chip"
+              :data-code="w.code"
+              :title="w.message"
+            >
+              {{ chipText(w) }}
+            </span>
+          </div>
         </div>
         <div class="rq__card-actions">
           <span class="rq__status" :data-status="r.status">{{ STATUS_LABELS[r.status] }}</span>
@@ -716,6 +906,76 @@ async function cancel(r: SchedRequest) {
 
 .rq__status[data-status='pending'] {
   color: var(--color-warning-500);
+}
+
+.rq__warnbox {
+  border: 1px solid oklch(0.85 0.08 60);
+  background: var(--color-warning-50);
+  border-radius: 9px;
+  padding: 0.5rem 0.7rem;
+}
+
+.rq__warnhead {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: oklch(0.45 0.12 60);
+  margin: 0 0 0.25rem;
+}
+
+.rq__warnlist {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.84rem;
+  color: var(--color-ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.rq__hoursline {
+  font-size: 0.76rem;
+  color: var(--color-ink-soft);
+  margin: 0.15rem 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.rq__chips {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+.rq__chip {
+  font-size: 10.5px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid oklch(0.85 0.08 60);
+  background: var(--color-warning-50);
+  color: oklch(0.45 0.12 60);
+  cursor: help;
+  white-space: nowrap;
+}
+
+.rq__chip[data-code='consecutive_confirm'],
+.rq__chip[data-code='check_failed'] {
+  border-color: oklch(0.8 0.1 27);
+  background: oklch(0.97 0.02 27);
+  color: var(--color-danger-500);
+}
+
+.rq__chip[data-code='ot'] {
+  border-color: var(--color-line);
+  background: var(--color-surface-soft);
+  color: var(--color-muted);
+}
+
+.rq__confirmnote {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-danger-500);
+  margin: 0.25rem 0 0;
 }
 
 @media (max-width: 560px) {

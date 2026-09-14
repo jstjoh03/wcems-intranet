@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSchedule'
+import { useScheduleEditor } from '@/composables/useScheduleEditor'
 import ScheduleMonthBoard from './ScheduleMonthBoard.vue'
 import ScheduleDayBoard from './ScheduleDayBoard.vue'
 import ScheduleWeekBoard from './ScheduleWeekBoard.vue'
@@ -10,6 +11,7 @@ import ScheduleRequestsPanel from './ScheduleRequestsPanel.vue'
 import ScheduleTradesPanel from './ScheduleTradesPanel.vue'
 import ScheduleMembersPanel from './ScheduleMembersPanel.vue'
 import ScheduleSetupPanel from './ScheduleSetupPanel.vue'
+import ScheduleEditModals from './ScheduleEditModals.vue'
 
 /**
  * Scheduling module shell — soft-launch build (URL-only, no nav entry).
@@ -20,6 +22,7 @@ import ScheduleSetupPanel from './ScheduleSetupPanel.vue'
 const route = useRoute()
 const router = useRouter()
 const sched = useSchedule()
+const editor = useScheduleEditor()
 
 type Tab = 'month' | 'day' | 'week' | 'period' | 'requests' | 'trades' | 'members' | 'setup'
 const tab = ref<Tab>('month')
@@ -120,6 +123,8 @@ watch(monthAnchor, () => {
 })
 
 watch(tab, (t, prev) => {
+  // a modal opened from the previous view shouldn't survive the switch
+  editor.closeAll()
   // returning from the pay-period board, restore the month-window load
   if (prev === 'period' && (t === 'month' || t === 'day' || t === 'week')) {
     void loadVisibleRange()
@@ -203,6 +208,9 @@ watch(dateIso, (v) => {
       <ScheduleTradesPanel v-else-if="tab === 'trades'" />
       <ScheduleMembersPanel v-else-if="tab === 'members'" />
       <ScheduleSetupPanel v-else />
+
+      <!-- shared modals: pickups, day editor, students, events, adds -->
+      <ScheduleEditModals />
     </template>
   </div>
 </template>

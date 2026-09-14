@@ -1,19 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useSchedule, addDaysIso, todayCentralIso, type DayModel } from '@/composables/useSchedule'
+import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 /**
  * Month board — the default view, mirroring Aladtec's monthly calendar:
  * every cell carries the full day roster (unit blocks, names with
  * credentials, right-aligned times, open seats in the seat's name).
- * On phones the roster collapses to platoon chip + open count and the
- * cell links into the Day view.
+ * Rows are live: open seats take pickup requests, and for editors every
+ * person, student, and event opens the same modals as the Day view; the
+ * per-cell "+" adds events, notes, and students without leaving the
+ * month. On phones the roster collapses to platoon chip + open count
+ * and the cell links into the Day view.
  */
 
 const props = defineProps<{ month: string }>() // 'YYYY-MM'
 const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 
 const sched = useSchedule()
+const editor = useScheduleEditor()
 const todayIso = todayCentralIso()
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thur', 'Fri', 'Sat']
@@ -63,13 +68,23 @@ const weeks = computed<Cell[][]>(() => {
         class="mb__cell"
         :class="{ 'mb__cell--out': !c.inMonth, 'mb__cell--today': c.isToday }"
       >
-        <button class="mb__cellhead" @click="emit('open-day', c.iso)">
-          <span class="mb__daynum">{{ c.dayNum }}</span>
-          <span class="mb__platoon" :data-platoon="c.model.platoon">
-            <span class="mb__dot" />{{ c.model.platoon }} Shift
-          </span>
+        <div class="mb__cellhead">
+          <button class="mb__cellbtn" @click="emit('open-day', c.iso)">
+            <span class="mb__daynum">{{ c.dayNum }}</span>
+            <span class="mb__platoon" :data-platoon="c.model.platoon">
+              <span class="mb__dot" />{{ c.model.platoon }} Shift
+            </span>
+          </button>
           <span v-if="c.model.openCount > 0" class="mb__open">{{ c.model.openCount }} open</span>
-        </button>
+          <button
+            v-if="sched.canEdit.value"
+            class="mb__plus"
+            title="Add event, note, or student"
+            @click="editor.openAdd(c.iso)"
+          >
+            +
+          </button>
+        </div>
 
         <div class="mb__roster">
           <div v-for="um in c.model.units" :key="um.unit.id" class="mb__unit">
@@ -80,7 +95,22 @@ const weeks = computed<Cell[][]>(() => {
                 :key="sm.seat.id + '-' + ri"
                 class="mb__row"
               >
-                <span v-if="row.open" class="mb__name mb__name--open">{{ sm.seat.label }}</span>
+                <button
+                  v-if="row.open"
+                  class="mb__name mb__name--open mb__rowbtn"
+                  title="Open — click to request or assign"
+                  @click="editor.openSlot(c.iso, sm.seat.id, sm.seat.label, row)"
+                >
+                  {{ sm.seat.label }}
+                </button>
+                <button
+                  v-else-if="sched.canEdit.value"
+                  class="mb__name mb__rowbtn"
+                  title="Edit this person's day"
+                  @click="editor.openPerson(c.iso, um.unit.code, sm.seat.id, sm.seat.label, row)"
+                >
+                  {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
+                </button>
                 <span v-else class="mb__name">
                   {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
                 </span>
@@ -88,25 +118,67 @@ const weeks = computed<Cell[][]>(() => {
               </div>
             </template>
             <div v-for="ex in um.extras" :key="ex.entryId ?? ex.name" class="mb__row mb__row--extra">
-              <span class="mb__name">{{ ex.name }}</span>
+              <button
+                v-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
+                class="mb__name mb__rowbtn"
+                :title="ex.note ?? 'Edit this student'"
+                @click="editor.openStudent(c.iso, ex)"
+              >
+                {{ ex.name }}<span v-if="ex.note" class="mb__notedot" />
+              </button>
+              <span v-else class="mb__name" :title="ex.note ?? undefined">
+                {{ ex.name }}<span v-if="ex.note" class="mb__notedot" />
+              </span>
               <span class="mb__time">{{ ex.start }}-{{ ex.end }}</span>
             </div>
           </div>
           <div v-for="ex in c.model.unattached" :key="ex.entryId ?? ex.name" class="mb__row mb__row--extra">
-            <span class="mb__name">{{ ex.name }}</span>
+            <button
+              v-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
+              class="mb__name mb__rowbtn"
+              :title="ex.note ?? 'Edit this student'"
+              @click="editor.openStudent(c.iso, ex)"
+            >
+              {{ ex.name }}<span v-if="ex.note" class="mb__notedot" />
+            </button>
+            <span v-else class="mb__name" :title="ex.note ?? undefined">{{ ex.name }}</span>
             <span class="mb__time">{{ ex.start }}-{{ ex.end }}</span>
           </div>
 
           <div v-for="ev in c.model.events" :key="ev.label" class="mb__event">
             <p class="mb__eventname">
-              <span class="mb__eventlabel">{{ ev.label }}</span>
+              <button
+                v-if="sched.canEdit.value"
+                class="mb__eventlabel mb__rowbtn mb__rowbtn--ev"
+                title="Manage this event — notes, slots, delete"
+                @click="editor.openEvent(c.iso, ev)"
+              >
+                {{ ev.label }}
+              </button>
+              <span v-else class="mb__eventlabel">{{ ev.label }}</span>
               <span v-if="ev.notes" class="mb__noteicon" :title="ev.notes">
                 <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
               </span>
               <span v-if="ev.start" class="mb__time">{{ ev.start }}-{{ ev.end }}</span>
             </p>
             <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="mb__row">
-              <span class="mb__name" :class="{ 'mb__name--open': row.open }">{{ row.name }}</span>
+              <button
+                v-if="row.open"
+                class="mb__name mb__name--open mb__rowbtn"
+                title="Open — click to request or assign"
+                @click="editor.openEventSlot(c.iso, ev, row)"
+              >
+                {{ row.name }}
+              </button>
+              <button
+                v-else-if="sched.canEdit.value"
+                class="mb__name mb__rowbtn"
+                title="Manage this event"
+                @click="editor.openEvent(c.iso, ev)"
+              >
+                {{ row.name }}
+              </button>
+              <span v-else class="mb__name">{{ row.name }}</span>
               <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
             </div>
           </div>
@@ -207,17 +279,76 @@ const weeks = computed<Cell[][]>(() => {
   gap: 5px;
   flex-wrap: wrap;
   width: 100%;
-  border: 0;
   border-bottom: 1px solid var(--color-line-soft);
   background: var(--color-surface-soft);
-  font: inherit;
-  text-align: left;
   padding: 0.3rem 0.4rem;
-  cursor: pointer;
 }
 
-.mb__cellhead:hover .mb__daynum {
+.mb__cellbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.mb__cellbtn:hover .mb__daynum {
   color: var(--color-brand-600);
+}
+
+.mb__plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-brand-600);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.mb__plus:hover {
+  border-color: var(--color-brand-300);
+}
+
+.mb__rowbtn {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  display: block;
+}
+
+.mb__rowbtn:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.mb__notedot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 2px;
+  background: oklch(0.88 0.1 86.8);
+  border: 1px solid oklch(0.6 0.11 86.8);
+  vertical-align: 2px;
 }
 
 .mb__daynum {

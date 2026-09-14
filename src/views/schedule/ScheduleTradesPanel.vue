@@ -7,6 +7,7 @@ import {
   type SchedRequest,
   type TradeOffer,
   type UpcomingShift,
+  type HoursWarning,
 } from '@/composables/useSchedule'
 
 /**
@@ -146,6 +147,25 @@ const offeringOn = ref<string | null>(null)
 const offerShiftKey = ref('')
 const offerNote = ref('')
 
+/* Hour-threshold warnings for taking the POSTED shift: shown once, and
+   the second click is the acknowledgment. */
+const hourWarnFor = ref<Record<string, HoursWarning[]>>({})
+
+function warnConfirm(list: HoursWarning[]): boolean {
+  return list.some((w) => w.code === 'consecutive_confirm')
+}
+
+async function checkMyHours(r: SchedRequest): Promise<HoursWarning[]> {
+  const me = sched.myUserId.value
+  if (!me || !r.workDate || !r.startAt || !r.endAt) return []
+  const info = await sched.hoursCheck(
+    me,
+    [{ dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt }],
+    'You',
+  )
+  return info.warnings
+}
+
 function startOffer(r: SchedRequest) {
   err.value = done.value = null
   const me = sched.myUserId.value
@@ -158,6 +178,14 @@ function startOffer(r: SchedRequest) {
 async function takeShift(r: SchedRequest) {
   busy.value = true
   err.value = null
+  if (!(r.id in hourWarnFor.value)) {
+    const w = await checkMyHours(r)
+    if (w.length > 0) {
+      hourWarnFor.value = { ...hourWarnFor.value, [r.id]: w }
+      busy.value = false
+      return
+    }
+  }
   const e = await sched.makeOffer({ requestId: r.id, offerShift: null, note: '' })
   busy.value = false
   if (e) err.value = e
@@ -172,6 +200,14 @@ async function submitOffer(r: SchedRequest) {
   }
   busy.value = true
   err.value = null
+  if (!(r.id in hourWarnFor.value)) {
+    const w = await checkMyHours(r)
+    if (w.length > 0) {
+      hourWarnFor.value = { ...hourWarnFor.value, [r.id]: w }
+      busy.value = false
+      return
+    }
+  }
   const e = await sched.makeOffer({
     requestId: r.id,
     offerShift: { dateIso: sel.dateIso, seatId: sel.seatId },
@@ -184,6 +220,13 @@ async function submitOffer(r: SchedRequest) {
   }
   offeringOn.value = null
   done.value = 'Swap offer sent to the poster.'
+}
+
+/** Warnings stored on a request when the poster accepted the deal. */
+function reqWarnings(r: SchedRequest): HoursWarning[] {
+  return (r.warnings as HoursWarning[]).filter(
+    (w) => w && typeof w === 'object' && 'code' in w && 'message' in w,
+  )
 }
 
 async function accept(r: SchedRequest, o: TradeOffer) {
@@ -300,6 +343,12 @@ async function cancelPosting(r: SchedRequest) {
 
         <!-- everyone else: take or offer -->
         <template v-if="r.requesterId !== sched.myUserId.value">
+          <div v-if="hourWarnFor[r.id]" class="tr__warnbox">
+            <p class="tr__warnhead">Before you take this:</p>
+            <ul class="tr__warnlist">
+              <li v-for="(w, i) in hourWarnFor[r.id]" :key="i">{{ w.message }}</li>
+            </ul>
+          </div>
           <div v-if="myOfferOn(r)" class="tr__cardfoot">
             <span class="tr__mine">Your {{ r.type === 'giveaway' ? 'claim' : 'offer' }} is in.</span>
             <button class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">Withdraw</button>
@@ -316,7 +365,15 @@ async function cancelPosting(r: SchedRequest) {
             </label>
             <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
             <div class="tr__offer-actions">
-              <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">Send offer</button>
+              <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">
+                {{
+                  hourWarnFor[r.id]
+                    ? warnConfirm(hourWarnFor[r.id]!)
+                      ? 'I understand — send offer'
+                      : 'Send offer anyway'
+                    : 'Send offer'
+                }}
+              </button>
               <button class="tr__btn" @click="offeringOn = null">Cancel</button>
             </div>
           </div>
@@ -327,7 +384,13 @@ async function cancelPosting(r: SchedRequest) {
               :disabled="busy"
               @click="takeShift(r)"
             >
-              Take this shift
+              {{
+                hourWarnFor[r.id]
+                  ? warnConfirm(hourWarnFor[r.id]!)
+                    ? 'I understand — take this shift'
+                    : 'Take it anyway'
+                  : 'Take this shift'
+              }}
             </button>
             <button v-else class="tr__btn tr__btn--primary" @click="startOffer(r)">Offer a swap</button>
           </div>
@@ -344,6 +407,14 @@ async function cancelPosting(r: SchedRequest) {
           · {{ postingLine(r) }}
           <template v-if="r.counterWorkDate"> ↔ {{ fmtDate(r.counterWorkDate) }}</template>
         </p>
+        <span
+          v-for="(w, i) in reqWarnings(r)"
+          :key="i"
+          class="tr__chip tr__chip--warn"
+          :title="w.message"
+        >
+          {{ w.code === 'weekly' ? `${w.hours}h week` : w.code === 'ot' ? 'Overtime' : `${w.hours}h consecutive` }}
+        </span>
         <span class="tr__chip">Pending approval</span>
       </div>
       <p v-if="sched.canEdit.value" class="tr__muted tr__muted--sm">
@@ -632,5 +703,36 @@ async function cancelPosting(r: SchedRequest) {
   border-radius: 999px;
   padding: 2px 9px;
   margin-left: auto;
+}
+
+.tr__chip--warn {
+  margin-left: 0;
+  color: oklch(0.45 0.12 60);
+  cursor: help;
+}
+
+.tr__warnbox {
+  border: 1px solid oklch(0.85 0.08 60);
+  background: var(--color-warning-50);
+  border-radius: 9px;
+  padding: 0.5rem 0.7rem;
+  margin-top: 0.4rem;
+}
+
+.tr__warnhead {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: oklch(0.45 0.12 60);
+  margin: 0 0 0.25rem;
+}
+
+.tr__warnlist {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.84rem;
+  color: var(--color-ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
 }
 </style>
