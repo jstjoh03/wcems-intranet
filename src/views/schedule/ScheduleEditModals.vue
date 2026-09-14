@@ -615,7 +615,9 @@ const asUntil = ref('18:00')
 const asUnit = ref('')
 
 const rsUnit = ref('')
-const rsLabel = ref('Attendant')
+const RS_POSITIONS = ['Attendant', 'Paramedic', 'Observer', 'FTO Trainee', '3rd Rider'] as const
+const rsLabelChoice = ref<string>('Attendant') // '__other' = free text
+const rsLabelCustom = ref('')
 const rsCount = ref(1)
 const rsFrom = ref('06:00')
 const rsUntil = ref('06:00')
@@ -638,7 +640,8 @@ watch(editor.add, (a) => {
   asUntil.value = '18:00'
   asUnit.value = a.unitId ?? ''
   rsUnit.value = a.unitId ?? ''
-  rsLabel.value = 'Attendant'
+  rsLabelChoice.value = 'Attendant'
+  rsLabelCustom.value = ''
   rsCount.value = 1
   rsFrom.value = '06:00'
   rsUntil.value = '06:00'
@@ -653,11 +656,16 @@ function pickAdd(kind: 'event' | 'note' | 'student' | 'seat'): void {
 async function submitAddSeat(): Promise<void> {
   const a = editor.add.value
   if (!a || busy.value) return
+  const label = rsLabelChoice.value === '__other' ? rsLabelCustom.value.trim() : rsLabelChoice.value
+  if (!label) {
+    err.value = 'Give the seat a position label.'
+    return
+  }
   busy.value = true
   err.value = null
   const e = await sched.addRiderSeats({
     unitId: rsUnit.value,
-    label: rsLabel.value,
+    label,
     from: rsFrom.value,
     until: rsUntil.value,
     startDate: rsStart.value,
@@ -1088,14 +1096,21 @@ async function submitAddStudent(): Promise<void> {
           </label>
           <div class="em__times">
             <label class="em__field">
-              <span>Position label</span>
-              <input v-model="rsLabel" type="text" class="em__input" placeholder="Attendant / Observer / FTO Trainee" />
+              <span>Position</span>
+              <select v-model="rsLabelChoice" class="em__input">
+                <option v-for="p in RS_POSITIONS" :key="p" :value="p">{{ p }}</option>
+                <option value="__other">Other…</option>
+              </select>
             </label>
             <label class="em__field">
               <span>Seats</span>
               <input v-model.number="rsCount" type="number" min="1" max="4" class="em__input em__input--num" />
             </label>
           </div>
+          <label v-if="rsLabelChoice === '__other'" class="em__field">
+            <span>Position label</span>
+            <input v-model="rsLabelCustom" type="text" class="em__input" placeholder="e.g. Ride-along RN" />
+          </label>
           <div class="em__times">
             <label>Start date <input v-model="rsStart" type="date" class="em__input" /></label>
             <label>End date <input v-model="rsEnd" type="date" class="em__input" /></label>
