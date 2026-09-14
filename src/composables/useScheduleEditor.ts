@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { SeatRow, DayEventBox } from './useSchedule'
+import type { SeatRow, DayEventBox, LabeledRow } from './useSchedule'
 
 /**
  * Shared modal state for the scheduling boards. The modals themselves
@@ -55,11 +55,21 @@ export interface AddCtx {
   unitId: string | null // preselected unit for students
 }
 
+export interface ExtraCtx {
+  dateIso: string
+  entryId: string
+  name: string
+  sub: string
+  start: string
+  end: string
+}
+
 const slot = ref<SlotCtx | null>(null)
 const person = ref<PersonCtx | null>(null)
 const student = ref<StudentCtx | null>(null)
 const eventEdit = ref<EventCtx | null>(null)
 const add = ref<AddCtx | null>(null)
+const extra = ref<ExtraCtx | null>(null)
 
 function closeAll(): void {
   slot.value = null
@@ -67,6 +77,7 @@ function closeAll(): void {
   student.value = null
   eventEdit.value = null
   add.value = null
+  extra.value = null
 }
 
 export function useScheduleEditor() {
@@ -144,18 +155,33 @@ export function useScheduleEditor() {
     add.value = { dateIso, kind, unitId }
   }
 
+  /** Chief: click an approved extra-hours row — change times or delete. */
+  function openExtra(dateIso: string, row: LabeledRow): void {
+    closeAll()
+    extra.value = {
+      dateIso,
+      entryId: row.entryId,
+      name: row.name,
+      sub: row.sub,
+      start: row.start,
+      end: row.end,
+    }
+  }
+
   return {
     slot,
     person,
     student,
     eventEdit,
     add,
+    extra,
     openSlot,
     openEventSlot,
     openPerson,
     openStudent,
     openEvent,
     openAdd,
+    openExtra,
     closeAll,
   }
 }

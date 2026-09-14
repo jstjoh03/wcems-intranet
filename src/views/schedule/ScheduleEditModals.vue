@@ -378,6 +378,53 @@ async function conflictLeaveOpen(): Promise<void> {
   flash('Seat posted as open.')
 }
 
+// ── approved extra-hours editor ──────────────────────────────────────
+
+const exFrom = ref('06:00')
+const exUntil = ref('06:00')
+const exArm = ref(false)
+
+watch(editor.extra, (x) => {
+  if (!x) return
+  exFrom.value = toInput(x.start)
+  exUntil.value = toInput(x.end)
+  exArm.value = false
+  err.value = null
+})
+
+async function saveExtra(): Promise<void> {
+  const x = editor.extra.value
+  if (!x || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.updateEntryWindow(x.entryId, x.dateIso, exFrom.value, exUntil.value)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  editor.closeAll()
+  flash('Extra hours updated.')
+}
+
+async function removeExtra(): Promise<void> {
+  const x = editor.extra.value
+  if (!x || busy.value) return
+  if (!exArm.value) {
+    exArm.value = true
+    return
+  }
+  busy.value = true
+  const e = await sched.removeEntry(x.entryId)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  editor.closeAll()
+  flash('Extra hours removed.')
+}
+
 // ── student modal ────────────────────────────────────────────────────
 
 const stLabel = ref('')
@@ -704,7 +751,35 @@ async function submitAddStudent(): Promise<void> {
           </ul>
         </div>
         <p v-if="err" class="em__error">{{ err }}</p>
-        <button class="em__btn em__btn--primary" :disabled="busy" @click="submitPickup">
+
+        <!-- Editors lead with assignment (their actual job); the crew's
+             request-a-shift flow is the secondary path for them. -->
+        <template v-if="sched.canEdit.value">
+          <select v-model="slotAssignee" class="em__input">
+            <option value="">— assign a member —</option>
+            <option v-for="p in sched.people.value" :key="p.id" :value="p.id">
+              {{ p.fullName }}<template v-if="p.credential"> - {{ p.credential }}</template>
+            </option>
+          </select>
+          <button
+            class="em__btn em__btn--primary"
+            :disabled="busy || !slotAssignee"
+            @click="assignDirect"
+          >
+            Assign to this shift
+          </button>
+          <div class="em__div">or file it as a request for yourself</div>
+          <button class="em__btn" :disabled="busy" @click="submitPickup">
+            {{
+              pickupWarn && pickupWarn.length
+                ? pickupHasConfirm
+                  ? 'I understand — request admin approval'
+                  : 'Request anyway'
+                : 'Request this shift'
+            }}
+          </button>
+        </template>
+        <button v-else class="em__btn em__btn--primary" :disabled="busy" @click="submitPickup">
           {{
             pickupWarn && pickupWarn.length
               ? pickupHasConfirm
@@ -714,17 +789,33 @@ async function submitAddStudent(): Promise<void> {
           }}
         </button>
 
-        <template v-if="sched.canEdit.value">
-          <div class="em__div">or assign directly</div>
-          <select v-model="slotAssignee" class="em__input">
-            <option value="">— choose a member —</option>
-            <option v-for="p in sched.people.value" :key="p.id" :value="p.id">
-              {{ p.fullName }}<template v-if="p.credential"> - {{ p.credential }}</template>
-            </option>
-          </select>
-          <button class="em__btn" :disabled="busy || !slotAssignee" @click="assignDirect">Assign</button>
-        </template>
+        <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+      </div>
+    </div>
 
+    <!-- approved extra-hours editor -->
+    <div
+      v-else-if="editor.extra.value"
+      class="em__overlay"
+      @click.self="editor.closeAll()"
+    >
+      <div class="em__modal">
+        <h3 class="em__title">{{ editor.extra.value.name }}</h3>
+        <p class="em__sub">
+          Extra hours · {{ fmtShort(editor.extra.value.dateIso) }}
+          <template v-if="editor.extra.value.sub"> · {{ editor.extra.value.sub }}</template>
+        </p>
+        <div class="em__times">
+          <label>From <input v-model="exFrom" type="time" class="em__input em__input--time" /></label>
+          <label>Until <input v-model="exUntil" type="time" class="em__input em__input--time" /></label>
+        </div>
+        <p v-if="err" class="em__error">{{ err }}</p>
+        <button class="em__btn em__btn--primary" :disabled="busy" @click="saveExtra">
+          {{ busy ? 'Working…' : 'Save new times' }}
+        </button>
+        <button class="em__btn em__btn--danger" :disabled="busy" @click="removeExtra">
+          {{ exArm ? 'Confirm — remove these hours' : 'Delete these hours' }}
+        </button>
         <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
       </div>
     </div>

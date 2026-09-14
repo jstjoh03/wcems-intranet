@@ -12,11 +12,14 @@ import { useScheduleEditor } from '@/composables/useScheduleEditor'
  * the event manager — the same behavior as every other view.
  */
 
-const props = defineProps<{ dateIso: string }>()
+// mine: "My schedule" mode — only the signed-in member + open seats
+const props = defineProps<{ dateIso: string; mine?: boolean }>()
 const sched = useSchedule()
 const editor = useScheduleEditor()
 
-const model = computed(() => sched.dayModel(props.dateIso))
+const model = computed(() =>
+  sched.dayModel(props.dateIso, props.mine ? sched.myUserId.value : null),
+)
 
 const stations = computed(() => {
   const groups: { station: string; units: typeof model.value.units }[] = []
@@ -220,7 +223,16 @@ async function removeNote(id: string) {
       <div class="db__labeled">
         <div v-for="r in model.extraHours" :key="r.entryId" class="db__row">
           <span class="db__seat">{{ r.sub || 'Extra' }}</span>
-          <span class="db__name" :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+          <button
+            v-if="sched.canEdit.value"
+            class="db__name db__name--btn"
+            :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }"
+            title="Edit or delete these extra hours"
+            @click="editor.openExtra(props.dateIso, r)"
+          >
+            {{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span>
+          </button>
+          <span v-else class="db__name" :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
           <span class="db__time">
             {{ r.start }} – {{ r.end }}
             <button v-if="sched.canEdit.value" class="db__x" aria-label="Remove" @click="clearRow(r.entryId)">

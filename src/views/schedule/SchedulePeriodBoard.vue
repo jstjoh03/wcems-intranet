@@ -12,6 +12,8 @@ import ScheduleDayColumn from './ScheduleDayColumn.vue'
 /** Pay-period board: a dropdown of two-week periods (current selected by
  *  default) rendering fourteen day columns. */
 
+const props = defineProps<{ mine?: boolean }>()
+
 const emit = defineEmits<{
   (e: 'open-day', iso: string): void
   (e: 'range', start: string, end: string): void
@@ -51,6 +53,7 @@ watch(
         v-for="iso in days"
         :key="iso"
         :date-iso="iso"
+        :mine="props.mine"
         @open-day="emit('open-day', $event)"
       />
     </div>

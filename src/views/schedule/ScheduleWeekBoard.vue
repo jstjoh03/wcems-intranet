@@ -6,7 +6,7 @@ import ScheduleDayColumn from './ScheduleDayColumn.vue'
 /** Week board: seven day columns, Sunday through Saturday, containing the
  *  focused date. Stacks vertically on phones. */
 
-const props = defineProps<{ dateIso: string }>()
+const props = defineProps<{ dateIso: string; mine?: boolean }>()
 const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 
 const days = computed(() => {
@@ -22,6 +22,7 @@ const days = computed(() => {
       v-for="iso in days"
       :key="iso"
       :date-iso="iso"
+      :mine="props.mine"
       @open-day="emit('open-day', $event)"
     />
   </div>

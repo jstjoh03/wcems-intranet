@@ -34,6 +34,10 @@ export interface SchedUnit {
   station: string
   sortOrder: number
   active: boolean
+  /** Custom repeating day pattern of platoon letters ('' = unit not
+   *  staffed that day); null = agency default 48/96. */
+  rotationPattern: string[] | null
+  rotationAnchor: string | null
 }
 
 export interface SchedSeat {
@@ -209,6 +213,7 @@ export interface LabeledRow {
 export interface PendingRow {
   id: string
   type: string
+  userId: string | null // whose schedule this side of the request affects
   name: string
   credential: string | null
   start: string
@@ -241,10 +246,25 @@ function daysBetweenIso(aIso: string, bIso: string): number {
   return Math.round((b.getTime() - a.getTime()) / 86_400_000)
 }
 
-/** Which platoon starts its 24-hour work date at 0600 on this date. */
+/** Which platoon starts its 24-hour work date at 0600 on this date
+ *  under the AGENCY default 48/96 rotation. */
 export function platoonFor(dateIso: string): Platoon {
   const d = daysBetweenIso(ROT_ANCHOR, dateIso)
   return ROT_SEQ[((d % 6) + 6) % 6]
+}
+
+/** Which platoon works this unit on this date — the unit's own
+ *  repeating pattern when it has one (null = not staffed that day),
+ *  otherwise the agency default. */
+export function unitPlatoonFor(unit: SchedUnit | undefined | null, dateIso: string): Platoon | null {
+  if (!unit || !unit.rotationPattern || unit.rotationPattern.length === 0) {
+    return platoonFor(dateIso)
+  }
+  const anchor = unit.rotationAnchor ?? ROT_ANCHOR
+  const len = unit.rotationPattern.length
+  const d = daysBetweenIso(anchor, dateIso)
+  const tok = (unit.rotationPattern[((d % len) + len) % len] ?? '').toUpperCase()
+  return tok === 'A' || tok === 'B' || tok === 'C' ? (tok as Platoon) : null
 }
 
 export function todayCentralIso(): string {
@@ -422,6 +442,8 @@ async function loadCore(): Promise<void> {
     station: r.station,
     sortOrder: r.sort_order,
     active: r.active,
+    rotationPattern: r.rotation_pattern ?? null,
+    rotationAnchor: r.rotation_anchor ?? null,
   }))
   seats.value = (sRes.data ?? []).map((r) => ({
     id: r.id,
@@ -486,6 +508,8 @@ function seedDevStub(): void {
     station,
     sortOrder: i,
     active: true,
+    rotationPattern: null,
+    rotationAnchor: null,
   }))
   const out: SchedSeat[] = []
   for (const u of units.value) {
@@ -735,16 +759,18 @@ const REQ_TYPE_LABELS: Record<string, string> = {
 
 /** Undecided requests targeting a date — the Chief sees them ON the
  *  board, not just in the queue. A trade surfaces on both its dates. */
-function pendingRowsFor(dateIso: string): PendingRow[] {
+function pendingRowsFor(dateIso: string, onlyFor?: string | null): PendingRow[] {
   const out: PendingRow[] = []
   for (const r of requests.value) {
     if (r.status !== 'pending' && r.status !== 'partner_accepted') continue
     const onMain = r.workDate === dateIso
     const onCounter = r.counterWorkDate === dateIso
     if (!onMain && !onCounter) continue
+    if (onlyFor && r.requesterId !== onlyFor && r.counterpartyId !== onlyFor) continue
     const requester = displayName(r.requesterId)
     const partner = r.counterpartyId ? displayName(r.counterpartyId) : null
     const who = onCounter && partner ? partner : requester
+    const whoId = onCounter && r.counterpartyId ? r.counterpartyId : r.requesterId
     const startAt = onCounter ? r.counterStartAt : r.startAt
     const endAt = onCounter ? r.counterEndAt : r.endAt
     const bits: string[] = []
@@ -765,6 +791,7 @@ function pendingRowsFor(dateIso: string): PendingRow[] {
     out.push({
       id: r.id + (onCounter ? ':c' : ''),
       type: r.type,
+      userId: whoId,
       name: who.name || 'Unknown',
       credential: who.credential,
       start: startAt ? hhmm(startAt) : '0600',
@@ -786,13 +813,24 @@ function rotationOccupant(seatId: string, platoon: Platoon, dateIso: string): st
   return best ? best.userId : null
 }
 
-export function dayModel(dateIso: string): DayModel {
+/** Rotation occupant of a seat on a date under its UNIT's pattern
+ *  (agency default when the unit has none); null when the unit is not
+ *  staffed that day or the seat is vacant. */
+function seatRotationOccupant(seatId: string, dateIso: string): string | null {
+  const seat = seats.value.find((s) => s.id === seatId)
+  const unit = seat ? units.value.find((u) => u.id === seat.unitId) : null
+  const platoon = unitPlatoonFor(unit, dateIso)
+  return platoon ? rotationOccupant(seatId, platoon, dateIso) : null
+}
+
+export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
   const platoon = platoonFor(dateIso)
   const dayEntries = entries.value.filter((e) => e.workDate === dateIso)
   const unitModels: UnitModel[] = []
   let openCount = 0
 
   for (const unit of units.value.filter((u) => u.active)) {
+    const unitPlatoon = unitPlatoonFor(unit, dateIso)
     const unitSeats = seats.value
       .filter((s) => s.unitId === unit.id && s.active)
       .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -807,7 +845,6 @@ export function dayModel(dateIso: string): DayModel {
         rows = overrides.map((e) => {
           const who = displayName(e.userId)
           const open = e.userId === null && e.status === 'open'
-          if (open) openCount++
           return {
             entryId: e.id,
             userId: e.userId,
@@ -821,11 +858,14 @@ export function dayModel(dateIso: string): DayModel {
             note: null,
           }
         })
+      } else if (unitPlatoon === null) {
+        // unit not staffed this day under its own pattern — no rows,
+        // no open seats
+        rows = []
       } else {
-        const occupant = rotationOccupant(seat.id, platoon, dateIso)
+        const occupant = rotationOccupant(seat.id, unitPlatoon, dateIso)
         const who = displayName(occupant)
         const open = occupant === null
-        if (open) openCount++
         rows = [
           {
             entryId: null,
@@ -841,12 +881,16 @@ export function dayModel(dateIso: string): DayModel {
           },
         ]
       }
+      if (onlyFor) {
+        rows = rows.filter((r) => r.open || r.userId === onlyFor)
+      }
+      openCount += rows.filter((r) => r.open).length
       seatModels.push({ seat, rows })
     }
 
     // Only students ride inside the unit block; approved extra hours get
     // their own labeled section below the schedule (Aladtec style).
-    const extras = dayEntries
+    let extras = dayEntries
       .filter((e) => e.unitId === unit.id && e.kind === 'student')
       .sort((a, b) => a.startAt.localeCompare(b.startAt))
       .map((e) => {
@@ -864,13 +908,19 @@ export function dayModel(dateIso: string): DayModel {
           note: e.note,
         }
       })
+    if (onlyFor) extras = extras.filter((r) => r.userId === onlyFor)
 
     const notes = dayNotes.value.filter((n) => n.onDate === dateIso && n.unitId === unit.id)
-    unitModels.push({ unit, seats: seatModels, extras, notes })
+    // A unit with nothing to show (its pattern is dark today, or the
+    // "just me" filter emptied it) drops off the board entirely.
+    const hasContent =
+      seatModels.some((sm) => sm.rows.length > 0) || extras.length > 0 || notes.length > 0
+    if (hasContent) unitModels.push({ unit, seats: seatModels, extras, notes })
   }
 
   const unattached = dayEntries
     .filter((e) => e.unitId === null && e.kind === 'student')
+    .filter((e) => !onlyFor || e.userId === onlyFor)
     .map((e) => {
       const who = displayName(e.userId)
       return {
@@ -901,35 +951,38 @@ export function dayModel(dateIso: string): DayModel {
   const listings = schedEvents.value.filter((ev) => ev.onDate === dateIso)
   for (const [label, rows] of byLabel) {
     const listing = listings.find((ev) => ev.label === label)
+    let boxRows = rows
+      .sort((a, b) => a.startAt.localeCompare(b.startAt))
+      .map((e) => {
+        const who = displayName(e.userId)
+        const open = e.userId === null && e.status === 'open'
+        return {
+          entryId: e.id,
+          userId: e.userId,
+          name: open ? (e.studentProgram || 'Open') : (who.name || e.studentProgram || 'Open'),
+          credential: who.credential,
+          start: hhmm(e.startAt),
+          end: hhmm(e.endAt),
+          kind: e.kind,
+          open,
+          isRotation: false,
+          note: null,
+        }
+      })
+    if (onlyFor) boxRows = boxRows.filter((r) => r.open || r.userId === onlyFor)
+    openCount += boxRows.filter((r) => r.open).length
+    if (onlyFor && boxRows.length === 0) continue
     eventBoxes.push({
       label,
       eventId: listing?.id ?? null,
       start: listing ? listing.startTime.replace(':', '') : null,
       end: listing ? listing.endTime.replace(':', '') : null,
       notes: listing?.notes ?? null,
-      rows: rows
-        .sort((a, b) => a.startAt.localeCompare(b.startAt))
-        .map((e) => {
-          const who = displayName(e.userId)
-          const open = e.userId === null && e.status === 'open'
-          if (open) openCount++
-          return {
-            entryId: e.id,
-            userId: e.userId,
-            name: open ? (e.studentProgram || 'Open') : (who.name || e.studentProgram || 'Open'),
-            credential: who.credential,
-            start: hhmm(e.startAt),
-            end: hhmm(e.endAt),
-            kind: e.kind,
-            open,
-            isRotation: false,
-            note: null,
-          }
-        }),
+      rows: boxRows,
     })
   }
   for (const ev of listings) {
-    if (!byLabel.has(ev.label)) {
+    if (!byLabel.has(ev.label) && !onlyFor) {
       eventBoxes.push({
         label: ev.label,
         eventId: ev.id,
@@ -945,6 +998,7 @@ export function dayModel(dateIso: string): DayModel {
   const unitCodeById = new Map(units.value.map((u) => [u.id, u.code]))
   const extraHours: LabeledRow[] = dayEntries
     .filter((e) => e.kind === 'extra')
+    .filter((e) => !onlyFor || e.userId === onlyFor)
     .sort((a, b) => a.startAt.localeCompare(b.startAt))
     .map((e) => {
       const who = displayName(e.userId)
@@ -963,6 +1017,7 @@ export function dayModel(dateIso: string): DayModel {
 
   const timeOff: LabeledRow[] = dayEntries
     .filter((e) => e.kind === 'timeoff')
+    .filter((e) => !onlyFor || e.userId === onlyFor)
     .sort((a, b) => a.startAt.localeCompare(b.startAt))
     .map((e) => {
       const who = displayName(e.userId)
@@ -979,6 +1034,7 @@ export function dayModel(dateIso: string): DayModel {
 
   const trades: LabeledRow[] = dayEntries
     .filter((e) => e.kind === 'trade' && e.userId !== null)
+    .filter((e) => !onlyFor || e.userId === onlyFor)
     .sort((a, b) => a.startAt.localeCompare(b.startAt))
     .map((e) => {
       const who = displayName(e.userId)
@@ -1002,7 +1058,7 @@ export function dayModel(dateIso: string): DayModel {
     extraHours,
     timeOff,
     trades,
-    pending: pendingRowsFor(dateIso),
+    pending: pendingRowsFor(dateIso, onlyFor),
     unattached,
     notes,
     openCount,
@@ -1013,6 +1069,7 @@ export function dayModel(dateIso: string): DayModel {
 export function daySummary(dateIso: string, myUserId: string | null) {
   const platoon = platoonFor(dateIso)
   const dayEntries = entries.value.filter((e) => e.workDate === dateIso)
+  const unitById = new Map(units.value.map((u) => [u.id, u]))
   let open = 0
   let mine = false
   let myStart = '0600'
@@ -1032,7 +1089,9 @@ export function daySummary(dateIso: string, myUserId: string | null) {
         }
       }
     } else {
-      const occ = rotationOccupant(seat.id, platoon, dateIso)
+      const unitPlatoon = unitPlatoonFor(unitById.get(seat.unitId), dateIso)
+      if (unitPlatoon === null) continue // unit not staffed this day
+      const occ = rotationOccupant(seat.id, unitPlatoon, dateIso)
       if (occ === null) open++
       else if (myUserId && occ === myUserId) mine = true
     }
@@ -1065,18 +1124,18 @@ function upcomingShiftsFor(userId: string, fromIso: string, days = 45): Upcoming
   const unitByid = new Map(units.value.map((u) => [u.id, u]))
   for (let i = 0; i < days; i++) {
     const iso = addDaysIso(fromIso, i)
-    const platoon = platoonFor(iso)
     const dayEntries = entries.value.filter((e) => e.workDate === iso)
     for (const seat of seats.value.filter((s) => s.active)) {
       const overrides = dayEntries.filter(
         (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
       )
+      const u = unitByid.get(seat.unitId)
+      const unitPlatoon = unitPlatoonFor(u, iso)
       const holds =
         overrides.length > 0
           ? overrides.some((e) => e.userId === userId)
-          : rotationOccupant(seat.id, platoon, iso) === userId
+          : unitPlatoon !== null && rotationOccupant(seat.id, unitPlatoon, iso) === userId
       if (holds) {
-        const u = unitByid.get(seat.unitId)
         out.push({ dateIso: iso, seatId: seat.id, unitCode: u?.code ?? '', seatLabel: seat.label })
       }
     }
@@ -1135,13 +1194,13 @@ async function fetchMySchedule(
   const items: MyScheduleItem[] = []
   for (let iso = fromIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
     const dayRows = rows.filter((e) => e.workDate === iso)
-    const platoon = platoonFor(iso)
     for (const seat of seats.value.filter((s) => s.active)) {
       const unit = unitById.get(seat.unitId)
       const label = `${unit?.code ?? ''} ${seat.label}`.trim()
       const seatRows = dayRows.filter(
         (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
       )
+      const unitPlatoon = unitPlatoonFor(unit, iso)
       if (seatRows.length > 0) {
         for (const e of seatRows) {
           if (e.userId === me && e.status === 'scheduled') {
@@ -1156,7 +1215,7 @@ async function fetchMySchedule(
             })
           }
         }
-      } else if (rotationOccupant(seat.id, platoon, iso) === me) {
+      } else if (unitPlatoon !== null && rotationOccupant(seat.id, unitPlatoon, iso) === me) {
         const s = centralTs(iso, '06:00')
         const en = centralTs(addDaysIso(iso, 1), '06:00')
         items.push({
@@ -1312,7 +1371,6 @@ function warningThresholds() {
  *  a seat replace its rotation occupant; extras/events/students add on. */
 function segsForUserOnDate(dateIso: string, userId: string, rows: SchedEntry[]): Seg[] {
   const dayRows = rows.filter((e) => e.workDate === dateIso)
-  const platoon = platoonFor(dateIso)
   const out: Seg[] = []
   for (const seat of seats.value.filter((s) => s.active)) {
     const seatRows = dayRows.filter(
@@ -1324,7 +1382,7 @@ function segsForUserOnDate(dateIso: string, userId: string, rows: SchedEntry[]):
           out.push({ start: tsMs(e.startAt), end: tsMs(e.endAt) })
         }
       }
-    } else if (rotationOccupant(seat.id, platoon, dateIso) === userId) {
+    } else if (seatRotationOccupant(seat.id, dateIso) === userId) {
       out.push({
         start: tsMs(centralTs(dateIso, '06:00')),
         end: tsMs(centralTs(addDaysIso(dateIso, 1), '06:00')),
@@ -1823,10 +1881,7 @@ async function carveSeatWindow(
 
   if (mine.length === 0) {
     // Bare rotation holder only when the seat has NO overrides at all.
-    if (
-      seatEntries.length === 0 &&
-      rotationOccupant(seatId, platoonFor(dateIso), dateIso) === userId
-    ) {
+    if (seatEntries.length === 0 && seatRotationOccupant(seatId, dateIso) === userId) {
       const dayStart = tsMs(centralTs(dateIso, '06:00'))
       const dayEnd = tsMs(centralTs(addDaysIso(dateIso, 1), '06:00'))
       const s = Math.max(dayStart, winStart)
@@ -2376,6 +2431,29 @@ async function removeEntry(entryId: string): Promise<string | null> {
   return null
 }
 
+/** Editor: change an entry's window in place (approved extra hours,
+ *  event rows, and similar standalone entries). */
+async function updateEntryWindow(
+  entryId: string,
+  dateIso: string,
+  from: string,
+  until: string,
+): Promise<string | null> {
+  const w = shiftWindow(dateIso, from, until)
+  const res = await supabase
+    .from('sched_entries')
+    .update({ start_at: w.reqStart, end_at: w.reqEnd, updated_at: new Date().toISOString() })
+    .eq('id', entryId)
+    .select('id')
+  if (res.error) return res.error.message
+  if (!res.data || res.data.length === 0) {
+    await reloadRangeIfLoaded()
+    return 'That entry no longer exists — the board has changed.'
+  }
+  await reloadRangeIfLoaded()
+  return null
+}
+
 /** Attach/update the hover note on an established event. Boxes that came
  *  from staffing rows alone (no sched_events listing yet, e.g. imported
  *  history) get a listing created so the note has somewhere to live. */
@@ -2501,12 +2579,11 @@ function seatHeldBy(userId: string, dateIso: string): string | null {
   for (const e of dayEntries) {
     if (e.seatId && e.userId === userId && e.kind !== 'timeoff' && e.status !== 'off') return e.seatId
   }
-  const platoon = platoonFor(dateIso)
   for (const seat of seats.value.filter((s) => s.active)) {
     const hasOverride = dayEntries.some(
       (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
     )
-    if (!hasOverride && rotationOccupant(seat.id, platoon, dateIso) === userId) return seat.id
+    if (!hasOverride && seatRotationOccupant(seat.id, dateIso) === userId) return seat.id
   }
   return null
 }
@@ -2868,6 +2945,29 @@ async function addUnit(opts: {
   return null
 }
 
+/** Set a unit's repeating rotation pattern (null = agency 48/96).
+ *  Tokens are 'A'/'B'/'C' or '' for an unstaffed day, anchored to
+ *  `anchor` (agency anchor when null). */
+async function saveUnitRotation(
+  unitId: string,
+  pattern: string[] | null,
+  anchor: string | null,
+): Promise<string | null> {
+  if (pattern) {
+    if (pattern.length === 0) return 'The pattern needs at least one day.'
+    const bad = pattern.find((t) => !['A', 'B', 'C', ''].includes(t))
+    if (bad !== undefined) return `"${bad}" is not a valid day — use A, B, C, or leave blank for off.`
+    if (!pattern.some((t) => t !== '')) return 'The pattern never staffs the unit — every day is off.'
+  }
+  const res = await supabase
+    .from('sched_units')
+    .update({ rotation_pattern: pattern, rotation_anchor: pattern ? anchor : null })
+    .eq('id', unitId)
+  if (res.error) return res.error.message
+  await loadCore()
+  return null
+}
+
 async function saveUnitOrder(orderedIds: string[]): Promise<string | null> {
   for (let i = 0; i < orderedIds.length; i++) {
     const res = await supabase
@@ -3027,6 +3127,7 @@ export function useSchedule() {
     removeRotationAssignment,
     addUnit,
     saveUnitOrder,
+    saveUnitRotation,
     setAccess,
     fetchAccessList,
     // requests
@@ -3058,6 +3159,7 @@ export function useSchedule() {
     assignEventSlot,
     addEventSlot,
     removeEntry,
+    updateEntryWindow,
     addStudent,
     updateStudentEntry,
     setEventNotes,

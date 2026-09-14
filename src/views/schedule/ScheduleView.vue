@@ -146,8 +146,9 @@ watch(monthAnchor, () => {
 watch(tab, (t, prev) => {
   // a modal opened from the previous view shouldn't survive the switch
   editor.closeAll()
-  // returning from the pay-period board, restore the month-window load
-  if (prev === 'period' && (t === 'month' || t === 'day' || t === 'week')) {
+  // returning from a tab that loads its own window (pay period, My
+  // schedule), restore the month-window load
+  if ((prev === 'period' || prev === 'mine') && (t === 'month' || t === 'day' || t === 'week')) {
     void loadVisibleRange()
   }
 })

@@ -11,12 +11,15 @@ import { useScheduleEditor } from '@/composables/useScheduleEditor'
  * students, and events — and the "+" adds to the day in place.
  */
 
-const props = defineProps<{ dateIso: string }>()
+// mine: "My schedule" mode — only the signed-in member + open seats
+const props = defineProps<{ dateIso: string; mine?: boolean }>()
 const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 
 const sched = useSchedule()
 const editor = useScheduleEditor()
-const model = computed(() => sched.dayModel(props.dateIso))
+const model = computed(() =>
+  sched.dayModel(props.dateIso, props.mine ? sched.myUserId.value : null),
+)
 const isToday = computed(() => props.dateIso === todayCentralIso())
 
 const header = computed(() =>
@@ -145,7 +148,16 @@ const header = computed(() =>
       <p class="dc__section-h">Extra Hours</p>
       <div v-for="r in model.extraHours" :key="r.entryId">
         <div class="dc__row">
-          <span class="dc__name" :class="{ 'dc__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
+          <button
+            v-if="sched.canEdit.value"
+            class="dc__name dc__rowbtn"
+            :class="{ 'dc__name--me': !!r.userId && r.userId === sched.myUserId.value }"
+            title="Edit or delete these extra hours"
+            @click="editor.openExtra(dateIso, r)"
+          >
+            {{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span>
+          </button>
+          <span v-else class="dc__name" :class="{ 'dc__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
           <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
         </div>
         <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>

@@ -14,7 +14,8 @@ import { useScheduleEditor } from '@/composables/useScheduleEditor'
  * and the cell links into the Day view.
  */
 
-const props = defineProps<{ month: string }>() // 'YYYY-MM'
+// mine: "My schedule" mode — only the signed-in member + open seats
+const props = defineProps<{ month: string; mine?: boolean }>() // 'YYYY-MM'
 const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 
 const sched = useSchedule()
@@ -44,7 +45,7 @@ const weeks = computed<Cell[][]>(() => {
         dayNum: Number(iso.slice(8, 10)),
         inMonth: iso.slice(0, 7) === props.month,
         isToday: iso === todayIso,
-        model: sched.dayModel(iso),
+        model: sched.dayModel(iso, props.mine ? sched.myUserId.value : null),
       })
     }
     if (row.every((c) => !c.inMonth)) break
@@ -197,7 +198,16 @@ const weeks = computed<Cell[][]>(() => {
             <p class="mb__section-h">Extra Hours</p>
             <div v-for="r in c.model.extraHours" :key="r.entryId" class="mb__lrow">
               <div class="mb__row">
-                <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <button
+                  v-if="sched.canEdit.value"
+                  class="mb__name mb__rowbtn"
+                  :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }"
+                  title="Edit or delete these extra hours"
+                  @click="editor.openExtra(c.iso, r)"
+                >
+                  {{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span>
+                </button>
+                <span v-else class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
                 <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
               </div>
               <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>

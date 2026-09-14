@@ -200,6 +200,53 @@ async function submitUnit() {
   nuPreset.value = 'medic'
 }
 
+// ── per-unit rotation patterns ───────────────────────────────────────
+
+const rotUnit = ref<string | null>(null) // unit whose pattern editor is open
+const rotCustom = ref(false)
+const rotPattern = ref('')
+const rotAnchor = ref(todayCentralIso())
+const rotBusy = ref(false)
+
+function rotationLabel(u: { rotationPattern: string[] | null; rotationAnchor: string | null }): string {
+  if (!u.rotationPattern || u.rotationPattern.length === 0) return '48/96 (agency default)'
+  const days = u.rotationPattern.map((t) => (t === '' ? '–' : t)).join(' ')
+  return `${u.rotationPattern.length}-day pattern: ${days}${u.rotationAnchor ? ` · from ${fmtDate(u.rotationAnchor)}` : ''}`
+}
+
+function startRotEdit(u: { id: string; rotationPattern: string[] | null; rotationAnchor: string | null }) {
+  if (rotUnit.value === u.id) {
+    rotUnit.value = null
+    return
+  }
+  rotUnit.value = u.id
+  rotCustom.value = !!u.rotationPattern && u.rotationPattern.length > 0
+  rotPattern.value = (u.rotationPattern ?? []).map((t) => (t === '' ? '-' : t)).join(',')
+  rotAnchor.value = u.rotationAnchor ?? todayCentralIso()
+  err.value = null
+}
+
+async function saveRotEdit(unitId: string) {
+  rotBusy.value = true
+  err.value = null
+  let e: string | null
+  if (!rotCustom.value) {
+    e = await sched.saveUnitRotation(unitId, null, null)
+  } else {
+    const pattern = rotPattern.value
+      .split(',')
+      .map((t) => t.trim().toUpperCase())
+      .map((t) => (t === '-' || t === 'OFF' ? '' : t))
+    e = await sched.saveUnitRotation(unitId, pattern, rotAnchor.value)
+  }
+  rotBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  rotUnit.value = null
+}
+
 // ── hour warnings & overtime (global admins) ─────────────────────────
 
 const wWarn = ref(60)
@@ -387,21 +434,62 @@ async function saveWarnCfg() {
           <div
             v-for="u in sched.units.value.filter((x) => x.active)"
             :key="u.id"
-            class="setup__unitrow"
+            class="setup__unitblock"
           >
-            <div class="setup__unitinfo">
-              <span class="setup__unitcode">{{ u.code }}</span>
-              <span class="setup__unitseats">{{ seatSummary(u.id) }}</span>
-              <span v-if="u.station" class="setup__unitstation">{{ u.station }}</span>
+            <div class="setup__unitrow">
+              <div class="setup__unitinfo">
+                <span class="setup__unitcode">{{ u.code }}</span>
+                <span class="setup__unitseats">{{ seatSummary(u.id) }}</span>
+                <span v-if="u.station" class="setup__unitstation">{{ u.station }}</span>
+                <button class="setup__rotbtn" @click="startRotEdit(u)">
+                  {{ rotationLabel(u) }}
+                </button>
+              </div>
+              <span class="setup__unit-order">
+                <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move up" @click="moveUnit(u.id, -1)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
+                </button>
+                <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move down" @click="moveUnit(u.id, 1)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                </button>
+              </span>
             </div>
-            <span class="setup__unit-order">
-              <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move up" @click="moveUnit(u.id, -1)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg>
-              </button>
-              <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move down" @click="moveUnit(u.id, 1)">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-              </button>
-            </span>
+
+            <div v-if="rotUnit === u.id" class="setup__rotedit">
+              <label class="setup__rotchoice">
+                <input v-model="rotCustom" type="radio" :value="false" />
+                Agency default — 48/96 (B B C C A A)
+              </label>
+              <label class="setup__rotchoice">
+                <input v-model="rotCustom" type="radio" :value="true" />
+                Custom repeating pattern for this unit
+              </label>
+              <template v-if="rotCustom">
+                <label class="setup__field">
+                  <span>Day sequence — one letter per day, repeat forever. A / B / C, or "-" for not staffed.</span>
+                  <input
+                    v-model="rotPattern"
+                    type="text"
+                    class="setup__input"
+                    placeholder="A,-,A,-,A,-,-  (Mon/Wed/Fri day truck on a 7-day cycle)"
+                  />
+                </label>
+                <label class="setup__field">
+                  <span>Pattern starts on (day 1 of the sequence)</span>
+                  <input v-model="rotAnchor" type="date" class="setup__input" />
+                </label>
+                <p class="setup__muted">
+                  Seats are still assigned per letter in the rotation table — the pattern just
+                  decides which letter (if any) works each date for this unit.
+                </p>
+              </template>
+              <div class="setup__editbtns">
+                <button class="setup__btn setup__btn--primary" :disabled="rotBusy" @click="saveRotEdit(u.id)">
+                  {{ rotBusy ? 'Saving…' : 'Save rotation' }}
+                </button>
+                <button class="setup__btn" :disabled="rotBusy" @click="rotUnit = null">Cancel</button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -463,6 +551,52 @@ async function saveWarnCfg() {
   grid-template-columns: 1fr 1fr;
   gap: 0.55rem;
   margin: 0.6rem 0;
+}
+
+.setup__unitblock {
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.setup__unitblock:last-child {
+  border-bottom: 0;
+}
+
+.setup__rotbtn {
+  display: block;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-brand-600);
+  background: transparent;
+  border: 0;
+  padding: 0.1rem 0 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.setup__rotbtn:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.setup__rotedit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface-soft);
+  padding: 0.6rem 0.7rem;
+  margin: 0.2rem 0 0.6rem;
+}
+
+.setup__rotchoice {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--color-ink-soft);
 }
 
 .setup__cols {
