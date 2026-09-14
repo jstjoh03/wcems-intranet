@@ -808,7 +808,7 @@ function startRealtime(): void {
 
 // ── generation: rotation template → day model ────────────────────────
 
-const OFF_LABELS: Record<string, string> = {
+export const OFF_LABELS: Record<string, string> = {
   vacation: 'Vacation Time',
   sick: 'Sick Time',
   unpaid: 'Unpaid Time Off',
@@ -1412,8 +1412,9 @@ export interface TimeSegment {
   hours: number
   unitId: string | null
   source: string // 'M211 Paramedic' | 'Extra — …' | 'Event — …' | rider/student
-  kind: string
+  kind: string // worked kinds + 'timeoff' (approved time off, not worked)
   timeType: string // regular | instructor | meeting
+  offType: string | null // set on kind 'timeoff' rows only
 }
 
 /**
@@ -1463,6 +1464,7 @@ async function fetchTimeSegments(
             source,
             kind: e.kind,
             timeType: e.timeType || 'regular',
+            offType: null,
           })
         }
       } else {
@@ -1482,6 +1484,7 @@ async function fetchTimeSegments(
             source,
             kind: 'rotation',
             timeType: 'regular',
+            offType: null,
           })
         }
       }
@@ -1511,6 +1514,28 @@ async function fetchTimeSegments(
         source,
         kind: e.kind,
         timeType: e.timeType || 'regular',
+        offType: null,
+      })
+    }
+    // approved time off — not worked hours, carried for the Paycom
+    // export (vacation/sick/etc. hours rows) and off accounting
+    for (const e of dayRows) {
+      if (e.kind !== 'timeoff' || e.status !== 'off' || !e.userId) continue
+      const s2 = tsMs(e.startAt)
+      const en2 = tsMs(e.endAt)
+      if (en2 - s2 < MIN_SEG_MS) continue
+      const ot = e.offType ?? 'other'
+      segs.push({
+        userId: e.userId,
+        dateIso: iso,
+        startMs: s2,
+        endMs: en2,
+        hours: (en2 - s2) / 3_600_000,
+        unitId: null,
+        source: OFF_LABELS[ot] ?? 'Time Off',
+        kind: 'timeoff',
+        timeType: 'regular',
+        offType: ot,
       })
     }
   }
@@ -1594,6 +1619,27 @@ export const DEFAULT_RIDER_POSITIONS = [
   'FTO Trainee',
   '3rd Rider',
 ]
+
+/** Paycom earning-code map from Setup: category key → code. Reads the
+ *  row-based `codes` map, falling back to the older single fields. */
+function paycomCodes(): Record<string, string> {
+  const p = (settings.value['paycom'] ?? {}) as Record<string, unknown>
+  const codes = (p.codes ?? {}) as Record<string, unknown>
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(codes)) {
+    if (typeof v === 'string' && v.trim()) out[k] = v.trim()
+  }
+  const legacy: [string, string][] = [
+    ['instructor', 'instructor_code'],
+    ['meeting', 'meeting_code'],
+    ['holiday', 'holiday_code'],
+  ]
+  for (const [k, lk] of legacy) {
+    const v = p[lk]
+    if (!out[k] && typeof v === 'string' && v.trim()) out[k] = v.trim()
+  }
+  return out
+}
 
 /** Rider-seat position presets (Chief-editable in Setup). */
 function riderPositions(): string[] {
@@ -3553,6 +3599,7 @@ export function useSchedule() {
     settings,
     warningThresholds,
     riderPositions,
+    paycomCodes,
     hoursCheck,
     hoursCheckWindow,
     saveSetting,

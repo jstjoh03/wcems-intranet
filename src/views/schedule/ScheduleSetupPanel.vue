@@ -359,44 +359,77 @@ async function rpSave() {
 
 // ── Paycom earning codes (global admins) ─────────────────────────────
 
-const pcInstructor = ref('')
-const pcMeeting = ref('')
-const pcHoliday = ref('')
+/* One row per earning code: pick the time category the schedule
+   supports, type the Paycom code beside it — categories are a fixed
+   dropdown so codes and pay types can't mismatch. */
+const PAY_CATEGORIES: { key: string; label: string }[] = [
+  { key: 'holiday', label: 'Holiday (double time)' },
+  { key: 'event', label: 'Special event (double time)' },
+  { key: 'instructor', label: 'Instructor hours' },
+  { key: 'meeting', label: 'Meeting hours' },
+  { key: 'vacation', label: 'Vacation Time' },
+  { key: 'sick', label: 'Sick Time' },
+  { key: 'unpaid', label: 'Unpaid Time Off' },
+  { key: 'bereavement', label: 'Bereavement' },
+  { key: 'other', label: 'Other Time Off' },
+]
+
+interface PcRow {
+  key: string
+  code: string
+}
+
+const pcRows = ref<PcRow[]>([])
 const pcBusy = ref(false)
 const pcDone = ref<string | null>(null)
 const pcInit = ref(false)
 
 watch(
   () => sched.settings.value,
-  (s) => {
+  () => {
     if (pcInit.value) return
-    const p = (s['paycom'] ?? {}) as Record<string, unknown>
-    if (Object.keys(p).length === 0 && !sched.loaded.value) return
-    pcInstructor.value = String(p.instructor_code ?? '')
-    pcMeeting.value = String(p.meeting_code ?? '')
-    pcHoliday.value = String(p.holiday_code ?? '')
+    const existing = sched.paycomCodes()
+    if (Object.keys(existing).length === 0 && !sched.loaded.value) return
+    pcRows.value = PAY_CATEGORIES.filter((c) => existing[c.key]).map((c) => ({
+      key: c.key,
+      code: existing[c.key],
+    }))
     pcInit.value = true
   },
   { immediate: true, deep: true },
 )
 
+function pcCatOptions(row: PcRow) {
+  const used = new Set(pcRows.value.filter((r) => r !== row).map((r) => r.key))
+  return PAY_CATEGORIES.filter((c) => c.key === row.key || !used.has(c.key))
+}
+
+function pcAdd() {
+  const used = new Set(pcRows.value.map((r) => r.key))
+  const next = PAY_CATEGORIES.find((c) => !used.has(c.key))
+  if (!next) return
+  pcRows.value = [...pcRows.value, { key: next.key, code: '' }]
+}
+
+function pcRemove(row: PcRow) {
+  pcRows.value = pcRows.value.filter((r) => r !== row)
+}
+
 async function pcSave() {
   pcBusy.value = true
   pcDone.value = null
   err.value = null
-  const merged = {
-    ...(sched.settings.value['paycom'] ?? {}),
-    instructor_code: pcInstructor.value.trim(),
-    meeting_code: pcMeeting.value.trim(),
-    holiday_code: pcHoliday.value.trim(),
+  const codes: Record<string, string> = {}
+  for (const r of pcRows.value) {
+    if (r.code.trim()) codes[r.key] = r.code.trim()
   }
-  const e = await sched.saveSetting('paycom', merged)
+  const e = await sched.saveSetting('paycom', { codes })
   pcBusy.value = false
   if (e) {
     err.value = e
     return
   }
-  pcDone.value = 'Saved — coded time now exports as hours rows in the Paycom file.'
+  pcDone.value = 'Saved — coded categories now export as hours rows in the Paycom file.'
 }
 
 const thisYear = Number(todayCentralIso().slice(0, 4))
@@ -730,28 +763,32 @@ async function saveWarnCfg() {
         <section v-if="sched.isGlobalAdmin.value" class="setup__card">
           <h2 class="setup__h">Paycom earning codes</h2>
           <p class="setup__muted">
-            Regular shifts export as ID/OD punches and need no code. Instructor and meeting
-            time pay differently — set their Paycom earning codes here and the Time tab
-            includes them in the import file automatically (blank = listed for manual entry).
+            Regular shifts export as ID/OD punches and need no code. Everything else — special
+            events and holidays (double time), instructor/meeting hours, and approved time
+            off — exports as hours rows with the earning code you map here. One row per code:
+            pick the category, type its Paycom code.
           </p>
-          <div class="setup__warngrid">
-            <label class="setup__field">
-              <span>Instructor earning code</span>
-              <input v-model="pcInstructor" type="text" class="setup__input" placeholder="e.g. INS" />
-            </label>
-            <label class="setup__field">
-              <span>Meeting earning code</span>
-              <input v-model="pcMeeting" type="text" class="setup__input" placeholder="e.g. MTG" />
-            </label>
-            <label class="setup__field">
-              <span>Holiday earning code (double time)</span>
-              <input v-model="pcHoliday" type="text" class="setup__input" placeholder="e.g. HOL" />
-            </label>
+
+          <div v-for="row in pcRows" :key="row.key" class="setup__pcrow">
+            <select v-model="row.key" class="setup__input setup__pccat">
+              <option v-for="c in pcCatOptions(row)" :key="c.key" :value="c.key">{{ c.label }}</option>
+            </select>
+            <input v-model="row.code" type="text" class="setup__input setup__pccode" placeholder="Paycom code" />
+            <button class="setup__rpx" :aria-label="`Remove ${row.key} code`" @click="pcRemove(row)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+            </button>
           </div>
+
+          <button
+            class="setup__btn"
+            :disabled="pcRows.length >= PAY_CATEGORIES.length"
+            @click="pcAdd"
+          >
+            Add a code
+          </button>
+
           <p class="setup__muted">
-            Observed holidays run 0600 the day of until 0600 the next day (handbook 5.5) and
-            pay double time. With the code set, all coverage on those work dates exports as
-            holiday hours rows instead of punches. Upcoming:
+            Holidays run 0600 the day of until 0600 the next day (handbook 5.5). Upcoming:
             <template v-for="(h, i) in holidayPreview" :key="h.dateIso">{{ i > 0 ? ' · ' : '' }}{{ h.name }} {{ fmtHoliday(h.dateIso) }}</template>
           </p>
           <p v-if="pcDone" class="setup__done">{{ pcDone }}</p>
@@ -940,6 +977,23 @@ async function saveWarnCfg() {
 }
 
 .setup__rpadd .setup__input {
+  flex: 1;
+  min-width: 0;
+}
+
+.setup__pcrow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+
+.setup__pccat {
+  flex: 1.4;
+  min-width: 0;
+}
+
+.setup__pccode {
   flex: 1;
   min-width: 0;
 }

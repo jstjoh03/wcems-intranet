@@ -7,6 +7,7 @@ import {
   payPeriodFor,
   payPeriodList,
   holidayName,
+  OFF_LABELS,
   type PayPeriod,
   type TimeSegment,
 } from '@/composables/useSchedule'
@@ -99,8 +100,12 @@ watch(sched.entries, () => void load())
 const memberFilter = ref('')
 const typeFilter = ref('')
 
+/** WORKED coverage only — time-off segments ride along solely for the
+ *  Paycom export and never count as worked hours anywhere. */
+const worked = computed(() => segs.value.filter((s) => s.kind !== 'timeoff'))
+
 const filtered = computed(() =>
-  segs.value.filter(
+  worked.value.filter(
     (s) =>
       (!memberFilter.value || s.userId === memberFilter.value) &&
       (!typeFilter.value || s.timeType === typeFilter.value),
@@ -138,9 +143,9 @@ const summary = computed<MemberRow[]>(() => {
     if (!byUser.has(s.userId)) byUser.set(s.userId, [])
     byUser.get(s.userId)!.push(s)
   }
-  // OT from ALL of a member's hours in range (not the type filter)
+  // OT from ALL of a member's WORKED hours in range (not the type filter)
   const allByUser = new Map<string, TimeSegment[]>()
-  for (const s of segs.value) {
+  for (const s of worked.value) {
     if (!allByUser.has(s.userId)) allByUser.set(s.userId, [])
     allByUser.get(s.userId)!.push(s)
   }
@@ -340,18 +345,17 @@ interface PunchPair {
   hours: number
 }
 
-/** Punch-eligible coverage merged per member per work date. Excluded
- *  and exported as HOURS ROWS instead: instructor/meeting time (own
- *  earning codes) and holiday work dates (double-time code) — when the
- *  codes are configured. Student rows aren't payroll at all. */
+/** Punch-eligible coverage merged per member per work date. A segment
+ *  whose category (special event, holiday, instructor/meeting, time
+ *  off) has an earning code exports as an HOURS ROW instead of
+ *  punches. Student rows aren't payroll at all. */
 const punches = computed<PunchPair[]>(() => {
   if (preset.value !== 'period') return []
-  const eligible = segs.value.filter(
-    (s) =>
-      s.timeType === 'regular' &&
-      s.kind !== 'student' &&
-      !(holidayCode.value && holidayName(s.dateIso)),
-  )
+  const eligible = segs.value.filter((s) => {
+    if (s.kind === 'timeoff' || s.kind === 'student' || s.timeType !== 'regular') return false
+    const cat = segCategory(s)
+    return !(cat && codes.value[cat.key])
+  })
   const byKey = new Map<string, TimeSegment[]>()
   for (const s of eligible) {
     const k = `${s.userId}|${s.dateIso}`
@@ -392,16 +396,27 @@ const noCode = computed(() => {
   return [...names].sort()
 })
 
-// Earning codes for instructor/meeting time (Setup → Paycom earning
-// codes). When set, those hours go into the file as hours rows; when
-// missing, they land on the manual-entry list instead.
-const payCfg = computed(() => (sched.settings.value['paycom'] ?? {}) as Record<string, unknown>)
-const holidayCode = computed(() => String(payCfg.value.holiday_code ?? '').trim())
+// Earning-code map from Setup (category key → Paycom code). Coded
+// categories export as hours rows; uncoded ones get flagged.
+const codes = computed(() => sched.paycomCodes())
+const holidayCode = computed(() => codes.value['holiday'] ?? '')
+const eventCode = computed(() => codes.value['event'] ?? '')
 
-function earnCodeFor(timeType: string): string {
-  if (timeType === 'instructor') return String(payCfg.value.instructor_code ?? '').trim()
-  if (timeType === 'meeting') return String(payCfg.value.meeting_code ?? '').trim()
-  return ''
+/** Which hours-row category (if any) a segment belongs to. Regular
+ *  seat punches return null. Precedence: instructor/meeting by time
+ *  type, then special events (double time), then holiday work dates
+ *  (double time), then time-off types. */
+function segCategory(s: TimeSegment): { key: string; label: string } | null {
+  if (s.kind === 'timeoff') {
+    const key = s.offType ?? 'other'
+    return { key, label: OFF_LABELS[key] ?? 'Time Off' }
+  }
+  if (s.kind === 'student') return null
+  if (s.timeType === 'instructor') return { key: 'instructor', label: 'instructor' }
+  if (s.timeType === 'meeting') return { key: 'meeting', label: 'meeting' }
+  if (s.kind === 'event') return { key: 'event', label: 'special event' }
+  if (holidayName(s.dateIso)) return { key: 'holiday', label: 'holiday' }
+  return null
 }
 
 interface HoursRow {
@@ -415,22 +430,17 @@ interface HoursRow {
 }
 
 /** Hours rows for the import file, one summed row per member + date +
- *  earning code (members with EE codes only): instructor/meeting time
- *  with their codes, and holiday work dates with the double-time code. */
+ *  earning code (members with EE codes only): every categorized
+ *  segment whose category has a code — instructor/meeting, special
+ *  events (double time), holiday work dates (double time), and
+ *  approved time off (vacation/sick/…). */
 const hoursRows = computed<HoursRow[]>(() => {
   if (preset.value !== 'period') return []
   const byKey = new Map<string, HoursRow>()
   for (const s of segs.value) {
-    if (s.kind === 'student') continue
-    const holiday = !!holidayName(s.dateIso)
-    let earn = ''
-    let label = s.timeType
-    if (s.timeType !== 'regular') {
-      earn = earnCodeFor(s.timeType)
-    } else if (holiday && holidayCode.value) {
-      earn = holidayCode.value
-      label = 'holiday'
-    }
+    const cat = segCategory(s)
+    if (!cat) continue
+    const earn = codes.value[cat.key]
     if (!earn) continue
     const p = sched.personById.value.get(s.userId)
     if (!p?.paycomCode) continue
@@ -446,7 +456,7 @@ const hoursRows = computed<HoursRow[]>(() => {
         earn,
         hours: round2(s.hours),
         name: p.fullName,
-        timeType: label,
+        timeType: cat.label,
       })
     }
   }
@@ -455,42 +465,71 @@ const hoursRows = computed<HoursRow[]>(() => {
   )
 })
 
-/** Time that CANNOT go in the file — instructor/meeting with no
- *  earning code, or a member with no EE code (holiday hours included
- *  when the holiday code is set but the member lacks a code). */
+/** Categorized time that CANNOT go in the file: instructor/meeting
+ *  with no earning code, or any coded category where the member has
+ *  no EE code. (Uncoded events/holidays stay punches; uncoded time
+ *  off gets its own banner.) */
 const manualEntries = computed(() => {
   if (preset.value !== 'period') return []
   return segs.value
-    .filter((s) => s.kind !== 'student')
-    .filter((s) => {
-      const p = sched.personById.value.get(s.userId)
-      if (s.timeType !== 'regular') return !earnCodeFor(s.timeType) || !p?.paycomCode
-      // regular holiday coverage: manual only when coded but member has no EE
-      return !!holidayCode.value && !!holidayName(s.dateIso) && !p?.paycomCode
+    .map((s) => ({ s, cat: segCategory(s) }))
+    .filter(({ s, cat }) => {
+      if (!cat) return false
+      const earn = codes.value[cat.key]
+      const hasEe = !!sched.personById.value.get(s.userId)?.paycomCode
+      if (cat.key === 'instructor' || cat.key === 'meeting') return !earn || !hasEe
+      return !!earn && !hasEe
     })
-    .map((s) => ({
+    .map(({ s, cat }) => ({
       name: sched.personById.value.get(s.userId)?.fullName ?? 'Unknown',
       dateIso: s.dateIso,
       hours: round2(s.hours),
-      timeType:
-        s.timeType !== 'regular' ? s.timeType : `holiday (${holidayName(s.dateIso)})`,
+      timeType: cat!.label,
       source: s.source,
     }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.dateIso.localeCompare(b.dateIso))
 })
 
-/** Holidays in this period whose double time ISN'T coded yet — their
+/** Holidays in this period whose double time ISN'T coded yet — that
  *  coverage exports as ordinary punches until the code is set. */
 const uncodedHolidays = computed(() => {
   if (preset.value !== 'period' || holidayCode.value) return []
   const seen = new Map<string, string>()
-  for (const s of segs.value) {
+  for (const s of worked.value) {
+    if (s.timeType !== 'regular' || s.kind === 'student' || s.kind === 'event') continue
     const h = holidayName(s.dateIso)
-    if (h && s.timeType === 'regular' && s.kind !== 'student') seen.set(s.dateIso, h)
+    if (h) seen.set(s.dateIso, h)
   }
   return [...seen.entries()]
     .map(([dateIso, name]) => ({ dateIso, name }))
     .sort((a, b) => a.dateIso.localeCompare(b.dateIso))
+})
+
+/** Event hours with no Special-event code — double time exporting as
+ *  ordinary punches until it's set. */
+const uncodedEventHours = computed(() => {
+  if (preset.value !== 'period' || eventCode.value) return 0
+  let h = 0
+  for (const s of worked.value) {
+    if (s.kind === 'event' && s.timeType === 'regular') h += s.hours
+  }
+  return round2(h)
+})
+
+/** Approved paid time off with no earning code — NOT exported at all
+ *  (unpaid time off is expected to stay uncoded and isn't flagged). */
+const uncodedOffTypes = computed(() => {
+  if (preset.value !== 'period') return []
+  const byType = new Map<string, number>()
+  for (const s of segs.value) {
+    if (s.kind !== 'timeoff') continue
+    const key = s.offType ?? 'other'
+    if (key === 'unpaid' || codes.value[key]) continue
+    byType.set(key, (byType.get(key) ?? 0) + s.hours)
+  }
+  return [...byType.entries()]
+    .map(([key, hours]) => ({ label: OFF_LABELS[key] ?? key, hours: round2(hours) }))
+    .sort((a, b) => a.label.localeCompare(b.label))
 })
 
 /** Paycom convention: a shift running to the 0600 changeover punches
@@ -700,8 +739,9 @@ const showPunches = ref(false)
         One IN (ID) and OUT (OD) punch per merged shift segment, per member with an EE code —
         the file imports straight into the Paycom timecard template (no header, 17 columns).
         Shifts running to the 0600 changeover punch OUT at <strong>05:59</strong> so
-        back-to-back 24s pair correctly. Instructor/meeting time exports as hours rows when
-        earning codes are set in Setup.
+        back-to-back 24s pair correctly. Categories with an earning code in Setup —
+        special events and holidays (double time), instructor/meeting, and paid time off —
+        export as hours rows instead.
       </p>
 
       <p v-if="noCode.length" class="tm__warn">
@@ -709,8 +749,17 @@ const showPunches = ref(false)
       </p>
       <p v-if="uncodedHolidays.length" class="tm__warn">
         {{ uncodedHolidays.map((h) => `${h.name} (${fmtDay(h.dateIso)})`).join(' · ') }} —
-        double time, but no holiday earning code is set in Setup, so these hours export as
+        double time, but no Holiday earning code is set in Setup, so these hours export as
         ordinary punches. Set the code and they switch to holiday hours rows automatically.
+      </p>
+      <p v-if="uncodedEventHours > 0" class="tm__warn">
+        {{ uncodedEventHours }} special-event hours this period — double time, but no
+        Special event earning code is set in Setup, so they export as ordinary punches.
+      </p>
+      <p v-if="uncodedOffTypes.length" class="tm__warn">
+        Approved time off with no earning code — NOT in the file:
+        {{ uncodedOffTypes.map((o) => `${o.label} ${o.hours}h`).join(' · ') }}. Add the codes
+        in Setup or enter these in Paycom manually.
       </p>
       <div v-if="hoursRows.length" class="tm__warn tm__warn--ok">
         <p class="tm__warnhead">In the file as hours rows:</p>
