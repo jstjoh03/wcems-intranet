@@ -422,7 +422,23 @@ async function removeExtra(): Promise<void> {
     return
   }
   editor.closeAll()
-  flash('Extra hours removed.')
+  flash(x.canUnassign ? 'Seat removed.' : 'Extra hours removed.')
+}
+
+/** Rider seats: clear the person, keep the seat posted open. */
+async function unassignExtra(): Promise<void> {
+  const x = editor.extra.value
+  if (!x || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.assignEventSlot(x.entryId, null)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  editor.closeAll()
+  flash('Unassigned — the seat is open again.')
 }
 
 // ── student modal ────────────────────────────────────────────────────
@@ -598,6 +614,14 @@ const asFrom = ref('06:00')
 const asUntil = ref('18:00')
 const asUnit = ref('')
 
+const rsUnit = ref('')
+const rsLabel = ref('Attendant')
+const rsCount = ref(1)
+const rsFrom = ref('06:00')
+const rsUntil = ref('06:00')
+const rsStart = ref('')
+const rsEnd = ref('')
+
 watch(editor.add, (a) => {
   if (!a) return
   err.value = null
@@ -613,10 +637,40 @@ watch(editor.add, (a) => {
   asFrom.value = '06:00'
   asUntil.value = '18:00'
   asUnit.value = a.unitId ?? ''
+  rsUnit.value = a.unitId ?? ''
+  rsLabel.value = 'Attendant'
+  rsCount.value = 1
+  rsFrom.value = '06:00'
+  rsUntil.value = '06:00'
+  rsStart.value = a.dateIso
+  rsEnd.value = a.dateIso
 })
 
-function pickAdd(kind: 'event' | 'note' | 'student'): void {
+function pickAdd(kind: 'event' | 'note' | 'student' | 'seat'): void {
   if (editor.add.value) editor.add.value.kind = kind
+}
+
+async function submitAddSeat(): Promise<void> {
+  const a = editor.add.value
+  if (!a || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.addRiderSeats({
+    unitId: rsUnit.value,
+    label: rsLabel.value,
+    from: rsFrom.value,
+    until: rsUntil.value,
+    startDate: rsStart.value,
+    endDate: rsEnd.value,
+    count: rsCount.value,
+  })
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  editor.closeAll()
+  flash('Extra seat added — it shows open on the unit until filled.')
 }
 
 async function submitAddEvent(): Promise<void> {
@@ -802,7 +856,7 @@ async function submitAddStudent(): Promise<void> {
       <div class="em__modal">
         <h3 class="em__title">{{ editor.extra.value.name }}</h3>
         <p class="em__sub">
-          Extra hours · {{ fmtShort(editor.extra.value.dateIso) }}
+          {{ editor.extra.value.canUnassign ? '' : 'Extra hours · ' }}{{ fmtShort(editor.extra.value.dateIso) }}
           <template v-if="editor.extra.value.sub"> · {{ editor.extra.value.sub }}</template>
         </p>
         <div class="em__times">
@@ -813,8 +867,24 @@ async function submitAddStudent(): Promise<void> {
         <button class="em__btn em__btn--primary" :disabled="busy" @click="saveExtra">
           {{ busy ? 'Working…' : 'Save new times' }}
         </button>
+        <button
+          v-if="editor.extra.value.canUnassign"
+          class="em__btn"
+          :disabled="busy"
+          @click="unassignExtra"
+        >
+          Unassign — post the seat open again
+        </button>
         <button class="em__btn em__btn--danger" :disabled="busy" @click="removeExtra">
-          {{ exArm ? 'Confirm — remove these hours' : 'Delete these hours' }}
+          {{
+            exArm
+              ? editor.extra.value.canUnassign
+                ? 'Confirm — remove this seat'
+                : 'Confirm — remove these hours'
+              : editor.extra.value.canUnassign
+                ? 'Remove this seat entirely'
+                : 'Delete these hours'
+          }}
         </button>
         <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
       </div>
@@ -999,7 +1069,46 @@ async function submitAddStudent(): Promise<void> {
           <button class="em__btn" @click="pickAdd('event')">Add a special event</button>
           <button class="em__btn" @click="pickAdd('note')">Add a note</button>
           <button class="em__btn" @click="pickAdd('student')">Add a student</button>
+          <button class="em__btn" @click="pickAdd('seat')">Add an extra seat (3rd rider)</button>
           <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+        </template>
+
+        <template v-else-if="editor.add.value.kind === 'seat'">
+          <h3 class="em__title">Add an extra seat</h3>
+          <p class="em__sub">
+            A third-rider seat on a unit — observers, new hires in field training. It shows
+            open on the unit until someone claims it or you assign them.
+          </p>
+          <label class="em__field">
+            <span>Unit</span>
+            <select v-model="rsUnit" class="em__input">
+              <option value="" disabled>— choose a unit —</option>
+              <option v-for="u in sched.units.value.filter((x) => x.active)" :key="u.id" :value="u.id">{{ u.code }}</option>
+            </select>
+          </label>
+          <div class="em__times">
+            <label class="em__field">
+              <span>Position label</span>
+              <input v-model="rsLabel" type="text" class="em__input" placeholder="Attendant / Observer / FTO Trainee" />
+            </label>
+            <label class="em__field">
+              <span>Seats</span>
+              <input v-model.number="rsCount" type="number" min="1" max="4" class="em__input em__input--num" />
+            </label>
+          </div>
+          <div class="em__times">
+            <label>Start date <input v-model="rsStart" type="date" class="em__input" /></label>
+            <label>End date <input v-model="rsEnd" type="date" class="em__input" /></label>
+          </div>
+          <div class="em__times">
+            <label>From <input v-model="rsFrom" type="time" class="em__input em__input--time" /></label>
+            <label>Until <input v-model="rsUntil" type="time" class="em__input em__input--time" /></label>
+          </div>
+          <p v-if="err" class="em__error">{{ err }}</p>
+          <button class="em__btn em__btn--primary" :disabled="busy" @click="submitAddSeat">
+            {{ busy ? 'Working…' : 'Add extra seat' }}
+          </button>
+          <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Cancel</button>
         </template>
 
         <template v-else-if="editor.add.value.kind === 'event'">

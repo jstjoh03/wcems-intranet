@@ -169,6 +169,7 @@ export interface SeatRow {
   open: boolean
   isRotation: boolean // circled-R marker: on regular rotation
   note: string | null // free-text note (students carry theirs here)
+  posLabel?: string | null // rider rows: the extra seat's position label
 }
 
 export interface SeatModel {
@@ -919,27 +920,36 @@ export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
       seatModels.push({ seat, rows })
     }
 
-    // Only students ride inside the unit block; approved extra hours get
-    // their own labeled section below the schedule (Aladtec style).
+    // Students and extra RIDER seats ride inside the unit block;
+    // approved extra hours get their own labeled section below the
+    // schedule (Aladtec style). An open rider row is an extra open
+    // seat — claim/assign like any open seat.
     let extras = dayEntries
-      .filter((e) => e.unitId === unit.id && e.kind === 'student')
+      .filter((e) => e.unitId === unit.id && (e.kind === 'student' || e.kind === 'rider'))
       .sort((a, b) => a.startAt.localeCompare(b.startAt))
       .map((e) => {
         const who = displayName(e.userId)
+        const open = e.kind === 'rider' && e.userId === null && e.status === 'open'
         return {
           entryId: e.id,
           userId: e.userId,
-          name: who.name || e.studentProgram || 'Open slot',
+          name: open
+            ? e.studentProgram || 'Rider'
+            : who.name || e.studentProgram || 'Open slot',
           credential: who.credential,
           start: hhmm(e.startAt),
           end: hhmm(e.endAt),
           kind: e.kind,
-          open: false,
+          open,
           isRotation: false,
           note: e.note,
+          posLabel: e.kind === 'rider' ? (e.studentProgram ?? 'Rider') : null,
         }
       })
-    if (onlyFor) extras = extras.filter((r) => r.userId === onlyFor)
+    if (onlyFor) {
+      extras = extras.filter((r) => r.userId === onlyFor || (r.kind === 'rider' && r.open))
+    }
+    openCount += extras.filter((r) => r.open).length
 
     const notes = dayNotes.value.filter((n) => n.onDate === dateIso && n.unitId === unit.id)
     // A unit with nothing to show (its pattern is dark today, or the
@@ -1133,10 +1143,13 @@ export function daySummary(dateIso: string, myUserId: string | null) {
       }
     }
   }
-  // extras/students count as my shift too
+  // extras/students/riders count as my shift too
   if (myUserId) {
     for (const e of dayEntries) {
-      if (e.userId === myUserId && (e.kind === 'extra' || e.kind === 'student')) {
+      if (
+        e.userId === myUserId &&
+        (e.kind === 'extra' || e.kind === 'student' || e.kind === 'rider')
+      ) {
         mine = true
         myStart = hhmm(e.startAt)
         myEnd = hhmm(e.endAt)
@@ -1288,6 +1301,17 @@ async function fetchMySchedule(
           end: hhmm(e.endAt),
           hours: hoursBetween(e.startAt, e.endAt),
         })
+      } else if (e.kind === 'rider' && e.status === 'scheduled') {
+        const rUnit = e.unitId ? unitById.get(e.unitId) : null
+        items.push({
+          dateIso: iso,
+          kind: 'shift',
+          label: `${rUnit?.code ?? ''} ${e.studentProgram ?? 'Rider'} (extra seat)`.trim(),
+          sub: null,
+          start: hhmm(e.startAt),
+          end: hhmm(e.endAt),
+          hours: hoursBetween(e.startAt, e.endAt),
+        })
       }
     }
     // time off can sit on a seat or stand alone — report either way
@@ -1429,7 +1453,7 @@ function segsForUserOnDate(dateIso: string, userId: string, rows: SchedEntry[]):
       e.seatId === null &&
       e.userId === userId &&
       e.status === 'scheduled' &&
-      (e.kind === 'extra' || e.kind === 'event' || e.kind === 'student')
+      (e.kind === 'extra' || e.kind === 'event' || e.kind === 'student' || e.kind === 'rider')
     ) {
       out.push({ start: tsMs(e.startAt), end: tsMs(e.endAt) })
     }
@@ -2586,6 +2610,48 @@ async function addStudent(opts: {
   return null
 }
 
+/** Add extra rider seats to a unit for a date or date range — "M272
+ *  runs a Paramedic and TWO Attendants this week". Each day gets
+ *  `count` OPEN rider rows that claim/assign like open seats. */
+async function addRiderSeats(opts: {
+  unitId: string
+  label: string // position label: 'Attendant', 'Observer', 'FTO Trainee'…
+  from: string // daily window 'HH:mm'
+  until: string
+  startDate: string
+  endDate: string
+  count: number
+}): Promise<string | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return 'Not available in the dev preview.'
+  if (!opts.unitId) return 'Pick the unit the seat rides on.'
+  if (opts.endDate < opts.startDate) return 'The end date is before the start date.'
+  const span = daysBetweenIso(opts.startDate, opts.endDate) + 1
+  if (span > 62) return 'Keep a rider-seat range within two months — add another range after that.'
+  const count = Math.max(1, Math.min(4, Math.round(opts.count)))
+  const label = opts.label.trim() || 'Rider'
+  const rows: Record<string, unknown>[] = []
+  for (let iso = opts.startDate; iso <= opts.endDate; iso = addDaysIso(iso, 1)) {
+    const w = shiftWindow(iso, opts.from, opts.until)
+    for (let i = 0; i < count; i++) {
+      rows.push({
+        work_date: iso,
+        unit_id: opts.unitId,
+        user_id: null,
+        start_at: w.reqStart,
+        end_at: w.reqEnd,
+        kind: 'rider',
+        status: 'open',
+        student_program: label,
+      })
+    }
+  }
+  const res = await supabase.from('sched_entries').insert(rows)
+  if (res.error) return res.error.message
+  await reloadRangeIfLoaded()
+  return null
+}
+
 async function addDayNote(opts: {
   dateIso: string
   unitId: string | null
@@ -3287,6 +3353,7 @@ export function useSchedule() {
     removeEntry,
     updateEntryWindow,
     addStudent,
+    addRiderSeats,
     updateStudentEntry,
     setEventNotes,
     addDayNote,

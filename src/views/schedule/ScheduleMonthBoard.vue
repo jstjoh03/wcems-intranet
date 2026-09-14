@@ -125,14 +125,36 @@ const weeks = computed<Cell[][]>(() => {
             </template>
             <div v-for="ex in um.extras" :key="ex.entryId ?? ex.name" class="mb__row mb__row--extra">
               <button
-                v-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
+                v-if="ex.open"
+                class="mb__name mb__name--open mb__rowbtn"
+                title="Open extra seat — click to request or assign"
+                @click="editor.openRiderSlot(c.iso, `${um.unit.code} ${ex.posLabel ?? 'Rider'} (extra seat)`, ex)"
+              >
+                {{ ex.posLabel ?? 'Rider' }}
+              </button>
+              <button
+                v-else-if="sched.canEdit.value && ex.kind === 'rider' && ex.entryId"
+                class="mb__name mb__rowbtn"
+                :class="{ 'mb__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
+                title="Edit this rider seat"
+                @click="editor.openRiderRow(c.iso, `${um.unit.code} · ${ex.posLabel ?? 'Rider'} (extra seat)`, ex)"
+              >
+                {{ ex.name }}
+              </button>
+              <button
+                v-else-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
                 class="mb__name mb__rowbtn"
                 :title="ex.note ?? 'Edit this student'"
                 @click="editor.openStudent(c.iso, ex)"
               >
                 {{ ex.name }}<span v-if="ex.note" class="mb__notedot" />
               </button>
-              <span v-else class="mb__name" :title="ex.note ?? undefined">
+              <span
+                v-else
+                class="mb__name"
+                :class="{ 'mb__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
+                :title="ex.note ?? undefined"
+              >
                 {{ ex.name }}<span v-if="ex.note" class="mb__notedot" />
               </span>
               <span class="mb__time">{{ ex.start }}-{{ ex.end }}</span>

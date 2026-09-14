@@ -64,6 +64,7 @@ async function removeNote(id: string) {
         <button class="db__tool" @click="editor.openAdd(props.dateIso, 'event')">Add event</button>
         <button class="db__tool" @click="editor.openAdd(props.dateIso, 'note')">Add note</button>
         <button class="db__tool" @click="editor.openAdd(props.dateIso, 'student')">Add student</button>
+        <button class="db__tool" @click="editor.openAdd(props.dateIso, 'seat')">Add seat</button>
       </span>
     </div>
 
@@ -137,9 +138,26 @@ async function removeNote(id: string) {
         </template>
 
         <div v-for="ex in um.extras" :key="ex.entryId ?? ex.name" class="db__row db__row--extra">
-          <span class="db__seat">{{ ex.kind === 'student' ? 'Student' : 'Extra' }}</span>
+          <span class="db__seat">{{ ex.kind === 'rider' ? `${ex.posLabel ?? 'Rider'} (extra)` : ex.kind === 'student' ? 'Student' : 'Extra' }}</span>
           <button
-            v-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
+            v-if="ex.open"
+            class="db__name db__name--open db__name--btn"
+            title="Open extra seat — click to request or assign"
+            @click="editor.openRiderSlot(props.dateIso, `${um.unit.code} ${ex.posLabel ?? 'Rider'} (extra seat)`, ex)"
+          >
+            {{ ex.posLabel ?? 'Rider' }}
+          </button>
+          <button
+            v-else-if="sched.canEdit.value && ex.kind === 'rider' && ex.entryId"
+            class="db__name db__name--btn"
+            :class="{ 'db__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
+            title="Edit this rider seat"
+            @click="editor.openRiderRow(props.dateIso, `${um.unit.code} · ${ex.posLabel ?? 'Rider'} (extra seat)`, ex)"
+          >
+            {{ ex.name }}<span v-if="ex.credential" class="db__cred"> - {{ ex.credential }}</span>
+          </button>
+          <button
+            v-else-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
             class="db__name db__name--btn"
             title="Edit this student"
             @click="editor.openStudent(props.dateIso, ex)"
@@ -149,7 +167,7 @@ async function removeNote(id: string) {
               <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
             </span>
           </button>
-          <span v-else class="db__name">
+          <span v-else class="db__name" :class="{ 'db__name--me': !!ex.userId && ex.userId === sched.myUserId.value }">
             {{ ex.name }}<span v-if="ex.credential" class="db__cred"> - {{ ex.credential }}</span>
             <span v-if="ex.note" class="db__noteicon" :title="ex.note">
               <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>

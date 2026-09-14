@@ -47,7 +47,7 @@ export interface EventCtx {
   notes: string | null
 }
 
-export type AddKind = 'menu' | 'event' | 'note' | 'student'
+export type AddKind = 'menu' | 'event' | 'note' | 'student' | 'seat'
 
 export interface AddCtx {
   dateIso: string
@@ -62,6 +62,7 @@ export interface ExtraCtx {
   sub: string
   start: string
   end: string
+  canUnassign: boolean // rider seats: keep the slot, clear the person
 }
 
 const slot = ref<SlotCtx | null>(null)
@@ -165,6 +166,36 @@ export function useScheduleEditor() {
       sub: row.sub,
       start: row.start,
       end: row.end,
+      canUnassign: false,
+    }
+  }
+
+  /** Open extra RIDER seat → pickup request / direct assign. */
+  function openRiderSlot(dateIso: string, label: string, row: SeatRow): void {
+    if (!row.entryId) return
+    closeAll()
+    slot.value = {
+      dateIso,
+      seatId: null,
+      entryId: row.entryId,
+      label,
+      start: row.start,
+      end: row.end,
+    }
+  }
+
+  /** Chief: click an ASSIGNED rider — retime, unassign, or remove. */
+  function openRiderRow(dateIso: string, sub: string, row: SeatRow): void {
+    if (!row.entryId) return
+    closeAll()
+    extra.value = {
+      dateIso,
+      entryId: row.entryId,
+      name: row.name,
+      sub,
+      start: row.start,
+      end: row.end,
+      canUnassign: true,
     }
   }
 
@@ -182,6 +213,8 @@ export function useScheduleEditor() {
     openEvent,
     openAdd,
     openExtra,
+    openRiderSlot,
+    openRiderRow,
     closeAll,
   }
 }

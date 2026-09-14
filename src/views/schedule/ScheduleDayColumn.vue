@@ -88,14 +88,36 @@ const header = computed(() =>
       </template>
       <div v-for="ex in um.extras" :key="ex.entryId ?? ex.name" class="dc__row dc__row--extra">
         <button
-          v-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
+          v-if="ex.open"
+          class="dc__name dc__name--open dc__rowbtn"
+          title="Open extra seat — click to request or assign"
+          @click="editor.openRiderSlot(dateIso, `${um.unit.code} ${ex.posLabel ?? 'Rider'} (extra seat)`, ex)"
+        >
+          {{ ex.posLabel ?? 'Rider' }}
+        </button>
+        <button
+          v-else-if="sched.canEdit.value && ex.kind === 'rider' && ex.entryId"
+          class="dc__name dc__rowbtn"
+          :class="{ 'dc__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
+          title="Edit this rider seat"
+          @click="editor.openRiderRow(dateIso, `${um.unit.code} · ${ex.posLabel ?? 'Rider'} (extra seat)`, ex)"
+        >
+          {{ ex.name }}<span v-if="ex.credential" class="dc__cred"> - {{ ex.credential }}</span>
+        </button>
+        <button
+          v-else-if="sched.canEdit.value && ex.kind === 'student' && ex.entryId"
           class="dc__name dc__rowbtn"
           :title="ex.note ?? 'Edit this student'"
           @click="editor.openStudent(dateIso, ex)"
         >
           {{ ex.name }}<span v-if="ex.note" class="dc__noteicon" />
         </button>
-        <span v-else class="dc__name" :title="ex.note ?? undefined">
+        <span
+          v-else
+          class="dc__name"
+          :class="{ 'dc__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
+          :title="ex.note ?? undefined"
+        >
           {{ ex.name }}<span v-if="ex.note" class="dc__noteicon" />
         </span>
         <span class="dc__time">{{ ex.start }}-{{ ex.end }}</span>
