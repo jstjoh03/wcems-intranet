@@ -347,11 +347,11 @@ const header = computed(() =>
   margin: 0 -0.2rem;
 }
 
-/* subtle zebra inside each unit block (child 1 is the unit name, so
-   odd children are the 2nd/4th rows) */
-.dc__unit > .dc__row:nth-child(odd) {
+/* subtle zebra per UNIT block — alternating trucks scan at a glance.
+   (child 1 of the column is the date header, so odd children are the
+   2nd/4th unit blocks) */
+.dc > .dc__unit:nth-child(odd) {
   background: oklch(0.45 0.02 260 / 0.045);
-  border-radius: 3px;
 }
 
 .dc__name {

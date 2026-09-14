@@ -460,11 +460,12 @@ const weeks = computed<Cell[][]>(() => {
   margin: 0 -0.2rem;
 }
 
-/* subtle zebra inside each unit block — rows scan at a glance.
-   (child 1 is the unit name, so odd children are the 2nd/4th rows) */
-.mb__unit > .mb__row:nth-child(odd) {
+/* subtle zebra per UNIT block — alternating trucks scan at a glance */
+.mb__roster > .mb__unit:nth-child(even) {
   background: oklch(0.45 0.02 260 / 0.045);
-  border-radius: 3px;
+  border-radius: 5px;
+  padding-inline: 0.25rem;
+  margin-inline: -0.25rem;
 }
 
 .mb__name {
