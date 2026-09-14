@@ -377,10 +377,69 @@ const noCode = computed(() => {
   return [...names].sort()
 })
 
+// Earning codes for instructor/meeting time (Setup → Paycom earning
+// codes). When set, those hours go into the file as hours rows; when
+// missing, they land on the manual-entry list instead.
+const payCfg = computed(() => (sched.settings.value['paycom'] ?? {}) as Record<string, unknown>)
+
+function earnCodeFor(timeType: string): string {
+  if (timeType === 'instructor') return String(payCfg.value.instructor_code ?? '').trim()
+  if (timeType === 'meeting') return String(payCfg.value.meeting_code ?? '').trim()
+  return ''
+}
+
+interface HoursRow {
+  code: string
+  date: string // MM/DD/YYYY
+  dateIso: string
+  earn: string
+  hours: number
+  name: string
+  timeType: string
+}
+
+/** Instructor/meeting hours rows for the import file: one summed row
+ *  per member + date + earning code (members with EE codes only). */
+const hoursRows = computed<HoursRow[]>(() => {
+  if (preset.value !== 'period') return []
+  const byKey = new Map<string, HoursRow>()
+  for (const s of segs.value) {
+    if (s.timeType === 'regular' || s.kind === 'student') continue
+    const earn = earnCodeFor(s.timeType)
+    if (!earn) continue
+    const p = sched.personById.value.get(s.userId)
+    if (!p?.paycomCode) continue
+    const [y, m, d] = s.dateIso.split('-')
+    const key = `${p.paycomCode}|${s.dateIso}|${earn}`
+    const cur = byKey.get(key)
+    if (cur) cur.hours = round2(cur.hours + s.hours)
+    else {
+      byKey.set(key, {
+        code: p.paycomCode,
+        date: `${m}/${d}/${y}`,
+        dateIso: s.dateIso,
+        earn,
+        hours: round2(s.hours),
+        name: p.fullName,
+        timeType: s.timeType,
+      })
+    }
+  }
+  return [...byKey.values()].sort(
+    (a, b) => a.code.localeCompare(b.code) || a.dateIso.localeCompare(b.dateIso),
+  )
+})
+
+/** Instructor/meeting time that CANNOT go in the file — no earning
+ *  code configured, or the member has no EE code. */
 const manualEntries = computed(() => {
   if (preset.value !== 'period') return []
   return segs.value
-    .filter((s) => s.timeType !== 'regular')
+    .filter((s) => s.timeType !== 'regular' && s.kind !== 'student')
+    .filter((s) => {
+      const p = sched.personById.value.get(s.userId)
+      return !earnCodeFor(s.timeType) || !p?.paycomCode
+    })
     .map((s) => ({
       name: sched.personById.value.get(s.userId)?.fullName ?? 'Unknown',
       dateIso: s.dateIso,
@@ -390,6 +449,13 @@ const manualEntries = computed(() => {
     }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.dateIso.localeCompare(b.dateIso))
 })
+
+/** Paycom convention: a shift running to the 0600 changeover punches
+ *  OUT at 05:59 — otherwise a 48 produces an OD and the next day's ID
+ *  at the same instant and the hours don't calculate. */
+function punchOutMs(ms: number): number {
+  return centralPunch(ms).time === '06:00' ? ms - 60_000 : ms
+}
 
 function centralPunch(ms: number): { date: string; time: string } {
   const d = new Date(ms)
@@ -408,8 +474,10 @@ function centralPunch(ms: number): { date: string; time: string } {
   return { date, time }
 }
 
-/** Paycom timecard import: no header, 17 columns; punch rows carry
- *  EE code, blank, MM/DD/YYYY, HH:MM (24h), and ID/OD. */
+/** Paycom timecard import: no header, 17 columns. Punch rows carry EE
+ *  code, blank, MM/DD/YYYY, HH:MM (24h), ID/OD; hours rows carry the
+ *  earning code in column F and hours in column J (instructor/meeting
+ *  time, when earning codes are configured in Setup). */
 function downloadPaycom(): void {
   const rows: string[] = []
   const withCode = punches.value
@@ -419,13 +487,17 @@ function downloadPaycom(): void {
     )
   for (const p of withCode) {
     const iin = centralPunch(p.inMs)
-    const out = centralPunch(p.outMs)
+    const out = centralPunch(punchOutMs(p.outMs))
     const blank12 = ',,,,,,,,,,,,'
     rows.push(`${p.code},,${iin.date},${iin.time},ID${blank12}`)
     rows.push(`${p.code},,${out.date},${out.time},OD${blank12}`)
   }
+  for (const h of hoursRows.value) {
+    // A..Q: code,,date,,,EARN,,,,hours + 7 trailing blanks = 17 fields
+    rows.push(`${h.code},,${h.date},,,${h.earn},,,,${h.hours},,,,,,,`)
+  }
   if (rows.length === 0) {
-    err.value = 'No punch rows to export for this period.'
+    err.value = 'No rows to export for this period.'
     return
   }
   downloadFile(`paycom-import_${range.value.start}_${range.value.end}.csv`, rows.join('\r\n'))
@@ -578,13 +650,26 @@ const showPunches = ref(false)
       <p class="tm__muted">
         One IN (ID) and OUT (OD) punch per merged shift segment, per member with an EE code —
         the file imports straight into the Paycom timecard template (no header, 17 columns).
+        Shifts running to the 0600 changeover punch OUT at <strong>05:59</strong> so
+        back-to-back 24s pair correctly. Instructor/meeting time exports as hours rows when
+        earning codes are set in Setup.
       </p>
 
       <p v-if="noCode.length" class="tm__warn">
         No Paycom EE code — enter these manually: {{ noCode.join(', ') }}
       </p>
+      <div v-if="hoursRows.length" class="tm__warn tm__warn--ok">
+        <p class="tm__warnhead">In the file as hours rows:</p>
+        <p v-for="(h, i) in hoursRows" :key="i" class="tm__manual">
+          {{ h.name }} · {{ fmtDay(h.dateIso) }} · {{ h.hours }} hrs {{ h.timeType }}
+          <span class="tm__muted">→ earning code {{ h.earn }}</span>
+        </p>
+      </div>
       <div v-if="manualEntries.length" class="tm__warn tm__warn--soft">
-        <p class="tm__warnhead">Instructor / meeting time — different earning code, enter manually:</p>
+        <p class="tm__warnhead">
+          Instructor / meeting time NOT in the file — set its earning code in Setup (or add
+          the member's EE code), or enter manually:
+        </p>
         <p v-for="(m, i) in manualEntries" :key="i" class="tm__manual">
           {{ m.name }} · {{ fmtDay(m.dateIso) }} · {{ m.hours }} hrs {{ m.timeType }} <span class="tm__muted">({{ m.source }})</span>
         </p>
@@ -611,7 +696,7 @@ const showPunches = ref(false)
               </td>
               <td>{{ fmtDay(p.dateIso) }}</td>
               <td>{{ centralPunch(p.inMs).date }} {{ centralPunch(p.inMs).time }}</td>
-              <td>{{ centralPunch(p.outMs).date }} {{ centralPunch(p.outMs).time }}</td>
+              <td>{{ centralPunch(punchOutMs(p.outMs)).date }} {{ centralPunch(punchOutMs(p.outMs)).time }}</td>
               <td class="tm__n">{{ p.hours }}</td>
             </tr>
           </tbody>
@@ -874,6 +959,17 @@ const showPunches = ref(false)
   font-weight: 400;
   border-color: oklch(0.85 0.08 60);
   background: var(--color-warning-50);
+}
+
+.tm__warn--ok {
+  color: var(--color-ink-soft);
+  font-weight: 400;
+  border-color: oklch(0.85 0.07 150);
+  background: var(--color-success-50);
+}
+
+.tm__warn--ok .tm__warnhead {
+  color: var(--color-success-500);
 }
 
 .tm__warnhead {

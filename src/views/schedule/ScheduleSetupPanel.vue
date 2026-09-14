@@ -356,6 +356,45 @@ async function rpSave() {
   rpDone.value = 'Saved — the Add-seat dropdown uses this list everywhere.'
 }
 
+// ── Paycom earning codes (global admins) ─────────────────────────────
+
+const pcInstructor = ref('')
+const pcMeeting = ref('')
+const pcBusy = ref(false)
+const pcDone = ref<string | null>(null)
+const pcInit = ref(false)
+
+watch(
+  () => sched.settings.value,
+  (s) => {
+    if (pcInit.value) return
+    const p = (s['paycom'] ?? {}) as Record<string, unknown>
+    if (Object.keys(p).length === 0 && !sched.loaded.value) return
+    pcInstructor.value = String(p.instructor_code ?? '')
+    pcMeeting.value = String(p.meeting_code ?? '')
+    pcInit.value = true
+  },
+  { immediate: true, deep: true },
+)
+
+async function pcSave() {
+  pcBusy.value = true
+  pcDone.value = null
+  err.value = null
+  const merged = {
+    ...(sched.settings.value['paycom'] ?? {}),
+    instructor_code: pcInstructor.value.trim(),
+    meeting_code: pcMeeting.value.trim(),
+  }
+  const e = await sched.saveSetting('paycom', merged)
+  pcBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  pcDone.value = 'Saved — instructor/meeting hours now export as hours rows in the Paycom file.'
+}
+
 // ── hour warnings & overtime (global admins) ─────────────────────────
 
 const wWarn = ref(60)
@@ -667,6 +706,29 @@ async function saveWarnCfg() {
           <p v-if="rpDone" class="setup__done">{{ rpDone }}</p>
           <button class="setup__btn setup__btn--primary" :disabled="rpBusy" @click="rpSave">
             {{ rpBusy ? 'Saving…' : 'Save positions' }}
+          </button>
+        </section>
+
+        <section v-if="sched.isGlobalAdmin.value" class="setup__card">
+          <h2 class="setup__h">Paycom earning codes</h2>
+          <p class="setup__muted">
+            Regular shifts export as ID/OD punches and need no code. Instructor and meeting
+            time pay differently — set their Paycom earning codes here and the Time tab
+            includes them in the import file automatically (blank = listed for manual entry).
+          </p>
+          <div class="setup__warngrid">
+            <label class="setup__field">
+              <span>Instructor earning code</span>
+              <input v-model="pcInstructor" type="text" class="setup__input" placeholder="e.g. INS" />
+            </label>
+            <label class="setup__field">
+              <span>Meeting earning code</span>
+              <input v-model="pcMeeting" type="text" class="setup__input" placeholder="e.g. MTG" />
+            </label>
+          </div>
+          <p v-if="pcDone" class="setup__done">{{ pcDone }}</p>
+          <button class="setup__btn setup__btn--primary" :disabled="pcBusy" @click="pcSave">
+            {{ pcBusy ? 'Saving…' : 'Save earning codes' }}
           </button>
         </section>
 
