@@ -1037,7 +1037,7 @@ async function submitAddStudent(): Promise<void> {
             <span>Attach to</span>
             <select v-model="noteUnit" class="em__input">
               <option value="">Whole day</option>
-              <option v-for="u in sched.units.value" :key="u.id" :value="u.id">{{ u.code }}</option>
+              <option v-for="u in sched.units.value.filter((x) => x.active)" :key="u.id" :value="u.id">{{ u.code }}</option>
             </select>
           </label>
           <label class="em__check">
@@ -1055,7 +1055,7 @@ async function submitAddStudent(): Promise<void> {
             <span>Rides with</span>
             <select v-model="asUnit" class="em__input">
               <option value="" disabled>— choose a unit —</option>
-              <option v-for="u in sched.units.value" :key="u.id" :value="u.id">{{ u.code }}</option>
+              <option v-for="u in sched.units.value.filter((x) => x.active)" :key="u.id" :value="u.id">{{ u.code }}</option>
             </select>
           </label>
           <label class="em__field">

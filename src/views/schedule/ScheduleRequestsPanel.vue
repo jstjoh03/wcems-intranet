@@ -510,7 +510,7 @@ async function cancel(r: SchedRequest) {
               <span class="rq__label">Unit</span>
               <select v-model="exUnit" class="rq__input">
                 <option value="">—</option>
-                <option v-for="u in sched.units.value" :key="u.id" :value="u.id">{{ u.code }}</option>
+                <option v-for="u in sched.units.value.filter((x) => x.active)" :key="u.id" :value="u.id">{{ u.code }}</option>
               </select>
             </label>
             <label class="rq__field">

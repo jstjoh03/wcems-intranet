@@ -814,13 +814,20 @@ function rotationOccupant(seatId: string, platoon: Platoon, dateIso: string): st
 }
 
 /** Rotation occupant of a seat on a date under its UNIT's pattern
- *  (agency default when the unit has none); null when the unit is not
- *  staffed that day or the seat is vacant. */
+ *  (agency default when the unit has none); null when the unit is
+ *  inactive, not staffed that day, or the seat is vacant. */
 function seatRotationOccupant(seatId: string, dateIso: string): string | null {
   const seat = seats.value.find((s) => s.id === seatId)
   const unit = seat ? units.value.find((u) => u.id === seat.unitId) : null
+  if (unit && !unit.active) return null
   const platoon = unitPlatoonFor(unit, dateIso)
   return platoon ? rotationOccupant(seatId, platoon, dateIso) : null
+}
+
+/** Active seats on ACTIVE units — the only seats the generators walk. */
+function activeSeatList(): SchedSeat[] {
+  const activeUnits = new Set(units.value.filter((u) => u.active).map((u) => u.id))
+  return seats.value.filter((s) => s.active && activeUnits.has(s.unitId))
 }
 
 export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
@@ -1075,7 +1082,7 @@ export function daySummary(dateIso: string, myUserId: string | null) {
   let myStart = '0600'
   let myEnd = '0600'
 
-  for (const seat of seats.value.filter((s) => s.active)) {
+  for (const seat of activeSeatList()) {
     const overrides = dayEntries.filter(
       (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
     )
@@ -1125,7 +1132,7 @@ function upcomingShiftsFor(userId: string, fromIso: string, days = 45): Upcoming
   for (let i = 0; i < days; i++) {
     const iso = addDaysIso(fromIso, i)
     const dayEntries = entries.value.filter((e) => e.workDate === iso)
-    for (const seat of seats.value.filter((s) => s.active)) {
+    for (const seat of activeSeatList()) {
       const overrides = dayEntries.filter(
         (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
       )
@@ -1194,7 +1201,7 @@ async function fetchMySchedule(
   const items: MyScheduleItem[] = []
   for (let iso = fromIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
     const dayRows = rows.filter((e) => e.workDate === iso)
-    for (const seat of seats.value.filter((s) => s.active)) {
+    for (const seat of activeSeatList()) {
       const unit = unitById.get(seat.unitId)
       const label = `${unit?.code ?? ''} ${seat.label}`.trim()
       const seatRows = dayRows.filter(
@@ -1372,7 +1379,7 @@ function warningThresholds() {
 function segsForUserOnDate(dateIso: string, userId: string, rows: SchedEntry[]): Seg[] {
   const dayRows = rows.filter((e) => e.workDate === dateIso)
   const out: Seg[] = []
-  for (const seat of seats.value.filter((s) => s.active)) {
+  for (const seat of activeSeatList()) {
     const seatRows = dayRows.filter(
       (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
     )
@@ -2579,7 +2586,7 @@ function seatHeldBy(userId: string, dateIso: string): string | null {
   for (const e of dayEntries) {
     if (e.seatId && e.userId === userId && e.kind !== 'timeoff' && e.status !== 'off') return e.seatId
   }
-  for (const seat of seats.value.filter((s) => s.active)) {
+  for (const seat of activeSeatList()) {
     const hasOverride = dayEntries.some(
       (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
     )
@@ -2945,6 +2952,59 @@ async function addUnit(opts: {
   return null
 }
 
+/** Show/hide a unit everywhere. Deactivating keeps every bit of its
+ *  history in the database — boards, pickers, and counts just stop
+ *  walking it; reactivate to bring it back exactly as it was. */
+async function setUnitActive(unitId: string, isActive: boolean): Promise<string | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return 'Not available in the dev preview.'
+  const res = await supabase.from('sched_units').update({ active: isActive }).eq('id', unitId)
+  if (res.error) return res.error.message
+  await loadCore()
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Permanently delete a unit + its seats and rotation template rows.
+ *  Refused when any schedule entries reference the unit or its seats —
+ *  real history is protected; deactivate those units instead. */
+async function deleteUnit(unitId: string): Promise<string | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return 'Not available in the dev preview.'
+  const seatIds = seats.value.filter((s) => s.unitId === unitId).map((s) => s.id)
+  const c1 = await supabase
+    .from('sched_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('unit_id', unitId)
+  if (c1.error) return c1.error.message
+  let seatEntryCount = 0
+  if (seatIds.length > 0) {
+    const c2 = await supabase
+      .from('sched_entries')
+      .select('id', { count: 'exact', head: true })
+      .in('seat_id', seatIds)
+    if (c2.error) return c2.error.message
+    seatEntryCount = c2.count ?? 0
+  }
+  const total = (c1.count ?? 0) + seatEntryCount
+  if (total > 0) {
+    return `This unit has ${total} schedule ${total === 1 ? 'entry' : 'entries'} on the books — deactivate it instead so history stays intact.`
+  }
+  if (seatIds.length > 0) {
+    const dr = await supabase.from('sched_rotation_assignments').delete().in('seat_id', seatIds)
+    if (dr.error) return dr.error.message
+    const ds = await supabase.from('sched_seats').delete().in('id', seatIds)
+    if (ds.error) return ds.error.message
+  }
+  const dn = await supabase.from('sched_day_notes').delete().eq('unit_id', unitId)
+  if (dn.error) return dn.error.message
+  const du = await supabase.from('sched_units').delete().eq('id', unitId)
+  if (du.error) return du.error.message
+  await loadCore()
+  await reloadRangeIfLoaded()
+  return null
+}
+
 /** Set a unit's repeating rotation pattern (null = agency 48/96).
  *  Tokens are 'A'/'B'/'C' or '' for an unstaffed day, anchored to
  *  `anchor` (agency anchor when null). */
@@ -3128,6 +3188,8 @@ export function useSchedule() {
     addUnit,
     saveUnitOrder,
     saveUnitRotation,
+    setUnitActive,
+    deleteUnit,
     setAccess,
     fetchAccessList,
     // requests

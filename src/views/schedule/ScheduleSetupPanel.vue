@@ -200,6 +200,47 @@ async function submitUnit() {
   nuPreset.value = 'medic'
 }
 
+// ── unit lifecycle: deactivate / reactivate / delete ─────────────────
+
+const inactiveUnits = computed(() => sched.units.value.filter((u) => !u.active))
+const deactArm = ref<string | null>(null)
+const delArm = ref<string | null>(null)
+const lifeBusy = ref(false)
+
+async function deactivateUnit(unitId: string) {
+  if (deactArm.value !== unitId) {
+    deactArm.value = unitId
+    return
+  }
+  deactArm.value = null
+  lifeBusy.value = true
+  err.value = null
+  const e = await sched.setUnitActive(unitId, false)
+  lifeBusy.value = false
+  if (e) err.value = e
+}
+
+async function reactivateUnit(unitId: string) {
+  lifeBusy.value = true
+  err.value = null
+  const e = await sched.setUnitActive(unitId, true)
+  lifeBusy.value = false
+  if (e) err.value = e
+}
+
+async function removeUnit(unitId: string) {
+  if (delArm.value !== unitId) {
+    delArm.value = unitId
+    return
+  }
+  delArm.value = null
+  lifeBusy.value = true
+  err.value = null
+  const e = await sched.deleteUnit(unitId)
+  lifeBusy.value = false
+  if (e) err.value = e
+}
+
 // ── per-unit rotation patterns ───────────────────────────────────────
 
 const rotUnit = ref<string | null>(null) // unit whose pattern editor is open
@@ -444,6 +485,13 @@ async function saveWarnCfg() {
                 <button class="setup__rotbtn" @click="startRotEdit(u)">
                   {{ rotationLabel(u) }}
                 </button>
+                <button
+                  class="setup__rotbtn setup__rotbtn--danger"
+                  :disabled="lifeBusy"
+                  @click="deactivateUnit(u.id)"
+                >
+                  {{ deactArm === u.id ? 'Confirm — hide from all schedules' : 'Deactivate' }}
+                </button>
               </div>
               <span class="setup__unit-order">
                 <button class="setup__order-btn" :disabled="orderSaving" aria-label="Move up" @click="moveUnit(u.id, -1)">
@@ -490,6 +538,33 @@ async function saveWarnCfg() {
                 <button class="setup__btn" :disabled="rotBusy" @click="rotUnit = null">Cancel</button>
               </div>
             </div>
+          </div>
+
+          <div v-if="inactiveUnits.length > 0" class="setup__inactive">
+            <p class="setup__h">Inactive units</p>
+            <div v-for="u in inactiveUnits" :key="u.id" class="setup__unitrow">
+              <div class="setup__unitinfo">
+                <span class="setup__unitcode setup__unitcode--off">{{ u.code }}</span>
+                <span class="setup__unitseats">{{ seatSummary(u.id) }}</span>
+              </div>
+              <span class="setup__unit-order">
+                <button class="setup__btn" :disabled="lifeBusy" @click="reactivateUnit(u.id)">
+                  Reactivate
+                </button>
+                <button
+                  class="setup__btn setup__btn--danger"
+                  :disabled="lifeBusy"
+                  @click="removeUnit(u.id)"
+                >
+                  {{ delArm === u.id ? 'Confirm — delete forever' : 'Delete' }}
+                </button>
+              </span>
+            </div>
+            <p class="setup__muted">
+              Inactive units are hidden from every board, picker, and count — their history
+              stays in the database. Delete only works when a unit has no schedule entries at
+              all (test units); anything with history must stay deactivated instead.
+            </p>
           </div>
         </section>
 
@@ -578,6 +653,21 @@ async function saveWarnCfg() {
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 2px;
+}
+
+.setup__rotbtn--danger {
+  color: var(--color-danger-500);
+}
+
+.setup__inactive {
+  margin-top: 0.9rem;
+  padding-top: 0.7rem;
+  border-top: 1px dashed var(--color-line);
+}
+
+.setup__unitcode--off {
+  color: var(--color-muted);
+  text-decoration: line-through;
 }
 
 .setup__rotedit {
