@@ -109,6 +109,7 @@ export interface SchedPerson {
   title: string | null
   email: string | null
   phone: string | null
+  paycomCode: string | null
 }
 
 export interface TradeOffer {
@@ -388,7 +389,7 @@ async function loadCore(): Promise<void> {
     supabase.from('sched_rotation_assignments').select('*'),
     supabase
       .from('app_users')
-      .select('id, full_name, shift, role, title, email, phone, account_type, active, employment_type')
+      .select('id, full_name, shift, role, title, email, phone, account_type, active, employment_type, paycom_employee_code')
       .eq('account_type', 'person')
       .eq('active', true)
       .order('full_name'),
@@ -437,6 +438,7 @@ async function loadCore(): Promise<void> {
     title: r.title,
     email: r.email,
     phone: r.phone,
+    paycomCode: r.paycom_employee_code ?? null,
   }))
   const setMap: Record<string, Record<string, unknown>> = {}
   for (const r of (setRes.data ?? []) as { key: string; value: Record<string, unknown> }[]) {
@@ -484,8 +486,8 @@ function seedDevStub(): void {
   }
   seats.value = out
   people.value = [
-    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101' },
-    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102' },
+    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X' },
+    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null },
   ]
 }
 
@@ -1348,6 +1350,21 @@ async function createPickupRequest(opts: {
     const q = await canFillSeat(me, opts.seatId)
     if (!q.ok) return q.reason
   }
+  // Re-validate a referenced open entry FRESH: a board left open while
+  // the shift got filled or reshaped elsewhere would otherwise file a
+  // request against a deleted row (raw FK error from Postgres).
+  if (opts.entryId) {
+    const fres = await supabase
+      .from('sched_entries')
+      .select('id, status')
+      .eq('id', opts.entryId)
+      .maybeSingle()
+    if (fres.error) return fres.error.message
+    if (!fres.data || fres.data.status !== 'open') {
+      await reloadRangeIfLoaded()
+      return 'That open shift is no longer available — the board has changed (it may have just been filled). The board has refreshed; try again from the current view.'
+    }
+  }
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
   const seat = seats.value.find((s) => s.id === opts.seatId)
   const unit = units.value.find((u) => u.id === seat?.unitId)
@@ -2092,7 +2109,12 @@ async function assignEventSlot(entryId: string, userId: string | null): Promise<
       updated_at: new Date().toISOString(),
     })
     .eq('id', entryId)
+    .select('id')
   if (res.error) return res.error.message
+  if (!res.data || res.data.length === 0) {
+    await reloadRangeIfLoaded()
+    return 'That slot no longer exists — the board has changed.'
+  }
   await reloadRangeIfLoaded()
   return null
 }
@@ -2326,7 +2348,9 @@ async function decideRequest(
       )
       if (err) return err
     } else if (req.type === 'pickup' && req.entryId && !req.seatId) {
-      // special-event slot claim
+      // special-event slot claim — verify the slot still exists (a raw
+      // update on a deleted row would "succeed" touching nothing and the
+      // request would be marked approved with no calendar change)
       const upd = await supabase
         .from('sched_entries')
         .update({
@@ -2336,13 +2360,41 @@ async function decideRequest(
           updated_at: new Date().toISOString(),
         })
         .eq('id', req.entryId)
+        .eq('status', 'open')
+        .select('id')
       if (upd.error) return upd.error.message
+      if (!upd.data || upd.data.length === 0) {
+        await reloadRangeIfLoaded()
+        return 'That event slot is no longer open — the board has changed since this request was filed.'
+      }
     } else if (req.type === 'pickup' && req.workDate && req.seatId) {
       if (req.entryId) {
-        // An explicit open entry exists. Claim it when the window matches;
-        // otherwise claim the requested slice and leave the rest open.
-        const openEntry = entries.value.find((e) => e.id === req.entryId)
-        if (openEntry && openEntry.startAt === req.startAt && openEntry.endAt === req.endAt) {
+        // An explicit open entry was referenced. Read it FRESH — the
+        // board may have been reshaped since the request was filed —
+        // then claim it when the window matches, or claim the
+        // overlapping slice and leave the rest open.
+        const fres = await supabase
+          .from('sched_entries')
+          .select('*')
+          .eq('id', req.entryId)
+          .maybeSingle()
+        if (fres.error) return fres.error.message
+        const openEntry = fres.data ? mapEntry(fres.data) : null
+        if (!openEntry || openEntry.status !== 'open') {
+          await reloadRangeIfLoaded()
+          return 'That open shift is no longer on the board — it may have been filled or reshaped since the request was filed. Check the day and assign directly if it should still happen.'
+        }
+        const oS = tsMs(openEntry.startAt)
+        const oE = tsMs(openEntry.endAt)
+        const rS = req.startAt ? tsMs(req.startAt) : oS
+        const rE = req.endAt ? tsMs(req.endAt) : oE
+        const cS = Math.max(oS, rS) // clamp to what is actually open
+        const cE = Math.min(oE, rE)
+        if (cE - cS < MIN_SEG_MS) {
+          await reloadRangeIfLoaded()
+          return 'The requested window no longer overlaps the open shift — the board has changed since this request was filed.'
+        }
+        if (cS - oS < MIN_SEG_MS && oE - cE < MIN_SEG_MS) {
           const upd = await supabase
             .from('sched_entries')
             .update({
@@ -2354,36 +2406,36 @@ async function decideRequest(
             })
             .eq('id', req.entryId)
           if (upd.error) return upd.error.message
-        } else if (openEntry) {
+        } else {
           const rows: Record<string, unknown>[] = [
             {
               work_date: req.workDate,
               seat_id: req.seatId,
               user_id: req.requesterId,
-              start_at: req.startAt,
-              end_at: req.endAt,
+              start_at: new Date(cS).toISOString(),
+              end_at: new Date(cE).toISOString(),
               kind: 'pickup',
               status: 'scheduled',
               source_request: req.id,
             },
           ]
-          if (req.startAt && openEntry.startAt < req.startAt) {
+          if (cS - oS >= MIN_SEG_MS) {
             rows.push({
               work_date: req.workDate,
               seat_id: req.seatId,
               user_id: null,
               start_at: openEntry.startAt,
-              end_at: req.startAt,
+              end_at: new Date(cS).toISOString(),
               kind: openEntry.kind,
               status: 'open',
             })
           }
-          if (req.endAt && openEntry.endAt > req.endAt) {
+          if (oE - cE >= MIN_SEG_MS) {
             rows.push({
               work_date: req.workDate,
               seat_id: req.seatId,
               user_id: null,
-              start_at: req.endAt,
+              start_at: new Date(cE).toISOString(),
               end_at: openEntry.endAt,
               kind: openEntry.kind,
               status: 'open',
@@ -2672,8 +2724,11 @@ export function useSchedule() {
   )
   const isGlobalAdmin = computed(() => level.value === 'global_admin')
   const canPageOut = computed(() => canEdit.value || level.value === 'supervisor')
-  /** Soft-launch gate: only editors see /schedule while the module is built out. */
-  const canAccessModule = computed(() => canEdit.value)
+  /** Soft-launch gate: editors always; supervisors added 2026-09-14 so
+   *  field sups (Brittany testing the crew-side experience) get in
+   *  before the crew-wide opening ~Sep 24. Supervisors get NO edit
+   *  tools — they see the crew view: pickups, requests, trades. */
+  const canAccessModule = computed(() => canEdit.value || level.value === 'supervisor')
 
   const myUserId = computed(() => auth.appUser?.id ?? null)
 

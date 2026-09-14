@@ -28,16 +28,22 @@ type Tab = 'month' | 'day' | 'week' | 'period' | 'requests' | 'trades' | 'member
 const tab = ref<Tab>('month')
 const dateIso = ref(todayCentralIso())
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'month', label: 'Month' },
-  { key: 'day', label: 'Day' },
-  { key: 'week', label: 'Week' },
-  { key: 'period', label: 'Pay period' },
-  { key: 'requests', label: 'Requests' },
-  { key: 'trades', label: 'Trades' },
-  { key: 'members', label: 'Members' },
-  { key: 'setup', label: 'Setup' },
-]
+/* Members and Setup are editor tools — non-editors (supervisors during
+   the soft launch, crew after) get the calendar + request tabs only. */
+const TABS = computed<{ key: Tab; label: string }[]>(() => {
+  const t: { key: Tab; label: string }[] = [
+    { key: 'month', label: 'Month' },
+    { key: 'day', label: 'Day' },
+    { key: 'week', label: 'Week' },
+    { key: 'period', label: 'Pay period' },
+    { key: 'requests', label: 'Requests' },
+    { key: 'trades', label: 'Trades' },
+  ]
+  if (sched.canEdit.value) {
+    t.push({ key: 'members', label: 'Members' }, { key: 'setup', label: 'Setup' })
+  }
+  return t
+})
 
 const showsDateNav = computed(() => tab.value === 'month' || tab.value === 'day' || tab.value === 'week')
 
