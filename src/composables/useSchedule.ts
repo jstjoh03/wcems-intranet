@@ -1344,6 +1344,121 @@ async function fetchMySchedule(
   return { items, error: null }
 }
 
+// ── scheduled-time report (payroll verification) ─────────────────────
+
+export interface TimeSegment {
+  userId: string
+  dateIso: string // work date (0600 anchor)
+  startMs: number
+  endMs: number
+  hours: number
+  unitId: string | null
+  source: string // 'M211 Paramedic' | 'Extra — …' | 'Event — …' | rider/student
+  kind: string
+  timeType: string // regular | instructor | meeting
+}
+
+/**
+ * Every member's held coverage in [startIso, endIso] (work dates),
+ * entries fetched FRESH, same overlay semantics as the boards: entry
+ * rows on a seat replace its rotation occupant; rotation coverage uses
+ * each unit's own pattern and daily window; extras, events, students,
+ * and rider seats add on. This is the payroll-verification ground
+ * truth — the Time tab and the Paycom export are built on it.
+ */
+async function fetchTimeSegments(
+  startIso: string,
+  endIso: string,
+): Promise<{ segs: TimeSegment[]; error: string | null }> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return { segs: [], error: null }
+  const res = await supabase
+    .from('sched_entries')
+    .select('*')
+    .gte('work_date', startIso)
+    .lte('work_date', endIso)
+  if (res.error) return { segs: [], error: res.error.message }
+  const rows = (res.data ?? []).map(mapEntry)
+  const unitById = new Map(units.value.map((u) => [u.id, u]))
+  const segs: TimeSegment[] = []
+  for (let iso = startIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
+    const dayRows = rows.filter((e) => e.workDate === iso)
+    for (const seat of activeSeatList()) {
+      const unit = unitById.get(seat.unitId)
+      const source = `${unit?.code ?? ''} ${seat.label}`.trim()
+      const seatRows = dayRows.filter(
+        (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
+      )
+      if (seatRows.length > 0) {
+        for (const e of seatRows) {
+          if (!e.userId || e.status !== 'scheduled') continue
+          const s = tsMs(e.startAt)
+          const en = tsMs(e.endAt)
+          if (en - s < MIN_SEG_MS) continue
+          segs.push({
+            userId: e.userId,
+            dateIso: iso,
+            startMs: s,
+            endMs: en,
+            hours: (en - s) / 3_600_000,
+            unitId: seat.unitId,
+            source,
+            kind: e.kind,
+            timeType: e.timeType || 'regular',
+          })
+        }
+      } else {
+        const unitPlatoon = unitPlatoonFor(unit, iso)
+        const occ = unitPlatoon ? rotationOccupant(seat.id, unitPlatoon, iso) : null
+        if (occ) {
+          const uw = unitDayWindow(unit, iso)
+          const s = tsMs(uw.startTs)
+          const en = tsMs(uw.endTs)
+          segs.push({
+            userId: occ,
+            dateIso: iso,
+            startMs: s,
+            endMs: en,
+            hours: (en - s) / 3_600_000,
+            unitId: seat.unitId,
+            source,
+            kind: 'rotation',
+            timeType: 'regular',
+          })
+        }
+      }
+    }
+    for (const e of dayRows) {
+      if (e.seatId !== null || !e.userId || e.status !== 'scheduled') continue
+      if (!['extra', 'event', 'student', 'rider'].includes(e.kind)) continue
+      const s = tsMs(e.startAt)
+      const en = tsMs(e.endAt)
+      if (en - s < MIN_SEG_MS) continue
+      const unit = e.unitId ? unitById.get(e.unitId) : null
+      const source =
+        e.kind === 'event'
+          ? `Event — ${e.note ?? 'Special event'}`
+          : e.kind === 'student'
+            ? `Student — ${e.studentProgram ?? ''}`.trim()
+            : e.kind === 'rider'
+              ? `${unit?.code ?? ''} ${e.studentProgram ?? 'Rider'} (extra seat)`.trim()
+              : `Extra — ${[unit?.code, e.note].filter(Boolean).join(' / ') || 'hours'}`
+      segs.push({
+        userId: e.userId,
+        dateIso: iso,
+        startMs: s,
+        endMs: en,
+        hours: (en - s) / 3_600_000,
+        unitId: e.unitId ?? null,
+        source,
+        kind: e.kind,
+        timeType: e.timeType || 'regular',
+      })
+    }
+  }
+  return { segs, error: null }
+}
+
 function openSeatsFor(dateIso: string): OpenSeatInfo[] {
   const model = dayModel(dateIso)
   const out: OpenSeatInfo[] = []
@@ -1412,6 +1527,23 @@ export interface HoursInfo {
   periodHours: number // pay period, would-be total
   consecutiveHours: number // longest continuous on-duty run touching the addition
   warnings: HoursWarning[]
+}
+
+export const DEFAULT_RIDER_POSITIONS = [
+  'Attendant',
+  'Paramedic',
+  'Observer',
+  'FTO Trainee',
+  '3rd Rider',
+]
+
+/** Rider-seat position presets (Chief-editable in Setup). */
+function riderPositions(): string[] {
+  const v = settings.value['rider_positions'] as { options?: unknown } | undefined
+  const opts = Array.isArray(v?.options)
+    ? (v.options as unknown[]).filter((o): o is string => typeof o === 'string' && o.trim() !== '')
+    : []
+  return opts.length > 0 ? opts : DEFAULT_RIDER_POSITIONS
 }
 
 /** Thresholds from sched_settings (Chief-editable in Setup). */
@@ -3326,6 +3458,7 @@ export function useSchedule() {
     upcomingShiftsFor,
     openSeatsFor,
     fetchMySchedule,
+    fetchTimeSegments,
     createTimeOffRequests,
     createExtraRequest,
     createPickupRequest,
@@ -3361,6 +3494,7 @@ export function useSchedule() {
     // hours engine + settings
     settings,
     warningThresholds,
+    riderPositions,
     hoursCheck,
     hoursCheckWindow,
     saveSetting,

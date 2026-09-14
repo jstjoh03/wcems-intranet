@@ -306,6 +306,56 @@ async function saveRotEdit(unitId: string) {
   rotUnit.value = null
 }
 
+// ── rider-seat positions (global admins) ─────────────────────────────
+
+const rpList = ref<string[]>([])
+const rpNew = ref('')
+const rpBusy = ref(false)
+const rpDone = ref<string | null>(null)
+const rpInit = ref(false)
+
+watch(
+  () => sched.settings.value,
+  () => {
+    if (rpInit.value) return
+    rpList.value = [...sched.riderPositions()]
+    rpInit.value = true
+  },
+  { immediate: true, deep: true },
+)
+
+function rpAdd() {
+  const v = rpNew.value.trim()
+  if (!v) return
+  if (rpList.value.some((p) => p.toLowerCase() === v.toLowerCase())) {
+    rpNew.value = ''
+    return
+  }
+  rpList.value = [...rpList.value, v]
+  rpNew.value = ''
+}
+
+function rpRemove(p: string) {
+  rpList.value = rpList.value.filter((x) => x !== p)
+}
+
+async function rpSave() {
+  if (rpList.value.length === 0) {
+    err.value = 'Keep at least one position in the list.'
+    return
+  }
+  rpBusy.value = true
+  rpDone.value = null
+  err.value = null
+  const e = await sched.saveSetting('rider_positions', { options: rpList.value })
+  rpBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  rpDone.value = 'Saved — the Add-seat dropdown uses this list everywhere.'
+}
+
 // ── hour warnings & overtime (global admins) ─────────────────────────
 
 const wWarn = ref(60)
@@ -597,6 +647,30 @@ async function saveWarnCfg() {
         </section>
 
         <section v-if="sched.isGlobalAdmin.value" class="setup__card">
+          <h2 class="setup__h">Rider seat positions</h2>
+          <p class="setup__muted">
+            The position choices offered when adding an extra seat (3rd rider) to a unit.
+            "Other…" with free text is always available on top of these.
+          </p>
+          <div class="setup__rplist">
+            <span v-for="p in rpList" :key="p" class="setup__rpchip">
+              {{ p }}
+              <button class="setup__rpx" :aria-label="`Remove ${p}`" @click="rpRemove(p)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              </button>
+            </span>
+          </div>
+          <form class="setup__rpadd" @submit.prevent="rpAdd">
+            <input v-model="rpNew" type="text" class="setup__input" placeholder="Add a position…" />
+            <button type="submit" class="setup__btn">Add</button>
+          </form>
+          <p v-if="rpDone" class="setup__done">{{ rpDone }}</p>
+          <button class="setup__btn setup__btn--primary" :disabled="rpBusy" @click="rpSave">
+            {{ rpBusy ? 'Saving…' : 'Save positions' }}
+          </button>
+        </section>
+
+        <section v-if="sched.isGlobalAdmin.value" class="setup__card">
           <h2 class="setup__h">Hour warnings &amp; overtime</h2>
           <p class="setup__muted">
             Pickups, extra hours, trades, and direct assignments that push someone past these
@@ -725,6 +799,59 @@ async function saveWarnCfg() {
   gap: 0.45rem;
   font-size: 0.82rem;
   color: var(--color-ink-soft);
+}
+
+.setup__rplist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0;
+}
+
+.setup__rpchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-surface);
+  padding: 0.2rem 0.4rem 0.2rem 0.7rem;
+}
+
+.setup__rpx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.setup__rpx svg {
+  width: 11px;
+  height: 11px;
+}
+
+.setup__rpx:hover {
+  color: var(--color-danger-500);
+}
+
+.setup__rpadd {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.setup__rpadd .setup__input {
+  flex: 1;
+  min-width: 0;
 }
 
 .setup__rothours {

@@ -615,7 +615,7 @@ const asUntil = ref('18:00')
 const asUnit = ref('')
 
 const rsUnit = ref('')
-const RS_POSITIONS = ['Attendant', 'Paramedic', 'Observer', 'FTO Trainee', '3rd Rider'] as const
+const riderOptions = computed(() => sched.riderPositions())
 const rsLabelChoice = ref<string>('Attendant') // '__other' = free text
 const rsLabelCustom = ref('')
 const rsCount = ref(1)
@@ -640,7 +640,7 @@ watch(editor.add, (a) => {
   asUntil.value = '18:00'
   asUnit.value = a.unitId ?? ''
   rsUnit.value = a.unitId ?? ''
-  rsLabelChoice.value = 'Attendant'
+  rsLabelChoice.value = riderOptions.value[0] ?? 'Attendant'
   rsLabelCustom.value = ''
   rsCount.value = 1
   rsFrom.value = '06:00'
@@ -1098,7 +1098,7 @@ async function submitAddStudent(): Promise<void> {
             <label class="em__field">
               <span>Position</span>
               <select v-model="rsLabelChoice" class="em__input">
-                <option v-for="p in RS_POSITIONS" :key="p" :value="p">{{ p }}</option>
+                <option v-for="p in riderOptions" :key="p" :value="p">{{ p }}</option>
                 <option value="__other">Other…</option>
               </select>
             </label>

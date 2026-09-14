@@ -1,0 +1,900 @@
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue'
+import {
+  useSchedule,
+  todayCentralIso,
+  addDaysIso,
+  payPeriodFor,
+  payPeriodList,
+  type PayPeriod,
+  type TimeSegment,
+} from '@/composables/useSchedule'
+
+/**
+ * Scheduled Time — the payroll verification report. Member-subtotaled
+ * hours for any window (day / week / month / pay period / custom) with
+ * per-person drill-down, CSV + print, and — for a pay period — the
+ * punch verification table and the Paycom timecard-import CSV
+ * (no header, 17 columns, ID/OD punch rows per merged shift segment).
+ */
+
+const sched = useSchedule()
+
+// ── range controls ───────────────────────────────────────────────────
+
+type Preset = 'day' | 'week' | 'month' | 'period' | 'custom'
+const preset = ref<Preset>('period')
+const anchor = ref(todayCentralIso())
+const monthAnchor = ref(todayCentralIso().slice(0, 7))
+const periods = ref<PayPeriod[]>(payPeriodList(todayCentralIso(), 6, 3))
+const periodStart = ref(payPeriodFor(todayCentralIso()).start)
+const customStart = ref(payPeriodFor(todayCentralIso()).start)
+const customEnd = ref(todayCentralIso())
+
+const range = computed(() => {
+  if (preset.value === 'day') return { start: anchor.value, end: anchor.value }
+  if (preset.value === 'week') {
+    const d = new Date(`${anchor.value}T00:00:00`)
+    const start = addDaysIso(anchor.value, -d.getDay())
+    return { start, end: addDaysIso(start, 6) }
+  }
+  if (preset.value === 'month') {
+    const first = `${monthAnchor.value}-01`
+    const endD = new Date(`${first}T00:00:00`)
+    endD.setMonth(endD.getMonth() + 1)
+    endD.setDate(0)
+    return {
+      start: first,
+      end: `${monthAnchor.value}-${String(endD.getDate()).padStart(2, '0')}`,
+    }
+  }
+  if (preset.value === 'period') {
+    const p = periods.value.find((x) => x.start === periodStart.value) ?? periods.value[0]
+    return { start: p.start, end: p.end }
+  }
+  return {
+    start: customStart.value <= customEnd.value ? customStart.value : customEnd.value,
+    end: customStart.value <= customEnd.value ? customEnd.value : customStart.value,
+  }
+})
+
+const rangeLabel = computed(() => {
+  const fmt = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  return range.value.start === range.value.end
+    ? fmt(range.value.start)
+    : `${fmt(range.value.start)} – ${fmt(range.value.end)}`
+})
+
+// ── data ─────────────────────────────────────────────────────────────
+
+const segs = ref<TimeSegment[]>([])
+const busy = ref(false)
+const err = ref<string | null>(null)
+
+async function load() {
+  busy.value = true
+  const res = await sched.fetchTimeSegments(range.value.start, range.value.end)
+  busy.value = false
+  err.value = res.error
+  segs.value = res.segs
+}
+
+onMounted(async () => {
+  await sched.ensureLoaded()
+  await load()
+})
+
+watch(range, () => void load())
+// board changed elsewhere (own edits or realtime) → keep the report live
+watch(sched.entries, () => void load())
+
+// ── filters ──────────────────────────────────────────────────────────
+
+const memberFilter = ref('')
+const typeFilter = ref('')
+
+const filtered = computed(() =>
+  segs.value.filter(
+    (s) =>
+      (!memberFilter.value || s.userId === memberFilter.value) &&
+      (!typeFilter.value || s.timeType === typeFilter.value),
+  ),
+)
+
+// ── member summary ───────────────────────────────────────────────────
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+function weekStartFor(iso: string): string {
+  return addDaysIso(iso, -new Date(`${iso}T00:00:00`).getDay())
+}
+
+interface MemberRow {
+  userId: string
+  name: string
+  credential: string | null
+  code: string | null
+  days: number
+  regular: number
+  instructor: number
+  meeting: number
+  total: number
+  ot: number
+}
+
+const summary = computed<MemberRow[]>(() => {
+  const t = sched.warningThresholds()
+  const byUser = new Map<string, TimeSegment[]>()
+  for (const s of filtered.value) {
+    if (!byUser.has(s.userId)) byUser.set(s.userId, [])
+    byUser.get(s.userId)!.push(s)
+  }
+  // OT from ALL of a member's hours in range (not the type filter)
+  const allByUser = new Map<string, TimeSegment[]>()
+  for (const s of segs.value) {
+    if (!allByUser.has(s.userId)) allByUser.set(s.userId, [])
+    allByUser.get(s.userId)!.push(s)
+  }
+  const out: MemberRow[] = []
+  for (const [userId, list] of byUser) {
+    const p = sched.personById.value.get(userId)
+    let regular = 0
+    let instructor = 0
+    let meeting = 0
+    const days = new Set<string>()
+    for (const s of list) {
+      days.add(s.dateIso)
+      if (s.timeType === 'instructor') instructor += s.hours
+      else if (s.timeType === 'meeting') meeting += s.hours
+      else regular += s.hours
+    }
+    const weekTotals = new Map<string, number>()
+    for (const s of allByUser.get(userId) ?? []) {
+      const wk = weekStartFor(s.dateIso)
+      weekTotals.set(wk, (weekTotals.get(wk) ?? 0) + s.hours)
+    }
+    let ot = 0
+    for (const h of weekTotals.values()) ot += Math.max(0, h - t.otWeek)
+    out.push({
+      userId,
+      name: p?.fullName ?? 'Unknown',
+      credential: p?.credential ?? null,
+      code: p?.paycomCode ?? null,
+      days: days.size,
+      regular: round2(regular),
+      instructor: round2(instructor),
+      meeting: round2(meeting),
+      total: round2(regular + instructor + meeting),
+      ot: round2(ot),
+    })
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name))
+})
+
+const grand = computed(() => {
+  let regular = 0
+  let instructor = 0
+  let meeting = 0
+  let total = 0
+  let ot = 0
+  for (const r of summary.value) {
+    regular += r.regular
+    instructor += r.instructor
+    meeting += r.meeting
+    total += r.total
+    ot += r.ot
+  }
+  return {
+    regular: round2(regular),
+    instructor: round2(instructor),
+    meeting: round2(meeting),
+    total: round2(total),
+    ot: round2(ot),
+  }
+})
+
+// ── drill-down ───────────────────────────────────────────────────────
+
+const expanded = ref<string | null>(null)
+
+function msHm(ms: number): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'America/Chicago',
+  })
+    .format(new Date(ms))
+    .replace(':', '')
+}
+
+function fmtDay(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+const detail = computed(() => {
+  if (!expanded.value) return []
+  const list = filtered.value
+    .filter((s) => s.userId === expanded.value)
+    .sort((a, b) => a.dateIso.localeCompare(b.dateIso) || a.startMs - b.startMs)
+  const groups: { dateIso: string; rows: TimeSegment[]; hours: number }[] = []
+  for (const s of list) {
+    const last = groups[groups.length - 1]
+    if (last && last.dateIso === s.dateIso) {
+      last.rows.push(s)
+      last.hours = round2(last.hours + s.hours)
+    } else {
+      groups.push({ dateIso: s.dateIso, rows: [s], hours: round2(s.hours) })
+    }
+  }
+  return groups
+})
+
+// ── CSV + print ──────────────────────────────────────────────────────
+
+function esc(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
+}
+
+function downloadFile(name: string, content: string): void {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function csvReport(): void {
+  const lines = ['Member,EE Code,Work Date,Source,Start,End,Hours,Type']
+  const list = [...filtered.value].sort((a, b) => {
+    const an = sched.personById.value.get(a.userId)?.fullName ?? ''
+    const bn = sched.personById.value.get(b.userId)?.fullName ?? ''
+    return an.localeCompare(bn) || a.dateIso.localeCompare(b.dateIso) || a.startMs - b.startMs
+  })
+  for (const s of list) {
+    const p = sched.personById.value.get(s.userId)
+    lines.push(
+      [
+        esc(p?.fullName ?? 'Unknown'),
+        p?.paycomCode ?? '',
+        s.dateIso,
+        esc(s.source),
+        msHm(s.startMs),
+        msHm(s.endMs),
+        String(round2(s.hours)),
+        s.timeType,
+      ].join(','),
+    )
+  }
+  downloadFile(`scheduled-time_${range.value.start}_${range.value.end}.csv`, lines.join('\r\n'))
+}
+
+function printReport(): void {
+  const w = window.open('', '_blank', 'width=900,height=700')
+  if (!w) {
+    err.value = 'Pop-up blocked — allow pop-ups to print.'
+    return
+  }
+  const rows = summary.value
+    .map(
+      (r) => `<tr>
+        <td>${r.name}${r.credential ? ` <span class="mut">- ${r.credential}</span>` : ''}</td>
+        <td>${r.code ?? '—'}</td><td class="n">${r.days}</td><td class="n">${r.regular}</td>
+        <td class="n">${r.instructor}</td><td class="n">${r.meeting}</td>
+        <td class="n"><strong>${r.total}</strong></td><td class="n">${r.ot}</td></tr>`,
+    )
+    .join('')
+  w.document.write(`<!doctype html><html><head><title>Scheduled Time — ${rangeLabel.value}</title>
+    <style>
+      body { font: 13px/1.5 -apple-system, "Segoe UI", sans-serif; color: #1a2233; padding: 24px; }
+      h1 { font-size: 19px; margin: 0 0 2px; } .sub { color: #667; margin: 0 0 16px; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border-bottom: 1px solid #d8dce4; padding: 5px 8px; text-align: left; }
+      th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #667; }
+      td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+      .mut { color: #778; } tfoot td { font-weight: 700; border-top: 2px solid #99a; }
+    </style></head><body>
+    <h1>Waller County EMS — Scheduled Time</h1>
+    <p class="sub">${rangeLabel.value} · generated ${new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })}</p>
+    <table><thead><tr><th>Member</th><th>EE Code</th><th class="n">Days</th><th class="n">Regular</th>
+    <th class="n">Instructor</th><th class="n">Meeting</th><th class="n">Total hrs</th><th class="n">OT (>40/wk)</th></tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr><td colspan="3">Total</td><td class="n">${grand.value.regular}</td><td class="n">${grand.value.instructor}</td>
+    <td class="n">${grand.value.meeting}</td><td class="n">${grand.value.total}</td><td class="n">${grand.value.ot}</td></tr></tfoot>
+    </table></body></html>`)
+  w.document.close()
+  w.focus()
+  w.print()
+}
+
+// ── Paycom export (pay-period preset) ────────────────────────────────
+
+interface PunchPair {
+  userId: string
+  name: string
+  code: string | null
+  dateIso: string
+  inMs: number
+  outMs: number
+  hours: number
+}
+
+/** Punch-eligible coverage merged per member per work date. Instructor
+ *  and meeting time carries a different earning code, and student rows
+ *  aren't payroll — both are excluded and listed for manual entry. */
+const punches = computed<PunchPair[]>(() => {
+  if (preset.value !== 'period') return []
+  const eligible = segs.value.filter((s) => s.timeType === 'regular' && s.kind !== 'student')
+  const byKey = new Map<string, TimeSegment[]>()
+  for (const s of eligible) {
+    const k = `${s.userId}|${s.dateIso}`
+    if (!byKey.has(k)) byKey.set(k, [])
+    byKey.get(k)!.push(s)
+  }
+  const out: PunchPair[] = []
+  for (const [key, list] of byKey) {
+    const [userId, dateIso] = key.split('|')
+    const sorted = [...list].sort((a, b) => a.startMs - b.startMs)
+    const merged: { start: number; end: number }[] = []
+    for (const s of sorted) {
+      const last = merged[merged.length - 1]
+      if (last && s.startMs <= last.end + 60_000) last.end = Math.max(last.end, s.endMs)
+      else merged.push({ start: s.startMs, end: s.endMs })
+    }
+    const p = sched.personById.value.get(userId)
+    for (const m of merged) {
+      out.push({
+        userId,
+        name: p?.fullName ?? 'Unknown',
+        code: p?.paycomCode ?? null,
+        dateIso,
+        inMs: m.start,
+        outMs: m.end,
+        hours: round2((m.end - m.start) / 3_600_000),
+      })
+    }
+  }
+  return out.sort(
+    (a, b) => a.name.localeCompare(b.name) || a.dateIso.localeCompare(b.dateIso) || a.inMs - b.inMs,
+  )
+})
+
+const noCode = computed(() => {
+  const names = new Set<string>()
+  for (const p of punches.value) if (!p.code) names.add(p.name)
+  return [...names].sort()
+})
+
+const manualEntries = computed(() => {
+  if (preset.value !== 'period') return []
+  return segs.value
+    .filter((s) => s.timeType !== 'regular')
+    .map((s) => ({
+      name: sched.personById.value.get(s.userId)?.fullName ?? 'Unknown',
+      dateIso: s.dateIso,
+      hours: round2(s.hours),
+      timeType: s.timeType,
+      source: s.source,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.dateIso.localeCompare(b.dateIso))
+})
+
+function centralPunch(ms: number): { date: string; time: string } {
+  const d = new Date(ms)
+  const date = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  }).format(d)
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Chicago',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d)
+  return { date, time }
+}
+
+/** Paycom timecard import: no header, 17 columns; punch rows carry
+ *  EE code, blank, MM/DD/YYYY, HH:MM (24h), and ID/OD. */
+function downloadPaycom(): void {
+  const rows: string[] = []
+  const withCode = punches.value
+    .filter((p) => p.code)
+    .sort(
+      (a, b) => (a.code ?? '').localeCompare(b.code ?? '') || a.inMs - b.inMs,
+    )
+  for (const p of withCode) {
+    const iin = centralPunch(p.inMs)
+    const out = centralPunch(p.outMs)
+    const blank12 = ',,,,,,,,,,,,'
+    rows.push(`${p.code},,${iin.date},${iin.time},ID${blank12}`)
+    rows.push(`${p.code},,${out.date},${out.time},OD${blank12}`)
+  }
+  if (rows.length === 0) {
+    err.value = 'No punch rows to export for this period.'
+    return
+  }
+  downloadFile(`paycom-import_${range.value.start}_${range.value.end}.csv`, rows.join('\r\n'))
+}
+
+const showPunches = ref(false)
+</script>
+
+<template>
+  <div class="tm">
+    <div class="tm__controls">
+      <label class="tm__field">
+        <span class="tm__label">Range</span>
+        <select v-model="preset" class="tm__input">
+          <option value="day">Day</option>
+          <option value="week">Week</option>
+          <option value="month">Month</option>
+          <option value="period">Pay period</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+
+      <label v-if="preset === 'day' || preset === 'week'" class="tm__field">
+        <span class="tm__label">{{ preset === 'day' ? 'Date' : 'Any date in the week' }}</span>
+        <input v-model="anchor" type="date" class="tm__input" />
+      </label>
+      <label v-else-if="preset === 'month'" class="tm__field">
+        <span class="tm__label">Month</span>
+        <input v-model="monthAnchor" type="month" class="tm__input" />
+      </label>
+      <label v-else-if="preset === 'period'" class="tm__field">
+        <span class="tm__label">Pay period</span>
+        <select v-model="periodStart" class="tm__input">
+          <option v-for="p in periods" :key="p.start" :value="p.start">{{ p.label }}</option>
+        </select>
+      </label>
+      <template v-else>
+        <label class="tm__field">
+          <span class="tm__label">From</span>
+          <input v-model="customStart" type="date" class="tm__input" />
+        </label>
+        <label class="tm__field">
+          <span class="tm__label">To</span>
+          <input v-model="customEnd" type="date" class="tm__input" />
+        </label>
+      </template>
+
+      <label class="tm__field">
+        <span class="tm__label">Member</span>
+        <select v-model="memberFilter" class="tm__input">
+          <option value="">All members</option>
+          <option v-for="p in sched.people.value" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+        </select>
+      </label>
+      <label class="tm__field">
+        <span class="tm__label">Time type</span>
+        <select v-model="typeFilter" class="tm__input">
+          <option value="">All</option>
+          <option value="regular">Regular</option>
+          <option value="instructor">Instructor</option>
+          <option value="meeting">Meeting</option>
+        </select>
+      </label>
+
+      <span class="tm__actions">
+        <button class="tm__btn" :disabled="busy || summary.length === 0" @click="csvReport">CSV</button>
+        <button class="tm__btn" :disabled="busy || summary.length === 0" @click="printReport">Print</button>
+      </span>
+    </div>
+
+    <p class="tm__rangeline">
+      <strong>{{ rangeLabel }}</strong>
+      <span v-if="busy" class="tm__muted"> · loading…</span>
+    </p>
+    <p v-if="err" class="tm__error">{{ err }}</p>
+
+    <div class="tm__scroll">
+      <table class="tm__table">
+        <thead>
+          <tr>
+            <th>Member</th>
+            <th>EE code</th>
+            <th class="tm__n">Days</th>
+            <th class="tm__n">Regular</th>
+            <th class="tm__n">Instructor</th>
+            <th class="tm__n">Meeting</th>
+            <th class="tm__n">Total hrs</th>
+            <th class="tm__n" title="Estimated: hours over 40 per Sun–Sat week inside this range">OT (&gt;40/wk)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="r in summary" :key="r.userId">
+            <tr class="tm__row" @click="expanded = expanded === r.userId ? null : r.userId">
+              <td>
+                <span class="tm__name">{{ r.name }}</span>
+                <span v-if="r.credential" class="tm__muted"> - {{ r.credential }}</span>
+              </td>
+              <td>
+                <span v-if="r.code">{{ r.code }}</span>
+                <span v-else class="tm__nocode">no code</span>
+              </td>
+              <td class="tm__n">{{ r.days }}</td>
+              <td class="tm__n">{{ r.regular }}</td>
+              <td class="tm__n">{{ r.instructor || '' }}</td>
+              <td class="tm__n">{{ r.meeting || '' }}</td>
+              <td class="tm__n tm__total">{{ r.total }}</td>
+              <td class="tm__n" :class="{ 'tm__ot': r.ot > 0 }">{{ r.ot || '' }}</td>
+            </tr>
+            <tr v-if="expanded === r.userId" class="tm__detailrow">
+              <td colspan="8">
+                <div v-for="g in detail" :key="g.dateIso" class="tm__detailday">
+                  <p class="tm__detailhead">{{ fmtDay(g.dateIso) }} <span class="tm__muted">· {{ g.hours }} hrs</span></p>
+                  <div v-for="(s, i) in g.rows" :key="i" class="tm__seg">
+                    <span class="tm__segsrc">{{ s.source }}</span>
+                    <span v-if="s.timeType !== 'regular'" class="tm__segtype">{{ s.timeType }}</span>
+                    <span class="tm__segtime">{{ msHm(s.startMs) }} – {{ msHm(s.endMs) }} · {{ Math.round(s.hours * 100) / 100 }} hrs</span>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+        <tfoot v-if="summary.length > 0">
+          <tr>
+            <td colspan="3">Total — {{ summary.length }} {{ summary.length === 1 ? 'member' : 'members' }}</td>
+            <td class="tm__n">{{ grand.regular }}</td>
+            <td class="tm__n">{{ grand.instructor }}</td>
+            <td class="tm__n">{{ grand.meeting }}</td>
+            <td class="tm__n tm__total">{{ grand.total }}</td>
+            <td class="tm__n">{{ grand.ot }}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <p v-if="!busy && summary.length === 0" class="tm__muted tm__empty">No scheduled hours in this range.</p>
+    </div>
+
+    <!-- Paycom export: pay-period ranges only -->
+    <section v-if="preset === 'period'" class="tm__paycom">
+      <div class="tm__paycom-head">
+        <h2 class="tm__h">Paycom timecard import</h2>
+        <span class="tm__actions">
+          <button class="tm__btn" @click="showPunches = !showPunches">
+            {{ showPunches ? 'Hide punch verification' : 'Verify punches' }}
+          </button>
+          <button class="tm__btn tm__btn--primary" :disabled="busy || punches.length === 0" @click="downloadPaycom">
+            Download Paycom CSV
+          </button>
+        </span>
+      </div>
+      <p class="tm__muted">
+        One IN (ID) and OUT (OD) punch per merged shift segment, per member with an EE code —
+        the file imports straight into the Paycom timecard template (no header, 17 columns).
+      </p>
+
+      <p v-if="noCode.length" class="tm__warn">
+        No Paycom EE code — enter these manually: {{ noCode.join(', ') }}
+      </p>
+      <div v-if="manualEntries.length" class="tm__warn tm__warn--soft">
+        <p class="tm__warnhead">Instructor / meeting time — different earning code, enter manually:</p>
+        <p v-for="(m, i) in manualEntries" :key="i" class="tm__manual">
+          {{ m.name }} · {{ fmtDay(m.dateIso) }} · {{ m.hours }} hrs {{ m.timeType }} <span class="tm__muted">({{ m.source }})</span>
+        </p>
+      </div>
+
+      <div v-if="showPunches" class="tm__scroll">
+        <table class="tm__table tm__table--punch">
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>EE code</th>
+              <th>Work date</th>
+              <th>IN</th>
+              <th>OUT</th>
+              <th class="tm__n">Hrs</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(p, i) in punches" :key="i" :class="{ 'tm__row--nocode': !p.code }">
+              <td>{{ p.name }}</td>
+              <td>
+                <span v-if="p.code">{{ p.code }}</span>
+                <span v-else class="tm__nocode">no code</span>
+              </td>
+              <td>{{ fmtDay(p.dateIso) }}</td>
+              <td>{{ centralPunch(p.inMs).date }} {{ centralPunch(p.inMs).time }}</td>
+              <td>{{ centralPunch(p.outMs).date }} {{ centralPunch(p.outMs).time }}</td>
+              <td class="tm__n">{{ p.hours }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.tm {
+  max-width: 1100px;
+}
+
+.tm__controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
+.tm__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.tm__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.tm__input {
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.34rem 0.5rem;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.tm__actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
+.tm__btn {
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.36rem 0.9rem;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+}
+
+.tm__btn--primary {
+  background: var(--color-brand-700);
+  border-color: var(--color-brand-700);
+  color: white;
+}
+
+.tm__btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.tm__rangeline {
+  font-size: 0.95rem;
+  color: var(--color-ink);
+  margin: 0 0 0.5rem;
+}
+
+.tm__error {
+  color: var(--color-danger-500);
+  font-size: 0.85rem;
+}
+
+.tm__muted {
+  color: var(--color-muted);
+}
+
+.tm__empty {
+  font-size: 0.88rem;
+  padding: 0.6rem 0.2rem;
+}
+
+.tm__scroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.tm__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.tm__table th {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface-soft);
+  white-space: nowrap;
+}
+
+.tm__table td {
+  padding: 0.42rem 0.7rem;
+  border-bottom: 1px solid var(--color-line-soft);
+  color: var(--color-ink-soft);
+}
+
+.tm__table tbody tr:nth-child(4n + 3):not(.tm__detailrow) {
+  background: oklch(0.45 0.02 260 / 0.045);
+}
+
+.tm__n {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tm__row {
+  cursor: pointer;
+}
+
+.tm__row:hover .tm__name {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.tm__name {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.tm__total {
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+.tm__ot {
+  color: var(--color-danger-500);
+  font-weight: 700;
+}
+
+.tm__nocode {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--color-danger-500);
+  border: 1px solid oklch(0.85 0.09 27);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.tm__table tfoot td {
+  font-weight: 700;
+  color: var(--color-ink);
+  border-top: 2px solid var(--color-line);
+  background: var(--color-surface-soft);
+}
+
+.tm__detailrow > td {
+  background: var(--color-surface-soft);
+  padding: 0.5rem 1rem 0.7rem;
+}
+
+.tm__detailday {
+  padding: 0.25rem 0;
+}
+
+.tm__detailhead {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-brand-800);
+  margin: 0 0 0.15rem;
+}
+
+.tm__seg {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.82rem;
+  padding: 0.12rem 0 0.12rem 0.8rem;
+}
+
+.tm__segsrc {
+  color: var(--color-ink);
+  min-width: 0;
+}
+
+.tm__segtype {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-accent-700);
+  border: 1px solid oklch(0.86 0.06 86.8);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.tm__segtime {
+  margin-left: auto;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tm__paycom {
+  margin-top: 1.4rem;
+}
+
+.tm__paycom-head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.2rem;
+}
+
+.tm__h {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  color: var(--color-brand-800);
+  margin: 0;
+}
+
+.tm__warn {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-danger-500);
+  border: 1px solid oklch(0.85 0.09 27);
+  background: oklch(0.97 0.02 27);
+  border-radius: 9px;
+  padding: 0.5rem 0.7rem;
+  margin: 0.5rem 0;
+}
+
+.tm__warn--soft {
+  color: var(--color-ink-soft);
+  font-weight: 400;
+  border-color: oklch(0.85 0.08 60);
+  background: var(--color-warning-50);
+}
+
+.tm__warnhead {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: oklch(0.45 0.12 60);
+  margin: 0 0 0.25rem;
+}
+
+.tm__manual {
+  font-size: 0.82rem;
+  margin: 0.1rem 0;
+}
+
+.tm__row--nocode td {
+  background: oklch(0.97 0.02 27);
+}
+
+@media (max-width: 700px) {
+  .tm__actions {
+    margin-left: 0;
+  }
+}
+</style>

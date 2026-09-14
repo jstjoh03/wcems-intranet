@@ -13,6 +13,7 @@ import ScheduleMembersPanel from './ScheduleMembersPanel.vue'
 import ScheduleSetupPanel from './ScheduleSetupPanel.vue'
 import ScheduleEditModals from './ScheduleEditModals.vue'
 import ScheduleMyPanel from './ScheduleMyPanel.vue'
+import ScheduleTimePanel from './ScheduleTimePanel.vue'
 
 /**
  * Scheduling module shell — soft-launch build (URL-only, no nav entry).
@@ -25,7 +26,17 @@ const router = useRouter()
 const sched = useSchedule()
 const editor = useScheduleEditor()
 
-type Tab = 'month' | 'day' | 'week' | 'period' | 'mine' | 'requests' | 'trades' | 'members' | 'setup'
+type Tab =
+  | 'month'
+  | 'day'
+  | 'week'
+  | 'period'
+  | 'mine'
+  | 'requests'
+  | 'trades'
+  | 'time'
+  | 'members'
+  | 'setup'
 const tab = ref<Tab>('month')
 const dateIso = ref(todayCentralIso())
 
@@ -42,7 +53,11 @@ const TABS = computed<{ key: Tab; label: string }[]>(() => {
     { key: 'trades', label: 'Trades' },
   ]
   if (sched.canEdit.value) {
-    t.push({ key: 'members', label: 'Members' }, { key: 'setup', label: 'Setup' })
+    t.push(
+      { key: 'time', label: 'Time' },
+      { key: 'members', label: 'Members' },
+      { key: 'setup', label: 'Setup' },
+    )
   }
   return t
 })
@@ -232,6 +247,7 @@ watch(dateIso, (v) => {
       <ScheduleMyPanel v-else-if="tab === 'mine'" />
       <ScheduleRequestsPanel v-else-if="tab === 'requests'" />
       <ScheduleTradesPanel v-else-if="tab === 'trades'" />
+      <ScheduleTimePanel v-else-if="tab === 'time'" />
       <ScheduleMembersPanel v-else-if="tab === 'members'" />
       <ScheduleSetupPanel v-else />
 
