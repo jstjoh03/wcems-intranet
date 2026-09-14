@@ -106,12 +106,17 @@ const weeks = computed<Cell[][]>(() => {
                 <button
                   v-else-if="sched.canEdit.value"
                   class="mb__name mb__rowbtn"
+                  :class="{ 'mb__name--me': !!row.userId && row.userId === sched.myUserId.value }"
                   title="Edit this person's day"
                   @click="editor.openPerson(c.iso, um.unit.code, sm.seat.id, sm.seat.label, row)"
                 >
                   {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
                 </button>
-                <span v-else class="mb__name">
+                <span
+                  v-else
+                  class="mb__name"
+                  :class="{ 'mb__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+                >
                   {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
                 </span>
                 <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
@@ -173,12 +178,17 @@ const weeks = computed<Cell[][]>(() => {
               <button
                 v-else-if="sched.canEdit.value"
                 class="mb__name mb__rowbtn"
+                :class="{ 'mb__name--me': !!row.userId && row.userId === sched.myUserId.value }"
                 title="Manage this event"
                 @click="editor.openEvent(c.iso, ev)"
               >
                 {{ row.name }}
               </button>
-              <span v-else class="mb__name">{{ row.name }}</span>
+              <span
+                v-else
+                class="mb__name"
+                :class="{ 'mb__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+              >{{ row.name }}</span>
               <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
             </div>
           </div>
@@ -187,7 +197,7 @@ const weeks = computed<Cell[][]>(() => {
             <p class="mb__section-h">Extra Hours</p>
             <div v-for="r in c.model.extraHours" :key="r.entryId" class="mb__lrow">
               <div class="mb__row">
-                <span class="mb__name">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
                 <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
               </div>
               <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
@@ -198,7 +208,7 @@ const weeks = computed<Cell[][]>(() => {
             <p class="mb__section-h">Trades</p>
             <div v-for="r in c.model.trades" :key="r.entryId" class="mb__lrow">
               <div class="mb__row">
-                <span class="mb__name">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
                 <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
               </div>
               <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
@@ -209,7 +219,7 @@ const weeks = computed<Cell[][]>(() => {
             <p class="mb__section-h">Time Off</p>
             <div v-for="r in c.model.timeOff" :key="r.entryId" class="mb__lrow">
               <div class="mb__row">
-                <span class="mb__name">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
                 <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
               </div>
               <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
@@ -453,6 +463,14 @@ const weeks = computed<Cell[][]>(() => {
 .mb__name--open {
   color: var(--color-danger-500);
   font-weight: 600;
+}
+
+/* Aladtec-style "that's me" highlight — spot your days at a glance. */
+.mb__name--me {
+  background: oklch(0.93 0.07 86.8);
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 0 3px;
 }
 
 .mb__cred {

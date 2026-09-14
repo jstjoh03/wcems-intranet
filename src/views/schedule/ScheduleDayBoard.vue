@@ -114,13 +114,18 @@ async function removeNote(id: string) {
             <button
               v-else-if="sched.canEdit.value"
               class="db__name db__name--btn"
+              :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
               title="Edit this person's day"
               @click="editor.openPerson(props.dateIso, um.unit.code, sm.seat.id, sm.seat.label, row)"
             >
               {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
               <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
             </button>
-            <span v-else class="db__name">
+            <span
+              v-else
+              class="db__name"
+              :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+            >
               {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
               <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
             </span>
@@ -192,12 +197,17 @@ async function removeNote(id: string) {
           <button
             v-else-if="sched.canEdit.value"
             class="db__name db__name--btn"
+            :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
             title="Manage this event"
             @click="editor.openEvent(props.dateIso, ev)"
           >
             {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
           </button>
-          <span v-else class="db__name">
+          <span
+            v-else
+            class="db__name"
+            :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+          >
             {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
           </span>
           <span class="db__time">{{ row.start }} – {{ row.end }}</span>
@@ -210,7 +220,7 @@ async function removeNote(id: string) {
       <div class="db__labeled">
         <div v-for="r in model.extraHours" :key="r.entryId" class="db__row">
           <span class="db__seat">{{ r.sub || 'Extra' }}</span>
-          <span class="db__name">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+          <span class="db__name" :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
           <span class="db__time">
             {{ r.start }} – {{ r.end }}
             <button v-if="sched.canEdit.value" class="db__x" aria-label="Remove" @click="clearRow(r.entryId)">
@@ -226,7 +236,7 @@ async function removeNote(id: string) {
       <div class="db__labeled">
         <div v-for="r in model.trades" :key="r.entryId" class="db__row">
           <span class="db__seat">{{ r.sub }}</span>
-          <span class="db__name">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+          <span class="db__name" :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
           <span class="db__time">{{ r.start }} – {{ r.end }}</span>
         </div>
       </div>
@@ -237,7 +247,7 @@ async function removeNote(id: string) {
       <div class="db__labeled">
         <div v-for="r in model.timeOff" :key="r.entryId" class="db__row">
           <span class="db__seat">{{ r.sub }}</span>
-          <span class="db__name">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+          <span class="db__name" :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
           <span class="db__time">
             {{ r.start }} – {{ r.end }}
             <button v-if="sched.canEdit.value" class="db__x" aria-label="Remove" @click="clearRow(r.entryId)">
@@ -471,6 +481,14 @@ async function removeNote(id: string) {
 .db__name--open {
   color: var(--color-danger-500);
   font-weight: 600;
+}
+
+/* Aladtec-style "that's me" highlight. */
+.db__name--me {
+  background: oklch(0.93 0.07 86.8);
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 0 4px;
 }
 
 .db__name--btn {

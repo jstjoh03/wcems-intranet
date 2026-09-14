@@ -67,12 +67,17 @@ const header = computed(() =>
           <button
             v-else-if="sched.canEdit.value"
             class="dc__name dc__rowbtn"
+            :class="{ 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
             title="Edit this person's day"
             @click="editor.openPerson(dateIso, um.unit.code, sm.seat.id, sm.seat.label, row)"
           >
             {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
           </button>
-          <span v-else class="dc__name">
+          <span
+            v-else
+            class="dc__name"
+            :class="{ 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+          >
             {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
           </span>
           <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
@@ -119,12 +124,17 @@ const header = computed(() =>
         <button
           v-else-if="sched.canEdit.value"
           class="dc__name dc__rowbtn"
+          :class="{ 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
           title="Manage this event"
           @click="editor.openEvent(dateIso, ev)"
         >
           {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
         </button>
-        <span v-else class="dc__name" :class="{ 'dc__name--open': row.open }">
+        <span
+          v-else
+          class="dc__name"
+          :class="{ 'dc__name--open': row.open, 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+        >
           {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
         </span>
         <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
@@ -135,7 +145,7 @@ const header = computed(() =>
       <p class="dc__section-h">Extra Hours</p>
       <div v-for="r in model.extraHours" :key="r.entryId">
         <div class="dc__row">
-          <span class="dc__name">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
+          <span class="dc__name" :class="{ 'dc__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
           <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
         </div>
         <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
@@ -146,7 +156,7 @@ const header = computed(() =>
       <p class="dc__section-h">Trades</p>
       <div v-for="r in model.trades" :key="r.entryId">
         <div class="dc__row">
-          <span class="dc__name">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
+          <span class="dc__name" :class="{ 'dc__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
           <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
         </div>
         <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
@@ -157,7 +167,7 @@ const header = computed(() =>
       <p class="dc__section-h">Time Off</p>
       <div v-for="r in model.timeOff" :key="r.entryId">
         <div class="dc__row">
-          <span class="dc__name">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
+          <span class="dc__name" :class="{ 'dc__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
           <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
         </div>
         <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
@@ -338,6 +348,14 @@ const header = computed(() =>
 .dc__name--open {
   color: var(--color-danger-500);
   font-weight: 600;
+}
+
+/* Aladtec-style "that's me" highlight. */
+.dc__name--me {
+  background: oklch(0.93 0.07 86.8);
+  font-weight: 700;
+  border-radius: 4px;
+  padding: 0 3px;
 }
 
 .dc__cred {

@@ -197,6 +197,7 @@ export interface DayEventBox {
 /** Row in a labeled day section (Extra Hours / Time Off / Trades). */
 export interface LabeledRow {
   entryId: string
+  userId: string | null
   name: string
   credential: string | null
   start: string
@@ -951,6 +952,7 @@ export function dayModel(dateIso: string): DayModel {
       const sub = [unitCode, e.note].filter(Boolean).join(' / ')
       return {
         entryId: e.id,
+        userId: e.userId,
         name: who.name || 'Unknown',
         credential: who.credential,
         start: hhmm(e.startAt),
@@ -966,6 +968,7 @@ export function dayModel(dateIso: string): DayModel {
       const who = displayName(e.userId)
       return {
         entryId: e.id,
+        userId: e.userId,
         name: who.name || 'Unknown',
         credential: who.credential,
         start: hhmm(e.startAt),
@@ -981,6 +984,7 @@ export function dayModel(dateIso: string): DayModel {
       const who = displayName(e.userId)
       return {
         entryId: e.id,
+        userId: e.userId,
         name: who.name || 'Unknown',
         credential: who.credential,
         start: hhmm(e.startAt),
@@ -1087,6 +1091,138 @@ export interface OpenSeatInfo {
   entryId: string | null
   start: string
   end: string
+}
+
+// ── My schedule (the signed-in member's own list) ────────────────────
+
+export interface MyScheduleItem {
+  dateIso: string
+  kind: 'shift' | 'extra' | 'event' | 'timeoff' | 'unavailable'
+  label: string // 'M211 Paramedic', 'Extra hours', event name, off type
+  sub: string | null
+  start: string // 'HHmm'; '' for all-day markers
+  end: string
+  hours: number
+}
+
+/**
+ * The signed-in member's own upcoming schedule: seat shifts (rotation +
+ * overrides, same overlay semantics as the boards), extra hours, event
+ * assignments, approved time off, and marked-unavailable days. Fetched
+ * FRESH for the window, independent of what range the boards loaded.
+ */
+async function fetchMySchedule(
+  days = 60,
+): Promise<{ items: MyScheduleItem[]; error: string | null }> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me) return { items: [], error: 'Not signed in' }
+  if (auth.usingDevStub) return { items: [], error: null }
+  const fromIso = todayCentralIso()
+  const endIso = addDaysIso(fromIso, days - 1)
+  const [eRes, aRes] = await Promise.all([
+    supabase.from('sched_entries').select('*').gte('work_date', fromIso).lte('work_date', endIso),
+    supabase
+      .from('sched_availability')
+      .select('*')
+      .eq('user_id', me)
+      .gte('on_date', fromIso)
+      .lte('on_date', endIso),
+  ])
+  if (eRes.error) return { items: [], error: eRes.error.message }
+  const rows = (eRes.data ?? []).map(mapEntry)
+  const unitById = new Map(units.value.map((u) => [u.id, u]))
+  const items: MyScheduleItem[] = []
+  for (let iso = fromIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
+    const dayRows = rows.filter((e) => e.workDate === iso)
+    const platoon = platoonFor(iso)
+    for (const seat of seats.value.filter((s) => s.active)) {
+      const unit = unitById.get(seat.unitId)
+      const label = `${unit?.code ?? ''} ${seat.label}`.trim()
+      const seatRows = dayRows.filter(
+        (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
+      )
+      if (seatRows.length > 0) {
+        for (const e of seatRows) {
+          if (e.userId === me && e.status === 'scheduled') {
+            items.push({
+              dateIso: iso,
+              kind: 'shift',
+              label,
+              sub: e.kind === 'trade' || e.kind === 'giveaway_cover' ? e.note : null,
+              start: hhmm(e.startAt),
+              end: hhmm(e.endAt),
+              hours: hoursBetween(e.startAt, e.endAt),
+            })
+          }
+        }
+      } else if (rotationOccupant(seat.id, platoon, iso) === me) {
+        const s = centralTs(iso, '06:00')
+        const en = centralTs(addDaysIso(iso, 1), '06:00')
+        items.push({
+          dateIso: iso,
+          kind: 'shift',
+          label,
+          sub: null,
+          start: '0600',
+          end: '0600',
+          hours: hoursBetween(s, en),
+        })
+      }
+    }
+    for (const e of dayRows) {
+      if (e.userId !== me || e.seatId !== null) continue
+      if (e.kind === 'extra' && e.status === 'scheduled') {
+        const unit = e.unitId ? unitById.get(e.unitId) : null
+        items.push({
+          dateIso: iso,
+          kind: 'extra',
+          label: 'Extra hours',
+          sub: [unit?.code, e.note].filter(Boolean).join(' / ') || null,
+          start: hhmm(e.startAt),
+          end: hhmm(e.endAt),
+          hours: hoursBetween(e.startAt, e.endAt),
+        })
+      } else if (e.kind === 'event' && e.status === 'scheduled') {
+        items.push({
+          dateIso: iso,
+          kind: 'event',
+          label: e.note ?? 'Special event',
+          sub: e.studentProgram,
+          start: hhmm(e.startAt),
+          end: hhmm(e.endAt),
+          hours: hoursBetween(e.startAt, e.endAt),
+        })
+      }
+    }
+    // time off can sit on a seat or stand alone — report either way
+    for (const e of dayRows) {
+      if (e.userId === me && e.kind === 'timeoff' && e.status === 'off') {
+        items.push({
+          dateIso: iso,
+          kind: 'timeoff',
+          label: OFF_LABELS[e.offType ?? 'other'] ?? 'Time Off',
+          sub: null,
+          start: hhmm(e.startAt),
+          end: hhmm(e.endAt),
+          hours: 0,
+        })
+      }
+    }
+  }
+  for (const a of aRes.data ?? []) {
+    items.push({
+      dateIso: a.on_date as string,
+      kind: 'unavailable',
+      label: 'Marked unavailable',
+      sub: (a.reason as string | null) ?? null,
+      start: '',
+      end: '',
+      hours: 0,
+    })
+  }
+  items.sort((x, y) => x.dateIso.localeCompare(y.dateIso) || x.start.localeCompare(y.start))
+  return { items, error: null }
 }
 
 function openSeatsFor(dateIso: string): OpenSeatInfo[] {
@@ -2896,6 +3032,7 @@ export function useSchedule() {
     // requests
     upcomingShiftsFor,
     openSeatsFor,
+    fetchMySchedule,
     createTimeOffRequests,
     createExtraRequest,
     createPickupRequest,
