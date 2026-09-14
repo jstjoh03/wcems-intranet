@@ -38,6 +38,10 @@ export interface SchedUnit {
    *  staffed that day); null = agency default 48/96. */
   rotationPattern: string[] | null
   rotationAnchor: string | null
+  /** Daily shift window 'HH:MM' for rotation coverage; null = the
+   *  standard 06:00 → 06:00 24-hour shift. */
+  shiftStart: string | null
+  shiftEnd: string | null
 }
 
 export interface SchedSeat {
@@ -444,6 +448,8 @@ async function loadCore(): Promise<void> {
     active: r.active,
     rotationPattern: r.rotation_pattern ?? null,
     rotationAnchor: r.rotation_anchor ?? null,
+    shiftStart: r.shift_start ? String(r.shift_start).slice(0, 5) : null,
+    shiftEnd: r.shift_end ? String(r.shift_end).slice(0, 5) : null,
   }))
   seats.value = (sRes.data ?? []).map((r) => ({
     id: r.id,
@@ -510,6 +516,8 @@ function seedDevStub(): void {
     active: true,
     rotationPattern: null,
     rotationAnchor: null,
+    shiftStart: null,
+    shiftEnd: null,
   }))
   const out: SchedSeat[] = []
   for (const u of units.value) {
@@ -830,6 +838,21 @@ function activeSeatList(): SchedSeat[] {
   return seats.value.filter((s) => s.active && activeUnits.has(s.unitId))
 }
 
+/** A unit's rotation shift window on a date, as timestamps clamped
+ *  inside the 0600-anchored work date, plus 'HHmm' display strings.
+ *  Default units: the full 0600 → 0600 shift. */
+function unitDayWindow(unit: SchedUnit | undefined | null, dateIso: string) {
+  const from = unit?.shiftStart ?? '06:00'
+  const until = unit?.shiftEnd ?? '06:00'
+  const w = shiftWindow(dateIso, from, until)
+  return {
+    startTs: w.reqStart,
+    endTs: w.reqEnd,
+    startHm: hhmm(w.reqStart),
+    endHm: hhmm(w.reqEnd),
+  }
+}
+
 export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
   const platoon = platoonFor(dateIso)
   const dayEntries = entries.value.filter((e) => e.workDate === dateIso)
@@ -873,14 +896,15 @@ export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
         const occupant = rotationOccupant(seat.id, unitPlatoon, dateIso)
         const who = displayName(occupant)
         const open = occupant === null
+        const uw = unitDayWindow(unit, dateIso)
         rows = [
           {
             entryId: null,
             userId: occupant,
             name: who.name,
             credential: who.credential,
-            start: '0600',
-            end: '0600',
+            start: uw.startHm,
+            end: uw.endHm,
             kind: 'rotation',
             open,
             isRotation: !open,
@@ -1096,11 +1120,17 @@ export function daySummary(dateIso: string, myUserId: string | null) {
         }
       }
     } else {
-      const unitPlatoon = unitPlatoonFor(unitById.get(seat.unitId), dateIso)
+      const unit = unitById.get(seat.unitId)
+      const unitPlatoon = unitPlatoonFor(unit, dateIso)
       if (unitPlatoon === null) continue // unit not staffed this day
       const occ = rotationOccupant(seat.id, unitPlatoon, dateIso)
       if (occ === null) open++
-      else if (myUserId && occ === myUserId) mine = true
+      else if (myUserId && occ === myUserId) {
+        mine = true
+        const uw = unitDayWindow(unit, dateIso)
+        myStart = uw.startHm
+        myEnd = uw.endHm
+      }
     }
   }
   // extras/students count as my shift too
@@ -1223,16 +1253,15 @@ async function fetchMySchedule(
           }
         }
       } else if (unitPlatoon !== null && rotationOccupant(seat.id, unitPlatoon, iso) === me) {
-        const s = centralTs(iso, '06:00')
-        const en = centralTs(addDaysIso(iso, 1), '06:00')
+        const uw = unitDayWindow(unit, iso)
         items.push({
           dateIso: iso,
           kind: 'shift',
           label,
           sub: null,
-          start: '0600',
-          end: '0600',
-          hours: hoursBetween(s, en),
+          start: uw.startHm,
+          end: uw.endHm,
+          hours: hoursBetween(uw.startTs, uw.endTs),
         })
       }
     }
@@ -1390,10 +1419,9 @@ function segsForUserOnDate(dateIso: string, userId: string, rows: SchedEntry[]):
         }
       }
     } else if (seatRotationOccupant(seat.id, dateIso) === userId) {
-      out.push({
-        start: tsMs(centralTs(dateIso, '06:00')),
-        end: tsMs(centralTs(addDaysIso(dateIso, 1), '06:00')),
-      })
+      const unit = units.value.find((u) => u.id === seat.unitId)
+      const uw = unitDayWindow(unit, dateIso)
+      out.push({ start: tsMs(uw.startTs), end: tsMs(uw.endTs) })
     }
   }
   for (const e of dayRows) {
@@ -1889,8 +1917,11 @@ async function carveSeatWindow(
   if (mine.length === 0) {
     // Bare rotation holder only when the seat has NO overrides at all.
     if (seatEntries.length === 0 && seatRotationOccupant(seatId, dateIso) === userId) {
-      const dayStart = tsMs(centralTs(dateIso, '06:00'))
-      const dayEnd = tsMs(centralTs(addDaysIso(dateIso, 1), '06:00'))
+      const seatRec = seats.value.find((s2) => s2.id === seatId)
+      const unit = seatRec ? units.value.find((u) => u.id === seatRec.unitId) : null
+      const uw = unitDayWindow(unit, dateIso)
+      const dayStart = tsMs(uw.startTs)
+      const dayEnd = tsMs(uw.endTs)
       const s = Math.max(dayStart, winStart)
       const en = Math.min(dayEnd, winEnd)
       if (en - s >= MIN_SEG_MS) {
@@ -2095,17 +2126,30 @@ async function assignOpenSeat(opts: {
       await reloadRangeIfLoaded()
       return STALE
     }
+    // The open window is the seat's UNIT shift window (part-time trucks
+    // are not 0600–0600) — clamp the claim and remainders inside it.
+    const seatRec = seats.value.find((s2) => s2.id === opts.seatId)
+    const unit = seatRec ? units.value.find((u) => u.id === seatRec.unitId) : null
+    const uw = unitDayWindow(unit, opts.dateIso)
+    const uS = tsMs(uw.startTs)
+    const uE = tsMs(uw.endTs)
+    const cS = Math.max(uS, tsMs(w.reqStart))
+    const cE = Math.min(uE, tsMs(w.reqEnd))
+    if (cE - cS < MIN_SEG_MS) {
+      return 'The requested window does not overlap this shift.'
+    }
     const rows: Record<string, unknown>[] = [
       { work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
-        start_at: w.reqStart, end_at: w.reqEnd, kind: 'pickup', status: 'scheduled' },
+        start_at: new Date(cS).toISOString(), end_at: new Date(cE).toISOString(),
+        kind: 'pickup', status: 'scheduled' },
     ]
-    if (w.before) {
+    if (cS - uS >= MIN_SEG_MS) {
       rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
-        start_at: w.before.start, end_at: w.before.end, kind: 'rotation', status: 'open' })
+        start_at: uw.startTs, end_at: new Date(cS).toISOString(), kind: 'rotation', status: 'open' })
     }
-    if (w.after) {
+    if (uE - cE >= MIN_SEG_MS) {
       rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
-        start_at: w.after.start, end_at: w.after.end, kind: 'rotation', status: 'open' })
+        start_at: new Date(cE).toISOString(), end_at: uw.endTs, kind: 'rotation', status: 'open' })
     }
     const ins = await supabase.from('sched_entries').insert(rows)
     if (ins.error) return ins.error.message
@@ -2770,39 +2814,48 @@ async function decideRequest(
           if (del.error) return del.error.message
         }
       } else {
-        // Rotation-open seat (no entry rows yet).
-        const dayStart = centralTs(req.workDate, '06:00')
-        const dayEnd = centralTs(addDaysIso(req.workDate, 1), '06:00')
+        // Rotation-open seat (no entry rows yet) — the open window is
+        // the seat's UNIT shift window, not always 0600–0600.
+        const seatRec = seats.value.find((s2) => s2.id === req.seatId)
+        const unit = seatRec ? units.value.find((u) => u.id === seatRec.unitId) : null
+        const uw = unitDayWindow(unit, req.workDate)
+        const uS = tsMs(uw.startTs)
+        const uE = tsMs(uw.endTs)
+        const rS = req.startAt ? Math.max(uS, tsMs(req.startAt)) : uS
+        const rE = req.endAt ? Math.min(uE, tsMs(req.endAt)) : uE
+        if (rE - rS < MIN_SEG_MS) {
+          return 'The requested window does not overlap this shift.'
+        }
         const rows: Record<string, unknown>[] = [
           {
             work_date: req.workDate,
             seat_id: req.seatId,
             user_id: req.requesterId,
-            start_at: req.startAt,
-            end_at: req.endAt,
+            start_at: new Date(rS).toISOString(),
+            end_at: new Date(rE).toISOString(),
             kind: 'pickup',
             status: 'scheduled',
             source_request: req.id,
           },
         ]
-        if (req.startAt && req.startAt > dayStart) {
+        if (rS - uS >= MIN_SEG_MS) {
           rows.push({
             work_date: req.workDate,
             seat_id: req.seatId,
             user_id: null,
-            start_at: dayStart,
-            end_at: req.startAt,
+            start_at: uw.startTs,
+            end_at: new Date(rS).toISOString(),
             kind: 'rotation',
             status: 'open',
           })
         }
-        if (req.endAt && req.endAt < dayEnd) {
+        if (uE - rE >= MIN_SEG_MS) {
           rows.push({
             work_date: req.workDate,
             seat_id: req.seatId,
             user_id: null,
-            start_at: req.endAt,
-            end_at: dayEnd,
+            start_at: new Date(rE).toISOString(),
+            end_at: uw.endTs,
             kind: 'rotation',
             status: 'open',
           })
@@ -3005,13 +3058,16 @@ async function deleteUnit(unitId: string): Promise<string | null> {
   return null
 }
 
-/** Set a unit's repeating rotation pattern (null = agency 48/96).
- *  Tokens are 'A'/'B'/'C' or '' for an unstaffed day, anchored to
- *  `anchor` (agency anchor when null). */
+/** Set a unit's repeating rotation pattern (null = agency 48/96) and
+ *  its daily shift window (null/06:00 pair = the standard 24-hour
+ *  0600 → 0600 shift). Pattern tokens are 'A'/'B'/'C' or '' for an
+ *  unstaffed day, anchored to `anchor` (agency anchor when null). */
 async function saveUnitRotation(
   unitId: string,
   pattern: string[] | null,
   anchor: string | null,
+  shiftStart: string | null,
+  shiftEnd: string | null,
 ): Promise<string | null> {
   if (pattern) {
     if (pattern.length === 0) return 'The pattern needs at least one day.'
@@ -3019,12 +3075,20 @@ async function saveUnitRotation(
     if (bad !== undefined) return `"${bad}" is not a valid day — use A, B, C, or leave blank for off.`
     if (!pattern.some((t) => t !== '')) return 'The pattern never staffs the unit — every day is off.'
   }
+  const defaultHours =
+    (!shiftStart || shiftStart === '06:00') && (!shiftEnd || shiftEnd === '06:00')
   const res = await supabase
     .from('sched_units')
-    .update({ rotation_pattern: pattern, rotation_anchor: pattern ? anchor : null })
+    .update({
+      rotation_pattern: pattern,
+      rotation_anchor: pattern ? anchor : null,
+      shift_start: defaultHours ? null : shiftStart,
+      shift_end: defaultHours ? null : shiftEnd,
+    })
     .eq('id', unitId)
   if (res.error) return res.error.message
   await loadCore()
+  await reloadRangeIfLoaded()
   return null
 }
 

@@ -247,15 +247,31 @@ const rotUnit = ref<string | null>(null) // unit whose pattern editor is open
 const rotCustom = ref(false)
 const rotPattern = ref('')
 const rotAnchor = ref(todayCentralIso())
+const rotFrom = ref('06:00')
+const rotUntil = ref('06:00')
 const rotBusy = ref(false)
 
-function rotationLabel(u: { rotationPattern: string[] | null; rotationAnchor: string | null }): string {
-  if (!u.rotationPattern || u.rotationPattern.length === 0) return '48/96 (agency default)'
-  const days = u.rotationPattern.map((t) => (t === '' ? '–' : t)).join(' ')
-  return `${u.rotationPattern.length}-day pattern: ${days}${u.rotationAnchor ? ` · from ${fmtDate(u.rotationAnchor)}` : ''}`
+interface RotUnitLike {
+  id: string
+  rotationPattern: string[] | null
+  rotationAnchor: string | null
+  shiftStart: string | null
+  shiftEnd: string | null
 }
 
-function startRotEdit(u: { id: string; rotationPattern: string[] | null; rotationAnchor: string | null }) {
+function rotationLabel(u: RotUnitLike): string {
+  const hours =
+    u.shiftStart || u.shiftEnd
+      ? ` · ${(u.shiftStart ?? '06:00').replace(':', '')}–${(u.shiftEnd ?? '06:00').replace(':', '')}`
+      : ''
+  if (!u.rotationPattern || u.rotationPattern.length === 0) {
+    return `48/96 (agency default)${hours}`
+  }
+  const days = u.rotationPattern.map((t) => (t === '' ? '–' : t)).join(' ')
+  return `${u.rotationPattern.length}-day pattern: ${days}${u.rotationAnchor ? ` · from ${fmtDate(u.rotationAnchor)}` : ''}${hours}`
+}
+
+function startRotEdit(u: RotUnitLike) {
   if (rotUnit.value === u.id) {
     rotUnit.value = null
     return
@@ -264,6 +280,8 @@ function startRotEdit(u: { id: string; rotationPattern: string[] | null; rotatio
   rotCustom.value = !!u.rotationPattern && u.rotationPattern.length > 0
   rotPattern.value = (u.rotationPattern ?? []).map((t) => (t === '' ? '-' : t)).join(',')
   rotAnchor.value = u.rotationAnchor ?? todayCentralIso()
+  rotFrom.value = u.shiftStart ?? '06:00'
+  rotUntil.value = u.shiftEnd ?? '06:00'
   err.value = null
 }
 
@@ -272,13 +290,13 @@ async function saveRotEdit(unitId: string) {
   err.value = null
   let e: string | null
   if (!rotCustom.value) {
-    e = await sched.saveUnitRotation(unitId, null, null)
+    e = await sched.saveUnitRotation(unitId, null, null, rotFrom.value, rotUntil.value)
   } else {
     const pattern = rotPattern.value
       .split(',')
       .map((t) => t.trim().toUpperCase())
       .map((t) => (t === '-' || t === 'OFF' ? '' : t))
-    e = await sched.saveUnitRotation(unitId, pattern, rotAnchor.value)
+    e = await sched.saveUnitRotation(unitId, pattern, rotAnchor.value, rotFrom.value, rotUntil.value)
   }
   rotBusy.value = false
   if (e) {
@@ -531,6 +549,16 @@ async function saveWarnCfg() {
                   decides which letter (if any) works each date for this unit.
                 </p>
               </template>
+              <div class="setup__rothours">
+                <span class="setup__rothours-label">Daily shift hours</span>
+                <label>From <input v-model="rotFrom" type="time" class="setup__input setup__input--time" /></label>
+                <label>Until <input v-model="rotUntil" type="time" class="setup__input setup__input--time" /></label>
+              </div>
+              <p class="setup__muted">
+                06:00 – 06:00 = the standard 24-hour shift. A part-time window (e.g. 08:00 –
+                20:00) applies to every rotation day for this unit; it must fit inside the
+                0600-anchored work date.
+              </p>
               <div class="setup__editbtns">
                 <button class="setup__btn setup__btn--primary" :disabled="rotBusy" @click="saveRotEdit(u.id)">
                   {{ rotBusy ? 'Saving…' : 'Save rotation' }}
@@ -687,6 +715,26 @@ async function saveWarnCfg() {
   gap: 0.45rem;
   font-size: 0.82rem;
   color: var(--color-ink-soft);
+}
+
+.setup__rothours {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  flex-wrap: wrap;
+}
+
+.setup__rothours-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.setup__input--time {
+  width: 110px;
 }
 
 .setup__cols {
