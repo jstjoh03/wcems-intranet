@@ -121,8 +121,21 @@ onMounted(async () => {
   if (typeof route.query.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.d)) {
     dateIso.value = route.query.d
   }
-  await loadVisibleRange()
+  // Requests load with the shell (not just on the Requests tab) so
+  // pending pickups/time-off show on the boards and the tab badge is
+  // right from the first paint; realtime keeps both fresh after that.
+  await Promise.all([loadVisibleRange(), sched.loadRequests()])
+  sched.startRealtime()
 })
+
+/** Undecided requests → red badge on the Requests tab (editors). */
+const pendingCount = computed(() =>
+  sched.canEdit.value
+    ? sched.requests.value.filter(
+        (r) => r.status === 'pending' || r.status === 'partner_accepted',
+      ).length
+    : 0,
+)
 
 watch(monthAnchor, () => {
   void loadVisibleRange()
@@ -170,7 +183,10 @@ watch(dateIso, (v) => {
             :aria-selected="tab === t.key"
             @click="tab = t.key"
           >
-            {{ t.label }}
+            {{ t.label
+            }}<span v-if="t.key === 'requests' && pendingCount > 0" class="sched__tab-badge">{{
+              pendingCount
+            }}</span>
           </button>
         </div>
       </header>
@@ -279,6 +295,23 @@ watch(dateIso, (v) => {
 .sched__tab--on {
   background: var(--color-brand-700);
   color: white;
+}
+
+.sched__tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--color-danger-500);
+  color: white;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: 1px;
 }
 
 .sched__nav {

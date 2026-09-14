@@ -215,6 +215,17 @@ const weeks = computed<Cell[][]>(() => {
               <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
             </div>
           </div>
+
+          <div v-if="c.model.pending.length" class="mb__section mb__section--pend">
+            <p class="mb__section-h">Pending Requests</p>
+            <div v-for="r in c.model.pending" :key="r.id" class="mb__lrow">
+              <div class="mb__row">
+                <span class="mb__name">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
+              </div>
+              <p class="mb__sub">{{ r.sub }}</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -539,6 +550,15 @@ const weeks = computed<Cell[][]>(() => {
 .mb__section--off .mb__section-h {
   background: var(--color-warning-50);
   color: oklch(0.5 0.13 60);
+}
+
+.mb__section--pend {
+  border-color: oklch(0.85 0.09 27);
+}
+
+.mb__section--pend .mb__section-h {
+  background: oklch(0.97 0.02 27);
+  color: var(--color-danger-500);
 }
 
 .mb__lrow {

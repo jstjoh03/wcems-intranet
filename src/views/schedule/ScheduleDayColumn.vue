@@ -163,6 +163,17 @@ const header = computed(() =>
         <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
       </div>
     </div>
+
+    <div v-if="model.pending.length" class="dc__section dc__section--pend">
+      <p class="dc__section-h">Pending Requests</p>
+      <div v-for="r in model.pending" :key="r.id">
+        <div class="dc__row">
+          <span class="dc__name">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
+          <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
+        </div>
+        <p class="dc__sub">{{ r.sub }}</p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -391,6 +402,14 @@ const header = computed(() =>
 
 .dc__section--off .dc__section-h {
   color: oklch(0.5 0.13 60);
+}
+
+.dc__section--pend {
+  background: oklch(0.99 0.006 27);
+}
+
+.dc__section--pend .dc__section-h {
+  color: var(--color-danger-500);
 }
 
 .dc__sub {

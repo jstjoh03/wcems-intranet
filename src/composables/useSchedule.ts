@@ -204,6 +204,17 @@ export interface LabeledRow {
   sub: string // second line: 'M272 / Paramedic', 'Vacation Time', 'For X'
 }
 
+/** A request awaiting decision, surfaced on its work date. */
+export interface PendingRow {
+  id: string
+  type: string
+  name: string
+  credential: string | null
+  start: string
+  end: string
+  sub: string // 'Pickup · M211 Paramedic · pending approval'
+}
+
 export interface DayModel {
   dateIso: string
   platoon: Platoon
@@ -212,6 +223,7 @@ export interface DayModel {
   extraHours: LabeledRow[]
   timeOff: LabeledRow[]
   trades: LabeledRow[]
+  pending: PendingRow[] // undecided requests targeting this date
   unattached: SeatRow[] // students with no unit
   notes: DayNote[] // day-level notes (no unit)
   openCount: number
@@ -663,7 +675,104 @@ async function loadRequests(): Promise<void> {
   }))
 }
 
+// ── live updates ─────────────────────────────────────────────────────
+
+let liveChannel: ReturnType<typeof supabase.channel> | null = null
+let entriesReloadTimer: number | undefined
+let requestsReloadTimer: number | undefined
+
+/** Subscribe once per session: entry/request changes made anywhere —
+ *  another device, another member — reload the open boards and the
+ *  request queue, so pending work and board changes appear live.
+ *  Events are only a "something changed" signal; the reloads re-query
+ *  under RLS as usual. */
+function startRealtime(): void {
+  const auth = useAuthStore()
+  if (auth.usingDevStub || liveChannel) return
+  liveChannel = supabase
+    .channel('sched-live')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'sched_entries' },
+      () => {
+        window.clearTimeout(entriesReloadTimer)
+        entriesReloadTimer = window.setTimeout(() => {
+          void reloadRangeIfLoaded()
+        }, 400)
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'sched_requests' },
+      () => {
+        window.clearTimeout(requestsReloadTimer)
+        requestsReloadTimer = window.setTimeout(() => {
+          void loadRequests()
+        }, 400)
+      },
+    )
+    .subscribe()
+}
+
 // ── generation: rotation template → day model ────────────────────────
+
+const OFF_LABELS: Record<string, string> = {
+  vacation: 'Vacation Time',
+  sick: 'Sick Time',
+  unpaid: 'Unpaid Time Off',
+  bereavement: 'Bereavement',
+  other: 'Time Off',
+}
+
+const REQ_TYPE_LABELS: Record<string, string> = {
+  pickup: 'Pickup',
+  time_off: 'Time off',
+  extra_hours: 'Extra hours',
+  giveaway: 'Giveaway',
+  trade: 'Trade',
+}
+
+/** Undecided requests targeting a date — the Chief sees them ON the
+ *  board, not just in the queue. A trade surfaces on both its dates. */
+function pendingRowsFor(dateIso: string): PendingRow[] {
+  const out: PendingRow[] = []
+  for (const r of requests.value) {
+    if (r.status !== 'pending' && r.status !== 'partner_accepted') continue
+    const onMain = r.workDate === dateIso
+    const onCounter = r.counterWorkDate === dateIso
+    if (!onMain && !onCounter) continue
+    const requester = displayName(r.requesterId)
+    const partner = r.counterpartyId ? displayName(r.counterpartyId) : null
+    const who = onCounter && partner ? partner : requester
+    const startAt = onCounter ? r.counterStartAt : r.startAt
+    const endAt = onCounter ? r.counterEndAt : r.endAt
+    const bits: string[] = []
+    if (r.type === 'time_off') {
+      bits.push(`${OFF_LABELS[r.offType ?? 'other'] ?? 'Time Off'} request`)
+    } else {
+      bits.push(REQ_TYPE_LABELS[r.type] ?? r.type)
+    }
+    const pos = [r.unitCode, r.positionLabel].filter(Boolean).join(' ')
+    if (pos && r.type !== 'time_off') bits.push(pos)
+    if (r.type === 'trade' && partner) {
+      bits.push(onCounter ? `with ${requester.name}` : `with ${partner.name}`)
+    }
+    if (r.type === 'giveaway' && r.status === 'partner_accepted' && partner) {
+      bits.push(`to ${partner.name}`)
+    }
+    bits.push(r.status === 'partner_accepted' ? 'awaiting Chief approval' : 'pending approval')
+    out.push({
+      id: r.id + (onCounter ? ':c' : ''),
+      type: r.type,
+      name: who.name || 'Unknown',
+      credential: who.credential,
+      start: startAt ? hhmm(startAt) : '0600',
+      end: endAt ? hhmm(endAt) : '0600',
+      sub: bits.join(' · '),
+    })
+  }
+  return out.sort((a, b) => a.start.localeCompare(b.start))
+}
 
 function rotationOccupant(seatId: string, platoon: Platoon, dateIso: string): string | null {
   let best: RotationAssignment | null = null
@@ -850,13 +959,6 @@ export function dayModel(dateIso: string): DayModel {
       }
     })
 
-  const OFF_LABELS: Record<string, string> = {
-    vacation: 'Vacation Time',
-    sick: 'Sick Time',
-    unpaid: 'Unpaid Time Off',
-    bereavement: 'Bereavement',
-    other: 'Time Off',
-  }
   const timeOff: LabeledRow[] = dayEntries
     .filter((e) => e.kind === 'timeoff')
     .sort((a, b) => a.startAt.localeCompare(b.startAt))
@@ -896,6 +998,7 @@ export function dayModel(dateIso: string): DayModel {
     extraHours,
     timeOff,
     trades,
+    pending: pendingRowsFor(dateIso),
     unattached,
     notes,
     openCount,
@@ -2770,6 +2873,7 @@ export function useSchedule() {
     loadCore,
     loadRange,
     loadRequests,
+    startRealtime,
     // engine
     platoonFor,
     dayModel,

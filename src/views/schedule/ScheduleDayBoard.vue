@@ -248,6 +248,18 @@ async function removeNote(id: string) {
       </div>
     </section>
 
+    <section v-if="model.pending.length > 0" class="db__station">
+      <h3 class="db__station-name db__station-name--pend">Pending Requests</h3>
+      <div class="db__labeled db__labeled--pend">
+        <div v-for="r in model.pending" :key="r.id" class="db__row">
+          <span class="db__seat" :title="r.sub">{{ r.sub }}</span>
+          <span class="db__name">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+          <span class="db__time">{{ r.start }} – {{ r.end }}</span>
+        </div>
+      </div>
+      <p v-if="sched.canEdit.value" class="db__pendhint">Approve or deny these on the Requests tab.</p>
+    </section>
+
     <section v-if="model.unattached.length > 0" class="db__station">
       <h3 class="db__station-name">Other assignments</h3>
       <div v-for="ex in model.unattached" :key="ex.entryId ?? ex.name" class="db__row db__row--extra">
@@ -561,6 +573,21 @@ async function removeNote(id: string) {
 
 .db__station-name--off {
   color: oklch(0.5 0.13 60);
+}
+
+.db__station-name--pend {
+  color: var(--color-danger-500);
+}
+
+.db__labeled--pend {
+  border-color: oklch(0.88 0.06 27);
+  background: oklch(0.995 0.004 27);
+}
+
+.db__pendhint {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  margin: 0.35rem 0 0;
 }
 
 .db__labeled {
