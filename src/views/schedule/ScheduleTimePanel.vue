@@ -6,6 +6,7 @@ import {
   addDaysIso,
   payPeriodFor,
   payPeriodList,
+  holidayName,
   type PayPeriod,
   type TimeSegment,
 } from '@/composables/useSchedule'
@@ -125,6 +126,7 @@ interface MemberRow {
   regular: number
   instructor: number
   meeting: number
+  holiday: number // double-time hours worked on observed holidays
   total: number
   ot: number
 }
@@ -148,9 +150,11 @@ const summary = computed<MemberRow[]>(() => {
     let regular = 0
     let instructor = 0
     let meeting = 0
+    let holiday = 0
     const days = new Set<string>()
     for (const s of list) {
       days.add(s.dateIso)
+      if (holidayName(s.dateIso)) holiday += s.hours
       if (s.timeType === 'instructor') instructor += s.hours
       else if (s.timeType === 'meeting') meeting += s.hours
       else regular += s.hours
@@ -171,6 +175,7 @@ const summary = computed<MemberRow[]>(() => {
       regular: round2(regular),
       instructor: round2(instructor),
       meeting: round2(meeting),
+      holiday: round2(holiday),
       total: round2(regular + instructor + meeting),
       ot: round2(ot),
     })
@@ -182,12 +187,14 @@ const grand = computed(() => {
   let regular = 0
   let instructor = 0
   let meeting = 0
+  let holiday = 0
   let total = 0
   let ot = 0
   for (const r of summary.value) {
     regular += r.regular
     instructor += r.instructor
     meeting += r.meeting
+    holiday += r.holiday
     total += r.total
     ot += r.ot
   }
@@ -195,6 +202,7 @@ const grand = computed(() => {
     regular: round2(regular),
     instructor: round2(instructor),
     meeting: round2(meeting),
+    holiday: round2(holiday),
     total: round2(total),
     ot: round2(ot),
   }
@@ -257,7 +265,7 @@ function downloadFile(name: string, content: string): void {
 }
 
 function csvReport(): void {
-  const lines = ['Member,EE Code,Work Date,Source,Start,End,Hours,Type']
+  const lines = ['Member,EE Code,Work Date,Source,Start,End,Hours,Type,Holiday']
   const list = [...filtered.value].sort((a, b) => {
     const an = sched.personById.value.get(a.userId)?.fullName ?? ''
     const bn = sched.personById.value.get(b.userId)?.fullName ?? ''
@@ -275,6 +283,7 @@ function csvReport(): void {
         msHm(s.endMs),
         String(round2(s.hours)),
         s.timeType,
+        holidayName(s.dateIso) ?? '',
       ].join(','),
     )
   }
@@ -292,7 +301,7 @@ function printReport(): void {
       (r) => `<tr>
         <td>${r.name}${r.credential ? ` <span class="mut">- ${r.credential}</span>` : ''}</td>
         <td>${r.code ?? '—'}</td><td class="n">${r.days}</td><td class="n">${r.regular}</td>
-        <td class="n">${r.instructor}</td><td class="n">${r.meeting}</td>
+        <td class="n">${r.instructor}</td><td class="n">${r.meeting}</td><td class="n">${r.holiday || ''}</td>
         <td class="n"><strong>${r.total}</strong></td><td class="n">${r.ot}</td></tr>`,
     )
     .join('')
@@ -309,10 +318,10 @@ function printReport(): void {
     <h1>Waller County EMS — Scheduled Time</h1>
     <p class="sub">${rangeLabel.value} · generated ${new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })}</p>
     <table><thead><tr><th>Member</th><th>EE Code</th><th class="n">Days</th><th class="n">Regular</th>
-    <th class="n">Instructor</th><th class="n">Meeting</th><th class="n">Total hrs</th><th class="n">OT (>40/wk)</th></tr></thead>
+    <th class="n">Instructor</th><th class="n">Meeting</th><th class="n">Holiday</th><th class="n">Total hrs</th><th class="n">OT (>40/wk)</th></tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr><td colspan="3">Total</td><td class="n">${grand.value.regular}</td><td class="n">${grand.value.instructor}</td>
-    <td class="n">${grand.value.meeting}</td><td class="n">${grand.value.total}</td><td class="n">${grand.value.ot}</td></tr></tfoot>
+    <td class="n">${grand.value.meeting}</td><td class="n">${grand.value.holiday || ''}</td><td class="n">${grand.value.total}</td><td class="n">${grand.value.ot}</td></tr></tfoot>
     </table></body></html>`)
   w.document.close()
   w.focus()
@@ -331,12 +340,18 @@ interface PunchPair {
   hours: number
 }
 
-/** Punch-eligible coverage merged per member per work date. Instructor
- *  and meeting time carries a different earning code, and student rows
- *  aren't payroll — both are excluded and listed for manual entry. */
+/** Punch-eligible coverage merged per member per work date. Excluded
+ *  and exported as HOURS ROWS instead: instructor/meeting time (own
+ *  earning codes) and holiday work dates (double-time code) — when the
+ *  codes are configured. Student rows aren't payroll at all. */
 const punches = computed<PunchPair[]>(() => {
   if (preset.value !== 'period') return []
-  const eligible = segs.value.filter((s) => s.timeType === 'regular' && s.kind !== 'student')
+  const eligible = segs.value.filter(
+    (s) =>
+      s.timeType === 'regular' &&
+      s.kind !== 'student' &&
+      !(holidayCode.value && holidayName(s.dateIso)),
+  )
   const byKey = new Map<string, TimeSegment[]>()
   for (const s of eligible) {
     const k = `${s.userId}|${s.dateIso}`
@@ -381,6 +396,7 @@ const noCode = computed(() => {
 // codes). When set, those hours go into the file as hours rows; when
 // missing, they land on the manual-entry list instead.
 const payCfg = computed(() => (sched.settings.value['paycom'] ?? {}) as Record<string, unknown>)
+const holidayCode = computed(() => String(payCfg.value.holiday_code ?? '').trim())
 
 function earnCodeFor(timeType: string): string {
   if (timeType === 'instructor') return String(payCfg.value.instructor_code ?? '').trim()
@@ -398,14 +414,23 @@ interface HoursRow {
   timeType: string
 }
 
-/** Instructor/meeting hours rows for the import file: one summed row
- *  per member + date + earning code (members with EE codes only). */
+/** Hours rows for the import file, one summed row per member + date +
+ *  earning code (members with EE codes only): instructor/meeting time
+ *  with their codes, and holiday work dates with the double-time code. */
 const hoursRows = computed<HoursRow[]>(() => {
   if (preset.value !== 'period') return []
   const byKey = new Map<string, HoursRow>()
   for (const s of segs.value) {
-    if (s.timeType === 'regular' || s.kind === 'student') continue
-    const earn = earnCodeFor(s.timeType)
+    if (s.kind === 'student') continue
+    const holiday = !!holidayName(s.dateIso)
+    let earn = ''
+    let label = s.timeType
+    if (s.timeType !== 'regular') {
+      earn = earnCodeFor(s.timeType)
+    } else if (holiday && holidayCode.value) {
+      earn = holidayCode.value
+      label = 'holiday'
+    }
     if (!earn) continue
     const p = sched.personById.value.get(s.userId)
     if (!p?.paycomCode) continue
@@ -421,7 +446,7 @@ const hoursRows = computed<HoursRow[]>(() => {
         earn,
         hours: round2(s.hours),
         name: p.fullName,
-        timeType: s.timeType,
+        timeType: label,
       })
     }
   }
@@ -430,24 +455,42 @@ const hoursRows = computed<HoursRow[]>(() => {
   )
 })
 
-/** Instructor/meeting time that CANNOT go in the file — no earning
- *  code configured, or the member has no EE code. */
+/** Time that CANNOT go in the file — instructor/meeting with no
+ *  earning code, or a member with no EE code (holiday hours included
+ *  when the holiday code is set but the member lacks a code). */
 const manualEntries = computed(() => {
   if (preset.value !== 'period') return []
   return segs.value
-    .filter((s) => s.timeType !== 'regular' && s.kind !== 'student')
+    .filter((s) => s.kind !== 'student')
     .filter((s) => {
       const p = sched.personById.value.get(s.userId)
-      return !earnCodeFor(s.timeType) || !p?.paycomCode
+      if (s.timeType !== 'regular') return !earnCodeFor(s.timeType) || !p?.paycomCode
+      // regular holiday coverage: manual only when coded but member has no EE
+      return !!holidayCode.value && !!holidayName(s.dateIso) && !p?.paycomCode
     })
     .map((s) => ({
       name: sched.personById.value.get(s.userId)?.fullName ?? 'Unknown',
       dateIso: s.dateIso,
       hours: round2(s.hours),
-      timeType: s.timeType,
+      timeType:
+        s.timeType !== 'regular' ? s.timeType : `holiday (${holidayName(s.dateIso)})`,
       source: s.source,
     }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.dateIso.localeCompare(b.dateIso))
+})
+
+/** Holidays in this period whose double time ISN'T coded yet — their
+ *  coverage exports as ordinary punches until the code is set. */
+const uncodedHolidays = computed(() => {
+  if (preset.value !== 'period' || holidayCode.value) return []
+  const seen = new Map<string, string>()
+  for (const s of segs.value) {
+    const h = holidayName(s.dateIso)
+    if (h && s.timeType === 'regular' && s.kind !== 'student') seen.set(s.dateIso, h)
+  }
+  return [...seen.entries()]
+    .map(([dateIso, name]) => ({ dateIso, name }))
+    .sort((a, b) => a.dateIso.localeCompare(b.dateIso))
 })
 
 /** Paycom convention: a shift running to the 0600 changeover punches
@@ -565,6 +608,17 @@ const showPunches = ref(false)
       <span class="tm__actions">
         <button class="tm__btn" :disabled="busy || summary.length === 0" @click="csvReport">CSV</button>
         <button class="tm__btn" :disabled="busy || summary.length === 0" @click="printReport">Print</button>
+        <button v-if="preset === 'period'" class="tm__btn" @click="showPunches = !showPunches">
+          {{ showPunches ? 'Hide punches' : 'Verify punches' }}
+        </button>
+        <button
+          v-if="preset === 'period'"
+          class="tm__btn tm__btn--primary"
+          :disabled="busy || (punches.length === 0 && hoursRows.length === 0)"
+          @click="downloadPaycom"
+        >
+          Download Paycom CSV
+        </button>
       </span>
     </div>
 
@@ -584,6 +638,7 @@ const showPunches = ref(false)
             <th class="tm__n">Regular</th>
             <th class="tm__n">Instructor</th>
             <th class="tm__n">Meeting</th>
+            <th class="tm__n" title="Hours worked on observed holidays (0600 → 0600) — paid double time">Holiday</th>
             <th class="tm__n">Total hrs</th>
             <th class="tm__n" title="Estimated: hours over 40 per Sun–Sat week inside this range">OT (&gt;40/wk)</th>
           </tr>
@@ -603,11 +658,12 @@ const showPunches = ref(false)
               <td class="tm__n">{{ r.regular }}</td>
               <td class="tm__n">{{ r.instructor || '' }}</td>
               <td class="tm__n">{{ r.meeting || '' }}</td>
+              <td class="tm__n tm__hol">{{ r.holiday || '' }}</td>
               <td class="tm__n tm__total">{{ r.total }}</td>
               <td class="tm__n" :class="{ 'tm__ot': r.ot > 0 }">{{ r.ot || '' }}</td>
             </tr>
             <tr v-if="expanded === r.userId" class="tm__detailrow">
-              <td colspan="8">
+              <td colspan="9">
                 <div v-for="g in detail" :key="g.dateIso" class="tm__detailday">
                   <p class="tm__detailhead">{{ fmtDay(g.dateIso) }} <span class="tm__muted">· {{ g.hours }} hrs</span></p>
                   <div v-for="(s, i) in g.rows" :key="i" class="tm__seg">
@@ -626,6 +682,7 @@ const showPunches = ref(false)
             <td class="tm__n">{{ grand.regular }}</td>
             <td class="tm__n">{{ grand.instructor }}</td>
             <td class="tm__n">{{ grand.meeting }}</td>
+            <td class="tm__n tm__hol">{{ grand.holiday || '' }}</td>
             <td class="tm__n tm__total">{{ grand.total }}</td>
             <td class="tm__n">{{ grand.ot }}</td>
           </tr>
@@ -638,14 +695,6 @@ const showPunches = ref(false)
     <section v-if="preset === 'period'" class="tm__paycom">
       <div class="tm__paycom-head">
         <h2 class="tm__h">Paycom timecard import</h2>
-        <span class="tm__actions">
-          <button class="tm__btn" @click="showPunches = !showPunches">
-            {{ showPunches ? 'Hide punch verification' : 'Verify punches' }}
-          </button>
-          <button class="tm__btn tm__btn--primary" :disabled="busy || punches.length === 0" @click="downloadPaycom">
-            Download Paycom CSV
-          </button>
-        </span>
       </div>
       <p class="tm__muted">
         One IN (ID) and OUT (OD) punch per merged shift segment, per member with an EE code —
@@ -657,6 +706,11 @@ const showPunches = ref(false)
 
       <p v-if="noCode.length" class="tm__warn">
         No Paycom EE code — enter these manually: {{ noCode.join(', ') }}
+      </p>
+      <p v-if="uncodedHolidays.length" class="tm__warn">
+        {{ uncodedHolidays.map((h) => `${h.name} (${fmtDay(h.dateIso)})`).join(' · ') }} —
+        double time, but no holiday earning code is set in Setup, so these hours export as
+        ordinary punches. Set the code and they switch to holiday hours rows automatically.
       </p>
       <div v-if="hoursRows.length" class="tm__warn tm__warn--ok">
         <p class="tm__warnhead">In the file as hours rows:</p>
@@ -694,7 +748,10 @@ const showPunches = ref(false)
                 <span v-if="p.code">{{ p.code }}</span>
                 <span v-else class="tm__nocode">no code</span>
               </td>
-              <td>{{ fmtDay(p.dateIso) }}</td>
+              <td>
+                {{ fmtDay(p.dateIso) }}
+                <span v-if="holidayName(p.dateIso)" class="tm__holtag">{{ holidayName(p.dateIso) }}</span>
+              </td>
               <td>{{ centralPunch(p.inMs).date }} {{ centralPunch(p.inMs).time }}</td>
               <td>{{ centralPunch(punchOutMs(p.outMs)).date }} {{ centralPunch(punchOutMs(p.outMs)).time }}</td>
               <td class="tm__n">{{ p.hours }}</td>
@@ -858,6 +915,26 @@ const showPunches = ref(false)
 .tm__ot {
   color: var(--color-danger-500);
   font-weight: 700;
+}
+
+.tm__hol {
+  color: var(--color-accent-700);
+  font-weight: 600;
+}
+
+.tm__holtag {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+  border: 1px solid oklch(0.86 0.06 86.8);
+  background: oklch(0.985 0.012 86.8);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
 }
 
 .tm__nocode {

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import {
   useSchedule,
   todayCentralIso,
+  holidaysForYear,
   type Platoon,
   type SchedSeat,
   type UnitPreset,
@@ -360,6 +361,7 @@ async function rpSave() {
 
 const pcInstructor = ref('')
 const pcMeeting = ref('')
+const pcHoliday = ref('')
 const pcBusy = ref(false)
 const pcDone = ref<string | null>(null)
 const pcInit = ref(false)
@@ -372,6 +374,7 @@ watch(
     if (Object.keys(p).length === 0 && !sched.loaded.value) return
     pcInstructor.value = String(p.instructor_code ?? '')
     pcMeeting.value = String(p.meeting_code ?? '')
+    pcHoliday.value = String(p.holiday_code ?? '')
     pcInit.value = true
   },
   { immediate: true, deep: true },
@@ -385,6 +388,7 @@ async function pcSave() {
     ...(sched.settings.value['paycom'] ?? {}),
     instructor_code: pcInstructor.value.trim(),
     meeting_code: pcMeeting.value.trim(),
+    holiday_code: pcHoliday.value.trim(),
   }
   const e = await sched.saveSetting('paycom', merged)
   pcBusy.value = false
@@ -392,7 +396,21 @@ async function pcSave() {
     err.value = e
     return
   }
-  pcDone.value = 'Saved — instructor/meeting hours now export as hours rows in the Paycom file.'
+  pcDone.value = 'Saved — coded time now exports as hours rows in the Paycom file.'
+}
+
+const thisYear = Number(todayCentralIso().slice(0, 4))
+const holidayPreview = [...holidaysForYear(thisYear), ...holidaysForYear(thisYear + 1)].filter(
+  (h) => h.dateIso >= todayCentralIso(),
+).slice(0, 8)
+
+function fmtHoliday(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
 }
 
 // ── hour warnings & overtime (global admins) ─────────────────────────
@@ -725,7 +743,17 @@ async function saveWarnCfg() {
               <span>Meeting earning code</span>
               <input v-model="pcMeeting" type="text" class="setup__input" placeholder="e.g. MTG" />
             </label>
+            <label class="setup__field">
+              <span>Holiday earning code (double time)</span>
+              <input v-model="pcHoliday" type="text" class="setup__input" placeholder="e.g. HOL" />
+            </label>
           </div>
+          <p class="setup__muted">
+            Observed holidays run 0600 the day of until 0600 the next day (handbook 5.5) and
+            pay double time. With the code set, all coverage on those work dates exports as
+            holiday hours rows instead of punches. Upcoming:
+            <template v-for="(h, i) in holidayPreview" :key="h.dateIso">{{ i > 0 ? ' · ' : '' }}{{ h.name }} {{ fmtHoliday(h.dateIso) }}</template>
+          </p>
           <p v-if="pcDone" class="setup__done">{{ pcDone }}</p>
           <button class="setup__btn setup__btn--primary" :disabled="pcBusy" @click="pcSave">
             {{ pcBusy ? 'Saving…' : 'Save earning codes' }}

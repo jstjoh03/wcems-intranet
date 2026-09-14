@@ -329,6 +329,64 @@ function periodLabel(start: string, end: string): string {
   return `${fmt(start)} – ${fmt(end)}, ${yr}`
 }
 
+// ── observed paid holidays (handbook 5.5, eff. 04-17-2017) ───────────
+// A holiday runs 0600 the day of until 0600 the next day — exactly one
+// work date — and pays double time (holiday earning code in Setup).
+
+/** Easter Sunday (Anonymous Gregorian computus). */
+function easterSundayIso(year: number): string {
+  const a = year % 19
+  const b = Math.floor(year / 100)
+  const c = year % 100
+  const d = Math.floor(b / 4)
+  const e = b % 4
+  const f = Math.floor((b + 8) / 25)
+  const g = Math.floor((b - f + 1) / 3)
+  const h = (19 * a + b - d - g + 15) % 30
+  const i = Math.floor(c / 4)
+  const k = c % 4
+  const l = (32 + 2 * e + 2 * i - h - k) % 7
+  const m = Math.floor((a + 11 * h + 22 * l) / 451)
+  const month = Math.floor((h + l - 7 * m + 114) / 31)
+  const day = ((h + l - 7 * m + 114) % 31) + 1
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+function nthWeekdayIso(year: number, monthIdx: number, weekday: number, nth: number): string {
+  const first = new Date(year, monthIdx, 1)
+  const day = 1 + ((weekday - first.getDay() + 7) % 7) + (nth - 1) * 7
+  return `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+export interface HolidayRec {
+  dateIso: string
+  name: string
+}
+
+export function holidaysForYear(year: number): HolidayRec[] {
+  return [
+    { dateIso: `${year}-01-01`, name: "New Year's Day" },
+    { dateIso: easterSundayIso(year), name: 'Easter Sunday' },
+    { dateIso: `${year}-07-04`, name: 'Independence Day' },
+    { dateIso: nthWeekdayIso(year, 8, 1, 1), name: 'Labor Day' }, // 1st Mon of Sep
+    { dateIso: nthWeekdayIso(year, 10, 4, 4), name: 'Thanksgiving Day' }, // 4th Thu of Nov
+    { dateIso: `${year}-12-24`, name: 'Christmas Eve' },
+    { dateIso: `${year}-12-25`, name: 'Christmas Day' },
+    { dateIso: `${year}-12-31`, name: "New Year's Eve" },
+  ].sort((a, b) => a.dateIso.localeCompare(b.dateIso))
+}
+
+const holidayCache = new Map<number, Map<string, string>>()
+
+/** The holiday observed on this WORK DATE, or null. */
+export function holidayName(dateIso: string): string | null {
+  const year = Number(dateIso.slice(0, 4))
+  if (!holidayCache.has(year)) {
+    holidayCache.set(year, new Map(holidaysForYear(year).map((h) => [h.dateIso, h.name])))
+  }
+  return holidayCache.get(year)!.get(dateIso) ?? null
+}
+
 // ── display helpers ──────────────────────────────────────────────────
 
 /** '2026-09-12T11:00:00+00:00' → '0600' in Central time. */
