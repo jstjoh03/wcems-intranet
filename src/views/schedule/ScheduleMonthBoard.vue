@@ -173,6 +173,48 @@ const weeks = computed<Cell[][]>(() => {
             <span class="mb__time">{{ ex.start }}-{{ ex.end }}</span>
           </div>
 
+          <div v-if="c.model.extraHours.length" class="mb__section mb__section--extra">
+            <p class="mb__section-h">Extra Hours</p>
+            <div v-for="r in c.model.extraHours" :key="r.entryId" class="mb__lrow">
+              <div class="mb__row">
+                <button
+                  v-if="sched.canEdit.value"
+                  class="mb__name mb__rowbtn"
+                  :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }"
+                  title="Edit or delete these extra hours"
+                  @click="editor.openExtra(c.iso, r)"
+                >
+                  {{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span>
+                </button>
+                <span v-else class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
+              </div>
+              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
+            </div>
+          </div>
+
+          <div v-if="c.model.trades.length" class="mb__section mb__section--trade">
+            <p class="mb__section-h">Trades</p>
+            <div v-for="r in c.model.trades" :key="r.entryId" class="mb__lrow">
+              <div class="mb__row">
+                <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
+              </div>
+              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
+            </div>
+          </div>
+
+          <div v-if="c.model.timeOff.length" class="mb__section mb__section--off">
+            <p class="mb__section-h">Time Off</p>
+            <div v-for="r in c.model.timeOff" :key="r.entryId" class="mb__lrow">
+              <div class="mb__row">
+                <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
+                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
+              </div>
+              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
+            </div>
+          </div>
+
           <div v-for="ev in c.model.events" :key="ev.label" class="mb__event">
             <p class="mb__eventname">
               <button
@@ -213,48 +255,6 @@ const weeks = computed<Cell[][]>(() => {
                 :class="{ 'mb__name--me': !!row.userId && row.userId === sched.myUserId.value }"
               >{{ row.name }}</span>
               <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
-            </div>
-          </div>
-
-          <div v-if="c.model.extraHours.length" class="mb__section mb__section--extra">
-            <p class="mb__section-h">Extra Hours</p>
-            <div v-for="r in c.model.extraHours" :key="r.entryId" class="mb__lrow">
-              <div class="mb__row">
-                <button
-                  v-if="sched.canEdit.value"
-                  class="mb__name mb__rowbtn"
-                  :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }"
-                  title="Edit or delete these extra hours"
-                  @click="editor.openExtra(c.iso, r)"
-                >
-                  {{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span>
-                </button>
-                <span v-else class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
-                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
-              </div>
-              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
-            </div>
-          </div>
-
-          <div v-if="c.model.trades.length" class="mb__section mb__section--trade">
-            <p class="mb__section-h">Trades</p>
-            <div v-for="r in c.model.trades" :key="r.entryId" class="mb__lrow">
-              <div class="mb__row">
-                <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
-                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
-              </div>
-              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
-            </div>
-          </div>
-
-          <div v-if="c.model.timeOff.length" class="mb__section mb__section--off">
-            <p class="mb__section-h">Time Off</p>
-            <div v-for="r in c.model.timeOff" :key="r.entryId" class="mb__lrow">
-              <div class="mb__row">
-                <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
-                <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
-              </div>
-              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
             </div>
           </div>
 

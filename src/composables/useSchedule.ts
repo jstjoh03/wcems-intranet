@@ -191,6 +191,7 @@ export interface SchedEventRec {
   startTime: string
   endTime: string
   notes: string | null
+  doubleTime: boolean
 }
 
 /** One special event on a day: its own box under the set schedule. */
@@ -200,6 +201,7 @@ export interface DayEventBox {
   start: string | null // 'HHmm' when known
   end: string | null
   notes: string | null // hover detail set when the event was created
+  doubleTime: boolean // staffed events default to double time
   rows: SeatRow[] // assigned staff + open event seats
 }
 
@@ -685,6 +687,7 @@ async function loadRange(startIso: string, endIso: string): Promise<void> {
     startTime: String(r.start_time).slice(0, 5),
     endTime: String(r.end_time).slice(0, 5),
     notes: r.notes,
+    doubleTime: r.double_time ?? true,
   }))
   entries.value = (eRes.data ?? []).map(mapEntry)
   dayNotes.value = (nRes.data ?? []).map((r) => ({
@@ -1077,6 +1080,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
       start: listing ? listing.startTime.replace(':', '') : null,
       end: listing ? listing.endTime.replace(':', '') : null,
       notes: listing?.notes ?? null,
+      doubleTime: listing?.doubleTime ?? true,
       rows: boxRows,
     })
   }
@@ -1088,6 +1092,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
         start: ev.startTime.replace(':', ''),
         end: ev.endTime.replace(':', ''),
         notes: ev.notes,
+        doubleTime: ev.doubleTime,
         rows: [],
       })
     }
@@ -1415,6 +1420,7 @@ export interface TimeSegment {
   kind: string // worked kinds + 'timeoff' (approved time off, not worked)
   timeType: string // regular | instructor | meeting
   offType: string | null // set on kind 'timeoff' rows only
+  eventDouble?: boolean // kind 'event' rows: does this event pay double?
 }
 
 /**
@@ -1431,13 +1437,26 @@ async function fetchTimeSegments(
 ): Promise<{ segs: TimeSegment[]; error: string | null }> {
   const auth = useAuthStore()
   if (auth.usingDevStub) return { segs: [], error: null }
-  const res = await supabase
-    .from('sched_entries')
-    .select('*')
-    .gte('work_date', startIso)
-    .lte('work_date', endIso)
+  const [res, evRes] = await Promise.all([
+    supabase
+      .from('sched_entries')
+      .select('*')
+      .gte('work_date', startIso)
+      .lte('work_date', endIso),
+    supabase
+      .from('sched_events')
+      .select('label, on_date, double_time')
+      .gte('on_date', startIso)
+      .lte('on_date', endIso),
+  ])
   if (res.error) return { segs: [], error: res.error.message }
+  if (evRes.error) return { segs: [], error: evRes.error.message }
   const rows = (res.data ?? []).map(mapEntry)
+  const eventDoubleByKey = new Map(
+    ((evRes.data ?? []) as { label: string; on_date: string; double_time: boolean | null }[]).map(
+      (r) => [`${r.on_date}|${r.label}`, r.double_time ?? true] as [string, boolean],
+    ),
+  )
   const unitById = new Map(units.value.map((u) => [u.id, u]))
   const segs: TimeSegment[] = []
   for (let iso = startIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
@@ -1515,6 +1534,10 @@ async function fetchTimeSegments(
         kind: e.kind,
         timeType: e.timeType || 'regular',
         offType: null,
+        eventDouble:
+          e.kind === 'event'
+            ? (eventDoubleByKey.get(`${iso}|${e.note ?? 'Special event'}`) ?? true)
+            : undefined,
       })
     }
     // approved time off — not worked hours, carried for the Paycom
@@ -2656,6 +2679,7 @@ async function addEvent(opts: {
   paramedicSlots: number
   attendantSlots: number
   notes: string
+  doubleTime: boolean
 }): Promise<string | null> {
   const auth = useAuthStore()
   const ins = await supabase.from('sched_events').insert({
@@ -2665,6 +2689,7 @@ async function addEvent(opts: {
     end_time: normTime(opts.until),
     seats_total: opts.paramedicSlots + opts.attendantSlots,
     notes: opts.notes || null,
+    double_time: opts.doubleTime,
     created_by: auth.appUser?.id ?? null,
   })
   if (ins.error) return ins.error.message
@@ -2803,21 +2828,24 @@ async function updateEntryWindow(
   return null
 }
 
-/** Attach/update the hover note on an established event. Boxes that came
- *  from staffing rows alone (no sched_events listing yet, e.g. imported
- *  history) get a listing created so the note has somewhere to live. */
-async function setEventNotes(
+/** Update an established event's listing — hover note and/or the
+ *  double-time flag. Boxes that came from staffing rows alone (no
+ *  sched_events listing yet, e.g. imported history) get a listing
+ *  created so the fields have somewhere to live. */
+async function updateEventListing(
   dateIso: string,
   label: string,
   eventId: string | null,
   startHHmm: string | null, // box times, 'HHmm' — used only when creating a listing
   endHHmm: string | null,
-  notes: string,
+  patch: { notes?: string; doubleTime?: boolean },
 ): Promise<string | null> {
   const auth = useAuthStore()
-  const val = notes.trim() || null
+  const fields: Record<string, unknown> = {}
+  if (patch.notes !== undefined) fields.notes = patch.notes.trim() || null
+  if (patch.doubleTime !== undefined) fields.double_time = patch.doubleTime
   if (eventId) {
-    const res = await supabase.from('sched_events').update({ notes: val }).eq('id', eventId)
+    const res = await supabase.from('sched_events').update(fields).eq('id', eventId)
     if (res.error) return res.error.message
   } else {
     const res = await supabase.from('sched_events').insert({
@@ -2826,7 +2854,8 @@ async function setEventNotes(
       start_time: startHHmm ? normTime(startHHmm) : '06:00',
       end_time: endHHmm ? normTime(endHHmm) : '06:00',
       seats_total: 0,
-      notes: val,
+      notes: (patch.notes ?? '').trim() || null,
+      double_time: patch.doubleTime ?? true,
       created_by: auth.appUser?.id ?? null,
     })
     if (res.error) return res.error.message
@@ -3630,7 +3659,7 @@ export function useSchedule() {
     addStudent,
     addRiderSeats,
     updateStudentEntry,
-    setEventNotes,
+    updateEventListing,
     addDayNote,
     deleteDayNote,
     // hours engine + settings

@@ -424,7 +424,14 @@ function segCategory(s: TimeSegment): { key: string; label: string } | null {
   if (s.kind === 'student') return null
   if (s.timeType === 'instructor') return { key: 'instructor', label: 'instructor' }
   if (s.timeType === 'meeting') return { key: 'meeting', label: 'meeting' }
-  if (s.kind === 'event') return { key: 'event', label: 'special event' }
+  if (s.kind === 'event') {
+    // events marked regular pay punch like ordinary coverage (unless
+    // the date itself is a holiday)
+    if (s.eventDouble === false) {
+      return holidayName(s.dateIso) ? { key: 'holiday', label: 'holiday' } : null
+    }
+    return { key: 'event', label: 'special event' }
+  }
   if (holidayName(s.dateIso)) return { key: 'holiday', label: 'holiday' }
   return null
 }
@@ -523,7 +530,7 @@ const uncodedEventHours = computed(() => {
   if (preset.value !== 'period' || eventCode.value) return 0
   let h = 0
   for (const s of worked.value) {
-    if (s.kind === 'event' && s.timeType === 'regular') h += s.hours
+    if (s.kind === 'event' && s.timeType === 'regular' && s.eventDouble !== false) h += s.hours
   }
   return round2(h)
 })
@@ -969,15 +976,30 @@ const showPunches = ref(false)
   padding: 0.36rem 0.9rem;
   border: 1px solid var(--color-line);
   border-radius: 8px;
-  background: var(--color-surface);
+  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft));
+  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.08);
   color: var(--color-ink-soft);
   cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
 }
 
-.tm__btn--primary {
-  background: var(--color-brand-700);
-  border-color: var(--color-brand-700);
+.tm__btn:hover:not(:disabled) {
+  border-color: var(--color-brand-300);
+  box-shadow: 0 2px 6px oklch(0.3 0.03 260 / 0.14);
+}
+
+.tm__btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.tm__btn--primary,
+.tm__btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  border-color: var(--color-brand-800);
   color: white;
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.18),
+    0 2px 6px oklch(0.3 0.06 260 / 0.35);
 }
 
 .tm__btn:disabled {
@@ -1225,6 +1247,7 @@ const showPunches = ref(false)
   position: fixed;
   inset: 0;
   background: oklch(0.18 0.015 260 / 0.45);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1233,9 +1256,13 @@ const showPunches = ref(false)
 }
 
 .tm__modal {
-  background: var(--color-surface);
+  background: linear-gradient(180deg, var(--color-surface) 0%, oklch(0.985 0.004 90) 100%);
+  border: 1px solid var(--color-line);
+  border-top: 3px solid var(--color-brand-700);
   border-radius: 14px;
-  box-shadow: var(--shadow-lg);
+  box-shadow:
+    0 24px 60px oklch(0.2 0.03 260 / 0.28),
+    0 4px 14px oklch(0.2 0.03 260 / 0.14);
   width: min(880px, 100%);
   max-height: 88vh;
   display: flex;

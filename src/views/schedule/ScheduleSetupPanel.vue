@@ -850,6 +850,28 @@ async function saveWarnCfg() {
   margin: 0.4rem 0;
 }
 
+/* elevation recipe shared with the nav bar and modals */
+.setup__btn {
+  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft)) !important;
+  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.08);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.setup__btn:hover:not(:disabled) {
+  border-color: var(--color-brand-300);
+  box-shadow: 0 2px 6px oklch(0.3 0.03 260 / 0.14);
+}
+
+.setup__btn--primary,
+.setup__btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800)) !important;
+  border-color: var(--color-brand-800) !important;
+  color: white !important;
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.18),
+    0 2px 6px oklch(0.3 0.06 260 / 0.35);
+}
+
 .setup__warngrid {
   display: grid;
   grid-template-columns: 1fr 1fr;

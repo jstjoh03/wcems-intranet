@@ -188,54 +188,6 @@ async function removeNote(id: string) {
       </div>
     </section>
 
-    <section v-if="model.events.length > 0 || sched.canEdit.value" class="db__station">
-      <h3 class="db__station-name">Special events</h3>
-      <p v-if="model.events.length === 0" class="db__empty">No events this day.</p>
-
-      <div v-for="ev in model.events" :key="ev.label" class="db__event">
-        <div class="db__event-head">
-          <span class="db__event-name">{{ ev.label }}</span>
-          <span v-if="ev.notes" class="db__noteicon" :title="ev.notes">
-            <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
-          </span>
-          <span v-if="ev.start" class="db__time">{{ ev.start }} – {{ ev.end }}</span>
-          <span v-if="sched.canEdit.value" class="db__event-tools">
-            <button class="db__tool db__tool--sm" @click="editor.openEvent(props.dateIso, ev)">
-              Manage event
-            </button>
-          </span>
-        </div>
-        <p v-if="ev.rows.length === 0" class="db__empty">No staff assigned.</p>
-        <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="db__row">
-          <span class="db__seat">{{ row.open ? row.name : 'Staff' }}</span>
-          <button
-            v-if="row.open"
-            class="db__name db__name--open db__name--btn"
-            @click="editor.openEventSlot(props.dateIso, ev, row)"
-          >
-            {{ row.name }} — open
-          </button>
-          <button
-            v-else-if="sched.canEdit.value"
-            class="db__name db__name--btn"
-            :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
-            title="Manage this event"
-            @click="editor.openEvent(props.dateIso, ev)"
-          >
-            {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
-          </button>
-          <span
-            v-else
-            class="db__name"
-            :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
-          >
-            {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
-          </span>
-          <span class="db__time">{{ row.start }} – {{ row.end }}</span>
-        </div>
-      </div>
-    </section>
-
     <section v-if="model.extraHours.length > 0" class="db__station">
       <h3 class="db__station-name db__station-name--extra">Extra Hours</h3>
       <div class="db__labeled">
@@ -284,6 +236,55 @@ async function removeNote(id: string) {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
             </button>
           </span>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="model.events.length > 0 || sched.canEdit.value" class="db__station">
+      <h3 class="db__station-name">Special events</h3>
+      <p v-if="model.events.length === 0" class="db__empty">No events this day.</p>
+
+      <div v-for="ev in model.events" :key="ev.label" class="db__event">
+        <div class="db__event-head">
+          <span class="db__event-name">{{ ev.label }}</span>
+          <span v-if="ev.doubleTime" class="db__x2" title="Double-time event">2×</span>
+          <span v-if="ev.notes" class="db__noteicon" :title="ev.notes">
+            <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
+          </span>
+          <span v-if="ev.start" class="db__time">{{ ev.start }} – {{ ev.end }}</span>
+          <span v-if="sched.canEdit.value" class="db__event-tools">
+            <button class="db__tool db__tool--sm" @click="editor.openEvent(props.dateIso, ev)">
+              Manage event
+            </button>
+          </span>
+        </div>
+        <p v-if="ev.rows.length === 0" class="db__empty">No staff assigned.</p>
+        <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="db__row">
+          <span class="db__seat">{{ row.open ? row.name : 'Staff' }}</span>
+          <button
+            v-if="row.open"
+            class="db__name db__name--open db__name--btn"
+            @click="editor.openEventSlot(props.dateIso, ev, row)"
+          >
+            {{ row.name }} — open
+          </button>
+          <button
+            v-else-if="sched.canEdit.value"
+            class="db__name db__name--btn"
+            :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+            title="Manage this event"
+            @click="editor.openEvent(props.dateIso, ev)"
+          >
+            {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
+          </button>
+          <span
+            v-else
+            class="db__name"
+            :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+          >
+            {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
+          </span>
+          <span class="db__time">{{ row.start }} – {{ row.end }}</span>
         </div>
       </div>
     </section>
@@ -387,10 +388,30 @@ async function removeNote(id: string) {
   padding: 0.28rem 0.7rem;
   border: 1px solid var(--color-line);
   border-radius: 7px;
-  background: var(--color-surface);
+  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft));
+  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.08);
   color: var(--color-brand-600);
   cursor: pointer;
   white-space: nowrap;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.db__tool:hover {
+  border-color: var(--color-brand-300);
+  box-shadow: 0 2px 5px oklch(0.3 0.03 260 / 0.14);
+}
+
+.db__x2 {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--color-accent-700);
+  border: 1px solid oklch(0.82 0.08 86.8);
+  background: oklch(0.97 0.03 86.8);
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 
 .db__tool--sm {

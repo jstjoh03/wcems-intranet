@@ -522,31 +522,44 @@ const eventBox = computed(() => {
   return sched.dayModel(ctx.dateIso).events.find((e) => e.label === ctx.label) ?? null
 })
 
-async function saveEventNotes(): Promise<void> {
+function eventListingArgs(): [string, string, string | null, string | null, string | null] | null {
   const ctx = editor.eventEdit.value
-  if (!ctx || busy.value) return
-  busy.value = true
-  err.value = null
+  if (!ctx) return null
   const box = eventBox.value
   // A box with no sched_events listing yet (imported history) gets one
-  // created to hold the note — default its times to the staffing rows.
+  // created to hold the fields — default its times to the staffing rows.
   const rows = box?.rows ?? []
   const start = box?.start ?? ctx.start ?? rows[0]?.start ?? null
   const end = box?.end ?? ctx.end ?? rows[rows.length - 1]?.end ?? null
-  const e = await sched.setEventNotes(
-    ctx.dateIso,
-    ctx.label,
-    box?.eventId ?? ctx.eventId,
-    start,
-    end,
-    evNotes.value,
-  )
+  return [ctx.dateIso, ctx.label, box?.eventId ?? ctx.eventId, start, end]
+}
+
+async function saveEventNotes(): Promise<void> {
+  const args = eventListingArgs()
+  if (!args || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.updateEventListing(...args, { notes: evNotes.value })
   busy.value = false
   if (e) {
     err.value = e
     return
   }
   flash('Event note saved.')
+}
+
+async function toggleEventDouble(val: boolean): Promise<void> {
+  const args = eventListingArgs()
+  if (!args || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.updateEventListing(...args, { doubleTime: val })
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash(val ? 'Marked double time.' : 'Marked regular pay.')
 }
 
 async function evAddSlot(title: string): Promise<void> {
@@ -603,6 +616,7 @@ const aeUntil = ref('21:00')
 const aeMedics = ref(1)
 const aeAttendants = ref(1)
 const aeNotes = ref('')
+const aeDouble = ref(true)
 
 const noteText = ref('')
 const noteUnit = ref('')
@@ -632,6 +646,7 @@ watch(editor.add, (a) => {
   aeUntil.value = '21:00'
   aeMedics.value = 1
   aeAttendants.value = 1
+  aeDouble.value = true
   noteText.value = ''
   noteUnit.value = ''
   noteRemind.value = false
@@ -698,6 +713,7 @@ async function submitAddEvent(): Promise<void> {
     paramedicSlots: Math.max(0, aeMedics.value),
     attendantSlots: Math.max(0, aeAttendants.value),
     notes: aeNotes.value,
+    doubleTime: aeDouble.value,
   })
   busy.value = false
   if (e) {
@@ -1036,6 +1052,15 @@ async function submitAddStudent(): Promise<void> {
           <textarea v-model="evNotes" class="em__input em__textarea" rows="3" placeholder="Staging location, contacts, radio channel…" />
         </label>
         <button class="em__btn" :disabled="busy" @click="saveEventNotes">Save note</button>
+        <label class="em__check">
+          <input
+            type="checkbox"
+            :checked="(eventBox?.doubleTime ?? true)"
+            :disabled="busy"
+            @change="toggleEventDouble(($event.target as HTMLInputElement).checked)"
+          />
+          Double-time event (staffed hours pay 2× on the Paycom export)
+        </label>
 
         <template v-if="eventBox">
           <div class="em__div">staffing</div>
@@ -1145,6 +1170,10 @@ async function submitAddStudent(): Promise<void> {
             <span>Notes</span>
             <input v-model="aeNotes" type="text" class="em__input" placeholder="Optional" />
           </label>
+          <label class="em__check">
+            <input v-model="aeDouble" type="checkbox" />
+            Double-time event (staffed hours pay 2× on the Paycom export)
+          </label>
           <p v-if="err" class="em__error">{{ err }}</p>
           <button class="em__btn em__btn--primary" :disabled="busy" @click="submitAddEvent">Create event</button>
           <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Cancel</button>
@@ -1234,7 +1263,8 @@ async function submitAddStudent(): Promise<void> {
 .em__overlay {
   position: fixed;
   inset: 0;
-  background: oklch(0.18 0.015 260 / 0.4);
+  background: oklch(0.18 0.015 260 / 0.45);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1243,9 +1273,13 @@ async function submitAddStudent(): Promise<void> {
 }
 
 .em__modal {
-  background: var(--color-surface);
+  background: linear-gradient(180deg, var(--color-surface) 0%, oklch(0.985 0.004 90) 100%);
+  border: 1px solid var(--color-line);
+  border-top: 3px solid var(--color-brand-700);
   border-radius: 14px;
-  box-shadow: var(--shadow-lg);
+  box-shadow:
+    0 24px 60px oklch(0.2 0.03 260 / 0.28),
+    0 4px 14px oklch(0.2 0.03 260 / 0.14);
   padding: 1.1rem 1.2rem;
   width: min(400px, 100%);
   max-height: min(85vh, 700px);
@@ -1321,26 +1355,44 @@ async function submitAddStudent(): Promise<void> {
   font: inherit;
   font-size: 0.82rem;
   font-weight: 600;
-  padding: 0.32rem 0.8rem;
+  padding: 0.38rem 0.8rem;
   border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: var(--color-surface);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft));
+  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.08);
   color: var(--color-ink-soft);
   cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
 }
 
-.em__btn--primary {
-  background: var(--color-brand-700);
-  border-color: var(--color-brand-700);
+.em__btn:hover {
+  border-color: var(--color-brand-300);
+  box-shadow: 0 2px 6px oklch(0.3 0.03 260 / 0.14);
+}
+
+.em__btn:active {
+  transform: translateY(1px);
+}
+
+.em__btn--primary,
+.em__btn--primary:hover {
+  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  border-color: var(--color-brand-800);
   color: white;
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.18),
+    0 2px 6px oklch(0.3 0.06 260 / 0.35);
 }
 
 .em__btn--danger {
   color: var(--color-danger-500);
 }
 
-.em__btn--ghost {
+.em__btn--ghost,
+.em__btn--ghost:hover {
   border: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--color-muted);
 }
 

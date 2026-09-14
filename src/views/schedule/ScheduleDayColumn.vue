@@ -124,48 +124,6 @@ const header = computed(() =>
       </div>
     </div>
 
-    <div v-for="ev in model.events" :key="ev.label" class="dc__event">
-      <p class="dc__event-name" :title="ev.notes ?? undefined">
-        <button
-          v-if="sched.canEdit.value"
-          class="dc__rowbtn dc__rowbtn--ev"
-          title="Manage this event — notes, slots, delete"
-          @click="editor.openEvent(dateIso, ev)"
-        >
-          {{ ev.label }}
-        </button>
-        <template v-else>{{ ev.label }}</template>
-        <span v-if="ev.notes" class="dc__noteicon" />
-      </p>
-      <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="dc__row">
-        <button
-          v-if="row.open"
-          class="dc__name dc__name--open dc__rowbtn"
-          title="Open — click to request or assign"
-          @click="editor.openEventSlot(dateIso, ev, row)"
-        >
-          {{ row.name }}
-        </button>
-        <button
-          v-else-if="sched.canEdit.value"
-          class="dc__name dc__rowbtn"
-          :class="{ 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
-          title="Manage this event"
-          @click="editor.openEvent(dateIso, ev)"
-        >
-          {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
-        </button>
-        <span
-          v-else
-          class="dc__name"
-          :class="{ 'dc__name--open': row.open, 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
-        >
-          {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
-        </span>
-        <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
-      </div>
-    </div>
-
     <div v-if="model.extraHours.length" class="dc__section dc__section--extra">
       <p class="dc__section-h">Extra Hours</p>
       <div v-for="r in model.extraHours" :key="r.entryId">
@@ -205,6 +163,48 @@ const header = computed(() =>
           <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
         </div>
         <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
+      </div>
+    </div>
+
+    <div v-for="ev in model.events" :key="ev.label" class="dc__event">
+      <p class="dc__event-name" :title="ev.notes ?? undefined">
+        <button
+          v-if="sched.canEdit.value"
+          class="dc__rowbtn dc__rowbtn--ev"
+          title="Manage this event — notes, slots, delete"
+          @click="editor.openEvent(dateIso, ev)"
+        >
+          {{ ev.label }}
+        </button>
+        <template v-else>{{ ev.label }}</template>
+        <span v-if="ev.notes" class="dc__noteicon" />
+      </p>
+      <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="dc__row">
+        <button
+          v-if="row.open"
+          class="dc__name dc__name--open dc__rowbtn"
+          title="Open — click to request or assign"
+          @click="editor.openEventSlot(dateIso, ev, row)"
+        >
+          {{ row.name }}
+        </button>
+        <button
+          v-else-if="sched.canEdit.value"
+          class="dc__name dc__rowbtn"
+          :class="{ 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+          title="Manage this event"
+          @click="editor.openEvent(dateIso, ev)"
+        >
+          {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
+        </button>
+        <span
+          v-else
+          class="dc__name"
+          :class="{ 'dc__name--open': row.open, 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+        >
+          {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
+        </span>
+        <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
       </div>
     </div>
 
