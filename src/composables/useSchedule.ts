@@ -2686,7 +2686,8 @@ async function addEvent(opts: {
   return null
 }
 
-/** Delete an event box: its staffing/open rows and its listing. */
+/** Delete an event box: its staffing/open rows and its listing. Any
+ *  approved pickups that filled its slots get voided too. */
 async function deleteEventBox(dateIso: string, label: string, eventId: string | null): Promise<string | null> {
   const del = await supabase
     .from('sched_entries')
@@ -2694,7 +2695,16 @@ async function deleteEventBox(dateIso: string, label: string, eventId: string | 
     .eq('work_date', dateIso)
     .eq('kind', 'event')
     .eq('note', label)
+    .select('source_request')
   if (del.error) return del.error.message
+  const reqIds = [
+    ...new Set(
+      ((del.data ?? []) as { source_request: string | null }[])
+        .map((r) => r.source_request)
+        .filter((x): x is string => !!x),
+    ),
+  ]
+  for (const id of reqIds) await voidRequestIfOrphaned(id)
   if (eventId) {
     const del2 = await supabase.from('sched_events').delete().eq('id', eventId)
     if (del2.error) return del2.error.message
@@ -2735,9 +2745,37 @@ async function addEventSlot(dateIso: string, label: string, title: string, from:
   return null
 }
 
+/** An approved request whose resulting shift was later deleted no
+ *  longer reflects reality — cancel it with a note so the Requests
+ *  tab, history, and payroll stay honest. Only fires when no other
+ *  entries still reference the request (trades write two). */
+async function voidRequestIfOrphaned(requestId: string): Promise<void> {
+  const left = await supabase
+    .from('sched_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_request', requestId)
+  if (left.error || (left.count ?? 0) > 0) return
+  await supabase
+    .from('sched_requests')
+    .update({
+      status: 'cancelled',
+      decision_note: 'Removed from the calendar after approval',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', requestId)
+    .eq('status', 'approved')
+  await loadRequests()
+}
+
 async function removeEntry(entryId: string): Promise<string | null> {
-  const res = await supabase.from('sched_entries').delete().eq('id', entryId)
+  const res = await supabase
+    .from('sched_entries')
+    .delete()
+    .eq('id', entryId)
+    .select('source_request')
   if (res.error) return res.error.message
+  const reqId = (res.data?.[0]?.source_request as string | null) ?? null
+  if (reqId) await voidRequestIfOrphaned(reqId)
   await reloadRangeIfLoaded()
   return null
 }

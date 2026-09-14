@@ -118,6 +118,16 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+/** Paycom sorts people by LAST name — every list here follows suit. */
+function lastNameKey(name: string): string {
+  const parts = name.trim().split(/\s+/)
+  return `${parts[parts.length - 1] ?? ''} ${name}`.toLowerCase()
+}
+
+function byLast(a: string, b: string): number {
+  return lastNameKey(a).localeCompare(lastNameKey(b))
+}
+
 function weekStartFor(iso: string): string {
   return addDaysIso(iso, -new Date(`${iso}T00:00:00`).getDay())
 }
@@ -185,7 +195,7 @@ const summary = computed<MemberRow[]>(() => {
       ot: round2(ot),
     })
   }
-  return out.sort((a, b) => a.name.localeCompare(b.name))
+  return out.sort((a, b) => byLast(a.name, b.name))
 })
 
 const grand = computed(() => {
@@ -274,7 +284,7 @@ function csvReport(): void {
   const list = [...filtered.value].sort((a, b) => {
     const an = sched.personById.value.get(a.userId)?.fullName ?? ''
     const bn = sched.personById.value.get(b.userId)?.fullName ?? ''
-    return an.localeCompare(bn) || a.dateIso.localeCompare(b.dateIso) || a.startMs - b.startMs
+    return byLast(an, bn) || a.dateIso.localeCompare(b.dateIso) || a.startMs - b.startMs
   })
   for (const s of list) {
     const p = sched.personById.value.get(s.userId)
@@ -386,7 +396,7 @@ const punches = computed<PunchPair[]>(() => {
     }
   }
   return out.sort(
-    (a, b) => a.name.localeCompare(b.name) || a.dateIso.localeCompare(b.dateIso) || a.inMs - b.inMs,
+    (a, b) => byLast(a.name, b.name) || a.dateIso.localeCompare(b.dateIso) || a.inMs - b.inMs,
   )
 })
 
@@ -420,6 +430,7 @@ function segCategory(s: TimeSegment): { key: string; label: string } | null {
 }
 
 interface HoursRow {
+  userId: string
   code: string
   date: string // MM/DD/YYYY
   dateIso: string
@@ -450,6 +461,7 @@ const hoursRows = computed<HoursRow[]>(() => {
     if (cur) cur.hours = round2(cur.hours + s.hours)
     else {
       byKey.set(key, {
+        userId: s.userId,
         code: p.paycomCode,
         date: `${m}/${d}/${y}`,
         dateIso: s.dateIso,
@@ -461,7 +473,7 @@ const hoursRows = computed<HoursRow[]>(() => {
     }
   }
   return [...byKey.values()].sort(
-    (a, b) => a.code.localeCompare(b.code) || a.dateIso.localeCompare(b.dateIso),
+    (a, b) => byLast(a.name, b.name) || a.dateIso.localeCompare(b.dateIso),
   )
 })
 
@@ -487,7 +499,7 @@ const manualEntries = computed(() => {
       timeType: cat!.label,
       source: s.source,
     }))
-    .sort((a, b) => a.name.localeCompare(b.name) || a.dateIso.localeCompare(b.dateIso))
+    .sort((a, b) => byLast(a.name, b.name) || a.dateIso.localeCompare(b.dateIso))
 })
 
 /** Holidays in this period whose double time ISN'T coded yet — that
@@ -539,6 +551,51 @@ function punchOutMs(ms: number): number {
   return centralPunch(ms).time === '06:00' ? ms - 60_000 : ms
 }
 
+/** Punch pairs grouped per employee (last-name order) — drives the
+ *  verification modal and the export-selected checkboxes. Members with
+ *  only hours rows (PTO, events…) appear too so they're selectable. */
+interface PunchGroup {
+  userId: string
+  name: string
+  code: string | null
+  pairs: PunchPair[]
+  hours: number
+}
+
+const punchGroups = computed<PunchGroup[]>(() => {
+  const m = new Map<string, PunchGroup>()
+  for (const p of punches.value) {
+    if (!m.has(p.userId)) m.set(p.userId, { userId: p.userId, name: p.name, code: p.code, pairs: [], hours: 0 })
+    const g = m.get(p.userId)!
+    g.pairs.push(p)
+    g.hours = round2(g.hours + p.hours)
+  }
+  for (const h of hoursRows.value) {
+    if (!m.has(h.userId)) {
+      m.set(h.userId, { userId: h.userId, name: h.name, code: h.code, pairs: [], hours: 0 })
+    }
+  }
+  return [...m.values()].sort((a, b) => byLast(a.name, b.name))
+})
+
+// export-selected: which employees go in the file (default: everyone)
+const selectedIds = ref<Set<string>>(new Set())
+
+watch(punchGroups, (groups) => {
+  selectedIds.value = new Set(groups.map((g) => g.userId))
+})
+
+function toggleSelected(userId: string) {
+  const s = new Set(selectedIds.value)
+  if (s.has(userId)) s.delete(userId)
+  else s.add(userId)
+  selectedIds.value = s
+}
+
+function selectAll(on: boolean) {
+  selectedIds.value = on ? new Set(punchGroups.value.map((g) => g.userId)) : new Set()
+}
+
 function centralPunch(ms: number): { date: string; time: string } {
   const d = new Date(ms)
   const date = new Intl.DateTimeFormat('en-US', {
@@ -560,13 +617,12 @@ function centralPunch(ms: number): { date: string; time: string } {
  *  code, blank, MM/DD/YYYY, HH:MM (24h), ID/OD; hours rows carry the
  *  earning code in column F and hours in column J (instructor/meeting
  *  time, when earning codes are configured in Setup). */
-function downloadPaycom(): void {
+function downloadPaycom(onlySelected = false): void {
+  const keep = (userId: string) => !onlySelected || selectedIds.value.has(userId)
   const rows: string[] = []
   const withCode = punches.value
-    .filter((p) => p.code)
-    .sort(
-      (a, b) => (a.code ?? '').localeCompare(b.code ?? '') || a.inMs - b.inMs,
-    )
+    .filter((p) => p.code && keep(p.userId))
+    .sort((a, b) => byLast(a.name, b.name) || a.inMs - b.inMs)
   for (const p of withCode) {
     const iin = centralPunch(p.inMs)
     const out = centralPunch(punchOutMs(p.outMs))
@@ -574,15 +630,18 @@ function downloadPaycom(): void {
     rows.push(`${p.code},,${iin.date},${iin.time},ID${blank12}`)
     rows.push(`${p.code},,${out.date},${out.time},OD${blank12}`)
   }
-  for (const h of hoursRows.value) {
+  for (const h of hoursRows.value.filter((x) => x.code && keep(x.userId))) {
     // A..Q: code,,date,,,EARN,,,,hours + 7 trailing blanks = 17 fields
     rows.push(`${h.code},,${h.date},,,${h.earn},,,,${h.hours},,,,,,,`)
   }
   if (rows.length === 0) {
-    err.value = 'No rows to export for this period.'
+    err.value = onlySelected
+      ? 'No employees selected — tick who to export in the punch list.'
+      : 'No rows to export for this period.'
     return
   }
-  downloadFile(`paycom-import_${range.value.start}_${range.value.end}.csv`, rows.join('\r\n'))
+  const suffix = onlySelected ? '_selected' : ''
+  downloadFile(`paycom-import_${range.value.start}_${range.value.end}${suffix}.csv`, rows.join('\r\n'))
 }
 
 const showPunches = ref(false)
@@ -647,14 +706,14 @@ const showPunches = ref(false)
       <span class="tm__actions">
         <button class="tm__btn" :disabled="busy || summary.length === 0" @click="csvReport">CSV</button>
         <button class="tm__btn" :disabled="busy || summary.length === 0" @click="printReport">Print</button>
-        <button v-if="preset === 'period'" class="tm__btn" @click="showPunches = !showPunches">
-          {{ showPunches ? 'Hide punches' : 'Verify punches' }}
+        <button v-if="preset === 'period'" class="tm__btn" @click="showPunches = true">
+          Verify / select punches
         </button>
         <button
           v-if="preset === 'period'"
           class="tm__btn tm__btn--primary"
           :disabled="busy || (punches.length === 0 && hoursRows.length === 0)"
-          @click="downloadPaycom"
+          @click="downloadPaycom()"
         >
           Download Paycom CSV
         </button>
@@ -683,8 +742,12 @@ const showPunches = ref(false)
           </tr>
         </thead>
         <tbody>
-          <template v-for="r in summary" :key="r.userId">
-            <tr class="tm__row" @click="expanded = expanded === r.userId ? null : r.userId">
+          <template v-for="(r, ri) in summary" :key="r.userId">
+            <tr
+              class="tm__row"
+              :class="{ 'tm__row--alt': ri % 2 === 1 }"
+              @click="expanded = expanded === r.userId ? null : r.userId"
+            >
               <td>
                 <span class="tm__name">{{ r.name }}</span>
                 <span v-if="r.credential" class="tm__muted"> - {{ r.credential }}</span>
@@ -778,37 +841,81 @@ const showPunches = ref(false)
         </p>
       </div>
 
-      <div v-if="showPunches" class="tm__scroll">
-        <table class="tm__table tm__table--punch">
-          <thead>
-            <tr>
-              <th>Member</th>
-              <th>EE code</th>
-              <th>Work date</th>
-              <th>IN</th>
-              <th>OUT</th>
-              <th class="tm__n">Hrs</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(p, i) in punches" :key="i" :class="{ 'tm__row--nocode': !p.code }">
-              <td>{{ p.name }}</td>
-              <td>
-                <span v-if="p.code">{{ p.code }}</span>
-                <span v-else class="tm__nocode">no code</span>
-              </td>
-              <td>
-                {{ fmtDay(p.dateIso) }}
-                <span v-if="holidayName(p.dateIso)" class="tm__holtag">{{ holidayName(p.dateIso) }}</span>
-              </td>
-              <td>{{ centralPunch(p.inMs).date }} {{ centralPunch(p.inMs).time }}</td>
-              <td>{{ centralPunch(punchOutMs(p.outMs)).date }} {{ centralPunch(punchOutMs(p.outMs)).time }}</td>
-              <td class="tm__n">{{ p.hours }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
     </section>
+
+    <!-- punch verification + export-selected modal -->
+    <div v-if="showPunches" class="tm__overlay" @click.self="showPunches = false">
+      <div class="tm__modal">
+        <div class="tm__modal-head">
+          <h2 class="tm__h">Punch verification — {{ rangeLabel }}</h2>
+          <span class="tm__actions">
+            <button class="tm__btn" @click="selectAll(true)">All</button>
+            <button class="tm__btn" @click="selectAll(false)">None</button>
+            <button
+              class="tm__btn tm__btn--primary"
+              :disabled="selectedIds.size === 0"
+              @click="downloadPaycom(true)"
+            >
+              Download selected ({{ selectedIds.size }} of {{ punchGroups.length }})
+            </button>
+            <button class="tm__btn" @click="showPunches = false">Close</button>
+          </span>
+        </div>
+        <p class="tm__muted tm__modal-hint">
+          Untick anyone whose timecard shouldn't be touched — handy when only a few need a
+          re-import. OUT punches at the 0600 changeover show as 05:59 (Paycom convention).
+        </p>
+
+        <div class="tm__modal-scroll">
+          <table class="tm__table tm__table--punch">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Work date</th>
+                <th>IN</th>
+                <th>OUT</th>
+                <th class="tm__n">Hrs</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="g in punchGroups" :key="g.userId">
+                <tr class="tm__emprow">
+                  <td colspan="4">
+                    <label class="tm__empcheck">
+                      <input
+                        type="checkbox"
+                        :checked="selectedIds.has(g.userId)"
+                        @change="toggleSelected(g.userId)"
+                      />
+                      <span class="tm__name">{{ g.name }}</span>
+                      <span v-if="g.code" class="tm__muted">· {{ g.code }}</span>
+                      <span v-else class="tm__nocode">no code</span>
+                      <span v-if="g.pairs.length === 0" class="tm__muted">· hours rows only</span>
+                    </label>
+                  </td>
+                  <td class="tm__n">{{ g.hours || '' }}</td>
+                </tr>
+                <tr
+                  v-for="(p, i) in g.pairs"
+                  :key="i"
+                  class="tm__punchrow"
+                  :class="{ 'tm__row--alt': i % 2 === 1, 'tm__row--off': !selectedIds.has(g.userId) }"
+                >
+                  <td></td>
+                  <td>
+                    {{ fmtDay(p.dateIso) }}
+                    <span v-if="holidayName(p.dateIso)" class="tm__holtag">{{ holidayName(p.dateIso) }}</span>
+                  </td>
+                  <td>{{ centralPunch(p.inMs).date }} {{ centralPunch(p.inMs).time }}</td>
+                  <td>{{ centralPunch(punchOutMs(p.outMs)).date }} {{ centralPunch(punchOutMs(p.outMs)).time }}</td>
+                  <td class="tm__n">{{ p.hours }}</td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -931,8 +1038,12 @@ const showPunches = ref(false)
   color: var(--color-ink-soft);
 }
 
-.tm__table tbody tr:nth-child(4n + 3):not(.tm__detailrow) {
+.tm__row--alt {
   background: oklch(0.45 0.02 260 / 0.045);
+}
+
+.tm__row--off td {
+  opacity: 0.45;
 }
 
 .tm__n {
@@ -1110,8 +1221,62 @@ const showPunches = ref(false)
   margin: 0.1rem 0;
 }
 
-.tm__row--nocode td {
-  background: oklch(0.97 0.02 27);
+.tm__overlay {
+  position: fixed;
+  inset: 0;
+  background: oklch(0.18 0.015 260 / 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+  padding: 1.2rem;
+}
+
+.tm__modal {
+  background: var(--color-surface);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  width: min(880px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.1rem;
+  gap: 0.4rem;
+}
+
+.tm__modal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.tm__modal-hint {
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.tm__modal-scroll {
+  overflow: auto;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+}
+
+.tm__emprow td {
+  background: var(--color-surface-soft);
+  border-top: 2px solid var(--color-line);
+  font-weight: 600;
+}
+
+.tm__empcheck {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.tm__punchrow td:first-child {
+  width: 28px;
 }
 
 @media (max-width: 700px) {

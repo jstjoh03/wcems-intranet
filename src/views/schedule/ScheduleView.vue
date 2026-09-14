@@ -41,20 +41,21 @@ const tab = ref<Tab>('month')
 const dateIso = ref(todayCentralIso())
 
 /* Members and Setup are editor tools — non-editors (supervisors during
-   the soft launch, crew after) get the calendar + request tabs only. */
-const TABS = computed<{ key: Tab; label: string }[]>(() => {
-  const t: { key: Tab; label: string }[] = [
+   the soft launch, crew after) get the calendar + request tabs only.
+   `group` starts a new visual cluster in the tab bar. */
+const TABS = computed<{ key: Tab; label: string; group?: boolean }[]>(() => {
+  const t: { key: Tab; label: string; group?: boolean }[] = [
     { key: 'month', label: 'Month' },
     { key: 'day', label: 'Day' },
     { key: 'week', label: 'Week' },
     { key: 'period', label: 'Pay period' },
-    { key: 'mine', label: 'My schedule' },
-    { key: 'requests', label: 'Requests' },
+    { key: 'mine', label: 'My schedule', group: true },
+    { key: 'requests', label: 'Requests', group: true },
     { key: 'trades', label: 'Trades' },
   ]
   if (sched.canEdit.value) {
     t.push(
-      { key: 'time', label: 'Time' },
+      { key: 'time', label: 'Payroll', group: true },
       { key: 'members', label: 'Members' },
       { key: 'setup', label: 'Setup' },
     )
@@ -192,20 +193,21 @@ watch(dateIso, (v) => {
           <h1 class="sched__title">Scheduling</h1>
         </div>
         <div class="sched__tabs" role="tablist">
-          <button
-            v-for="t in TABS"
-            :key="t.key"
-            class="sched__tab"
-            :class="{ 'sched__tab--on': tab === t.key }"
-            role="tab"
-            :aria-selected="tab === t.key"
-            @click="tab = t.key"
-          >
-            {{ t.label
-            }}<span v-if="t.key === 'requests' && pendingCount > 0" class="sched__tab-badge">{{
-              pendingCount
-            }}</span>
-          </button>
+          <template v-for="t in TABS" :key="t.key">
+            <span v-if="t.group" class="sched__tabdiv" aria-hidden="true" />
+            <button
+              class="sched__tab"
+              :class="{ 'sched__tab--on': tab === t.key }"
+              role="tab"
+              :aria-selected="tab === t.key"
+              @click="tab = t.key"
+            >
+              {{ t.label
+              }}<span v-if="t.key === 'requests' && pendingCount > 0" class="sched__tab-badge">{{
+                pendingCount
+              }}</span>
+            </button>
+          </template>
         </div>
       </header>
 
@@ -291,30 +293,72 @@ watch(dateIso, (v) => {
   margin: 0;
 }
 
+/* The module's main navigator — give it real presence: an elevated
+   bar, grouped clusters, and a navy pill with a gold accent when
+   active, instead of a flat strip that disappears into the page. */
 .sched__tabs {
   display: inline-flex;
+  align-items: center;
   border: 1px solid var(--color-line);
-  border-radius: 10px;
-  background: var(--color-surface);
-  padding: 3px;
+  border-bottom-color: oklch(0.82 0.02 260);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface-soft) 100%);
+  box-shadow:
+    0 1px 2px oklch(0.3 0.03 260 / 0.08),
+    0 3px 10px oklch(0.3 0.03 260 / 0.09);
+  padding: 4px;
   gap: 2px;
+  flex-wrap: wrap;
+}
+
+.sched__tabdiv {
+  width: 1px;
+  align-self: stretch;
+  margin: 5px 4px;
+  background: var(--color-line);
 }
 
 .sched__tab {
+  position: relative;
   border: 0;
   background: transparent;
   font: inherit;
   font-size: 0.85rem;
   font-weight: 600;
-  color: var(--color-muted);
-  padding: 0.35rem 0.85rem;
-  border-radius: 7px;
+  color: var(--color-ink-soft);
+  padding: 0.45rem 0.95rem;
+  border-radius: 9px;
   cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
-.sched__tab--on {
-  background: var(--color-brand-700);
+.sched__tab:hover {
+  background: oklch(0.94 0.015 260);
+  color: var(--color-brand-700);
+}
+
+.sched__tab--on,
+.sched__tab--on:hover {
+  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
   color: white;
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.18),
+    0 2px 6px oklch(0.3 0.06 260 / 0.35);
+}
+
+.sched__tab--on::after {
+  content: '';
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--color-accent-500, oklch(0.78 0.13 86.8));
+  opacity: 0.9;
 }
 
 .sched__tab-badge {
