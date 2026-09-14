@@ -343,7 +343,15 @@ const header = computed(() =>
   align-items: baseline;
   justify-content: space-between;
   gap: 0.4rem;
-  padding: 0.08rem 0;
+  padding: 0.08rem 0.2rem;
+  margin: 0 -0.2rem;
+}
+
+/* subtle zebra inside each unit block (child 1 is the unit name, so
+   odd children are the 2nd/4th rows) */
+.dc__unit > .dc__row:nth-child(odd) {
+  background: oklch(0.45 0.02 260 / 0.045);
+  border-radius: 3px;
 }
 
 .dc__name {

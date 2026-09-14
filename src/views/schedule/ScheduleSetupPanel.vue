@@ -656,6 +656,16 @@ async function saveWarnCfg() {
   margin: 0.6rem 0;
 }
 
+/* subtle zebra so long tables scan row-by-row at a glance */
+.setup__table tbody tr:nth-child(even) {
+  background: oklch(0.45 0.02 260 / 0.045);
+}
+
+.setup__unitblock:nth-child(even) .setup__unitrow {
+  background: oklch(0.45 0.02 260 / 0.045);
+  border-radius: 6px;
+}
+
 .setup__unitblock {
   border-bottom: 1px solid var(--color-line-soft);
 }

@@ -456,6 +456,15 @@ const weeks = computed<Cell[][]>(() => {
   justify-content: space-between;
   gap: 0.3rem;
   line-height: 1.35;
+  padding: 0 0.2rem;
+  margin: 0 -0.2rem;
+}
+
+/* subtle zebra inside each unit block — rows scan at a glance.
+   (child 1 is the unit name, so odd children are the 2nd/4th rows) */
+.mb__unit > .mb__row:nth-child(odd) {
+  background: oklch(0.45 0.02 260 / 0.045);
+  border-radius: 3px;
 }
 
 .mb__name {

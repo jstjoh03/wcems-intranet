@@ -471,8 +471,19 @@ async function removeNote(id: string) {
   grid-template-columns: 110px 1fr auto;
   align-items: baseline;
   gap: 0.6rem;
-  padding: 0.3rem 0;
+  padding: 0.3rem 0.45rem;
+  margin: 0 -0.45rem;
   border-bottom: 1px solid var(--color-line-soft);
+}
+
+/* subtle zebra — rows scan at a glance on busy days. Unit/event blocks
+   lead with a header child, so their odd children are 2nd/4th rows;
+   labeled sections are rows only, so even children are. */
+.db__unit > .db__row:nth-child(odd),
+.db__event > .db__row:nth-child(odd),
+.db__labeled > .db__row:nth-child(even) {
+  background: oklch(0.45 0.02 260 / 0.045);
+  border-radius: 4px;
 }
 
 .db__row:last-child {
