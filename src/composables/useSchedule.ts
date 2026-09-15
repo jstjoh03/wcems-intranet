@@ -143,6 +143,38 @@ export interface MemberSettings {
   smsOptIn: boolean
 }
 
+/** Message types × channels for the per-member notification matrix
+ *  (Aladtec's My Requests / My Alerts grids). Stored in
+ *  sched_member_settings.notify as {key: {push,email,sms}} — a missing
+ *  key or channel means ON. The notifications/page-out build consumes
+ *  these; until then the matrix records preferences ahead of delivery. */
+export const NOTIFY_TYPES: { key: string; label: string; editorOnly?: boolean }[] = [
+  { key: 'request_decision', label: 'A request of mine is approved or denied' },
+  { key: 'schedule_change', label: 'My schedule is changed by a scheduler' },
+  { key: 'open_shift', label: 'Open shifts & page-outs' },
+  { key: 'trade_activity', label: 'Trades — offers and claims on my postings' },
+  { key: 'reminders', label: 'Shift reminders' },
+  { key: 'approvals', label: 'A request needs approval', editorOnly: true },
+]
+
+export type NotifyChannel = 'push' | 'email' | 'sms'
+
+export const NOTIFY_CHANNELS: { key: NotifyChannel; label: string }[] = [
+  { key: 'push', label: 'Push' },
+  { key: 'email', label: 'Email' },
+  { key: 'sms', label: 'Text' },
+]
+
+/** Read one cell of the notify matrix — absent means ON. */
+export function notifyOn(
+  notify: Record<string, unknown>,
+  type: string,
+  ch: NotifyChannel,
+): boolean {
+  const t = notify?.[type] as Record<string, unknown> | undefined
+  return t?.[ch] !== false
+}
+
 export interface DayNote {
   id: string
   onDate: string

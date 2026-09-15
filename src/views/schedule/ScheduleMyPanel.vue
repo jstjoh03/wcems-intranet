@@ -5,6 +5,12 @@ import {
   todayCentralIso,
   addDaysIso,
   hhmm,
+  NOTIFY_TYPES,
+  NOTIFY_CHANNELS,
+  notifyOn,
+  type Availability,
+  type MemberSettings,
+  type NotifyChannel,
   type SchedRequest,
 } from '@/composables/useSchedule'
 import ScheduleMonthBoard from './ScheduleMonthBoard.vue'
@@ -143,6 +149,82 @@ const TYPE_LABELS: Record<string, string> = {
   giveaway: 'Giveaway',
 }
 
+// ── my settings (contact, notifications, unavailable days) ──────────
+
+const setOpen = ref(false)
+const mySet = ref<MemberSettings | null>(null)
+const myUnavail = ref<Availability[]>([])
+const setBusy = ref(false)
+const setSaved = ref(false)
+const setErr = ref<string | null>(null)
+
+const myPerson = computed(() =>
+  sched.myUserId.value ? (sched.personById.value.get(sched.myUserId.value) ?? null) : null,
+)
+
+/** Editors and supervisors also get the approvals row. */
+const myNotifyTypes = computed(() =>
+  NOTIFY_TYPES.filter(
+    (t) => !t.editorOnly || sched.canEdit.value || sched.level.value === 'supervisor',
+  ),
+)
+
+async function openSettings() {
+  setOpen.value = true
+  setSaved.value = false
+  setErr.value = null
+  mySet.value = null
+  const me = sched.myUserId.value
+  if (!me) return
+  mySet.value = await sched.fetchMemberSettings(me)
+  myUnavail.value = await sched.listMyUnavailable()
+}
+
+function nChecked(key: string, ch: NotifyChannel): boolean {
+  return mySet.value ? notifyOn(mySet.value.notify, key, ch) : true
+}
+
+function nToggle(key: string, ch: NotifyChannel, ev: Event) {
+  if (!mySet.value) return
+  const on = (ev.target as HTMLInputElement).checked
+  const n = { ...(mySet.value.notify as Record<string, Record<string, boolean>>) }
+  n[key] = { ...(n[key] ?? {}), [ch]: on }
+  mySet.value.notify = n
+}
+
+async function saveSettings() {
+  if (!mySet.value) return
+  setBusy.value = true
+  setErr.value = null
+  setSaved.value = false
+  const e = await sched.saveMemberSettings(mySet.value)
+  setBusy.value = false
+  if (e) {
+    setErr.value = e
+    return
+  }
+  setSaved.value = true
+}
+
+async function removeUnavail(id: string) {
+  setErr.value = null
+  const e = await sched.clearUnavailable(id)
+  if (e) {
+    setErr.value = e
+    return
+  }
+  myUnavail.value = await sched.listMyUnavailable()
+}
+
+function fmtUnavail(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
 function pendingLine(r: SchedRequest): string {
   const bits: string[] = []
   if (r.workDate) {
@@ -206,6 +288,84 @@ function pendingLine(r: SchedRequest): string {
           · {{ monthShiftCount }} shift {{ monthShiftCount === 1 ? 'day' : 'days' }} this month
         </template>
       </span>
+
+      <button class="my__navbtn my__setbtn" @click="openSettings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
+        My settings
+      </button>
+    </div>
+
+    <div v-if="setOpen" class="my__overlay" @click.self="setOpen = false">
+      <div class="my__modal" role="dialog" aria-label="My settings">
+        <h3 class="my__mtitle">My settings</h3>
+        <p v-if="setErr" class="my__merr">{{ setErr }}</p>
+
+        <template v-if="mySet">
+          <section class="my__msec">
+            <h4 class="my__mh">Contact on file</h4>
+            <p class="my__mline">
+              {{ myPerson?.phone ?? 'No phone on file' }} · {{ myPerson?.email ?? 'no email on file' }}
+            </p>
+            <p class="my__mhint">Wrong or missing? Ask the office to update your roster record.</p>
+            <label class="my__mcheck">
+              <input v-model="mySet.smsOptIn" type="checkbox" />
+              Send me text messages (applies when texting goes live)
+            </label>
+          </section>
+
+          <section class="my__msec">
+            <h4 class="my__mh">Notifications</h4>
+            <table class="my__ntable">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th v-for="ch in NOTIFY_CHANNELS" :key="ch.key">{{ ch.label }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="t in myNotifyTypes" :key="t.key">
+                  <td class="my__ntype">{{ t.label }}</td>
+                  <td v-for="ch in NOTIFY_CHANNELS" :key="ch.key">
+                    <input
+                      type="checkbox"
+                      :checked="nChecked(t.key, ch.key)"
+                      :disabled="ch.key === 'sms' && !mySet.smsOptIn"
+                      :aria-label="`${t.label} — ${ch.label}`"
+                      @change="nToggle(t.key, ch.key, $event)"
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="my__mhint">
+              Delivery starts with the notifications rollout — your choices here are ready for it.
+            </p>
+          </section>
+
+          <section class="my__msec">
+            <h4 class="my__mh">Unavailable days</h4>
+            <p v-if="myUnavail.length === 0" class="my__mhint">
+              None marked. Protect a rotation day off from Requests → Time off → “Mark unavailable”.
+            </p>
+            <ul v-else class="my__ulist">
+              <li v-for="a in myUnavail" :key="a.id" class="my__urow">
+                <span class="my__udate">{{ fmtUnavail(a.onDate) }}</span>
+                <span v-if="a.reason" class="my__ureason">{{ a.reason }}</span>
+                <button class="my__uremove" @click="removeUnavail(a.id)">Remove</button>
+              </li>
+            </ul>
+          </section>
+
+          <div class="my__mfoot">
+            <span v-if="setSaved" class="my__msaved">Saved.</span>
+            <button class="my__navbtn" @click="setOpen = false">Close</button>
+            <button class="my__msave" :disabled="setBusy" @click="saveSettings">
+              {{ setBusy ? 'Saving…' : 'Save settings' }}
+            </button>
+          </div>
+        </template>
+        <p v-else class="my__mhint">Loading…</p>
+      </div>
     </div>
 
     <ScheduleMonthBoard v-if="view === 'month'" :month="monthAnchor" mine @open-day="openDay" />
@@ -359,5 +519,200 @@ function pendingLine(r: SchedRequest): string {
   margin-left: auto;
   font-size: 0.78rem;
   color: var(--color-muted);
+}
+
+.my__setbtn {
+  gap: 6px;
+}
+
+/* ── My settings modal (module elevation recipe) ── */
+
+.my__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: oklch(0.25 0.03 260 / 0.42);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 7vh 1rem 2rem;
+  overflow-y: auto;
+}
+
+.my__modal {
+  width: min(560px, 100%);
+  background:
+    linear-gradient(180deg, oklch(1 0 0 / 0.9), oklch(0.985 0.004 84 / 0.9)),
+    var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-top: 3px solid var(--color-brand-700);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px oklch(0.2 0.04 260 / 0.28), 0 4px 14px oklch(0.2 0.04 260 / 0.12);
+  padding: 1rem 1.2rem 1.1rem;
+}
+
+.my__mtitle {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  color: var(--color-ink);
+  margin: 0 0 0.6rem;
+}
+
+.my__msec {
+  border-top: 1px solid var(--color-line-soft);
+  padding: 0.7rem 0 0.4rem;
+}
+
+.my__mh {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin: 0 0 0.4rem;
+}
+
+.my__mline {
+  font-size: 0.86rem;
+  color: var(--color-ink);
+  margin: 0 0 0.15rem;
+  overflow-wrap: anywhere;
+}
+
+.my__mhint {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  margin: 0.15rem 0 0.4rem;
+}
+
+.my__mcheck {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.84rem;
+  color: var(--color-ink-soft);
+  margin: 0.35rem 0 0.2rem;
+}
+
+.my__merr {
+  font-size: 0.8rem;
+  color: var(--color-danger-600, oklch(0.5 0.19 27));
+  background: oklch(0.98 0.013 27);
+  border: 1px solid oklch(0.88 0.06 27);
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  margin: 0 0 0.6rem;
+}
+
+.my__ntable {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  width: 100%;
+}
+
+.my__ntable th {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  padding: 0.25rem 0.5rem;
+  text-align: center;
+}
+
+.my__ntable td {
+  padding: 0.3rem 0.5rem;
+  border-top: 1px solid var(--color-line-soft);
+  text-align: center;
+}
+
+.my__ntable td.my__ntype {
+  text-align: left;
+  color: var(--color-ink-soft);
+  padding-left: 0;
+}
+
+.my__ntable input[type='checkbox']:disabled {
+  opacity: 0.4;
+}
+
+.my__ulist {
+  list-style: none;
+  margin: 0.2rem 0 0.3rem;
+  padding: 0;
+}
+
+.my__urow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--color-line-soft);
+  font-size: 0.84rem;
+  flex-wrap: wrap;
+}
+
+.my__urow:last-child {
+  border-bottom: 0;
+}
+
+.my__udate {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.my__ureason {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.my__uremove {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-danger-600, oklch(0.5 0.19 27));
+  background: transparent;
+  border: 1px solid oklch(0.88 0.06 27);
+  border-radius: 7px;
+  padding: 0.1rem 0.5rem;
+  cursor: pointer;
+}
+
+.my__mfoot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  border-top: 1px solid var(--color-line-soft);
+  padding-top: 0.7rem;
+  margin-top: 0.4rem;
+}
+
+.my__msaved {
+  font-size: 0.8rem;
+  color: var(--color-success-600, oklch(0.55 0.13 150));
+  margin-right: auto;
+}
+
+.my__msave {
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 600;
+  padding: 0.4rem 1rem;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.18), 0 1px 2px oklch(0.2 0.04 260 / 0.2);
+  color: white;
+  cursor: pointer;
+}
+
+.my__msave:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 </style>

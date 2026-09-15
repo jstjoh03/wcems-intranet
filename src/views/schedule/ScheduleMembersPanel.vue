@@ -3,7 +3,11 @@ import { ref, computed, onMounted } from 'vue'
 import {
   useSchedule,
   INTERNAL_CREDENTIALS,
+  NOTIFY_TYPES,
+  NOTIFY_CHANNELS,
+  notifyOn,
   type MemberSettings,
+  type NotifyChannel,
   type SchedPerson,
 } from '@/composables/useSchedule'
 
@@ -116,6 +120,25 @@ function toggleUnitExclusion(unitId: string) {
   const i = detail.value.unitExclusions.indexOf(unitId)
   if (i >= 0) detail.value.unitExclusions.splice(i, 1)
   else detail.value.unitExclusions.push(unitId)
+}
+
+/** Editors and supervisors get the approvals row; crew don't see it. */
+function notifyTypesFor(p: { id: string; role: string }) {
+  const lvl = effectiveLevel(p)
+  const editorish = lvl === 'global_admin' || lvl === 'scheduler' || lvl === 'supervisor'
+  return NOTIFY_TYPES.filter((t) => !t.editorOnly || editorish)
+}
+
+function notifyChecked(key: string, ch: NotifyChannel): boolean {
+  return detail.value ? notifyOn(detail.value.notify, key, ch) : true
+}
+
+function toggleNotify(key: string, ch: NotifyChannel, ev: Event) {
+  if (!detail.value) return
+  const on = (ev.target as HTMLInputElement).checked
+  const n = { ...(detail.value.notify as Record<string, Record<string, boolean>>) }
+  n[key] = { ...(n[key] ?? {}), [ch]: on }
+  detail.value.notify = n
 }
 
 async function saveDetail() {
@@ -258,6 +281,35 @@ function credSourceLine(p: SchedPerson): string {
             </section>
           </div>
 
+          <section class="mem__block mem__block--notify">
+            <h3 class="mem__block-h">Notifications</h3>
+            <p class="mem__note-sm">
+              Which messages reach this member, per channel. Text needs the opt-in above<template v-if="detail && !detail.smsOptIn"> — currently opted out</template>; delivery begins with the notifications rollout.
+            </p>
+            <table v-if="detail" class="mem__ntable">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th v-for="ch in NOTIFY_CHANNELS" :key="ch.key">{{ ch.label }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="t in notifyTypesFor(p)" :key="t.key">
+                  <td class="mem__ntype">{{ t.label }}</td>
+                  <td v-for="ch in NOTIFY_CHANNELS" :key="ch.key">
+                    <input
+                      type="checkbox"
+                      :checked="notifyChecked(t.key, ch.key)"
+                      :disabled="(!sched.canEdit.value && p.id !== sched.myUserId.value) || (ch.key === 'sms' && !detail.smsOptIn)"
+                      :aria-label="`${t.label} — ${ch.label}`"
+                      @change="toggleNotify(t.key, ch.key, $event)"
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
           <div class="mem__detail-foot">
             <span v-if="detailSaved" class="mem__saved">Saved.</span>
             <select
@@ -285,10 +337,6 @@ function credSourceLine(p: SchedPerson): string {
       </template>
     </div>
 
-    <p class="mem__note">
-      Per-member notification matrix (which message types go to push / email / text) is coming
-      to this screen with the notifications build.
-    </p>
   </div>
 </template>
 
@@ -526,6 +574,42 @@ function credSourceLine(p: SchedPerson): string {
   font-size: 0.78rem;
   color: var(--color-muted);
   margin-top: 0.8rem;
+}
+
+.mem__block--notify {
+  margin-top: 0.9rem;
+}
+
+.mem__ntable {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin-top: 0.4rem;
+}
+
+.mem__ntable th {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  padding: 0.25rem 0.9rem 0.25rem 0;
+  text-align: center;
+}
+
+.mem__ntable td {
+  padding: 0.28rem 0.9rem 0.28rem 0;
+  border-top: 1px solid var(--color-line-soft);
+  text-align: center;
+}
+
+.mem__ntable td.mem__ntype {
+  text-align: left;
+  color: var(--color-ink-soft);
+  padding-right: 1.2rem;
+}
+
+.mem__ntable input[type='checkbox']:disabled {
+  opacity: 0.4;
 }
 
 .mem__cred-src {
