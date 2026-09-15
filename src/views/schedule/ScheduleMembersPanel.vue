@@ -137,6 +137,22 @@ async function changeCredential(userId: string, ev: Event) {
   const e = await sched.setCredential(userId, val || null)
   if (e) err.value = e
 }
+
+/** One-line provenance under the credential select. */
+function credSourceLine(p: SchedPerson): string {
+  switch (p.credentialSource) {
+    case 'manual':
+      return `Manual override — auto would be ${p.credentialAuto ?? 'none'} (choose Auto to track the clinical pipeline)`
+    case 'pipeline':
+      return 'Auto — tracks the clinical pipeline'
+    case 'role':
+      return 'Auto — from portal role'
+    case 'title':
+      return 'Auto — from title (not in the clinical pipeline)'
+    default:
+      return 'No credential — set one, or enroll them in the clinical pipeline'
+  }
+}
 </script>
 
 <template>
@@ -180,13 +196,14 @@ async function changeCredential(userId: string, ev: Event) {
                     <select
                       v-if="sched.canEdit.value"
                       class="mem__select"
-                      :value="p.credential ?? ''"
+                      :value="p.credentialSource === 'manual' ? (p.credential ?? '') : ''"
                       @change="changeCredential(p.id, $event)"
                     >
-                      <option value="">—</option>
+                      <option value="">Auto{{ p.credentialAuto ? ' (' + p.credentialAuto + ')' : '' }}</option>
                       <option v-for="c in INTERNAL_CREDENTIALS" :key="c" :value="c">{{ c }}</option>
                     </select>
                     <template v-else>{{ p.credential ?? '—' }}</template>
+                    <p class="mem__cred-src">{{ credSourceLine(p) }}</p>
                   </dd>
                 </div>
                 <div><dt>Title</dt><dd>{{ p.title ?? '—' }}</dd></div>
@@ -509,5 +526,13 @@ async function changeCredential(userId: string, ev: Event) {
   font-size: 0.78rem;
   color: var(--color-muted);
   margin-top: 0.8rem;
+}
+
+.mem__cred-src {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  margin: 0.25rem 0 0;
+  max-width: 260px;
+  line-height: 1.35;
 }
 </style>

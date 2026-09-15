@@ -114,6 +114,9 @@ export interface SchedPerson {
   shift: string | null
   role: string
   credential: string | null
+  /** What the credential resolves to with no manual row (role / pipeline / title). */
+  credentialAuto: string | null
+  credentialSource: 'manual' | 'role' | 'pipeline' | 'title' | null
   title: string | null
   email: string | null
   phone: string | null
@@ -481,7 +484,7 @@ async function loadCore(): Promise<void> {
     loaded.value = true
     return
   }
-  const [uRes, sRes, rRes, pRes, lvlRes, cRes, setRes] = await Promise.all([
+  const [uRes, sRes, rRes, pRes, lvlRes, cRes, setRes, pipeRes] = await Promise.all([
     supabase.from('sched_units').select('*').order('sort_order'),
     supabase.from('sched_seats').select('*').order('sort_order'),
     supabase.from('sched_rotation_assignments').select('*'),
@@ -494,6 +497,7 @@ async function loadCore(): Promise<void> {
     supabase.rpc('sched_level'),
     supabase.from('sched_credentials').select('user_id, credential'),
     supabase.from('sched_settings').select('key, value'),
+    supabase.rpc('sched_pipeline_credentials'),
   ])
   const err = uRes.error ?? sRes.error ?? rRes.error ?? pRes.error ?? lvlRes.error
   if (err) {
@@ -531,17 +535,39 @@ async function loadCore(): Promise<void> {
   const credByUser = new Map<string, string>(
     ((cRes.data ?? []) as { user_id: string; credential: string }[]).map((r) => [r.user_id, r.credential]),
   )
-  people.value = (pRes.data ?? []).map((r) => ({
-    id: r.id,
-    fullName: r.full_name,
-    shift: r.shift,
-    role: r.role,
-    credential: credByUser.get(r.id) ?? defaultInternalCredential(r.role, r.title),
-    title: r.title,
-    email: r.email,
-    phone: r.phone,
-    paycomCode: r.paycom_employee_code ?? null,
-  }))
+  // Pipeline-derived credentials (security-definer fn — same view for
+  // crew and editors). A failed read just falls back to title defaults.
+  const pipeCredByUser = new Map<string, string>()
+  if (!pipeRes.error) {
+    for (const r of (pipeRes.data ?? []) as { user_id: string; credential: string | null }[]) {
+      if (r.credential) pipeCredByUser.set(r.user_id, r.credential)
+    }
+  }
+  people.value = (pRes.data ?? []).map((r) => {
+    const explicit = credByUser.get(r.id) ?? null
+    const pipeline = pipeCredByUser.get(r.id) ?? null
+    const titleCred = defaultInternalCredential(r.role, r.title)
+    const auto = r.role === 'supervisor' ? 'Supervisor' : (pipeline ?? titleCred)
+    const source =
+      explicit !== null ? ('manual' as const)
+      : r.role === 'supervisor' ? ('role' as const)
+      : pipeline !== null ? ('pipeline' as const)
+      : titleCred !== null ? ('title' as const)
+      : null
+    return {
+      id: r.id,
+      fullName: r.full_name,
+      shift: r.shift,
+      role: r.role,
+      credential: explicit ?? auto,
+      credentialAuto: auto,
+      credentialSource: source,
+      title: r.title,
+      email: r.email,
+      phone: r.phone,
+      paycomCode: r.paycom_employee_code ?? null,
+    }
+  })
   const setMap: Record<string, Record<string, unknown>> = {}
   for (const r of (setRes.data ?? []) as { key: string; value: Record<string, unknown> }[]) {
     setMap[r.key] = r.value ?? {}
@@ -592,8 +618,8 @@ function seedDevStub(): void {
   }
   seats.value = out
   people.value = [
-    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X' },
-    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null },
+    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', credentialAuto: 'P2', credentialSource: 'pipeline', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X' },
+    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', credentialAuto: 'EMT', credentialSource: 'title', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null },
   ]
 }
 
