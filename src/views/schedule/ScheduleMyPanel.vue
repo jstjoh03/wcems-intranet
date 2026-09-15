@@ -309,8 +309,13 @@ function pendingLine(r: SchedRequest): string {
             <p class="my__mhint">Wrong or missing? Ask the office to update your roster record.</p>
             <label class="my__mcheck">
               <input v-model="mySet.smsOptIn" type="checkbox" />
-              Send me text messages (applies when texting goes live)
+              Send me text messages about scheduling
             </label>
+            <p class="my__mhint">
+              Optional — never required. Frequency varies with schedule activity; message &amp;
+              data rates may apply. Reply STOP to any message to opt out (or untick this box),
+              HELP for help.
+            </p>
           </section>
 
           <section class="my__msec">
