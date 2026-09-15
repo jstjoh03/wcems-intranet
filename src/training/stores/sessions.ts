@@ -86,6 +86,7 @@ function toAttendee(r: any): Attendee {
     phone: r.phone ?? '',
     status: r.status ?? 'CheckedIn',
     psaScore: r.psa_score ?? null,
+    psaCertPath: r.psa_cert_path ?? null,
     phase: r.phase ?? 'checkedin',
     ecardIssuedAt: r.ecard_issued_at ?? null,
     ceCertIssuedAt: r.ce_cert_issued_at ?? null,
@@ -325,9 +326,10 @@ export const useSessionsStore = defineStore('sessions', () => {
       })
     }
 
-    // Exams + CE certs: nested as {sessionId}/{Exam|CE}/{safeEmail}/<file>.
-    // List the student-folders first, then list each one to collect files.
-    for (const recordType of ['Exam', 'CE'] as const) {
+    // Exams + CE certs + PSA certs: nested as
+    // {sessionId}/{Exam|CE|PSA}/{safeEmail}/<file>. List the
+    // student-folders first, then list each one to collect files.
+    for (const recordType of ['Exam', 'CE', 'PSA'] as const) {
       const prefix = `${sessionId}/${recordType}`
       const { data: studentDirs } = await supabase.storage
         .from('training-archives')
@@ -484,6 +486,15 @@ export const useSessionsStore = defineStore('sessions', () => {
         })
         .eq('session_id', sessionId)
         .eq('ce_cert_path', file.path)
+    }
+
+    if (file.recordType === 'PSA') {
+      // Clear the roster reference so the Upload button comes back.
+      await supabase
+        .from('training_attendance')
+        .update({ psa_cert_path: null })
+        .eq('session_id', sessionId)
+        .eq('psa_cert_path', file.path)
     }
   }
 
@@ -770,6 +781,7 @@ export const useSessionsStore = defineStore('sessions', () => {
    *    {sessionId}/Evaluation/...
    *    {sessionId}/Exam/{safeEmail}/...
    *    {sessionId}/CE/{safeEmail}/...
+   *    {sessionId}/PSA/{safeEmail}/...
    *  so we list each prefix (including the per-student subfolders)
    *  and remove() in batches. */
   async function deleteSession(sessionId: string): Promise<{
@@ -788,7 +800,7 @@ export const useSessionsStore = defineStore('sessions', () => {
         if (f.name && !f.name.startsWith('.')) paths.push(`${prefix}/${f.name}`)
       }
     }
-    for (const recordType of ['Exam', 'CE'] as const) {
+    for (const recordType of ['Exam', 'CE', 'PSA'] as const) {
       const prefix = `${sessionId}/${recordType}`
       const { data: dirs } = await supabase.storage
         .from('training-archives')
@@ -868,6 +880,43 @@ export const useSessionsStore = defineStore('sessions', () => {
       blob: file,
       studentEmail,
     })
+  }
+
+  /** ACLS/PALS: archive a student's PSA completion certificate and
+   *  point their roster row at it (newer AHA precourse work shows no
+   *  numeric score, so the certificate IS the record). Re-uploading
+   *  archives a new file (5-year retention — nothing is overwritten)
+   *  and moves the roster reference to the latest one. */
+  async function uploadPsaCert(
+    attendeeId: string,
+    sessionId: string,
+    studentEmail: string,
+    file: File,
+  ) {
+    const { path } = await archiveFile({
+      sessionId,
+      recordType: 'PSA',
+      fileName: file.name,
+      blob: file,
+      studentEmail,
+    })
+    const { error } = await supabase
+      .from('training_attendance')
+      .update({ psa_cert_path: path })
+      .eq('id', attendeeId)
+    if (error) throw new Error(error.message)
+  }
+
+  /** Short-lived signed URL for viewing an archived file (PSA certs on
+   *  the roster; the archives browser makes its own). */
+  async function archiveSignedUrl(path: string): Promise<string> {
+    const { data, error } = await supabase.storage
+      .from('training-archives')
+      .createSignedUrl(path, 3600)
+    if (error || !data?.signedUrl) {
+      throw new Error('Could not open the file — try again.')
+    }
+    return data.signedUrl
   }
 
   async function loadRegistrations(sessionId: string) {
@@ -1269,6 +1318,8 @@ export const useSessionsStore = defineStore('sessions', () => {
     closeCourse,
     cancelSession,
     uploadExam,
+    uploadPsaCert,
+    archiveSignedUrl,
     addRegistration,
     updateAttendance,
     deleteArchive,

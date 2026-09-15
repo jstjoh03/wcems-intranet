@@ -21,18 +21,19 @@ import { supabase } from './supabase'
  *   training-archives/{sessionId}/{recordType}/{UTCstamp}__{fileName}
  *   training-archives/{sessionId}/Exam/{safeEmail}/{UTCstamp}__{fileName}
  *   training-archives/{sessionId}/CE/{safeEmail}/{UTCstamp}__{fileName}
+ *   training-archives/{sessionId}/PSA/{safeEmail}/{UTCstamp}__{fileName}
  *
  * Returns the stored path AND a short-lived signed URL the caller can
  * open in a new tab to preview the freshly-archived file.
  */
 export async function archiveFile(opts: {
   sessionId: string
-  recordType: 'Roster' | 'Evaluation' | 'Exam' | 'CE'
+  recordType: 'Roster' | 'Evaluation' | 'Exam' | 'CE' | 'PSA'
   fileName: string
   blob: Blob
-  /** Required when recordType === 'Exam' or 'CE' — the file is filed
-   *  under `{sessionId}/Exam|CE/{safeEmail}/...` so all attempts /
-   *  certificates for a student stay together. */
+  /** Required when recordType === 'Exam', 'CE', or 'PSA' — the file is
+   *  filed under `{sessionId}/Exam|CE|PSA/{safeEmail}/...` so all
+   *  attempts / certificates for a student stay together. */
   studentEmail?: string
 }): Promise<{ path: string; signedUrl: string }> {
   const stamp = new Date()
@@ -42,7 +43,7 @@ export async function archiveFile(opts: {
     .slice(0, 19) // e.g. 2026-05-19_14-32-07
 
   let path: string
-  if (opts.recordType === 'Exam' || opts.recordType === 'CE') {
+  if (opts.recordType === 'Exam' || opts.recordType === 'CE' || opts.recordType === 'PSA') {
     if (!opts.studentEmail) {
       throw new Error(`${opts.recordType} uploads require a studentEmail.`)
     }

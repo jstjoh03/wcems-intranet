@@ -189,7 +189,9 @@ export async function generateRosterPdf(
     const email = a.eCardEmail || a.studentEmail || ''
     const address = a.mailingAddress || ''
     const phone = a.phone || ''
-    const psaScore = a.psaScore ?? ''
+    // Newer ACLS/PALS PSAs have no numeric score — an uploaded
+    // completion certificate prints as "Complete" on the AHA roster.
+    const psaScore = a.psaScore ?? (a.psaCertPath ? 'Complete' : '')
 
     setField(`Name${suffix}`, name)
     setField(`Email${suffix}`, email)
@@ -255,7 +257,7 @@ export async function generateRosterPdf(
       setExtra(`Mailing Address${suffix}`, a.mailingAddress || '')
       setExtra(`Telephone${suffix}`, a.phone || '')
       if (templateKey === 'ACLS' || templateKey === 'PALS') {
-        setExtra(`PSA${suffix}`, String(a.psaScore ?? ''))
+        setExtra(`PSA${suffix}`, String(a.psaScore ?? (a.psaCertPath ? 'Complete' : '')))
       }
       setExtra(`Complete-Incomplete${suffix}`, 'Complete')
     })

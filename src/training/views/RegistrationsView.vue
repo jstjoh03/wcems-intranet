@@ -196,7 +196,7 @@ function exportCsv() {
           'Check-in',
           'Checked In',
           r.status,
-          r.psaScore ?? '',
+          r.psaScore ?? (r.psaCertPath ? 'Complete' : ''),
           r.createdAt,
         ]
           .map(esc)

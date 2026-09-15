@@ -16,6 +16,7 @@ import {
   Archive,
   ScrollText,
   Award,
+  FileCheck2,
   Trash2,
 } from 'lucide-vue-next'
 
@@ -180,7 +181,10 @@ function examGroups(id: string) {
 function ceGroups(id: string) {
   return studentGroups(id, 'CE')
 }
-function studentGroups(id: string, kind: 'Exam' | 'CE') {
+function psaGroups(id: string) {
+  return studentGroups(id, 'PSA')
+}
+function studentGroups(id: string, kind: 'Exam' | 'CE' | 'PSA') {
   const map = new Map<string, ArchiveFile[]>()
   for (const f of archivesOf(id)) {
     if (f.recordType !== kind) continue
@@ -212,7 +216,7 @@ async function deleteSessionAction(s: CourseSession) {
         `  • the session itself\n` +
         `  • every registration and check-in for it\n` +
         `  • every eval submission for it\n` +
-        `  • every archived PDF (rosters, evals, exams, CE certs)\n` +
+        `  • every archived PDF (rosters, evals, exams, CE certs, PSA certs)\n` +
         `  • the intranet-calendar tile if it's a lecture\n\n` +
         `WCEMS is required to retain training records for 5 years. ` +
         `Only delete duplicates or sessions created by mistake. ` +
@@ -243,7 +247,9 @@ async function deleteFile(file: ArchiveFile, sessionId: string) {
   const label =
     file.recordType === 'CE'
       ? `the CE certificate for ${file.studentEmail || 'this student'}`
-      : `${file.fileName}`
+      : file.recordType === 'PSA'
+        ? `the PSA certificate for ${file.studentEmail || 'this student'}`
+        : `${file.fileName}`
   if (
     !confirm(
       `Permanently delete ${label}?\n\n` +
@@ -481,7 +487,7 @@ const counts = computed(() => ({
                 </div>
                 <template v-else>
                   <template
-                    v-for="rt in (['Roster', 'Evaluation', 'Exam', 'CE'] as const)"
+                    v-for="rt in (['Roster', 'Evaluation', 'Exam', 'PSA', 'CE'] as const)"
                     :key="rt"
                   >
                     <div
@@ -497,7 +503,9 @@ const counts = computed(() => ({
                                 ? CheckSquare
                                 : rt === 'CE'
                                   ? Award
-                                  : ScrollText
+                                  : rt === 'PSA'
+                                    ? FileCheck2
+                                    : ScrollText
                           "
                           :size="13"
                         />
@@ -508,12 +516,14 @@ const counts = computed(() => ({
                               ? 'Evaluations'
                               : rt === 'CE'
                                 ? 'CE Certificates'
-                                : 'Exam Answer Sheets'
+                                : rt === 'PSA'
+                                  ? 'PSA Certificates'
+                                  : 'Exam Answer Sheets'
                         }}
                       </div>
 
-                      <!-- Roster / Evaluation: flat list. Exam + CE: grouped by student. -->
-                      <template v-if="rt !== 'Exam' && rt !== 'CE'">
+                      <!-- Roster / Evaluation: flat list. Exam + PSA + CE: grouped by student. -->
+                      <template v-if="rt !== 'Exam' && rt !== 'CE' && rt !== 'PSA'">
                         <div
                           v-for="f in archivesOf(s.sessionId).filter(
                             (x) => x.recordType === rt,
@@ -549,7 +559,7 @@ const counts = computed(() => ({
                       </template>
                       <template v-else>
                         <div
-                          v-for="group in (rt === 'CE' ? ceGroups(s.sessionId) : examGroups(s.sessionId))"
+                          v-for="group in (rt === 'CE' ? ceGroups(s.sessionId) : rt === 'PSA' ? psaGroups(s.sessionId) : examGroups(s.sessionId))"
                           :key="group.studentEmail"
                           class="examgroup"
                         >

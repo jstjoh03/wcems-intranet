@@ -143,6 +143,9 @@ export interface Attendee {
   phone: string
   status: AttendanceStatus
   psaScore: number | null
+  /** ACLS/PALS — storage path of the uploaded PSA completion
+   *  certificate (newer AHA precourse work shows no numeric score). */
+  psaCertPath: string | null
   phase: 'registered' | 'checkedin'
   ecardIssuedAt: string | null
   /** Lecture-only — CE certificate issuance metadata. Populated when the
@@ -202,7 +205,7 @@ export interface EvalRecord {
  *  `{sessionId}/{Exam|CE}/{safeEmail}/...`, so we also surface the
  *  studentEmail (parsed from the path) for grouping in the Archive view. */
 export interface ArchiveFile {
-  recordType: 'Roster' | 'Evaluation' | 'Exam' | 'CE'
+  recordType: 'Roster' | 'Evaluation' | 'Exam' | 'CE' | 'PSA'
   fileName: string
   path: string
   createdAt: string

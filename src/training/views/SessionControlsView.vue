@@ -17,6 +17,7 @@ import {
   CalendarDays,
   User,
   Upload,
+  FileCheck2,
   CreditCard,
   Ban,
   Award,
@@ -185,6 +186,15 @@ const isCardClass = computed(
   () => s.value?.sessionType === 'CardClass' || !!s.value?.cardCourseName,
 )
 
+/** ACLS/PALS record the precourse self-assessment as an uploaded
+ *  completion certificate (newer AHA PSAs show no numeric score);
+ *  other courses keep the score box. */
+const psaIsUpload = computed(() => {
+  if (!isCardClass.value) return false
+  const n = (s.value?.cardCourseName ?? '').toUpperCase()
+  return n.includes('ACLS') || n.includes('PALS')
+})
+
 async function toggleCheckIn(e: Event) {
   const open = (e.target as HTMLInputElement).checked
   if (s.value) await sessions.setCheckInStatus(s.value.sessionId, open)
@@ -241,6 +251,41 @@ function fmtIssued(ts: string | null) {
         day: 'numeric',
         year: 'numeric',
       })
+}
+
+const uploadingPsaId = ref<string | null>(null)
+
+async function handlePsaUpload(
+  e: Event,
+  a: { id: string; studentEmail: string; studentName: string },
+) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // allow re-upload of same filename
+  if (!file || !s.value) return
+  uploadingPsaId.value = a.id
+  examMsg.value = null
+  try {
+    await sessions.uploadPsaCert(a.id, s.value.sessionId, a.studentEmail, file)
+    examMsg.value = `PSA certificate "${file.name}" saved for ${a.studentName}.`
+    setTimeout(() => (examMsg.value = null), 4000)
+  } catch (err) {
+    examMsg.value =
+      err instanceof Error ? err.message : 'PSA certificate upload failed.'
+  } finally {
+    uploadingPsaId.value = null
+  }
+}
+
+async function viewPsaCert(a: { psaCertPath: string | null }) {
+  if (!a.psaCertPath) return
+  try {
+    const url = await sessions.archiveSignedUrl(a.psaCertPath)
+    window.open(url, '_blank', 'noopener')
+  } catch (err) {
+    examMsg.value =
+      err instanceof Error ? err.message : 'Could not open the certificate.'
+  }
 }
 
 async function savePsa(id: string, raw: string) {
@@ -1780,7 +1825,7 @@ function fmtSubmittedAt(ts: string) {
               <th>Name</th>
               <th>Email</th>
               <th>Mode</th>
-              <th>PSA</th>
+              <th>{{ psaIsUpload ? 'PSA cert' : 'PSA' }}</th>
               <th>Eval</th>
               <th v-if="!isCardClass && hasAnyQuizConfigured">Quiz</th>
               <th v-if="isCardClass">Exam</th>
@@ -1793,7 +1838,7 @@ function fmtSubmittedAt(ts: string) {
               <td>{{ a.studentName }}</td>
               <td class="muted">{{ a.studentEmail }}</td>
               <td><span class="chip">{{ a.attendanceMode || '—' }}</span></td>
-              <td>
+              <td v-if="!psaIsUpload">
                 <input
                   class="psa"
                   :class="{
@@ -1807,6 +1852,46 @@ function fmtSubmittedAt(ts: string) {
                   :value="a.psaScore ?? ''"
                   @blur="savePsa(a.id, ($event.target as HTMLInputElement).value)"
                 />
+              </td>
+              <td v-else class="psa-cell">
+                <template v-if="a.psaCertPath">
+                  <button
+                    type="button"
+                    class="psa-view"
+                    title="Open the PSA completion certificate"
+                    @click="viewPsaCert(a)"
+                  >
+                    <FileCheck2 :size="13" :stroke-width="2" /> On file
+                  </button>
+                  <label
+                    class="upload-btn upload-btn--ghost"
+                    :class="{ busy: uploadingPsaId === a.id }"
+                    title="Replace the certificate (the prior file stays archived)"
+                  >
+                    <Upload :size="12" :stroke-width="2" />
+                    <input
+                      type="file"
+                      accept="application/pdf,image/*"
+                      hidden
+                      @change="(e) => handlePsaUpload(e, a)"
+                    />
+                  </label>
+                </template>
+                <label
+                  v-else
+                  class="upload-btn"
+                  :class="{ busy: uploadingPsaId === a.id }"
+                  title="Upload the student's PSA completion certificate"
+                >
+                  <Upload :size="13" :stroke-width="2" />
+                  <span>{{ uploadingPsaId === a.id ? 'Uploading…' : 'Upload' }}</span>
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    hidden
+                    @change="(e) => handlePsaUpload(e, a)"
+                  />
+                </label>
               </td>
               <td class="ctr">
                 <button
@@ -3532,6 +3617,38 @@ select:focus {
   color: var(--color-ink-soft);
   cursor: pointer;
   transition: all 120ms var(--ease-out);
+}
+
+.upload-btn--ghost {
+  padding: 5px 6px;
+}
+
+.psa-cell {
+  white-space: nowrap;
+}
+
+.psa-cell > * + * {
+  margin-left: 4px;
+}
+
+.psa-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 7px;
+  border: 1px solid oklch(0.87 0.06 150);
+  background: oklch(0.97 0.02 150);
+  color: oklch(0.42 0.1 150);
+  cursor: pointer;
+  transition: all 120ms var(--ease-out);
+}
+
+.psa-view:hover {
+  border-color: oklch(0.72 0.1 150);
 }
 .upload-btn:hover {
   border-color: var(--color-brand-300);
