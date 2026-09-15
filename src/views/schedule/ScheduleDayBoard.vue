@@ -261,7 +261,6 @@ async function removeNote(id: string) {
       <div v-for="ev in model.events" :key="ev.label" class="db__event">
         <div class="db__event-head">
           <span class="db__event-name">{{ ev.label }}</span>
-          <span v-if="ev.doubleTime" class="db__x2" title="Double-time event">2×</span>
           <button
             v-if="ev.notes"
             class="db__noteicon db__notebtn"
@@ -418,19 +417,6 @@ async function removeNote(id: string) {
 .db__tool:hover {
   border-color: var(--color-brand-300);
   box-shadow: 0 2px 5px oklch(0.3 0.03 260 / 0.14);
-}
-
-.db__x2 {
-  display: inline-flex;
-  align-items: center;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  color: var(--color-accent-700);
-  border: 1px solid oklch(0.82 0.08 86.8);
-  background: oklch(0.97 0.03 86.8);
-  border-radius: 999px;
-  padding: 1px 7px;
 }
 
 .db__tool--sm {
