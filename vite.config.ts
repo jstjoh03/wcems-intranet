@@ -35,6 +35,14 @@ export default defineConfig({
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
+        scope: '/',
+        // Chromium/Android hints: portal links tapped elsewhere should
+        // open in the installed app (navigating its existing window)
+        // instead of a browser tab. Ignored on iOS — Apple never routes
+        // links into home-screen web apps; push taps are the in-app
+        // path there.
+        launch_handler: { client_mode: 'navigate-existing' },
+        handle_links: 'preferred',
         icons: [
           { src: '/wcems-patch.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
         ],
