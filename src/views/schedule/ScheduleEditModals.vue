@@ -773,6 +773,95 @@ async function submitAddStudent(): Promise<void> {
   editor.closeAll()
   flash('Student added.')
 }
+// ── my-shift self-service (crew: time off / trade / giveaway) ───────
+
+type MyShiftMode = 'menu' | 'off' | 'trade' | 'giveaway'
+const msMode = ref<MyShiftMode>('menu')
+const msOffType = ref('vacation')
+const msFrom = ref('06:00')
+const msUntil = ref('06:00')
+const msComment = ref('')
+
+watch(
+  () => editor.myShift.value,
+  (v) => {
+    msMode.value = 'menu'
+    msOffType.value = 'vacation'
+    msComment.value = ''
+    err.value = null
+    if (v) {
+      msFrom.value = toInput(v.start)
+      msUntil.value = toInput(v.end)
+    }
+  },
+)
+
+async function msSubmit() {
+  const ctx = editor.myShift.value
+  if (!ctx || msMode.value === 'menu') return
+  busy.value = true
+  err.value = null
+  let e: string | null
+  if (msMode.value === 'off') {
+    e = await sched.createTimeOffRequests(
+      msOffType.value,
+      [{ dateIso: ctx.dateIso, from: msFrom.value, until: msUntil.value, seatId: ctx.seatId }],
+      msComment.value,
+    )
+  } else {
+    e = await sched.createTradePosting({
+      type: msMode.value,
+      dateIso: ctx.dateIso,
+      seatId: ctx.seatId,
+      from: msFrom.value,
+      until: msUntil.value,
+      comments: msComment.value,
+    })
+  }
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash(
+    msMode.value === 'off'
+      ? 'Time-off request submitted — pending approval.'
+      : msMode.value === 'trade'
+        ? 'Trade posted — offers land on the Trades tab.'
+        : 'Giveaway posted — claims land on the Trades tab.',
+  )
+  editor.closeAll()
+}
+
+// ── note viewer / editor ─────────────────────────────────────────────
+
+const noteBody = ref('')
+
+watch(
+  () => editor.note.value,
+  (v) => {
+    noteBody.value = v?.text ?? ''
+    err.value = null
+  },
+)
+
+async function noteSave() {
+  const ctx = editor.note.value
+  if (!ctx?.event) return
+  busy.value = true
+  err.value = null
+  const ev = ctx.event
+  const e = await sched.updateEventListing(ev.dateIso, ev.label, ev.eventId, ev.startHm, ev.endHm, {
+    notes: noteBody.value,
+  })
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Note saved.')
+  editor.closeAll()
+}
 </script>
 
 <template>
@@ -1184,7 +1273,7 @@ async function submitAddStudent(): Promise<void> {
           <p class="em__sub">{{ fmtLong(editor.add.value.dateIso) }}</p>
           <label class="em__field">
             <span>Note</span>
-            <input v-model="noteText" type="text" class="em__input" placeholder="Note for the day" />
+            <input v-model="noteBody" type="text" class="em__input" placeholder="Note for the day" />
           </label>
           <label class="em__field">
             <span>Attach to</span>
@@ -1197,7 +1286,7 @@ async function submitAddStudent(): Promise<void> {
             <input v-model="noteRemind" type="checkbox" /> Include in shift reminders
           </label>
           <p v-if="err" class="em__error">{{ err }}</p>
-          <button class="em__btn em__btn--primary" :disabled="busy || !noteText.trim()" @click="submitAddNote">Save note</button>
+          <button class="em__btn em__btn--primary" :disabled="busy || !noteBody.trim()" @click="submitAddNote">Save note</button>
           <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Cancel</button>
         </template>
 
@@ -1229,10 +1318,92 @@ async function submitAddStudent(): Promise<void> {
         </template>
       </div>
     </div>
+
+    <!-- ── my shift: crew self-service (Aladtec's tap-your-shift trio) ── -->
+    <div v-if="editor.myShift.value" class="em__overlay" @click.self="editor.closeAll()">
+      <div class="em__modal">
+        <h3 class="em__title">Your shift</h3>
+        <p class="em__sub">
+          {{ editor.myShift.value.unitCode }} {{ editor.myShift.value.seatLabel }} ·
+          {{ fmtLong(editor.myShift.value.dateIso) }} ·
+          {{ editor.myShift.value.start }}-{{ editor.myShift.value.end }}
+        </p>
+        <p v-if="err" class="em__error">{{ err }}</p>
+
+        <template v-if="msMode === 'menu'">
+          <button class="em__btn em__btn--primary" @click="msMode = 'off'">Request time off</button>
+          <button class="em__btn" @click="msMode = 'trade'">Post as a trade (swap)</button>
+          <button class="em__btn" @click="msMode = 'giveaway'">Give this shift away</button>
+          <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+        </template>
+
+        <template v-else>
+          <select v-if="msMode === 'off'" v-model="msOffType" class="em__input" aria-label="Time-off type">
+            <option value="vacation">Vacation</option>
+            <option value="sick">Sick</option>
+            <option value="unpaid">Unpaid time off</option>
+            <option value="bereavement">Bereavement</option>
+          </select>
+          <div class="em__times">
+            <label>From <input v-model="msFrom" type="time" class="em__input em__input--time" /></label>
+            <label>Until <input v-model="msUntil" type="time" class="em__input em__input--time" /></label>
+          </div>
+          <input
+            v-model="msComment"
+            type="text"
+            class="em__input"
+            :placeholder="msMode === 'off' ? 'Comments (optional)' : 'Anything claimants should know (optional)'"
+          />
+          <p class="em__notetext">
+            {{
+              msMode === 'off'
+                ? 'Goes to the Chief for approval; the approved window posts your seat open.'
+                : msMode === 'trade'
+                  ? 'Posts to the Trades board — you accept an offer, then the Chief approves the swap.'
+                  : 'Posts to the Trades board — you accept a claim, then the Chief approves the coverage.'
+            }}
+          </p>
+          <button class="em__btn em__btn--primary" :disabled="busy" @click="msSubmit">
+            {{ busy ? 'Submitting…' : msMode === 'off' ? 'Submit time-off request' : msMode === 'trade' ? 'Post trade' : 'Post giveaway' }}
+          </button>
+          <button class="em__btn" :disabled="busy" @click="msMode = 'menu'">Back</button>
+        </template>
+      </div>
+    </div>
+
+    <!-- ── note viewer (everyone) / editor (event notes, editors) ── -->
+    <div v-if="editor.note.value" class="em__overlay" @click.self="editor.closeAll()">
+      <div class="em__modal">
+        <h3 class="em__title">{{ editor.note.value.title }}</h3>
+        <p v-if="err" class="em__error">{{ err }}</p>
+        <template v-if="editor.note.value.event && sched.canEdit.value">
+          <textarea v-model="noteBody" class="em__input em__textarea" rows="4"></textarea>
+          <button class="em__btn em__btn--primary" :disabled="busy" @click="noteSave">
+            {{ busy ? 'Saving…' : 'Save note' }}
+          </button>
+        </template>
+        <p v-else class="em__notetext em__notetext--body">{{ editor.note.value.text }}</p>
+        <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.em__notetext {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  margin: 0.1rem 0 0.2rem;
+  line-height: 1.45;
+}
+
+.em__notetext--body {
+  font-size: 0.9rem;
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .em__toast {
   position: fixed;
   bottom: 1.2rem;

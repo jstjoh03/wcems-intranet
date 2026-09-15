@@ -477,7 +477,7 @@ Deno.serve(async (req: Request) => {
           .map((s) => {
             const href = s.entryId
               ? `${PORTAL}/schedule?d=${s.dateIso ?? ''}&pickup=${s.entryId}`
-              : `${PORTAL}/schedule?d=${s.dateIso ?? ''}`
+              : `${PORTAL}/schedule?d=${s.dateIso ?? ''}&v=day`
             return `<li style="margin:4px 0;"><a href="${href}" style="color:#182644;font-weight:600;">${esc(s.text ?? '')}</a></li>`
           })
           .join('')
@@ -499,7 +499,7 @@ Deno.serve(async (req: Request) => {
         shifts.length === 1 && shifts[0].entryId
           ? `/schedule?d=${shifts[0].dateIso ?? ''}&pickup=${shifts[0].entryId}`
           : shifts[0]?.dateIso
-            ? `/schedule?d=${shifts[0].dateIso}`
+            ? `/schedule?d=${shifts[0].dateIso}&v=day`
             : '/schedule'
 
       const d = await deliver(

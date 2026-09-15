@@ -49,6 +49,31 @@ export interface EventCtx {
 
 export type AddKind = 'menu' | 'event' | 'note' | 'student' | 'seat'
 
+/** Crew tapping their OWN shift — Aladtec's self-service trio:
+ *  request time off, post a trade, or give the shift away. */
+export interface MyShiftCtx {
+  dateIso: string
+  unitCode: string
+  seatId: string
+  seatLabel: string
+  start: string // 'HHmm'
+  end: string
+}
+
+/** Read a note in a modal (tooltips don't exist on phones). When the
+ *  note belongs to an event listing, editors can save changes here. */
+export interface NoteCtx {
+  title: string
+  text: string
+  event?: {
+    dateIso: string
+    label: string
+    eventId: string | null
+    startHm: string | null
+    endHm: string | null
+  }
+}
+
 export interface AddCtx {
   dateIso: string
   kind: AddKind
@@ -71,6 +96,8 @@ const student = ref<StudentCtx | null>(null)
 const eventEdit = ref<EventCtx | null>(null)
 const add = ref<AddCtx | null>(null)
 const extra = ref<ExtraCtx | null>(null)
+const myShift = ref<MyShiftCtx | null>(null)
+const note = ref<NoteCtx | null>(null)
 
 function closeAll(): void {
   slot.value = null
@@ -79,6 +106,8 @@ function closeAll(): void {
   eventEdit.value = null
   add.value = null
   extra.value = null
+  myShift.value = null
+  note.value = null
 }
 
 export function useScheduleEditor() {
@@ -206,6 +235,24 @@ export function useScheduleEditor() {
     }
   }
 
+  /** Crew: tap your own shift → time off / trade / giveaway. */
+  function openMyShift(
+    dateIso: string,
+    unitCode: string,
+    seatId: string,
+    seatLabel: string,
+    row: SeatRow,
+  ): void {
+    closeAll()
+    myShift.value = { dateIso, unitCode, seatId, seatLabel, start: row.start, end: row.end }
+  }
+
+  /** Anyone: read a note; editors save event notes in place. */
+  function openNote(ctx: NoteCtx): void {
+    closeAll()
+    note.value = ctx
+  }
+
   return {
     slot,
     person,
@@ -213,6 +260,8 @@ export function useScheduleEditor() {
     eventEdit,
     add,
     extra,
+    myShift,
+    note,
     openSlot,
     openSlotDirect,
     openEventSlot,
@@ -223,6 +272,8 @@ export function useScheduleEditor() {
     openExtra,
     openRiderSlot,
     openRiderRow,
+    openMyShift,
+    openNote,
     closeAll,
   }
 }

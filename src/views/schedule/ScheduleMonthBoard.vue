@@ -77,7 +77,7 @@ const weeks = computed<Cell[][]>(() => {
 </script>
 
 <template>
-  <div class="mb">
+  <div class="mb" :class="{ 'mb--mine': props.mine }">
     <div class="mb__weekdays">
       <span v-for="w in WEEKDAYS" :key="w" class="mb__weekday">{{ w }}</span>
     </div>
@@ -133,11 +133,15 @@ const weeks = computed<Cell[][]>(() => {
                 >
                   {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
                 </button>
-                <span
-                  v-else
-                  class="mb__name"
-                  :class="{ 'mb__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+                <button
+                  v-else-if="!!row.userId && row.userId === sched.myUserId.value"
+                  class="mb__name mb__rowbtn mb__name--me"
+                  title="Your shift — time off, trade, or giveaway"
+                  @click="editor.openMyShift(c.iso, um.unit.code, sm.seat.id, sm.seat.label, row)"
                 >
+                  {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
+                </button>
+                <span v-else class="mb__name">
                   {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
                 </span>
                 <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
@@ -169,13 +173,21 @@ const weeks = computed<Cell[][]>(() => {
               >
                 {{ ex.name }}<span v-if="ex.note" class="mb__notedot" />
               </button>
+              <button
+                v-else-if="ex.note"
+                class="mb__name mb__rowbtn"
+                :class="{ 'mb__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
+                title="Read the note"
+                @click="editor.openNote({ title: ex.name, text: ex.note ?? '' })"
+              >
+                {{ ex.name }}<span class="mb__notedot" />
+              </button>
               <span
                 v-else
                 class="mb__name"
                 :class="{ 'mb__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
-                :title="ex.note ?? undefined"
               >
-                {{ ex.name }}<span v-if="ex.note" class="mb__notedot" />
+                {{ ex.name }}
               </span>
               <span class="mb__time">{{ ex.start }}-{{ ex.end }}</span>
             </div>
@@ -189,7 +201,13 @@ const weeks = computed<Cell[][]>(() => {
             >
               {{ ex.name }}<span v-if="ex.note" class="mb__notedot" />
             </button>
-            <span v-else class="mb__name" :title="ex.note ?? undefined">{{ ex.name }}</span>
+            <button
+              v-else-if="ex.note"
+              class="mb__name mb__rowbtn"
+              title="Read the note"
+              @click="editor.openNote({ title: ex.name, text: ex.note ?? '' })"
+            >{{ ex.name }}<span class="mb__notedot" /></button>
+            <span v-else class="mb__name">{{ ex.name }}</span>
             <span class="mb__time">{{ ex.start }}-{{ ex.end }}</span>
           </div>
 
@@ -246,9 +264,14 @@ const weeks = computed<Cell[][]>(() => {
                 {{ ev.label }}
               </button>
               <span v-else class="mb__eventlabel">{{ ev.label }}</span>
-              <span v-if="ev.notes" class="mb__noteicon" :title="ev.notes">
+              <button
+                v-if="ev.notes"
+                class="mb__noteicon mb__rowbtn"
+                title="Read the note"
+                @click="editor.openNote({ title: ev.label, text: ev.notes ?? '', event: { dateIso: c.iso, label: ev.label, eventId: ev.eventId, startHm: ev.start, endHm: ev.end } })"
+              >
                 <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
-              </span>
+              </button>
               <span v-if="ev.start" class="mb__time">{{ ev.start }}-{{ ev.end }}</span>
             </p>
             <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="mb__row">
@@ -748,6 +771,13 @@ const weeks = computed<Cell[][]>(() => {
     border-radius: 999px;
     background: oklch(0.98 0.013 27);
     box-shadow: inset 0 0 0 1px oklch(0.9 0.05 27);
+  }
+
+  /* My schedule on a phone: a personal calendar — only YOUR days are
+     marked (gold circle); no platoon dots or open pills as noise. */
+  .mb--mine .mb__platoon,
+  .mb--mine .mb__open {
+    display: none;
   }
 }
 </style>

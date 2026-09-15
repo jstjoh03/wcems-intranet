@@ -125,11 +125,16 @@ async function removeNote(id: string) {
               {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
               <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
             </button>
-            <span
-              v-else
-              class="db__name"
-              :class="{ 'db__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+            <button
+              v-else-if="!!row.userId && row.userId === sched.myUserId.value"
+              class="db__name db__name--btn db__name--me"
+              title="Your shift — time off, trade, or giveaway"
+              @click="editor.openMyShift(props.dateIso, um.unit.code, sm.seat.id, sm.seat.label, row)"
             >
+              {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
+              <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
+            </button>
+            <span v-else class="db__name">
               {{ row.name }}<span v-if="row.credential" class="db__cred"> - {{ row.credential }}</span>
               <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
             </span>
@@ -167,11 +172,20 @@ async function removeNote(id: string) {
               <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
             </span>
           </button>
-          <span v-else class="db__name" :class="{ 'db__name--me': !!ex.userId && ex.userId === sched.myUserId.value }">
+          <button
+            v-else-if="ex.note"
+            class="db__name db__name--btn"
+            :class="{ 'db__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
+            title="Read the note"
+            @click="editor.openNote({ title: ex.name, text: ex.note ?? '' })"
+          >
             {{ ex.name }}<span v-if="ex.credential" class="db__cred"> - {{ ex.credential }}</span>
-            <span v-if="ex.note" class="db__noteicon" :title="ex.note">
+            <span class="db__noteicon">
               <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
             </span>
+          </button>
+          <span v-else class="db__name" :class="{ 'db__name--me': !!ex.userId && ex.userId === sched.myUserId.value }">
+            {{ ex.name }}<span v-if="ex.credential" class="db__cred"> - {{ ex.credential }}</span>
           </span>
           <span class="db__time">
             {{ ex.start }} – {{ ex.end }}
@@ -248,9 +262,14 @@ async function removeNote(id: string) {
         <div class="db__event-head">
           <span class="db__event-name">{{ ev.label }}</span>
           <span v-if="ev.doubleTime" class="db__x2" title="Double-time event">2×</span>
-          <span v-if="ev.notes" class="db__noteicon" :title="ev.notes">
+          <button
+            v-if="ev.notes"
+            class="db__noteicon db__notebtn"
+            title="Read the note"
+            @click="editor.openNote({ title: ev.label, text: ev.notes ?? '', event: { dateIso: props.dateIso, label: ev.label, eventId: ev.eventId, startHm: ev.start, endHm: ev.end } })"
+          >
             <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
-          </span>
+          </button>
           <span v-if="ev.start" class="db__time">{{ ev.start }} – {{ ev.end }}</span>
           <span v-if="sched.canEdit.value" class="db__event-tools">
             <button class="db__tool db__tool--sm" @click="editor.openEvent(props.dateIso, ev)">
@@ -635,7 +654,13 @@ async function removeNote(id: string) {
 
 .db__noteicon {
   display: inline-flex;
-  cursor: help;
+  cursor: pointer;
+}
+
+.db__notebtn {
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .db__noteicon svg {

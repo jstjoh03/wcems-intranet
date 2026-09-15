@@ -76,11 +76,15 @@ const header = computed(() =>
           >
             {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
           </button>
-          <span
-            v-else
-            class="dc__name"
-            :class="{ 'dc__name--me': !!row.userId && row.userId === sched.myUserId.value }"
+          <button
+            v-else-if="!!row.userId && row.userId === sched.myUserId.value"
+            class="dc__name dc__rowbtn dc__name--me"
+            title="Your shift — time off, trade, or giveaway"
+            @click="editor.openMyShift(dateIso, um.unit.code, sm.seat.id, sm.seat.label, row)"
           >
+            {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
+          </button>
+          <span v-else class="dc__name">
             {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
           </span>
           <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
@@ -112,13 +116,21 @@ const header = computed(() =>
         >
           {{ ex.name }}<span v-if="ex.note" class="dc__noteicon" />
         </button>
+        <button
+          v-else-if="ex.note"
+          class="dc__name dc__rowbtn"
+          :class="{ 'dc__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
+          title="Read the note"
+          @click="editor.openNote({ title: ex.name, text: ex.note ?? '' })"
+        >
+          {{ ex.name }}<span class="dc__noteicon" />
+        </button>
         <span
           v-else
           class="dc__name"
           :class="{ 'dc__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
-          :title="ex.note ?? undefined"
         >
-          {{ ex.name }}<span v-if="ex.note" class="dc__noteicon" />
+          {{ ex.name }}
         </span>
         <span class="dc__time">{{ ex.start }}-{{ ex.end }}</span>
       </div>
@@ -167,7 +179,7 @@ const header = computed(() =>
     </div>
 
     <div v-for="ev in model.events" :key="ev.label" class="dc__event">
-      <p class="dc__event-name" :title="ev.notes ?? undefined">
+      <p class="dc__event-name">
         <button
           v-if="sched.canEdit.value"
           class="dc__rowbtn dc__rowbtn--ev"
@@ -177,7 +189,12 @@ const header = computed(() =>
           {{ ev.label }}
         </button>
         <template v-else>{{ ev.label }}</template>
-        <span v-if="ev.notes" class="dc__noteicon" />
+        <button
+          v-if="ev.notes"
+          class="dc__noteicon dc__rowbtn"
+          title="Read the note"
+          @click="editor.openNote({ title: ev.label, text: ev.notes ?? '', event: { dateIso, label: ev.label, eventId: ev.eventId, startHm: ev.start, endHm: ev.end } })"
+        />
       </p>
       <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="dc__row">
         <button

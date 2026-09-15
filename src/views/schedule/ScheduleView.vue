@@ -39,7 +39,10 @@ type Tab =
   | 'time'
   | 'members'
   | 'setup'
-const tab = ref<Tab>('month')
+/* Phones open on the personal calendar (Aladtec habit — your days at a
+   glance); the full board is one tab away. Desktop keeps Month. */
+const isPhone = window.matchMedia('(max-width: 900px)').matches
+const tab = ref<Tab>(isPhone ? 'mine' : 'month')
 const dateIso = ref(todayCentralIso())
 
 /* Members and Setup are editor tools — non-editors (supervisors during
@@ -143,6 +146,12 @@ onMounted(async () => {
   await sched.ensureLoaded()
   if (typeof route.query.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.d)) {
     dateIso.value = route.query.d
+  }
+  // Page-out day links (?v=day) land on that day's full board — on
+  // phones the default is My schedule, which would hide the shift.
+  if (route.query.v === 'day') {
+    tab.value = 'day'
+    void router.replace({ query: { ...route.query, v: undefined } })
   }
   // Requests load with the shell (not just on the Requests tab) so
   // pending pickups/time-off show on the boards and the tab badge is
