@@ -121,6 +121,7 @@ export interface SchedPerson {
   email: string | null
   phone: string | null
   paycomCode: string | null
+  employmentType: string | null
 }
 
 export interface TradeOffer {
@@ -561,6 +562,20 @@ async function fetchAuditLog(beforeId?: number): Promise<AuditRow[]> {
   }))
 }
 
+/** Fire-and-forget call to the sched-notify edge function — push /
+ *  email / text fan-out with recipients resolved server-side against
+ *  each member's notification matrix. Never blocks the mutation. */
+function notify(kind: string, payload: Record<string, unknown>): void {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return
+  void supabase.functions
+    .invoke('sched-notify', { body: { kind, ...payload } })
+    .then(({ error }) => {
+      if (error) console.warn('[sched] notify failed:', error.message)
+    })
+    .catch((e: unknown) => console.warn('[sched] notify failed:', e))
+}
+
 // ── loading ──────────────────────────────────────────────────────────
 
 async function loadCore(): Promise<void> {
@@ -655,6 +670,7 @@ async function loadCore(): Promise<void> {
       email: r.email,
       phone: r.phone,
       paycomCode: r.paycom_employee_code ?? null,
+      employmentType: r.employment_type ?? null,
     }
   })
   const setMap: Record<string, Record<string, unknown>> = {}
@@ -707,8 +723,8 @@ function seedDevStub(): void {
   }
   seats.value = out
   people.value = [
-    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', credentialAuto: 'P2', credentialSource: 'pipeline', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X' },
-    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', credentialAuto: 'EMT', credentialSource: 'title', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null },
+    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', credentialAuto: 'P2', credentialSource: 'pipeline', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X', employmentType: 'full_time' },
+    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', credentialAuto: 'EMT', credentialSource: 'title', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null, employmentType: 'part_time' },
   ]
 }
 
@@ -2026,8 +2042,9 @@ async function createTimeOffRequests(
       comments: comments || null,
     }
   })
-  const res = await supabase.from('sched_requests').insert(rows)
+  const res = await supabase.from('sched_requests').insert(rows).select('id')
   if (res.error) return res.error.message
+  notify('request_submitted', { requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id) })
   audit('request.time_off', `Requested ${OFF_LABELS[offType] ?? offType} time off — ${daysReq.length === 1 ? daysReq[0].dateIso : `${daysReq.length} days from ${daysReq[0].dateIso}`}`, { entity: 'request' })
   await loadRequests()
   return null
@@ -2059,8 +2076,9 @@ async function createExtraRequest(opts: {
     position_label: opts.positionLabel || null,
     comments: opts.comments || null,
     warnings: opts.warnings ?? [],
-  })
+  }).select('id')
   if (res.error) return res.error.message
+  notify('request_submitted', { requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id) })
   audit('request.extra', `Requested extra hours ${opts.dateIso} ${opts.from}–${opts.until}${unit ? ` on ${unit.code}` : ''} (${opts.timeType})`, { entity: 'request' })
   await loadRequests()
   return null
@@ -2113,8 +2131,9 @@ async function createPickupRequest(opts: {
     position_label: seat?.label ?? opts.positionLabel ?? null,
     comments: opts.comments || null,
     warnings: opts.warnings ?? [],
-  })
+  }).select('id')
   if (res.error) return res.error.message
+  notify('request_submitted', { requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id) })
   audit('request.pickup', `Requested pickup — ${unit?.code ?? 'event/rider slot'}${seat ? ` ${seat.label}` : ''} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'request' })
   await loadRequests()
   return null
@@ -2216,6 +2235,7 @@ async function makeOffer(opts: {
       : res.error.message
   }
   audit('trade.offer', opts.offerShift ? `Offered a swap shift (${opts.offerShift.dateIso}) on a posting` : 'Offered to take a posted shift', { entity: 'request', entityId: opts.requestId })
+  notify('trade_activity', { requestId: opts.requestId, event: 'offer' })
   await loadTradeOffers()
   return null
 }
@@ -2274,17 +2294,21 @@ async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string
     .eq('id', req.id)
   if (up2.error) return up2.error.message
   audit('trade.accept', `Accepted ${displayName(offer.userId).name}'s offer on their ${req.type === 'trade' ? 'swap' : 'giveaway'} posting`, { entity: 'request', entityId: req.id })
+  notify('request_submitted', { requestIds: [req.id] })
+  notify('trade_activity', { requestId: req.id, event: 'accepted', offerUserId: offer.userId })
   await Promise.all([loadRequests(), loadTradeOffers()])
   return null
 }
 
 async function declineOffer(offerId: string): Promise<string | null> {
+  const offer = tradeOffers.value.find((o) => o.id === offerId)
   const res = await supabase
     .from('sched_trade_offers')
     .update({ status: 'declined' })
     .eq('id', offerId)
   if (res.error) return res.error.message
   audit('trade.decline', 'Declined a swap offer', { entity: 'request' })
+  if (offer) notify('trade_activity', { requestId: offer.requestId, event: 'declined', offerUserId: offer.userId })
   await loadTradeOffers()
   return null
 }
@@ -2564,6 +2588,7 @@ async function assignOpenSeat(opts: {
   const seatA = seats.value.find((s2) => s2.id === opts.seatId)
   const unitA = units.value.find((u) => u.id === seatA?.unitId)
   audit('assign.seat', `Assigned ${displayName(opts.userId).name} to ${unitA?.code ?? '?'} ${seatA?.label ?? 'seat'} on ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
+  notify('schedule_change', { userId: opts.userId, summary: `You were assigned to ${unitA?.code ?? 'a unit'} ${seatA?.label ?? 'seat'} on ${opts.dateIso}, ${opts.from}–${opts.until}.` })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2618,6 +2643,7 @@ async function dayMarkOff(opts: {
   const ins = await supabase.from('sched_entries').insert(rows)
   if (ins.error) return ins.error.message
   audit('day.mark_off', `Marked ${displayName(opts.userId).name} off (${OFF_LABELS[opts.offType] ?? opts.offType}) ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
+  notify('schedule_change', { userId: opts.userId, summary: `You were marked off (${OFF_LABELS[opts.offType] ?? opts.offType}) on ${opts.dateIso} ${opts.from}–${opts.until}; that window is posted open.` })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2648,6 +2674,7 @@ async function dayOpenWindow(opts: {
   const ins = await supabase.from('sched_entries').insert(rows)
   if (ins.error) return ins.error.message
   audit('day.open', `Opened ${displayName(opts.userId).name}'s seat ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
+  notify('schedule_change', { userId: opts.userId, summary: `You were taken off your seat on ${opts.dateIso} ${opts.from}–${opts.until}; the window is posted open.` })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2690,6 +2717,8 @@ async function dayReplace(opts: {
   const ins = await supabase.from('sched_entries').insert(rows)
   if (ins.error) return ins.error.message
   audit('day.replace', `Replaced ${displayName(opts.fromUserId).name} with ${displayName(opts.toUserId).name} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
+  notify('schedule_change', { userId: opts.fromUserId, summary: `You were replaced by ${displayName(opts.toUserId).name} on ${opts.dateIso} ${opts.from}–${opts.until}.` })
+  notify('schedule_change', { userId: opts.toUserId, summary: `You were assigned to cover ${displayName(opts.fromUserId).name}'s seat on ${opts.dateIso} ${opts.from}–${opts.until}.` })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2883,13 +2912,17 @@ async function assignEventSlot(entryId: string, userId: string | null): Promise<
       updated_at: new Date().toISOString(),
     })
     .eq('id', entryId)
-    .select('id')
+    .select('id, work_date, note, student_program')
   if (res.error) return res.error.message
   if (!res.data || res.data.length === 0) {
     await reloadRangeIfLoaded()
     return 'That slot no longer exists — the board has changed.'
   }
   audit(userId ? 'slot.assign' : 'slot.unassign', userId ? `Assigned ${displayName(userId).name} to an event/rider slot` : 'Unassigned an event/rider slot', { entity: 'entry', entityId: entryId })
+  if (userId) {
+    const slot = res.data[0] as { work_date: string; note: string | null; student_program: string | null }
+    notify('schedule_change', { userId, summary: `You were assigned: ${slot.student_program ?? 'slot'}${slot.note ? ` — ${slot.note}` : ''} on ${slot.work_date}.` })
+  }
   await reloadRangeIfLoaded()
   return null
 }
@@ -2945,6 +2978,10 @@ async function removeEntry(entryId: string): Promise<string | null> {
   const reqId = gone?.source_request ?? null
   if (reqId) await voidRequestIfOrphaned(reqId)
   audit('entry.remove', `Removed a ${gone?.kind ?? 'schedule'} entry${gone?.user_id ? ` for ${displayName(gone.user_id).name}` : ''}${gone?.work_date ? ` on ${gone.work_date}` : ''}`, { entity: 'entry', entityId: entryId })
+  if (gone?.user_id) {
+    const what = gone.kind === 'extra' ? 'extra-hours entry' : gone.kind === 'timeoff' ? 'time-off record' : 'shift entry'
+    notify('schedule_change', { userId: gone.user_id, summary: `Your ${what} on ${gone.work_date ?? 'the schedule'} was removed.` })
+  }
   await reloadRangeIfLoaded()
   return null
 }
@@ -2962,13 +2999,15 @@ async function updateEntryWindow(
     .from('sched_entries')
     .update({ start_at: w.reqStart, end_at: w.reqEnd, updated_at: new Date().toISOString() })
     .eq('id', entryId)
-    .select('id')
+    .select('id, user_id, work_date')
   if (res.error) return res.error.message
   if (!res.data || res.data.length === 0) {
     await reloadRangeIfLoaded()
     return 'That entry no longer exists — the board has changed.'
   }
   audit('entry.retime', `Retimed an entry to ${from}–${until} (${dateIso})`, { entity: 'entry', entityId: entryId })
+  const touched = res.data[0] as { user_id: string | null; work_date: string }
+  if (touched.user_id) notify('schedule_change', { userId: touched.user_id, summary: `Your hours on ${touched.work_date} were changed to ${from}–${until}.` })
   await reloadRangeIfLoaded()
   return null
 }
@@ -3400,6 +3439,7 @@ async function decideRequest(
   if (upd.error) return upd.error.message
 
   audit(approve ? 'request.approve' : 'request.deny', `${approve ? 'Approved' : 'Denied'} ${displayName(req.requesterId).name}'s ${(REQ_TYPE_LABELS[req.type] ?? req.type).toLowerCase()}${req.workDate ? ` for ${req.workDate}` : ''}${note ? ` — ${note}` : ''}`, { entity: 'request', entityId: req.id })
+  notify('request_decided', { requestId: req.id })
   await Promise.all([loadRequests(), rangeStart.value ? loadRange(rangeStart.value, rangeEnd.value) : Promise.resolve()])
   return null
 }
@@ -3637,6 +3677,165 @@ async function saveUnitOrder(orderedIds: string[]): Promise<string | null> {
   return null
 }
 
+// ── page-outs ────────────────────────────────────────────────────────
+
+export interface OpenShiftItem {
+  entryId: string | null
+  dateIso: string
+  text: string
+}
+
+/** Open coverage in a date range: open ENTRY rows (carved vacancies,
+ *  event slots, rider seats) plus template seats with nobody assigned
+ *  that day. Fresh-fetched — never trusts the loaded board range. */
+async function findOpenShifts(startIso: string, endIso: string): Promise<OpenShiftItem[]> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return []
+  const res = await supabase
+    .from('sched_entries')
+    .select('id, work_date, seat_id, unit_id, user_id, kind, status, start_at, end_at, student_program, note')
+    .gte('work_date', startIso)
+    .lte('work_date', endIso)
+  if (res.error) return []
+  const rows = (res.data ?? []).filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
+  const out: OpenShiftItem[] = []
+  const fmtD = (iso: string) =>
+    new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+  for (const r of rows) {
+    if (r.status !== 'open') continue
+    const w = `${hhmm(r.start_at)}–${hhmm(r.end_at)}`
+    if (r.seat_id) {
+      const seat = seats.value.find((s) => s.id === r.seat_id)
+      const unit = seat ? units.value.find((u) => u.id === seat.unitId) : null
+      if (unit && !unit.active) continue
+      out.push({ entryId: r.id, dateIso: r.work_date, text: `${fmtD(r.work_date)} · ${unit?.code ?? '?'} ${seat?.label ?? 'seat'} · ${w}` })
+    } else if (r.kind === 'event') {
+      out.push({ entryId: r.id, dateIso: r.work_date, text: `${fmtD(r.work_date)} · ${r.note ?? 'Event'} — ${r.student_program ?? 'slot'} · ${w}` })
+    } else if (r.kind === 'rider') {
+      const unit = units.value.find((u) => u.id === r.unit_id)
+      if (unit && !unit.active) continue
+      out.push({ entryId: r.id, dateIso: r.work_date, text: `${fmtD(r.work_date)} · ${unit?.code ?? '?'} extra ${r.student_program ?? 'seat'} · ${w}` })
+    }
+  }
+  const rowsBySeatDate = new Set(rows.filter((r) => r.seat_id).map((r) => `${r.work_date}|${r.seat_id}`))
+  for (let iso = startIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
+    for (const seat of activeSeatList()) {
+      if (rowsBySeatDate.has(`${iso}|${seat.id}`)) continue
+      const unit = units.value.find((u) => u.id === seat.unitId)
+      if (!unit || unitPlatoonFor(unit, iso) === null) continue
+      if (seatRotationOccupant(seat.id, iso) !== null) continue
+      const uw = unitDayWindow(unit, iso)
+      out.push({ entryId: null, dateIso: iso, text: `${fmtD(iso)} · ${unit.code} ${seat.label} · ${uw.startHm}–${uw.endHm}` })
+    }
+  }
+  out.sort((a, b) => a.dateIso.localeCompare(b.dateIso) || a.text.localeCompare(b.text))
+  return out
+}
+
+/** Everyone with ANY coverage on a work date (entry rows override
+ *  rotation per seat, matching the board's occupancy rules). Used by
+ *  the page-out composer's "only people off duty" filter. */
+async function assignedUserIdsOn(dateIso: string): Promise<Set<string>> {
+  const out = new Set<string>()
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return out
+  const res = await supabase
+    .from('sched_entries')
+    .select('seat_id, user_id, kind, status')
+    .eq('work_date', dateIso)
+  const rows = (res.data ?? []).filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
+  const overridden = new Set(rows.filter((r) => r.seat_id).map((r) => r.seat_id as string))
+  for (const r of rows) if (r.user_id) out.add(r.user_id)
+  for (const seat of activeSeatList()) {
+    if (overridden.has(seat.id)) continue
+    const occ = seatRotationOccupant(seat.id, dateIso)
+    if (occ) out.add(occ)
+  }
+  return out
+}
+
+export interface PageLogRow {
+  id: string
+  message: string
+  channels: { push?: boolean; email?: boolean; sms?: boolean }
+  recipients: string[]
+  delivery: { push?: number; email?: number; sms?: number; skipped_sms?: number; errors?: string[] } | null
+  entryIds: string[]
+  sentBy: string | null
+  sentAt: string
+  entriesOpen: number
+}
+
+async function fetchPageLog(): Promise<PageLogRow[]> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return []
+  const res = await supabase
+    .from('sched_pages')
+    .select('*')
+    .order('sent_at', { ascending: false })
+    .limit(20)
+  if (res.error) return []
+  const pages = res.data ?? []
+  const allIds = [...new Set(pages.flatMap((p) => (p.entry_ids ?? []) as string[]))]
+  const openById = new Map<string, boolean>()
+  if (allIds.length > 0) {
+    const eres = await supabase.from('sched_entries').select('id, status').in('id', allIds)
+    for (const r of eres.data ?? []) openById.set(r.id, r.status === 'open')
+  }
+  return pages.map((p) => ({
+    id: p.id,
+    message: p.message,
+    channels: p.channels ?? {},
+    recipients: (p.recipients ?? []) as string[],
+    delivery: p.delivery && Object.keys(p.delivery).length > 0 ? p.delivery : null,
+    entryIds: (p.entry_ids ?? []) as string[],
+    sentBy: p.sent_by,
+    sentAt: p.sent_at,
+    entriesOpen: ((p.entry_ids ?? []) as string[]).filter((id) => openById.get(id) === true).length,
+  }))
+}
+
+async function createPageOut(opts: {
+  message: string
+  channels: { push: boolean; email: boolean; sms: boolean }
+  audience: Record<string, unknown>
+  entryIds: string[]
+  recipients: string[]
+}): Promise<{ id: string | null; error: string | null }> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return { id: null, error: 'Not available in the dev preview.' }
+  const res = await supabase
+    .from('sched_pages')
+    .insert({
+      message: opts.message,
+      channels: opts.channels,
+      audience: opts.audience,
+      entry_ids: opts.entryIds,
+      recipients: opts.recipients,
+      sent_by: auth.appUser?.id ?? null,
+    })
+    .select('id')
+    .single()
+  if (res.error) return { id: null, error: res.error.message }
+  audit('pageout.send', `Paged ${opts.recipients.length} ${opts.recipients.length === 1 ? 'person' : 'people'}: "${opts.message.slice(0, 80)}"`, { entity: 'page', entityId: res.data.id as string })
+  return { id: res.data.id as string, error: null }
+}
+
+async function sendPageOut(pageId: string): Promise<{
+  delivery: { push?: number; email?: number; sms?: number; skippedSms?: number; errors?: string[] } | null
+  error: string | null
+}> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return { delivery: null, error: 'Not available in the dev preview.' }
+  const { data, error } = await supabase.functions.invoke('sched-notify', {
+    body: { kind: 'pageout', pageId },
+  })
+  if (error) return { delivery: null, error: error.message }
+  const d = data as { ok?: boolean; delivery?: { push?: number; email?: number; sms?: number; skippedSms?: number; errors?: string[] }; error?: string } | null
+  if (!d?.ok) return { delivery: null, error: d?.error ?? 'Send failed' }
+  return { delivery: d.delivery ?? null, error: null }
+}
+
 async function setAccess(
   userId: string,
   lvl: 'global_admin' | 'scheduler' | 'none' | null,
@@ -3796,6 +3995,11 @@ export function useSchedule() {
     setAccess,
     fetchAccessList,
     fetchAuditLog,
+    findOpenShifts,
+    assignedUserIdsOn,
+    fetchPageLog,
+    createPageOut,
+    sendPageOut,
     // requests
     upcomingShiftsFor,
     openSeatsFor,

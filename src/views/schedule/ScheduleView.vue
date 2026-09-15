@@ -14,6 +14,7 @@ import ScheduleSetupPanel from './ScheduleSetupPanel.vue'
 import ScheduleEditModals from './ScheduleEditModals.vue'
 import ScheduleMyPanel from './ScheduleMyPanel.vue'
 import ScheduleTimePanel from './ScheduleTimePanel.vue'
+import SchedulePagesPanel from './SchedulePagesPanel.vue'
 
 /**
  * Scheduling module shell — soft-launch build (URL-only, no nav entry).
@@ -34,6 +35,7 @@ type Tab =
   | 'mine'
   | 'requests'
   | 'trades'
+  | 'pages'
   | 'time'
   | 'members'
   | 'setup'
@@ -53,6 +55,9 @@ const TABS = computed<{ key: Tab; label: string; group?: boolean }[]>(() => {
     { key: 'requests', label: 'Requests', group: true },
     { key: 'trades', label: 'Trades' },
   ]
+  if (sched.canPageOut.value) {
+    t.push({ key: 'pages', label: 'Page-outs' })
+  }
   if (sched.canEdit.value) {
     t.push(
       { key: 'time', label: 'Payroll', group: true },
@@ -249,6 +254,7 @@ watch(dateIso, (v) => {
       <ScheduleMyPanel v-else-if="tab === 'mine'" />
       <ScheduleRequestsPanel v-else-if="tab === 'requests'" />
       <ScheduleTradesPanel v-else-if="tab === 'trades'" />
+      <SchedulePagesPanel v-else-if="tab === 'pages'" />
       <ScheduleTimePanel v-else-if="tab === 'time'" />
       <ScheduleMembersPanel v-else-if="tab === 'members'" />
       <ScheduleSetupPanel v-else />
