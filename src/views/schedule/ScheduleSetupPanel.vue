@@ -4,6 +4,7 @@ import {
   useSchedule,
   todayCentralIso,
   holidaysForYear,
+  type AuditRow,
   type Platoon,
   type SchedSeat,
   type UnitPreset,
@@ -21,7 +22,53 @@ const PLATOONS: Platoon[] = ['A', 'B', 'C']
 
 onMounted(async () => {
   await sched.ensureLoaded()
+  void loadLog()
 })
+
+// ── activity log ─────────────────────────────────────────────────────
+
+const logRows = ref<AuditRow[]>([])
+const logLoaded = ref(false)
+const logBusy = ref(false)
+const logDone = ref(false)
+const logFilter = ref('')
+
+async function loadLog(more = false) {
+  logBusy.value = true
+  const before = more && logRows.value.length > 0 ? logRows.value[logRows.value.length - 1].id : undefined
+  const rows = await sched.fetchAuditLog(before)
+  logRows.value = more ? [...logRows.value, ...rows] : rows
+  logDone.value = rows.length < 80
+  logLoaded.value = true
+  logBusy.value = false
+}
+
+function actorName(id: string | null): string {
+  if (!id) return 'System'
+  return sched.personById.value.get(id)?.fullName ?? 'Former member'
+}
+
+const logShown = computed(() => {
+  const q = logFilter.value.trim().toLowerCase()
+  if (!q) return logRows.value
+  return logRows.value.filter(
+    (r) =>
+      r.summary.toLowerCase().includes(q) ||
+      r.action.toLowerCase().includes(q) ||
+      actorName(r.actorId).toLowerCase().includes(q),
+  )
+})
+
+function logWhen(at: string): string {
+  return new Date(at).toLocaleString('en-US', {
+    timeZone: 'America/Chicago',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
 
 // ── rotation template ────────────────────────────────────────────────
 
@@ -591,6 +638,36 @@ async function saveWarnCfg() {
             </button>
           </div>
         </section>
+
+        <section class="setup__card">
+          <div class="setup__card-head">
+            <h2 class="setup__h">Activity log</h2>
+            <input
+              v-model="logFilter"
+              type="search"
+              class="setup__loginput"
+              placeholder="Filter actions"
+              aria-label="Filter activity log"
+            />
+          </div>
+          <p class="setup__muted">Every change made in the scheduler — who did what, when (Central time).</p>
+          <p v-if="logLoaded && logRows.length === 0" class="setup__muted">Nothing recorded yet.</p>
+          <ul v-else class="setup__log">
+            <li v-for="r in logShown" :key="r.id" class="setup__logrow">
+              <span class="setup__logwhen">{{ logWhen(r.at) }}</span>
+              <span class="setup__logwho">{{ actorName(r.actorId) }}</span>
+              <span class="setup__logwhat">{{ r.summary }}</span>
+            </li>
+          </ul>
+          <button
+            v-if="logLoaded && !logDone && !logFilter"
+            class="setup__btn"
+            :disabled="logBusy"
+            @click="loadLog(true)"
+          >
+            {{ logBusy ? 'Loading…' : 'Load older entries' }}
+          </button>
+        </section>
       </div>
 
       <aside class="setup__side">
@@ -1045,6 +1122,71 @@ async function saveWarnCfg() {
   grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
   gap: 1rem;
   align-items: start;
+}
+
+.setup__log {
+  list-style: none;
+  margin: 0.5rem 0 0.7rem;
+  padding: 0;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.setup__logrow {
+  display: grid;
+  grid-template-columns: 92px 160px 1fr;
+  gap: 0.7rem;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.8rem;
+  border-bottom: 1px solid var(--color-line-soft);
+  align-items: baseline;
+}
+
+.setup__logrow:last-child {
+  border-bottom: 0;
+}
+
+.setup__logrow:nth-child(even) {
+  background: oklch(0.45 0.02 260 / 0.045);
+}
+
+.setup__logwhen {
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.setup__logwho {
+  font-weight: 600;
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup__logwhat {
+  color: var(--color-ink-soft);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.setup__loginput {
+  font: inherit;
+  font-size: 0.8rem;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 0.25rem 0.6rem;
+  background: var(--color-surface);
+  margin-left: auto;
+}
+
+@media (max-width: 700px) {
+  .setup__logrow {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
 }
 
 .setup__card {

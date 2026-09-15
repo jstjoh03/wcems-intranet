@@ -472,6 +472,63 @@ function displayName(userId: string | null): { name: string; credential: string 
   return p ? { name: p.fullName, credential: p.credential } : { name: 'Unknown', credential: null }
 }
 
+// ── audit trail ──────────────────────────────────────────────────────
+
+export interface AuditRow {
+  id: number
+  at: string
+  actorId: string | null
+  action: string
+  summary: string
+}
+
+/** Fire-and-forget action record — never blocks or fails the calling
+ *  mutation; a failed write only logs to the console. Editors read the
+ *  log on the Setup tab. */
+function audit(
+  action: string,
+  summary: string,
+  opts?: { entity?: string; entityId?: string | null; detail?: Record<string, unknown> },
+): void {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return
+  const actorId = auth.appUser?.id ?? null
+  if (!actorId) return
+  void supabase
+    .from('sched_audit')
+    .insert({
+      actor_id: actorId,
+      action,
+      entity: opts?.entity ?? 'schedule',
+      entity_id: opts?.entityId ?? null,
+      detail: { summary, ...(opts?.detail ?? {}) },
+    })
+    .then(({ error }) => {
+      if (error) console.warn('[sched] audit write failed:', error.message)
+    })
+}
+
+/** Editors: page through the action log, newest first. */
+async function fetchAuditLog(beforeId?: number): Promise<AuditRow[]> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return []
+  let q = supabase
+    .from('sched_audit')
+    .select('id, at, actor_id, action, detail')
+    .order('id', { ascending: false })
+    .limit(80)
+  if (beforeId !== undefined) q = q.lt('id', beforeId)
+  const res = await q
+  if (res.error) return []
+  return (res.data ?? []).map((r) => ({
+    id: r.id as number,
+    at: r.at as string,
+    actorId: (r.actor_id as string | null) ?? null,
+    action: r.action as string,
+    summary: (r.detail as { summary?: string } | null)?.summary ?? (r.action as string),
+  }))
+}
+
 // ── loading ──────────────────────────────────────────────────────────
 
 async function loadCore(): Promise<void> {
@@ -1903,6 +1960,7 @@ async function saveSetting(key: string, value: Record<string, unknown>): Promise
   )
   if (res.error) return res.error.message
   settings.value = { ...settings.value, [key]: value }
+  audit('settings.save', `Updated ${key} settings`, { entity: 'settings', entityId: key, detail: { value } })
   return null
 }
 
@@ -1938,6 +1996,7 @@ async function createTimeOffRequests(
   })
   const res = await supabase.from('sched_requests').insert(rows)
   if (res.error) return res.error.message
+  audit('request.time_off', `Requested ${OFF_LABELS[offType] ?? offType} time off — ${daysReq.length === 1 ? daysReq[0].dateIso : `${daysReq.length} days from ${daysReq[0].dateIso}`}`, { entity: 'request' })
   await loadRequests()
   return null
 }
@@ -1970,6 +2029,7 @@ async function createExtraRequest(opts: {
     warnings: opts.warnings ?? [],
   })
   if (res.error) return res.error.message
+  audit('request.extra', `Requested extra hours ${opts.dateIso} ${opts.from}–${opts.until}${unit ? ` on ${unit.code}` : ''} (${opts.timeType})`, { entity: 'request' })
   await loadRequests()
   return null
 }
@@ -2023,6 +2083,7 @@ async function createPickupRequest(opts: {
     warnings: opts.warnings ?? [],
   })
   if (res.error) return res.error.message
+  audit('request.pickup', `Requested pickup — ${unit?.code ?? 'event/rider slot'}${seat ? ` ${seat.label}` : ''} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'request' })
   await loadRequests()
   return null
 }
@@ -2082,6 +2143,7 @@ async function createTradePosting(opts: {
     comments: opts.comments || null,
   })
   if (res.error) return res.error.message
+  audit(`request.${opts.type}`, `Posted a ${opts.type === 'trade' ? 'swap' : 'giveaway'} — ${unit?.code ?? ''} ${seat?.label ?? ''} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'request' })
   await loadRequests()
   return null
 }
@@ -2121,6 +2183,7 @@ async function makeOffer(opts: {
       ? 'You already have an offer on this posting.'
       : res.error.message
   }
+  audit('trade.offer', opts.offerShift ? `Offered a swap shift (${opts.offerShift.dateIso}) on a posting` : 'Offered to take a posted shift', { entity: 'request', entityId: opts.requestId })
   await loadTradeOffers()
   return null
 }
@@ -2131,6 +2194,7 @@ async function withdrawOffer(offerId: string): Promise<string | null> {
     .update({ status: 'withdrawn' })
     .eq('id', offerId)
   if (res.error) return res.error.message
+  audit('trade.withdraw', 'Withdrew a swap offer', { entity: 'request' })
   await loadTradeOffers()
   return null
 }
@@ -2177,6 +2241,7 @@ async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string
     })
     .eq('id', req.id)
   if (up2.error) return up2.error.message
+  audit('trade.accept', `Accepted ${displayName(offer.userId).name}'s offer on their ${req.type === 'trade' ? 'swap' : 'giveaway'} posting`, { entity: 'request', entityId: req.id })
   await Promise.all([loadRequests(), loadTradeOffers()])
   return null
 }
@@ -2187,6 +2252,7 @@ async function declineOffer(offerId: string): Promise<string | null> {
     .update({ status: 'declined' })
     .eq('id', offerId)
   if (res.error) return res.error.message
+  audit('trade.decline', 'Declined a swap offer', { entity: 'request' })
   await loadTradeOffers()
   return null
 }
@@ -2463,6 +2529,9 @@ async function assignOpenSeat(opts: {
     const ins = await supabase.from('sched_entries').insert(rows)
     if (ins.error) return ins.error.message
   }
+  const seatA = seats.value.find((s2) => s2.id === opts.seatId)
+  const unitA = units.value.find((u) => u.id === seatA?.unitId)
+  audit('assign.seat', `Assigned ${displayName(opts.userId).name} to ${unitA?.code ?? '?'} ${seatA?.label ?? 'seat'} on ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2516,6 +2585,7 @@ async function dayMarkOff(opts: {
   }
   const ins = await supabase.from('sched_entries').insert(rows)
   if (ins.error) return ins.error.message
+  audit('day.mark_off', `Marked ${displayName(opts.userId).name} off (${OFF_LABELS[opts.offType] ?? opts.offType}) ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2545,6 +2615,7 @@ async function dayOpenWindow(opts: {
   }))
   const ins = await supabase.from('sched_entries').insert(rows)
   if (ins.error) return ins.error.message
+  audit('day.open', `Opened ${displayName(opts.userId).name}'s seat ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2586,6 +2657,7 @@ async function dayReplace(opts: {
   }))
   const ins = await supabase.from('sched_entries').insert(rows)
   if (ins.error) return ins.error.message
+  audit('day.replace', `Replaced ${displayName(opts.fromUserId).name} with ${displayName(opts.toUserId).name} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2638,6 +2710,7 @@ async function markUnavailable(dateIso: string, reason: string): Promise<string 
       ? 'That day is already marked unavailable.'
       : res.error.message
   }
+  audit('availability.mark', `Marked unavailable on ${dateIso}`, { entity: 'availability' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2645,6 +2718,7 @@ async function markUnavailable(dateIso: string, reason: string): Promise<string 
 async function clearUnavailable(id: string): Promise<string | null> {
   const res = await supabase.from('sched_availability').delete().eq('id', id)
   if (res.error) return res.error.message
+  audit('availability.clear', 'Removed an unavailable day', { entity: 'availability', entityId: id })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2733,6 +2807,7 @@ async function addEvent(opts: {
     const eres = await supabase.from('sched_entries').insert(rows)
     if (eres.error) return eres.error.message
   }
+  audit('event.add', `Added event "${opts.label}" ${opts.dateIso} ${opts.from}–${opts.until} (${opts.paramedicSlots}P/${opts.attendantSlots}A${opts.doubleTime ? ', double time' : ''})`, { entity: 'event' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2762,6 +2837,7 @@ async function deleteEventBox(dateIso: string, label: string, eventId: string | 
   } else {
     await supabase.from('sched_events').delete().eq('on_date', dateIso).eq('label', label)
   }
+  audit('event.delete', `Deleted event "${label}" on ${dateIso}`, { entity: 'event' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2781,6 +2857,7 @@ async function assignEventSlot(entryId: string, userId: string | null): Promise<
     await reloadRangeIfLoaded()
     return 'That slot no longer exists — the board has changed.'
   }
+  audit(userId ? 'slot.assign' : 'slot.unassign', userId ? `Assigned ${displayName(userId).name} to an event/rider slot` : 'Unassigned an event/rider slot', { entity: 'entry', entityId: entryId })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2792,6 +2869,7 @@ async function addEventSlot(dateIso: string, label: string, title: string, from:
     kind: 'event', status: 'open', student_program: title, note: label,
   })
   if (res.error) return res.error.message
+  audit('event.add_slot', `Added a ${title} slot to "${label}" ${dateIso}`, { entity: 'event' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2806,7 +2884,7 @@ async function voidRequestIfOrphaned(requestId: string): Promise<void> {
     .select('id', { count: 'exact', head: true })
     .eq('source_request', requestId)
   if (left.error || (left.count ?? 0) > 0) return
-  await supabase
+  const upd = await supabase
     .from('sched_requests')
     .update({
       status: 'cancelled',
@@ -2815,6 +2893,10 @@ async function voidRequestIfOrphaned(requestId: string): Promise<void> {
     })
     .eq('id', requestId)
     .eq('status', 'approved')
+    .select('id')
+  if (!upd.error && (upd.data?.length ?? 0) > 0) {
+    audit('request.auto_void', 'Auto-cancelled an approved request whose calendar entry was removed', { entity: 'request', entityId: requestId })
+  }
   await loadRequests()
 }
 
@@ -2823,10 +2905,14 @@ async function removeEntry(entryId: string): Promise<string | null> {
     .from('sched_entries')
     .delete()
     .eq('id', entryId)
-    .select('source_request')
+    .select('source_request, user_id, work_date, kind')
   if (res.error) return res.error.message
-  const reqId = (res.data?.[0]?.source_request as string | null) ?? null
+  const gone = res.data?.[0] as
+    | { source_request: string | null; user_id: string | null; work_date: string; kind: string }
+    | undefined
+  const reqId = gone?.source_request ?? null
   if (reqId) await voidRequestIfOrphaned(reqId)
+  audit('entry.remove', `Removed a ${gone?.kind ?? 'schedule'} entry${gone?.user_id ? ` for ${displayName(gone.user_id).name}` : ''}${gone?.work_date ? ` on ${gone.work_date}` : ''}`, { entity: 'entry', entityId: entryId })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2850,6 +2936,7 @@ async function updateEntryWindow(
     await reloadRangeIfLoaded()
     return 'That entry no longer exists — the board has changed.'
   }
+  audit('entry.retime', `Retimed an entry to ${from}–${until} (${dateIso})`, { entity: 'entry', entityId: entryId })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2886,6 +2973,7 @@ async function updateEventListing(
     })
     if (res.error) return res.error.message
   }
+  audit('event.update', `Updated event "${label}" on ${dateIso}`, { entity: 'event', detail: { patch } })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2911,6 +2999,7 @@ async function updateStudentEntry(opts: {
     })
     .eq('id', opts.entryId)
   if (res.error) return res.error.message
+  audit('student.update', `Updated student rider (${opts.label}) on ${opts.dateIso}`, { entity: 'entry', entityId: opts.entryId })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2935,6 +3024,7 @@ async function addStudent(opts: {
     student_program: opts.comment ? `${opts.program} (${opts.comment})` : opts.program,
   })
   if (res.error) return res.error.message
+  audit('student.add', `Added a ${opts.program} student to ${units.value.find((u) => u.id === opts.unitId)?.code ?? 'a unit'} on ${opts.dateIso}`, { entity: 'entry' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2977,6 +3067,7 @@ async function addRiderSeats(opts: {
   }
   const res = await supabase.from('sched_entries').insert(rows)
   if (res.error) return res.error.message
+  audit('rider.add', `Added ${count} ${label} seat${count > 1 ? 's' : ''} on ${units.value.find((u) => u.id === opts.unitId)?.code ?? '?'} ${opts.startDate}${opts.endDate !== opts.startDate ? `–${opts.endDate}` : ''}`, { entity: 'entry' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -2996,6 +3087,7 @@ async function addDayNote(opts: {
     created_by: auth.appUser?.id ?? null,
   })
   if (res.error) return res.error.message
+  audit('note.add', `Added a day note on ${opts.dateIso}`, { entity: 'note' })
   await reloadRangeIfLoaded()
   return null
 }
@@ -3003,6 +3095,7 @@ async function addDayNote(opts: {
 async function deleteDayNote(id: string): Promise<string | null> {
   const res = await supabase.from('sched_day_notes').delete().eq('id', id)
   if (res.error) return res.error.message
+  audit('note.delete', 'Deleted a day note', { entity: 'note', entityId: id })
   await reloadRangeIfLoaded()
   return null
 }
@@ -3014,6 +3107,7 @@ async function cancelRequest(id: string): Promise<string | null> {
     .eq('id', id)
     .eq('status', 'pending')
   if (res.error) return res.error.message
+  audit('request.cancel', 'Cancelled a pending request', { entity: 'request', entityId: id })
   await loadRequests()
   return null
 }
@@ -3273,6 +3367,7 @@ async function decideRequest(
     .eq('id', req.id)
   if (upd.error) return upd.error.message
 
+  audit(approve ? 'request.approve' : 'request.deny', `${approve ? 'Approved' : 'Denied'} ${displayName(req.requesterId).name}'s ${(REQ_TYPE_LABELS[req.type] ?? req.type).toLowerCase()}${req.workDate ? ` for ${req.workDate}` : ''}${note ? ` — ${note}` : ''}`, { entity: 'request', entityId: req.id })
   await Promise.all([loadRequests(), rangeStart.value ? loadRange(rangeStart.value, rangeEnd.value) : Promise.resolve()])
   return null
 }
@@ -3333,6 +3428,9 @@ async function assignRotation(
     created_by: auth.appUser?.id ?? null,
   })
   if (ins.error) return ins.error.message
+  const seatR = seats.value.find((s) => s.id === seatId)
+  const unitR = units.value.find((u) => u.id === seatR?.unitId)
+  audit('rotation.assign', `Rotation: ${userId ? displayName(userId).name : 'OPEN'} → ${unitR?.code ?? '?'} ${seatR?.label ?? ''} (${platoon} Shift) from ${effectiveFrom}`, { entity: 'rotation' })
   await loadCore()
   return null
 }
@@ -3360,6 +3458,9 @@ async function removeRotationAssignment(id: string): Promise<string | null> {
       if (upd.error) return upd.error.message
     }
   }
+  const seatR = seats.value.find((s) => s.id === target.seatId)
+  const unitR = units.value.find((u) => u.id === seatR?.unitId)
+  audit('rotation.cancel', `Cancelled a scheduled rotation change on ${unitR?.code ?? '?'} ${seatR?.label ?? ''} (${target.platoon} Shift, eff. ${target.effectiveFrom})`, { entity: 'rotation' })
   await loadCore()
   return null
 }
@@ -3396,6 +3497,7 @@ async function addUnit(opts: {
     .from('sched_seats')
     .insert(seatsToAdd.map((s) => ({ ...s, unit_id: unitId })))
   if (sres.error) return sres.error.message
+  audit('unit.add', `Added unit ${opts.code} (${opts.preset})`, { entity: 'unit', entityId: unitId })
   await loadCore()
   return null
 }
@@ -3408,6 +3510,7 @@ async function setUnitActive(unitId: string, isActive: boolean): Promise<string 
   if (auth.usingDevStub) return 'Not available in the dev preview.'
   const res = await supabase.from('sched_units').update({ active: isActive }).eq('id', unitId)
   if (res.error) return res.error.message
+  audit(isActive ? 'unit.reactivate' : 'unit.deactivate', `${isActive ? 'Reactivated' : 'Deactivated'} unit ${units.value.find((u) => u.id === unitId)?.code ?? '?'}`, { entity: 'unit', entityId: unitId })
   await loadCore()
   await reloadRangeIfLoaded()
   return null
@@ -3448,6 +3551,7 @@ async function deleteUnit(unitId: string): Promise<string | null> {
   if (dn.error) return dn.error.message
   const du = await supabase.from('sched_units').delete().eq('id', unitId)
   if (du.error) return du.error.message
+  audit('unit.delete', `Deleted unit ${units.value.find((u) => u.id === unitId)?.code ?? '?'} (no history)`, { entity: 'unit', entityId: unitId })
   await loadCore()
   await reloadRangeIfLoaded()
   return null
@@ -3482,6 +3586,7 @@ async function saveUnitRotation(
     })
     .eq('id', unitId)
   if (res.error) return res.error.message
+  audit('unit.rotation', `Updated ${units.value.find((u) => u.id === unitId)?.code ?? '?'} rotation & shift hours`, { entity: 'unit', entityId: unitId, detail: { pattern, anchor, shiftStart, shiftEnd } })
   await loadCore()
   await reloadRangeIfLoaded()
   return null
@@ -3495,6 +3600,7 @@ async function saveUnitOrder(orderedIds: string[]): Promise<string | null> {
       .eq('id', orderedIds[i])
     if (res.error) return res.error.message
   }
+  audit('unit.reorder', 'Reordered unit display', { entity: 'unit' })
   await loadCore()
   return null
 }
@@ -3512,6 +3618,7 @@ async function setAccess(
       .upsert({ user_id: userId, level: lvl }, { onConflict: 'user_id' })
     if (res.error) return res.error.message
   }
+  audit('access.set', `Set ${displayName(userId).name}'s access to ${lvl ?? 'default'}`, { entity: 'access', entityId: userId })
   return null
 }
 
@@ -3546,11 +3653,14 @@ async function setCredential(userId: string, credential: string | null): Promise
     )
     if (res.error) return res.error.message
   }
+  audit('credential.set', `Set ${displayName(userId).name}'s credential to ${credential ?? 'Auto'}`, { entity: 'member', entityId: userId })
   await loadCore()
   return null
 }
 
 async function saveMemberSettings(s: MemberSettings): Promise<string | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return 'Not available in the dev preview.'
   const res = await supabase.from('sched_member_settings').upsert(
     {
       user_id: s.userId,
@@ -3562,7 +3672,9 @@ async function saveMemberSettings(s: MemberSettings): Promise<string | null> {
     },
     { onConflict: 'user_id' },
   )
-  return res.error ? res.error.message : null
+  if (res.error) return res.error.message
+  audit('member.settings', `Updated ${displayName(s.userId).name}'s scheduler settings`, { entity: 'member', entityId: s.userId })
+  return null
 }
 
 async function fetchAccessList(): Promise<{ userId: string; level: string }[]> {
@@ -3651,6 +3763,7 @@ export function useSchedule() {
     deleteUnit,
     setAccess,
     fetchAccessList,
+    fetchAuditLog,
     // requests
     upcomingShiftsFor,
     openSeatsFor,
