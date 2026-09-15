@@ -353,6 +353,27 @@ watch(dateIso, (v) => {
   flex-wrap: wrap;
 }
 
+/* Phone: one swipeable row instead of a three-row stack — content
+   starts a full nav-bar sooner. */
+@media (max-width: 700px) {
+  .sched__tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    max-width: 100%;
+  }
+
+  .sched__tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sched__tabs > * {
+    flex: none;
+  }
+}
+
 .sched__tabdiv {
   width: 1px;
   align-self: stretch;

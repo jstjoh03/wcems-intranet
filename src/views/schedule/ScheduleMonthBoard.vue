@@ -29,23 +29,43 @@ interface Cell {
   dayNum: number
   inMonth: boolean
   isToday: boolean
+  worksMe: boolean
   model: DayModel
+}
+
+/** Am I working (seat, rider, event, or extra hours) on this day?
+ *  Drives the gold day-number marker — on phones the roster is hidden,
+ *  so this is how you spot your days at a glance (the Aladtec habit). */
+function worksMe(model: DayModel, me: string | null): boolean {
+  if (!me) return false
+  return (
+    model.units.some(
+      (um) =>
+        um.seats.some((sm) => sm.rows.some((r) => r.userId === me)) ||
+        um.extras.some((r) => r.userId === me),
+    ) ||
+    model.events.some((ev) => ev.rows.some((r) => r.userId === me)) ||
+    model.extraHours.some((r) => r.userId === me)
+  )
 }
 
 const weeks = computed<Cell[][]>(() => {
   const first = new Date(`${props.month}-01T00:00:00`)
   const gridStart = addDaysIso(`${props.month}-01`, -first.getDay())
+  const me = sched.myUserId.value
   const out: Cell[][] = []
   for (let w = 0; w < 6; w++) {
     const row: Cell[] = []
     for (let d = 0; d < 7; d++) {
       const iso = addDaysIso(gridStart, w * 7 + d)
+      const model = sched.dayModel(iso, props.mine ? me : null)
       row.push({
         iso,
         dayNum: Number(iso.slice(8, 10)),
         inMonth: iso.slice(0, 7) === props.month,
         isToday: iso === todayIso,
-        model: sched.dayModel(iso, props.mine ? sched.myUserId.value : null),
+        worksMe: worksMe(model, me),
+        model,
       })
     }
     if (row.every((c) => !c.inMonth)) break
@@ -71,12 +91,12 @@ const weeks = computed<Cell[][]>(() => {
       >
         <div class="mb__cellhead">
           <button class="mb__cellbtn" @click="emit('open-day', c.iso)">
-            <span class="mb__daynum">{{ c.dayNum }}</span>
+            <span class="mb__daynum" :class="{ 'mb__daynum--me': c.worksMe }" :title="c.worksMe ? 'You work this day' : undefined">{{ c.dayNum }}</span>
             <span class="mb__platoon" :data-platoon="c.model.platoon">
-              <span class="mb__dot" />{{ c.model.platoon }} Shift
+              <span class="mb__dot" /><span class="mb__platoonword">{{ c.model.platoon }} Shift</span>
             </span>
           </button>
-          <span v-if="c.model.openCount > 0" class="mb__open">{{ c.model.openCount }} open</span>
+          <span v-if="c.model.openCount > 0" class="mb__open">{{ c.model.openCount }}<span class="mb__openword"> open</span></span>
           <button
             v-if="sched.canEdit.value"
             class="mb__plus"
@@ -411,6 +431,20 @@ const weeks = computed<Cell[][]>(() => {
   font-variant-numeric: tabular-nums;
 }
 
+/* Gold day number = you're on the board that day (matches the gold
+   name highlight; on phones it's the only marker, roster is hidden). */
+.mb__daynum--me {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: oklch(0.93 0.07 86.8);
+  box-shadow: inset 0 0 0 1px oklch(0.78 0.09 86.8);
+}
+
 .mb__platoon {
   display: inline-flex;
   align-items: center;
@@ -645,22 +679,75 @@ const weeks = computed<Cell[][]>(() => {
   color: var(--color-muted);
 }
 
-/* Phone: collapse rosters — the cell header (day, platoon, opens) stays
-   and taps through to the Day view. */
+/* Phone: a native-calendar month — day number (gold circle = your
+   day), platoon dot, red open-count pill. The whole cell taps into the
+   Day view; rosters and editor tools live there. */
 @media (max-width: 900px) {
-  .mb__roster {
+  .mb__roster,
+  .mb__plus,
+  .mb__platoonword,
+  .mb__openword {
     display: none;
+  }
+
+  .mb__week {
+    gap: 4px;
+    margin-bottom: 4px;
+  }
+
+  .mb__cell {
+    position: relative;
+    min-height: 60px;
+    border-radius: 9px;
   }
 
   .mb__cellhead {
     border-bottom: 0;
     background: var(--color-surface);
+    flex: 1;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 3px;
+    padding: 0.4rem 0.1rem;
+  }
+
+  .mb__cell--out .mb__cellhead {
+    background: transparent;
+  }
+
+  .mb__cellbtn {
+    position: static;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* stretch the tap target across the whole cell */
+  .mb__cellbtn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+
+  .mb__platoon {
+    border: 0;
+    padding: 0;
+    background: transparent;
+  }
+
+  .mb__dot {
+    width: 9px;
+    height: 9px;
   }
 
   .mb__open {
     margin-left: 0;
+    line-height: 15px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: oklch(0.98 0.013 27);
+    box-shadow: inset 0 0 0 1px oklch(0.9 0.05 27);
   }
 }
 </style>
