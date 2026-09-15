@@ -41,6 +41,15 @@ const VIEWS: { key: MyView; label: string }[] = [
 
 const monthAnchor = computed(() => dateIso.value.slice(0, 7))
 
+/* The phone month is a personal calendar (gold day markers only); the
+   other views — and desktop month — still list open seats too. */
+const isPhone = window.matchMedia('(max-width: 900px)').matches
+const showingLabel = computed(() =>
+  isPhone && view.value === 'month'
+    ? 'Your days are marked in gold'
+    : 'Showing you + open seats',
+)
+
 const navLabel = computed(() => {
   if (view.value === 'month') {
     return new Date(`${monthAnchor.value}-01T00:00:00`).toLocaleDateString('en-US', {
@@ -283,7 +292,7 @@ function pendingLine(r: SchedRequest): string {
       </template>
 
       <span class="my__count">
-        Showing you + open seats
+        {{ showingLabel }}
         <template v-if="view === 'month' && monthShiftCount > 0">
           · {{ monthShiftCount }} shift {{ monthShiftCount === 1 ? 'day' : 'days' }} this month
         </template>
