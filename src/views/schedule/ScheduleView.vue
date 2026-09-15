@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
@@ -170,6 +170,9 @@ async function openPickupLink(entryId: string) {
   }
   dateIso.value = info.dateIso
   tab.value = 'day'
+  // The tab watcher calls editor.closeAll() on its next flush — wait it
+  // out, or it closes this modal the instant it opens.
+  await nextTick()
   editor.openSlotDirect({
     dateIso: info.dateIso,
     seatId: info.seatId,
