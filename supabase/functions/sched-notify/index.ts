@@ -40,8 +40,10 @@ const env = Deno.env
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, content-type, apikey',
-  'Access-Control-Allow-Methods': 'POST',
+  // x-client-info is sent by supabase-js functions.invoke — omitting it
+  // fails the preflight and the browser never reaches the function.
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 const PORTAL = 'https://employee.wallercountyems.com'
