@@ -120,7 +120,7 @@ const header = computed(() =>
           v-else-if="ex.note"
           class="dc__name dc__rowbtn"
           :class="{ 'dc__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
-          title="Read the note"
+          :title="ex.note ?? undefined"
           @click="editor.openNote({ title: ex.name, text: ex.note ?? '' })"
         >
           {{ ex.name }}<span class="dc__noteicon" />
@@ -192,7 +192,7 @@ const header = computed(() =>
         <button
           v-if="ev.notes"
           class="dc__noteicon dc__rowbtn"
-          title="Read the note"
+          :title="ev.notes ?? undefined"
           @click="editor.openNote({ title: ev.label, text: ev.notes ?? '', event: { dateIso, label: ev.label, eventId: ev.eventId, startHm: ev.start, endHm: ev.end } })"
         />
       </p>
@@ -453,7 +453,7 @@ const header = computed(() =>
   border-radius: 2px;
   background: oklch(0.88 0.1 86.8);
   border: 1px solid oklch(0.6 0.11 86.8);
-  cursor: help;
+  cursor: pointer;
 }
 
 .dc__section {

@@ -176,7 +176,7 @@ async function removeNote(id: string) {
             v-else-if="ex.note"
             class="db__name db__name--btn"
             :class="{ 'db__name--me': !!ex.userId && ex.userId === sched.myUserId.value }"
-            title="Read the note"
+            :title="ex.note ?? undefined"
             @click="editor.openNote({ title: ex.name, text: ex.note ?? '' })"
           >
             {{ ex.name }}<span v-if="ex.credential" class="db__cred"> - {{ ex.credential }}</span>
@@ -264,7 +264,7 @@ async function removeNote(id: string) {
           <button
             v-if="ev.notes"
             class="db__noteicon db__notebtn"
-            title="Read the note"
+            :title="ev.notes ?? undefined"
             @click="editor.openNote({ title: ev.label, text: ev.notes ?? '', event: { dateIso: props.dateIso, label: ev.label, eventId: ev.eventId, startHm: ev.start, endHm: ev.end } })"
           >
             <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
