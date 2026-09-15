@@ -49,6 +49,26 @@ function worksMe(model: DayModel, me: string | null): boolean {
   )
 }
 
+/** Unit (or whole-day) notes open in the shared note modal — Aladtec's
+ *  gold note icon on the unit header, tap-to-read on phones, editable
+ *  in place for editors. */
+function noteCtx(label: string, iso: string, notes: { id: string; note: string }[]) {
+  const day = new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+  return {
+    title: `${label} — ${day}`,
+    text: notes.map((n) => n.note).join('\n'),
+    dayNotes: notes.map((n) => ({ id: n.id, note: n.note })),
+  }
+}
+
+function notesTitle(notes: { note: string }[]): string {
+  return notes.map((n) => n.note).join('\n')
+}
+
 const weeks = computed<Cell[][]>(() => {
   const first = new Date(`${props.month}-01T00:00:00`)
   const gridStart = addDaysIso(`${props.month}-01`, -first.getDay())
@@ -108,8 +128,28 @@ const weeks = computed<Cell[][]>(() => {
         </div>
 
         <div class="mb__roster">
+          <div v-if="c.model.notes.length" class="mb__daynotes">
+            <button
+              class="mb__noteicon mb__rowbtn"
+              :title="notesTitle(c.model.notes)"
+              @click="editor.openNote(noteCtx('Day note', c.iso, c.model.notes))"
+            >
+              <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
+              <span>Day note</span>
+            </button>
+          </div>
           <div v-for="um in c.model.units" :key="um.unit.id" class="mb__unit">
-            <p class="mb__unitname">{{ um.unit.code }}</p>
+            <p class="mb__unitname">
+              <span>{{ um.unit.code }}</span>
+              <button
+                v-if="um.notes.length"
+                class="mb__noteicon mb__rowbtn"
+                :title="notesTitle(um.notes)"
+                @click="editor.openNote(noteCtx(um.unit.code, c.iso, um.notes))"
+              >
+                <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
+              </button>
+            </p>
             <template v-for="sm in um.seats" :key="sm.seat.id">
               <div
                 v-for="(row, ri) in sm.rows"
@@ -303,13 +343,19 @@ const weeks = computed<Cell[][]>(() => {
 
           <div v-if="c.model.pending.length" class="mb__section mb__section--pend">
             <p class="mb__section-h">Pending Requests</p>
-            <div v-for="r in c.model.pending" :key="r.id" class="mb__lrow">
-              <div class="mb__row">
+            <button
+              v-for="r in c.model.pending"
+              :key="r.id"
+              class="mb__lrow mb__pendbtn"
+              :title="sched.canEdit.value ? 'Review — approve or deny' : 'Your request — view or cancel'"
+              @click="editor.openRequest(r.id)"
+            >
+              <span class="mb__row">
                 <span class="mb__name">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
                 <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
-              </div>
-              <p class="mb__sub">{{ r.sub }}</p>
-            </div>
+              </span>
+              <span class="mb__sub">{{ r.sub }}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -436,6 +482,40 @@ const weeks = computed<Cell[][]>(() => {
   text-underline-offset: 2px;
 }
 
+/* clickable pending-request row — same reset as the name buttons */
+.mb__pendbtn {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+}
+
+.mb__pendbtn .mb__sub {
+  display: block;
+}
+
+.mb__pendbtn:hover .mb__name {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.mb__daynotes {
+  padding: 0.08rem 0;
+}
+
+.mb__daynotes .mb__noteicon span {
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: oklch(0.5 0.11 86.8);
+  margin-left: 3px;
+}
+
 .mb__notedot {
   display: inline-block;
   width: 6px;
@@ -523,6 +603,9 @@ const weeks = computed<Cell[][]>(() => {
 }
 
 .mb__unitname {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
   font-size: 0.66rem;
   font-weight: 700;
   color: var(--color-brand-700);

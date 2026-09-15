@@ -951,7 +951,7 @@ export const OFF_LABELS: Record<string, string> = {
   other: 'Time Off',
 }
 
-const REQ_TYPE_LABELS: Record<string, string> = {
+export const REQ_TYPE_LABELS: Record<string, string> = {
   pickup: 'Pickup',
   time_off: 'Time off',
   extra_hours: 'Extra hours',
@@ -1146,9 +1146,12 @@ export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
 
     const notes = dayNotes.value.filter((n) => n.onDate === dateIso && n.unitId === unit.id)
     // A unit with nothing to show (its pattern is dark today, or the
-    // "just me" filter emptied it) drops off the board entirely.
+    // "just me" filter emptied it) drops off the board entirely. On a
+    // personal calendar a note alone doesn't earn the unit a block.
     const hasContent =
-      seatModels.some((sm) => sm.rows.length > 0) || extras.length > 0 || notes.length > 0
+      seatModels.some((sm) => sm.rows.length > 0) ||
+      extras.length > 0 ||
+      (!onlyFor && notes.length > 0)
     if (hasContent) unitModels.push({ unit, seats: seatModels, extras, notes })
   }
 
@@ -3172,6 +3175,14 @@ async function deleteDayNote(id: string): Promise<string | null> {
   return null
 }
 
+async function updateDayNote(id: string, note: string): Promise<string | null> {
+  const res = await supabase.from('sched_day_notes').update({ note }).eq('id', id)
+  if (res.error) return res.error.message
+  audit('note.update', 'Updated a day note', { entity: 'note', entityId: id })
+  await reloadRangeIfLoaded()
+  return null
+}
+
 async function cancelRequest(id: string): Promise<string | null> {
   const res = await supabase
     .from('sched_requests')
@@ -4102,6 +4113,7 @@ export function useSchedule() {
     updateEventListing,
     addDayNote,
     deleteDayNote,
+    updateDayNote,
     // hours engine + settings
     settings,
     warningThresholds,

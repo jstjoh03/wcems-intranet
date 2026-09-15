@@ -310,13 +310,19 @@ async function removeNote(id: string) {
     <section v-if="model.pending.length > 0" class="db__station">
       <h3 class="db__station-name db__station-name--pend">Pending Requests</h3>
       <div class="db__labeled db__labeled--pend">
-        <div v-for="r in model.pending" :key="r.id" class="db__row">
+        <button
+          v-for="r in model.pending"
+          :key="r.id"
+          class="db__row db__pendbtn"
+          :title="sched.canEdit.value ? 'Review — approve or deny' : 'Your request — view or cancel'"
+          @click="editor.openRequest(r.id)"
+        >
           <span class="db__seat" :title="r.sub">{{ r.sub }}</span>
           <span class="db__name">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
           <span class="db__time">{{ r.start }} – {{ r.end }}</span>
-        </div>
+        </button>
       </div>
-      <p v-if="sched.canEdit.value" class="db__pendhint">Approve or deny these on the Requests tab.</p>
+      <p v-if="sched.canEdit.value" class="db__pendhint">Click a request to approve or deny it in place.</p>
     </section>
 
     <section v-if="model.unattached.length > 0" class="db__station">
@@ -679,6 +685,23 @@ async function removeNote(id: string) {
   font-size: 0.75rem;
   color: var(--color-muted);
   margin: 0.35rem 0 0;
+}
+
+/* clickable pending-request row — inherits the db__row flex layout */
+.db__pendbtn {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+
+.db__pendbtn:hover .db__name {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
 }
 
 .db__labeled {

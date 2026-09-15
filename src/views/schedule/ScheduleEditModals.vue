@@ -3,8 +3,12 @@ import { ref, computed, watch } from 'vue'
 import {
   useSchedule,
   platoonFor,
+  hhmm,
+  OFF_LABELS,
+  REQ_TYPE_LABELS,
   type HoursWarning,
   type OpenSeatInfo,
+  type SchedRequest,
 } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
@@ -862,6 +866,181 @@ async function noteSave() {
   flash('Note saved.')
   editor.closeAll()
 }
+
+// unit/day notes (sched_day_notes rows) edit in the same modal
+const unitNoteDrafts = ref<{ id: string; text: string }[]>([])
+const noteDelArm = ref<string | null>(null)
+
+watch(
+  () => editor.note.value,
+  (v) => {
+    unitNoteDrafts.value = (v?.dayNotes ?? []).map((n) => ({ id: n.id, text: n.note }))
+    noteDelArm.value = null
+  },
+)
+
+async function unitNoteSave(d: { id: string; text: string }) {
+  busy.value = true
+  err.value = null
+  const e = await sched.updateDayNote(d.id, d.text.trim())
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Note saved.')
+  editor.closeAll()
+}
+
+async function unitNoteDelete(d: { id: string }) {
+  if (noteDelArm.value !== d.id) {
+    noteDelArm.value = d.id
+    return
+  }
+  busy.value = true
+  err.value = null
+  const e = await sched.deleteDayNote(d.id)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Note deleted.')
+  editor.closeAll()
+}
+
+// ── pending request (opened from the red calendar rows) ─────────────
+
+const reqObj = computed(() =>
+  editor.request.value
+    ? (sched.requests.value.find((r) => r.id === editor.request.value?.requestId) ?? null)
+    : null,
+)
+const reqHours = ref<{ lines: string[]; warnings: HoursWarning[] }>({ lines: [], warnings: [] })
+const reqConfirm = ref(false)
+
+watch(reqObj, (r) => {
+  err.value = null
+  reqConfirm.value = false
+  reqHours.value = { lines: [], warnings: [] }
+  if (r && sched.canEdit.value && (r.status === 'pending' || r.status === 'partner_accepted')) {
+    void computeReqHours(r)
+  }
+})
+
+function personName(id: string | null): string {
+  return (id && sched.personById.value.get(id)?.fullName) || 'Unknown'
+}
+
+/** Live would-be hours for whoever GAINS time — same subjects the
+ *  Requests queue computes, so the inline decision sees the same
+ *  numbers as the dedicated tab. */
+async function computeReqHours(r: SchedRequest) {
+  const subs: { userId: string; dateIso: string; startAt: string; endAt: string; name: string }[] = []
+  if ((r.type === 'pickup' || r.type === 'extra_hours') && r.workDate && r.startAt && r.endAt) {
+    subs.push({ userId: r.requesterId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name: personName(r.requesterId) })
+  } else if (r.type === 'giveaway' && r.counterpartyId && r.workDate && r.startAt && r.endAt) {
+    subs.push({ userId: r.counterpartyId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name: personName(r.counterpartyId) })
+  } else if (r.type === 'trade') {
+    if (r.counterpartyId && r.workDate && r.startAt && r.endAt) {
+      subs.push({ userId: r.counterpartyId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name: personName(r.counterpartyId) })
+    }
+    if (r.counterpartyId && r.counterWorkDate && r.counterStartAt && r.counterEndAt) {
+      subs.push({ userId: r.requesterId, dateIso: r.counterWorkDate, startAt: r.counterStartAt, endAt: r.counterEndAt, name: personName(r.requesterId) })
+    }
+  }
+  const lines: string[] = []
+  const warnings: HoursWarning[] = []
+  for (const s of subs) {
+    const info = await sched.hoursCheck(s.userId, [{ dateIso: s.dateIso, startAt: s.startAt, endAt: s.endAt }], s.name)
+    lines.push(`${s.name}: ${info.weekHours}h week · ${info.periodHours}h period · ${info.consecutiveHours}h consecutive`)
+    warnings.push(...info.warnings)
+  }
+  if (reqObj.value?.id === r.id) reqHours.value = { lines, warnings }
+}
+
+/** Chips shown before deciding: live warnings win over stored ones. */
+const reqChips = computed<HoursWarning[]>(() => {
+  const r = reqObj.value
+  if (!r) return []
+  const stored = (r.warnings as HoursWarning[]).filter(
+    (w) => w && typeof w === 'object' && 'code' in w && 'message' in w,
+  )
+  const live = reqHours.value.warnings
+  const seen = new Set(live.map((w) => w.code))
+  return [...live, ...stored.filter((w) => !seen.has(w.code))]
+})
+
+const reqTitle = computed(() => {
+  const r = reqObj.value
+  if (!r) return 'Request'
+  return `${REQ_TYPE_LABELS[r.type] ?? r.type} — ${personName(r.requesterId)}`
+})
+
+const reqRows = computed<[string, string][]>(() => {
+  const r = reqObj.value
+  if (!r) return []
+  const rows: [string, string][] = []
+  if (r.workDate) rows.push(['Date', fmtShort(r.workDate)])
+  if (r.startAt && r.endAt) rows.push(['Time', `${hhmm(r.startAt)} – ${hhmm(r.endAt)}`])
+  if (r.type === 'time_off') rows.push(['Type', OFF_LABELS[r.offType ?? ''] ?? r.offType ?? '—'])
+  const pos = [r.unitCode, r.positionLabel].filter(Boolean).join(' ')
+  if (pos) rows.push(['Shift', pos])
+  if (r.type === 'extra_hours' && r.timeType) rows.push(['Time type', r.timeType])
+  if (r.counterpartyId) rows.push([r.type === 'trade' ? 'Partner' : 'Claimed by', personName(r.counterpartyId)])
+  if (r.type === 'trade' && r.counterWorkDate && r.counterStartAt && r.counterEndAt)
+    rows.push(['In return', `${fmtShort(r.counterWorkDate)} ${hhmm(r.counterStartAt)} – ${hhmm(r.counterEndAt)}`])
+  if (r.comments) rows.push(['Comments', r.comments])
+  rows.push(['Status', r.status === 'partner_accepted' ? 'Partner accepted — awaiting approval' : r.status === 'pending' ? 'Pending approval' : r.status])
+  return rows
+})
+
+const reqIsMine = computed(() => reqObj.value?.requesterId === sched.myUserId.value)
+const reqDecidable = computed(
+  () =>
+    !!reqObj.value &&
+    (reqObj.value.status === 'pending' || reqObj.value.status === 'partner_accepted') &&
+    sched.canEdit.value,
+)
+
+async function reqDecide(approve: boolean) {
+  const r = reqObj.value
+  if (!r) return
+  if (approve) {
+    const needsConfirm = reqChips.value.some(
+      (w) => w.code === 'consecutive_confirm' || w.code === 'check_failed',
+    )
+    if (needsConfirm && !reqConfirm.value) {
+      reqConfirm.value = true
+      return
+    }
+  }
+  busy.value = true
+  err.value = null
+  const e = await sched.decideRequest(r, approve, '')
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash(approve ? 'Request approved.' : 'Request denied.')
+  editor.closeAll()
+}
+
+async function reqCancel() {
+  const r = reqObj.value
+  if (!r) return
+  busy.value = true
+  err.value = null
+  const e = await sched.cancelRequest(r.id)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Request cancelled.')
+  editor.closeAll()
+}
 </script>
 
 <template>
@@ -1371,7 +1550,51 @@ async function noteSave() {
       </div>
     </div>
 
-    <!-- ── note viewer (everyone) / editor (event notes, editors) ── -->
+    <!-- ── pending request — approve/deny in place, cancel your own ── -->
+    <div v-if="editor.request.value" class="em__overlay" @click.self="editor.closeAll()">
+      <div class="em__modal">
+        <template v-if="reqObj">
+          <h3 class="em__title">{{ reqTitle }}</h3>
+          <p v-if="err" class="em__error">{{ err }}</p>
+          <p v-for="[k, v] in reqRows" :key="k" class="em__notetext">
+            <strong>{{ k }}:</strong> {{ v }}
+          </p>
+          <template v-if="reqDecidable">
+            <p v-for="(line, i) in reqHours.lines" :key="i" class="em__notetext">{{ line }}</p>
+            <div v-if="reqChips.length" class="em__warnbox">
+              <p class="em__warnhead">Check before approving:</p>
+              <ul class="em__warnlist">
+                <li v-for="w in reqChips" :key="w.code + w.message">{{ w.message }}</li>
+              </ul>
+            </div>
+            <button class="em__btn em__btn--primary" :disabled="busy" @click="reqDecide(true)">
+              {{ busy ? 'Working…' : reqConfirm ? 'Approve anyway' : 'Approve' }}
+            </button>
+            <button class="em__btn em__btn--danger" :disabled="busy" @click="reqDecide(false)">
+              Deny
+            </button>
+          </template>
+          <button
+            v-else-if="reqIsMine && reqObj.status === 'pending'"
+            class="em__btn em__btn--danger"
+            :disabled="busy"
+            @click="reqCancel"
+          >
+            {{ busy ? 'Working…' : 'Cancel this request' }}
+          </button>
+          <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+        </template>
+        <template v-else>
+          <h3 class="em__title">Request</h3>
+          <p class="em__notetext">
+            This request has already been decided or withdrawn — the board refreshes on its own.
+          </p>
+          <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+        </template>
+      </div>
+    </div>
+
+    <!-- ── note viewer (everyone) / editor (event + day notes, editors) ── -->
     <div v-if="editor.note.value" class="em__overlay" @click.self="editor.closeAll()">
       <div class="em__modal">
         <h3 class="em__title">{{ editor.note.value.title }}</h3>
@@ -1382,6 +1605,17 @@ async function noteSave() {
             {{ busy ? 'Saving…' : 'Save note' }}
           </button>
         </template>
+        <template v-else-if="unitNoteDrafts.length && sched.canEdit.value">
+          <div v-for="d in unitNoteDrafts" :key="d.id" class="em__daynote">
+            <textarea v-model="d.text" class="em__input em__textarea" rows="2"></textarea>
+            <button class="em__btn em__btn--primary" :disabled="busy || !d.text.trim()" @click="unitNoteSave(d)">
+              {{ busy ? 'Saving…' : 'Save note' }}
+            </button>
+            <button class="em__btn em__btn--danger" :disabled="busy" @click="unitNoteDelete(d)">
+              {{ noteDelArm === d.id ? 'Really delete?' : 'Delete note' }}
+            </button>
+          </div>
+        </template>
         <p v-else class="em__notetext em__notetext--body">{{ editor.note.value.text }}</p>
         <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
       </div>
@@ -1390,6 +1624,19 @@ async function noteSave() {
 </template>
 
 <style scoped>
+.em__daynote {
+  display: grid;
+  gap: 0.4rem;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.em__daynote:last-of-type {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+
 .em__notetext {
   font-size: 0.8rem;
   color: var(--color-muted);

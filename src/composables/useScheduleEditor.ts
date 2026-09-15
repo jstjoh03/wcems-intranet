@@ -61,7 +61,8 @@ export interface MyShiftCtx {
 }
 
 /** Read a note in a modal (tooltips don't exist on phones). When the
- *  note belongs to an event listing, editors can save changes here. */
+ *  note belongs to an event listing, editors can save changes here;
+ *  unit/day notes (sched_day_notes rows) are editable the same way. */
 export interface NoteCtx {
   title: string
   text: string
@@ -72,6 +73,13 @@ export interface NoteCtx {
     startHm: string | null
     endHm: string | null
   }
+  dayNotes?: { id: string; note: string }[]
+}
+
+/** A pending request opened from its red calendar row — editors decide
+ *  it in place, the requester can cancel their own. */
+export interface RequestCtx {
+  requestId: string
 }
 
 export interface AddCtx {
@@ -98,6 +106,7 @@ const add = ref<AddCtx | null>(null)
 const extra = ref<ExtraCtx | null>(null)
 const myShift = ref<MyShiftCtx | null>(null)
 const note = ref<NoteCtx | null>(null)
+const request = ref<RequestCtx | null>(null)
 
 function closeAll(): void {
   slot.value = null
@@ -108,6 +117,7 @@ function closeAll(): void {
   extra.value = null
   myShift.value = null
   note.value = null
+  request.value = null
 }
 
 export function useScheduleEditor() {
@@ -253,6 +263,13 @@ export function useScheduleEditor() {
     note.value = ctx
   }
 
+  /** A red pending row on any board — editors approve/deny in place,
+   *  the requester can cancel their own while it's still pending. */
+  function openRequest(requestId: string): void {
+    closeAll()
+    request.value = { requestId }
+  }
+
   return {
     slot,
     person,
@@ -262,6 +279,7 @@ export function useScheduleEditor() {
     extra,
     myShift,
     note,
+    request,
     openSlot,
     openSlotDirect,
     openEventSlot,
@@ -274,6 +292,7 @@ export function useScheduleEditor() {
     openRiderRow,
     openMyShift,
     openNote,
+    openRequest,
     closeAll,
   }
 }

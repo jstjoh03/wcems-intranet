@@ -29,6 +29,19 @@ const header = computed(() =>
     day: 'numeric',
   }),
 )
+
+/** Unit/day notes open in the shared note modal (editable for editors). */
+function noteCtx(label: string, notes: { id: string; note: string }[]) {
+  return {
+    title: `${label} — ${header.value}`,
+    text: notes.map((n) => n.note).join('\n'),
+    dayNotes: notes.map((n) => ({ id: n.id, note: n.note })),
+  }
+}
+
+function notesTitle(notes: { note: string }[]): string {
+  return notes.map((n) => n.note).join('\n')
+}
 </script>
 
 <template>
@@ -50,8 +63,26 @@ const header = computed(() =>
       </button>
     </div>
 
+    <div v-if="model.notes.length" class="dc__row">
+      <button
+        class="dc__name dc__rowbtn dc__daynote"
+        :title="notesTitle(model.notes)"
+        @click="editor.openNote(noteCtx('Day note', model.notes))"
+      >
+        <span class="dc__noteicon" />Day note
+      </button>
+    </div>
+
     <div v-for="um in model.units" :key="um.unit.id" class="dc__unit">
-      <p class="dc__unit-name">{{ um.unit.code }}</p>
+      <p class="dc__unit-name">
+        {{ um.unit.code }}
+        <button
+          v-if="um.notes.length"
+          class="dc__noteicon dc__rowbtn"
+          :title="notesTitle(um.notes)"
+          @click="editor.openNote(noteCtx(um.unit.code, um.notes))"
+        />
+      </p>
       <template v-for="sm in um.seats" :key="sm.seat.id">
         <div
           v-for="(row, ri) in sm.rows"
@@ -227,13 +258,19 @@ const header = computed(() =>
 
     <div v-if="model.pending.length" class="dc__section dc__section--pend">
       <p class="dc__section-h">Pending Requests</p>
-      <div v-for="r in model.pending" :key="r.id">
-        <div class="dc__row">
+      <button
+        v-for="r in model.pending"
+        :key="r.id"
+        class="dc__pendbtn"
+        :title="sched.canEdit.value ? 'Review — approve or deny' : 'Your request — view or cancel'"
+        @click="editor.openRequest(r.id)"
+      >
+        <span class="dc__row">
           <span class="dc__name">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
           <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
-        </div>
-        <p class="dc__sub">{{ r.sub }}</p>
-      </div>
+        </span>
+        <span class="dc__sub">{{ r.sub }}</span>
+      </button>
     </div>
   </div>
 </template>
@@ -371,10 +408,48 @@ const header = computed(() =>
 }
 
 .dc__unit-name {
+  display: flex;
+  align-items: center;
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--color-brand-700);
   margin: 0 0 0.15rem;
+}
+
+/* clickable pending-request row — same reset as the name buttons */
+.dc__pendbtn {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+}
+
+.dc__pendbtn .dc__sub {
+  display: block;
+  padding: 0 0.2rem;
+}
+
+.dc__pendbtn:hover .dc__name {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.dc__daynote {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: oklch(0.5 0.11 86.8);
+}
+
+.dc__daynote .dc__noteicon {
+  margin: 0 5px 0 0;
 }
 
 .dc__row {
