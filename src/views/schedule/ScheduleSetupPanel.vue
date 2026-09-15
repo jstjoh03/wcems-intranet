@@ -521,14 +521,15 @@ watch(
 
 // ── page-out settings ────────────────────────────────────────────────
 
-const poPhone = ref('')
+const PO_NOTE_DEFAULT = 'Immediate opening — call S201 or S202 to pick up.'
+const poNote = ref('')
 const poBusy = ref(false)
 const poSaved = ref(false)
 
 watch(
   () => sched.settings.value['pageout'],
   (v) => {
-    poPhone.value = String((v as { supervisor_phone?: string } | undefined)?.supervisor_phone ?? '')
+    poNote.value = String((v as { urgent_note?: string } | undefined)?.urgent_note ?? '')
   },
   { immediate: true },
 )
@@ -540,7 +541,7 @@ async function savePageoutCfg() {
   const existing = (sched.settings.value['pageout'] ?? {}) as Record<string, unknown>
   const e = await sched.saveSetting('pageout', {
     ...existing,
-    supervisor_phone: poPhone.value.trim(),
+    urgent_note: poNote.value.trim(),
   })
   poBusy.value = false
   if (e) {
@@ -939,17 +940,17 @@ async function saveWarnCfg() {
         <section v-if="sched.isGlobalAdmin.value" class="setup__card">
           <h2 class="setup__h">Page-outs</h2>
           <p class="setup__muted">
-            Urgent page-outs tell crews to call the supervisor phone to claim immediate
-            openings by voice — the number below goes in those messages. Assignment still
-            happens in the system either way.
+            The line added to every URGENT page-out. Leave blank for the default:
+            “{{ PO_NOTE_DEFAULT }}”
           </p>
-          <label class="setup__muted" for="po-phone">Supervisor phone</label>
+          <label class="setup__muted" for="po-note">Urgent page-out note</label>
           <input
-            id="po-phone"
-            v-model="poPhone"
-            type="tel"
+            id="po-note"
+            v-model="poNote"
+            type="text"
             class="setup__input"
-            placeholder="(555) 555-0100"
+            maxlength="180"
+            :placeholder="PO_NOTE_DEFAULT"
           />
           <div class="setup__row">
             <span v-if="poSaved" class="setup__saved">Saved.</span>

@@ -446,16 +446,19 @@ Deno.serve(async (req: Request) => {
         text?: string
       }[]
 
-      // Urgent openings get claimed by voice — the supervisor phone
-      // lives in sched_settings so the office can change it in-app.
-      let supPhone = ''
+      // Urgent openings get claimed by voice — the exact wording is a
+      // Setup setting (Justin, 2026-09-15: keep it light, supervisors
+      // will flag plenty of pages urgent).
+      let urgentNote = ''
       if (urgent) {
         const { data: poSet } = await sb
           .from('sched_settings')
           .select('value')
           .eq('key', 'pageout')
           .maybeSingle()
-        supPhone = String((poSet?.value as { supervisor_phone?: string } | null)?.supervisor_phone ?? '')
+        urgentNote =
+          clean((poSet?.value as { urgent_note?: string } | null)?.urgent_note, 180) ||
+          'Immediate opening — call S201 or S202 to pick up.'
       }
 
       const pre = urgent ? 'URGENT — ' : ''
@@ -483,15 +486,13 @@ Deno.serve(async (req: Request) => {
         )
       }
       if (urgent) {
-        emailLines.push(
-          `<b style="color:#b3261e;">Immediate opening — ${supPhone ? `call the supervisor phone at ${esc(supPhone)}` : 'call the on-duty supervisor'} to claim by voice; portal requests may not be approved in time.</b>`,
-        )
+        emailLines.push(`<b style="color:#b3261e;">${esc(urgentNote)}</b>`)
       }
 
       let sms = `${urgent ? 'URGENT ' : ''}WCEMS${isAnn ? '' : ' page-out'}: ${msg}`
       for (const s of shifts.slice(0, 2)) sms += ` | ${s.text ?? ''}`
       if (shifts.length > 2) sms += ` (+${shifts.length - 2} more)`
-      if (urgent && supPhone) sms += ` Call the supervisor: ${supPhone}.`
+      if (urgent) sms += ` ${urgentNote}`
       sms += ` ${PORTAL}/schedule`
 
       const url =
