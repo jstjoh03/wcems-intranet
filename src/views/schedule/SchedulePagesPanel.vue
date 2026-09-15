@@ -28,6 +28,8 @@ onMounted(async () => {
 // ── compose ──────────────────────────────────────────────────────────
 
 const message = ref('')
+const msgType = ref<'scheduling' | 'announcement'>('scheduling')
+const urgent = ref(false)
 const chPush = ref(true)
 const chEmail = ref(true)
 const chSms = ref(true)
@@ -116,11 +118,20 @@ const sentResult = ref<string | null>(null)
 const offDutyExcluded = ref(0)
 const baseRecipients = ref<SchedPerson[]>([])
 
+const selectedShifts = computed(() =>
+  msgType.value === 'scheduling'
+    ? [...pickedShifts.value].sort((a, b) => a - b).map((i) => openItems.value[i]).filter(Boolean)
+    : [],
+)
+
 async function toPreview() {
   err.value = null
   sentResult.value = null
-  if (!message.value.trim() && pickedShifts.value.size === 0) {
-    err.value = 'Write a message or attach at least one open shift.'
+  if (!message.value.trim() && selectedShifts.value.length === 0) {
+    err.value =
+      msgType.value === 'announcement'
+        ? 'Write the announcement first.'
+        : 'Write a message or attach at least one open shift.'
     return
   }
   if (pickedGroups.value.size === 0) {
@@ -175,17 +186,6 @@ function addPerson() {
   addPick.value = ''
 }
 
-const finalMessage = computed(() => {
-  const base = message.value.trim()
-  const shifts = [...pickedShifts.value]
-    .sort((a, b) => a - b)
-    .map((i) => openItems.value[i])
-    .filter(Boolean)
-  if (shifts.length === 0) return base
-  const lines = shifts.map((s) => `• ${s.text}`).join('\n')
-  return base ? `${base}\n\nOpen shifts:\n${lines}` : `Open shifts:\n${lines}`
-})
-
 async function send() {
   err.value = null
   if (previewList.value.length === 0) {
@@ -193,9 +193,11 @@ async function send() {
     return
   }
   busy.value = true
-  const shifts = [...pickedShifts.value].map((i) => openItems.value[i]).filter(Boolean)
   const { id, error } = await sched.createPageOut({
-    message: finalMessage.value,
+    message: message.value.trim(),
+    messageType: msgType.value,
+    urgent: urgent.value,
+    shifts: selectedShifts.value,
     channels: { push: chPush.value, email: chEmail.value, sms: chSms.value },
     audience: {
       groups: [...pickedGroups.value],
@@ -203,7 +205,6 @@ async function send() {
       removed: [...removed.value],
       added: [...added.value],
     },
-    entryIds: shifts.map((s) => s.entryId).filter((x): x is string => !!x),
     recipients: previewList.value.map((p) => p.id),
   })
   if (error || !id) {
@@ -223,6 +224,8 @@ async function send() {
   const issues = (d.errors ?? []).length
   sentResult.value = `Sent — ${bits.join(' · ')}${issues ? ` · ${issues} issue${issues === 1 ? '' : 's'} (details in the log)` : ''}.`
   message.value = ''
+  urgent.value = false
+  msgType.value = 'scheduling'
   pickedShifts.value = new Set()
   pickedGroups.value = new Set()
   offDutyDate.value = ''
@@ -283,6 +286,32 @@ function deliveryLine(p: PageLogRow): string {
         <p v-if="sentResult" class="pg__sent">{{ sentResult }}</p>
 
         <template v-if="step === 'compose'">
+          <div class="pg__row">
+            <span class="pg__label">Type</span>
+            <div class="pg__seg">
+              <button
+                class="pg__segbtn"
+                :class="{ 'pg__segbtn--on': msgType === 'scheduling' }"
+                type="button"
+                @click="msgType = 'scheduling'"
+              >
+                Scheduling page-out
+              </button>
+              <button
+                class="pg__segbtn"
+                :class="{ 'pg__segbtn--on': msgType === 'announcement' }"
+                type="button"
+                @click="msgType = 'announcement'"
+              >
+                Announcement
+              </button>
+            </div>
+            <label class="pg__check pg__check--urgent">
+              <input v-model="urgent" type="checkbox" />
+              Urgent — last-minute callout
+            </label>
+          </div>
+
           <label class="pg__label" for="pg-msg">Message</label>
           <textarea
             id="pg-msg"
@@ -318,7 +347,7 @@ function deliveryLine(p: PageLogRow): string {
             <button v-if="offDutyDate" class="pg__mini" type="button" @click="offDutyDate = ''">Clear</button>
           </div>
 
-          <div class="pg__row pg__row--shifts">
+          <div v-if="msgType === 'scheduling'" class="pg__row pg__row--shifts">
             <span class="pg__label">Attach open shifts</span>
             <select v-model.number="shiftDays" class="pg__input" aria-label="Days ahead">
               <option :value="7">next 7 days</option>
@@ -328,7 +357,7 @@ function deliveryLine(p: PageLogRow): string {
               {{ openBusy ? 'Looking…' : openLoaded ? 'Refresh' : 'Find open shifts' }}
             </button>
           </div>
-          <div v-if="openLoaded" class="pg__shifts">
+          <div v-if="msgType === 'scheduling' && openLoaded" class="pg__shifts">
             <p v-if="openItems.length === 0" class="pg__muted">No open coverage in that window.</p>
             <label v-for="(s, i) in openItems" :key="i" class="pg__shift">
               <input type="checkbox" :checked="pickedShifts.has(i)" @change="toggleShift(i)" />
@@ -345,8 +374,15 @@ function deliveryLine(p: PageLogRow): string {
         </template>
 
         <template v-else>
-          <p class="pg__label">Message that will go out</p>
-          <pre class="pg__previewmsg">{{ finalMessage }}</pre>
+          <p class="pg__label">
+            {{ msgType === 'announcement' ? 'Announcement' : 'Message' }} that will go out
+            <span v-if="urgent" class="pg__urgentchip">URGENT</span>
+          </p>
+          <pre v-if="message.trim()" class="pg__previewmsg">{{ message.trim() }}</pre>
+          <div v-if="selectedShifts.length > 0" class="pg__previewshifts">
+            <p class="pg__label">Attached shifts — each is a tap-to-request link in the message</p>
+            <p v-for="(sh, i) in selectedShifts" :key="i" class="pg__previewshift">{{ sh.text }}</p>
+          </div>
 
           <p class="pg__label">
             Recipients ({{ previewList.length }})
@@ -383,9 +419,12 @@ function deliveryLine(p: PageLogRow): string {
           <div class="pg__loghead">
             <span class="pg__logwhen">{{ fmtSent(p.sentAt) }}</span>
             <span class="pg__logwho">{{ senderName(p.sentBy) }}</span>
+            <span v-if="p.urgent" class="pg__urgentchip">URGENT</span>
+            <span v-if="p.messageType === 'announcement'" class="pg__typechip">Announcement</span>
             <span class="pg__logcount">{{ p.recipients.length }} recipient{{ p.recipients.length === 1 ? '' : 's' }}</span>
           </div>
-          <p class="pg__logmsg">{{ p.message }}</p>
+          <p v-if="p.message" class="pg__logmsg">{{ p.message }}</p>
+          <p v-for="(sh, i) in p.shifts" :key="i" class="pg__logshift">{{ sh.text }}</p>
           <p class="pg__logmeta">
             {{ deliveryLine(p) }}
             <template v-if="p.entryIds.length > 0">
@@ -670,6 +709,85 @@ function deliveryLine(p: PageLogRow): string {
 
 .pg__x:hover {
   color: oklch(0.5 0.19 27);
+}
+
+.pg__seg {
+  display: inline-flex;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  background: var(--color-surface);
+  padding: 2px;
+  gap: 2px;
+}
+
+.pg__segbtn {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  border: 0;
+  background: transparent;
+  border-radius: 7px;
+  padding: 0.24rem 0.65rem;
+  cursor: pointer;
+}
+
+.pg__segbtn--on {
+  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  color: white;
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.18);
+}
+
+.pg__check--urgent {
+  color: oklch(0.5 0.17 27);
+  font-weight: 600;
+}
+
+.pg__urgentchip {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: white;
+  background: linear-gradient(180deg, oklch(0.55 0.19 27), oklch(0.45 0.18 27));
+  border-radius: 5px;
+  padding: 2px 6px;
+  vertical-align: middle;
+  margin-left: 0.4rem;
+}
+
+.pg__typechip {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: oklch(0.45 0.1 86);
+  background: oklch(0.96 0.03 86);
+  border: 1px solid oklch(0.88 0.06 86);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+.pg__previewshifts {
+  margin: 0.2rem 0 0.4rem;
+}
+
+.pg__previewshift,
+.pg__logshift {
+  font-size: 0.82rem;
+  color: var(--color-ink-soft);
+  font-variant-numeric: tabular-nums;
+  margin: 0.1rem 0;
+  padding-left: 0.9rem;
+  position: relative;
+}
+
+.pg__previewshift::before,
+.pg__logshift::before {
+  content: '•';
+  position: absolute;
+  left: 0.15rem;
+  color: var(--color-brand-700);
 }
 
 /* log */

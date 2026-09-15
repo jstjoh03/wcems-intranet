@@ -149,7 +149,36 @@ onMounted(async () => {
   // right from the first paint; realtime keeps both fresh after that.
   await Promise.all([loadVisibleRange(), sched.loadRequests()])
   sched.startRealtime()
+  // Page-out deep link: /schedule?d=<date>&pickup=<entryId> opens the
+  // pickup modal for that open entry straight from the email/push.
+  const pk = route.query.pickup
+  if (typeof pk === 'string' && pk) {
+    void openPickupLink(pk)
+    void router.replace({ query: { ...route.query, pickup: undefined } })
+  }
 })
+
+/** Deep link from a page-out message: fetch the entry FRESH and open
+ *  the same slot modal the boards use — or say it's gone. */
+const linkMsg = ref<string | null>(null)
+async function openPickupLink(entryId: string) {
+  const info = await sched.fetchOpenEntryInfo(entryId)
+  if (!info) {
+    linkMsg.value =
+      'That paged shift is no longer open — it may have just been filled. The current board is below.'
+    return
+  }
+  dateIso.value = info.dateIso
+  tab.value = 'day'
+  editor.openSlotDirect({
+    dateIso: info.dateIso,
+    seatId: info.seatId,
+    entryId,
+    label: info.label,
+    start: info.start,
+    end: info.end,
+  })
+}
 
 /** Undecided requests → red badge on the Requests tab (editors). */
 const pendingCount = computed(() =>
@@ -242,6 +271,10 @@ watch(dateIso, (v) => {
       </div>
 
       <p v-if="sched.loadError.value" class="sched__error">{{ sched.loadError.value }}</p>
+      <p v-if="linkMsg" class="sched__error">
+        {{ linkMsg }}
+        <button class="sched__linkdismiss" aria-label="Dismiss" @click="linkMsg = null">×</button>
+      </p>
 
       <ScheduleMonthBoard v-if="tab === 'month'" :month="monthAnchor" @open-day="openDay" />
       <ScheduleDayBoard v-else-if="tab === 'day'" :date-iso="dateIso" />
@@ -448,6 +481,16 @@ watch(dateIso, (v) => {
 .sched__error {
   color: var(--color-danger-500);
   font-size: 0.85rem;
+}
+
+.sched__linkdismiss {
+  font: inherit;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  font-weight: 700;
 }
 
 .sched__locked {

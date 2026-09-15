@@ -155,6 +155,7 @@ export const NOTIFY_TYPES: { key: string; label: string; editorOnly?: boolean }[
   { key: 'open_shift', label: 'Open shifts & page-outs' },
   { key: 'trade_activity', label: 'Trades — offers and claims on my postings' },
   { key: 'reminders', label: 'Shift reminders' },
+  { key: 'announcements', label: 'Announcements from the scheduler' },
   { key: 'approvals', label: 'A request needs approval', editorOnly: true },
 ]
 
@@ -3682,6 +3683,11 @@ async function saveUnitOrder(orderedIds: string[]): Promise<string | null> {
 export interface OpenShiftItem {
   entryId: string | null
   dateIso: string
+  /** Unit code when the shift rides a unit (null for event slots). */
+  unit: string | null
+  /** Seat/position label — what's needed ("Paramedic", "Attendant"). */
+  position: string | null
+  window: string // '0600–0600'
   text: string
 }
 
@@ -3708,13 +3714,13 @@ async function findOpenShifts(startIso: string, endIso: string): Promise<OpenShi
       const seat = seats.value.find((s) => s.id === r.seat_id)
       const unit = seat ? units.value.find((u) => u.id === seat.unitId) : null
       if (unit && !unit.active) continue
-      out.push({ entryId: r.id, dateIso: r.work_date, text: `${fmtD(r.work_date)} · ${unit?.code ?? '?'} ${seat?.label ?? 'seat'} · ${w}` })
+      out.push({ entryId: r.id, dateIso: r.work_date, unit: unit?.code ?? null, position: seat?.label ?? null, window: w, text: `${fmtD(r.work_date)} · ${unit?.code ?? '?'} ${seat?.label ?? 'seat'} · ${w}` })
     } else if (r.kind === 'event') {
-      out.push({ entryId: r.id, dateIso: r.work_date, text: `${fmtD(r.work_date)} · ${r.note ?? 'Event'} — ${r.student_program ?? 'slot'} · ${w}` })
+      out.push({ entryId: r.id, dateIso: r.work_date, unit: null, position: r.student_program ?? null, window: w, text: `${fmtD(r.work_date)} · ${r.note ?? 'Event'} — ${r.student_program ?? 'slot'} · ${w}` })
     } else if (r.kind === 'rider') {
       const unit = units.value.find((u) => u.id === r.unit_id)
       if (unit && !unit.active) continue
-      out.push({ entryId: r.id, dateIso: r.work_date, text: `${fmtD(r.work_date)} · ${unit?.code ?? '?'} extra ${r.student_program ?? 'seat'} · ${w}` })
+      out.push({ entryId: r.id, dateIso: r.work_date, unit: unit?.code ?? null, position: r.student_program ?? null, window: w, text: `${fmtD(r.work_date)} · ${unit?.code ?? '?'} extra ${r.student_program ?? 'seat'} · ${w}` })
     }
   }
   const rowsBySeatDate = new Set(rows.filter((r) => r.seat_id).map((r) => `${r.work_date}|${r.seat_id}`))
@@ -3725,7 +3731,7 @@ async function findOpenShifts(startIso: string, endIso: string): Promise<OpenShi
       if (!unit || unitPlatoonFor(unit, iso) === null) continue
       if (seatRotationOccupant(seat.id, iso) !== null) continue
       const uw = unitDayWindow(unit, iso)
-      out.push({ entryId: null, dateIso: iso, text: `${fmtD(iso)} · ${unit.code} ${seat.label} · ${uw.startHm}–${uw.endHm}` })
+      out.push({ entryId: null, dateIso: iso, unit: unit.code, position: seat.label, window: `${uw.startHm}–${uw.endHm}`, text: `${fmtD(iso)} · ${unit.code} ${seat.label} · ${uw.startHm}–${uw.endHm}` })
     }
   }
   out.sort((a, b) => a.dateIso.localeCompare(b.dateIso) || a.text.localeCompare(b.text))
@@ -3754,9 +3760,59 @@ async function assignedUserIdsOn(dateIso: string): Promise<Set<string>> {
   return out
 }
 
+/** Fresh lookup for a page-out deep link (?pickup=<entryId>): enough
+ *  to open the slot modal if the entry is STILL open, null otherwise. */
+async function fetchOpenEntryInfo(entryId: string): Promise<{
+  dateIso: string
+  seatId: string | null
+  label: string
+  start: string
+  end: string
+} | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return null
+  const res = await supabase
+    .from('sched_entries')
+    .select('id, work_date, seat_id, unit_id, kind, status, start_at, end_at, student_program, note')
+    .eq('id', entryId)
+    .maybeSingle()
+  if (res.error || !res.data || res.data.status !== 'open') return null
+  const r = res.data
+  let label = 'Open shift'
+  if (r.seat_id) {
+    const seat = seats.value.find((s) => s.id === r.seat_id)
+    const unit = seat ? units.value.find((u) => u.id === seat.unitId) : null
+    label = `${unit?.code ?? ''} ${seat?.label ?? 'Open seat'}`.trim()
+  } else if (r.kind === 'event') {
+    label = `${r.note ?? 'Event'} — ${r.student_program ?? 'slot'}`
+  } else if (r.kind === 'rider') {
+    const unit = units.value.find((u) => u.id === r.unit_id)
+    label = `${unit?.code ?? ''} extra ${r.student_program ?? 'seat'}`.trim()
+  }
+  return {
+    dateIso: r.work_date,
+    seatId: r.seat_id,
+    label,
+    start: hhmm(r.start_at),
+    end: hhmm(r.end_at),
+  }
+}
+
+export interface PageShift {
+  entryId: string | null
+  dateIso: string
+  unit: string | null
+  position: string | null
+  window: string
+  text: string
+}
+
 export interface PageLogRow {
   id: string
   message: string
+  messageType: 'scheduling' | 'announcement'
+  urgent: boolean
+  shifts: PageShift[]
   channels: { push?: boolean; email?: boolean; sms?: boolean }
   recipients: string[]
   delivery: { push?: number; email?: number; sms?: number; skipped_sms?: number; errors?: string[] } | null
@@ -3785,6 +3841,9 @@ async function fetchPageLog(): Promise<PageLogRow[]> {
   return pages.map((p) => ({
     id: p.id,
     message: p.message,
+    messageType: (p.message_type === 'announcement' ? 'announcement' : 'scheduling') as 'scheduling' | 'announcement',
+    urgent: !!p.urgent,
+    shifts: (Array.isArray(p.shifts) ? p.shifts : []) as PageShift[],
     channels: p.channels ?? {},
     recipients: (p.recipients ?? []) as string[],
     delivery: p.delivery && Object.keys(p.delivery).length > 0 ? p.delivery : null,
@@ -3797,9 +3856,11 @@ async function fetchPageLog(): Promise<PageLogRow[]> {
 
 async function createPageOut(opts: {
   message: string
+  messageType: 'scheduling' | 'announcement'
+  urgent: boolean
+  shifts: PageShift[]
   channels: { push: boolean; email: boolean; sms: boolean }
   audience: Record<string, unknown>
-  entryIds: string[]
   recipients: string[]
 }): Promise<{ id: string | null; error: string | null }> {
   const auth = useAuthStore()
@@ -3808,16 +3869,19 @@ async function createPageOut(opts: {
     .from('sched_pages')
     .insert({
       message: opts.message,
+      message_type: opts.messageType,
+      urgent: opts.urgent,
+      shifts: opts.shifts,
       channels: opts.channels,
       audience: opts.audience,
-      entry_ids: opts.entryIds,
+      entry_ids: opts.shifts.map((s) => s.entryId).filter((x): x is string => !!x),
       recipients: opts.recipients,
       sent_by: auth.appUser?.id ?? null,
     })
     .select('id')
     .single()
   if (res.error) return { id: null, error: res.error.message }
-  audit('pageout.send', `Paged ${opts.recipients.length} ${opts.recipients.length === 1 ? 'person' : 'people'}: "${opts.message.slice(0, 80)}"`, { entity: 'page', entityId: res.data.id as string })
+  audit('pageout.send', `${opts.urgent ? 'URGENT ' : ''}${opts.messageType === 'announcement' ? 'Announcement' : 'Page-out'} to ${opts.recipients.length} ${opts.recipients.length === 1 ? 'person' : 'people'}: "${opts.message.slice(0, 80)}"`, { entity: 'page', entityId: res.data.id as string })
   return { id: res.data.id as string, error: null }
 }
 
@@ -3997,6 +4061,7 @@ export function useSchedule() {
     fetchAuditLog,
     findOpenShifts,
     assignedUserIdsOn,
+    fetchOpenEntryInfo,
     fetchPageLog,
     createPageOut,
     sendPageOut,

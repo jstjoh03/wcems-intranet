@@ -88,6 +88,13 @@ export function useScheduleEditor() {
     slot.value = { dateIso, seatId, entryId: row.entryId, label, start: row.start, end: row.end }
   }
 
+  /** Page-out deep link (?pickup=<entryId>): the caller has already
+   *  fetched the open entry fresh and built the context. */
+  function openSlotDirect(ctx: SlotCtx): void {
+    closeAll()
+    slot.value = ctx
+  }
+
   /** Open special-event slot → pickup request / direct assign. */
   function openEventSlot(dateIso: string, ev: DayEventBox, row: SeatRow): void {
     closeAll()
@@ -207,6 +214,7 @@ export function useScheduleEditor() {
     add,
     extra,
     openSlot,
+    openSlotDirect,
     openEventSlot,
     openPerson,
     openStudent,

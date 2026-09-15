@@ -519,6 +519,37 @@ watch(
   { immediate: true, deep: true },
 )
 
+// ── page-out settings ────────────────────────────────────────────────
+
+const poPhone = ref('')
+const poBusy = ref(false)
+const poSaved = ref(false)
+
+watch(
+  () => sched.settings.value['pageout'],
+  (v) => {
+    poPhone.value = String((v as { supervisor_phone?: string } | undefined)?.supervisor_phone ?? '')
+  },
+  { immediate: true },
+)
+
+async function savePageoutCfg() {
+  poBusy.value = true
+  poSaved.value = false
+  err.value = null
+  const existing = (sched.settings.value['pageout'] ?? {}) as Record<string, unknown>
+  const e = await sched.saveSetting('pageout', {
+    ...existing,
+    supervisor_phone: poPhone.value.trim(),
+  })
+  poBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  poSaved.value = true
+}
+
 async function saveWarnCfg() {
   wBusy.value = true
   wDone.value = null
@@ -903,6 +934,29 @@ async function saveWarnCfg() {
           <button class="setup__btn setup__btn--primary" :disabled="wBusy" @click="saveWarnCfg">
             {{ wBusy ? 'Saving…' : 'Save thresholds' }}
           </button>
+        </section>
+
+        <section v-if="sched.isGlobalAdmin.value" class="setup__card">
+          <h2 class="setup__h">Page-outs</h2>
+          <p class="setup__muted">
+            Urgent page-outs tell crews to call the supervisor phone to claim immediate
+            openings by voice — the number below goes in those messages. Assignment still
+            happens in the system either way.
+          </p>
+          <label class="setup__muted" for="po-phone">Supervisor phone</label>
+          <input
+            id="po-phone"
+            v-model="poPhone"
+            type="tel"
+            class="setup__input"
+            placeholder="(555) 555-0100"
+          />
+          <div class="setup__row">
+            <span v-if="poSaved" class="setup__saved">Saved.</span>
+            <button class="setup__btn setup__btn--primary" :disabled="poBusy" @click="savePageoutCfg">
+              {{ poBusy ? 'Saving…' : 'Save' }}
+            </button>
+          </div>
         </section>
 
         <section class="setup__card">

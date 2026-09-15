@@ -218,6 +218,7 @@ async function deliver(
     subject: string
     emailLines: string[]
     sms: string
+    url?: string
     channels?: { push?: boolean; email?: boolean; sms?: boolean }
   },
   exclude: string | null,
@@ -250,7 +251,7 @@ async function deliver(
     const payload = JSON.stringify({
       title: m.title,
       body: m.body.slice(0, 160),
-      url: '/schedule',
+      url: m.url ?? '/schedule',
       tag: m.tag,
       icon: '/wcems-patch.png',
       badge: '/wcems-patch.png',
@@ -426,7 +427,7 @@ Deno.serve(async (req: Request) => {
       const pageId = String(body.pageId ?? '')
       const { data: page, error } = await sb
         .from('sched_pages')
-        .select('id, message, channels, recipients, sent_by')
+        .select('id, message, channels, recipients, sent_by, message_type, urgent, shifts')
         .eq('id', pageId)
         .maybeSingle()
       if (error || !page)
@@ -435,16 +436,82 @@ Deno.serve(async (req: Request) => {
         return Response.json({ ok: false, error: 'Not your page-out' }, { status: 403, headers: CORS })
 
       const msg = clean(page.message, 600)
+      const isAnn = page.message_type === 'announcement'
+      const urgent = !!page.urgent
+      const shifts = (Array.isArray(page.shifts) ? page.shifts : []) as {
+        entryId?: string | null
+        dateIso?: string
+        unit?: string | null
+        position?: string | null
+        text?: string
+      }[]
+
+      // Urgent openings get claimed by voice — the supervisor phone
+      // lives in sched_settings so the office can change it in-app.
+      let supPhone = ''
+      if (urgent) {
+        const { data: poSet } = await sb
+          .from('sched_settings')
+          .select('value')
+          .eq('key', 'pageout')
+          .maybeSingle()
+        supPhone = String((poSet?.value as { supervisor_phone?: string } | null)?.supervisor_phone ?? '')
+      }
+
+      const pre = urgent ? 'URGENT — ' : ''
+      let subject: string
+      if (isAnn) subject = `${pre}WCEMS Announcement`
+      else if (shifts.length === 1) {
+        const s0 = shifts[0]
+        subject = `${pre}WCEMS Scheduling: ${s0.position ?? 'Open shift'} needed${s0.unit ? ` on ${s0.unit}` : ''} — ${fmtDate(s0.dateIso ?? null)}`
+      } else if (shifts.length > 1) subject = `${pre}WCEMS Scheduling: ${shifts.length} open shifts`
+      else subject = `${pre}WCEMS Scheduling`
+
+      const emailLines: string[] = []
+      if (msg) emailLines.push(esc(msg).replace(/\n/g, '<br/>'))
+      if (shifts.length > 0) {
+        const items = shifts
+          .map((s) => {
+            const href = s.entryId
+              ? `${PORTAL}/schedule?d=${s.dateIso ?? ''}&pickup=${s.entryId}`
+              : `${PORTAL}/schedule?d=${s.dateIso ?? ''}`
+            return `<li style="margin:4px 0;"><a href="${href}" style="color:#182644;font-weight:600;">${esc(s.text ?? '')}</a></li>`
+          })
+          .join('')
+        emailLines.push(
+          `<b>Open shift${shifts.length === 1 ? '' : 's'} — tap one to request it:</b><ul style="margin:6px 0 0;padding-left:18px;">${items}</ul>`,
+        )
+      }
+      if (urgent) {
+        emailLines.push(
+          `<b style="color:#b3261e;">Immediate opening — ${supPhone ? `call the supervisor phone at ${esc(supPhone)}` : 'call the on-duty supervisor'} to claim by voice; portal requests may not be approved in time.</b>`,
+        )
+      }
+
+      let sms = `${urgent ? 'URGENT ' : ''}WCEMS${isAnn ? '' : ' page-out'}: ${msg}`
+      for (const s of shifts.slice(0, 2)) sms += ` | ${s.text ?? ''}`
+      if (shifts.length > 2) sms += ` (+${shifts.length - 2} more)`
+      if (urgent && supPhone) sms += ` Call the supervisor: ${supPhone}.`
+      sms += ` ${PORTAL}/schedule`
+
+      const url =
+        shifts.length === 1 && shifts[0].entryId
+          ? `/schedule?d=${shifts[0].dateIso ?? ''}&pickup=${shifts[0].entryId}`
+          : shifts[0]?.dateIso
+            ? `/schedule?d=${shifts[0].dateIso}`
+            : '/schedule'
+
       const d = await deliver(
         (page.recipients ?? []) as string[],
-        'open_shift',
+        isAnn ? 'announcements' : 'open_shift',
         {
-          title: 'WCEMS page-out',
-          body: msg,
+          title: `${urgent ? 'URGENT ' : ''}${isAnn ? 'WCEMS announcement' : 'WCEMS page-out'}`,
+          body: [msg, shifts[0]?.text].filter(Boolean).join(' — '),
           tag: `sched-page-${page.id}`,
-          subject: 'WCEMS Scheduling — page-out',
-          emailLines: [esc(msg).replace(/\n/g, '<br/>')],
-          sms: `WCEMS page-out: ${msg} — reply on the portal: ${PORTAL}/schedule`,
+          subject,
+          emailLines,
+          sms,
+          url,
           channels: (page.channels ?? {}) as { push?: boolean; email?: boolean; sms?: boolean },
         },
         null, // page-outs go to everyone selected, sender included if listed
@@ -478,16 +545,26 @@ Deno.serve(async (req: Request) => {
         line = `${who}: ${OFF_LABELS[first.off_type ?? ''] ?? 'Time off'} time off — ${rows.length} days (${fmtDate(dates[0])} – ${fmtDate(dates[dates.length - 1])})`
       }
       const awaiting = first.status === 'partner_accepted' ? ' Partner accepted — awaiting approval.' : ''
+      // Same-day / next-day requests are the ones crews were told to
+      // call in — flag them loudly so the Chief sees them in time.
+      const todayC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date())
+      const soonest = rows.map((r) => r.work_date).filter((x): x is string => !!x).sort()[0] ?? null
+      const tomorrow = (() => {
+        const dt = new Date(`${todayC}T12:00:00Z`)
+        dt.setUTCDate(dt.getUTCDate() + 1)
+        return dt.toISOString().slice(0, 10)
+      })()
+      const sameDay = soonest !== null && soonest <= tomorrow
       const d = await deliver(
         await editorIds(),
         'approvals',
         {
-          title: 'Request needs approval',
+          title: sameDay ? 'SAME-DAY request needs approval' : 'Request needs approval',
           body: line,
           tag: `sched-req-${first.id}`,
-          subject: 'WCEMS Scheduling — request needs approval',
+          subject: `WCEMS Scheduling — ${sameDay ? 'SAME-DAY ' : ''}request needs approval`,
           emailLines: [esc(line) + awaiting, 'Review it on the Requests tab.'],
-          sms: `WCEMS: ${line} — approve on the portal.`,
+          sms: `${sameDay ? 'URGENT ' : ''}WCEMS: ${line} — approve on the portal.`,
         },
         caller.id,
       )
