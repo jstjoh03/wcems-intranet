@@ -404,6 +404,62 @@ async function rpSave() {
   rpDone.value = 'Saved — the Add-seat dropdown uses this list everywhere.'
 }
 
+// ── Pilot access (global admins) ─────────────────────────────────────
+
+/* Pre-launch testers: named field staff get the crew experience before
+   the crew-wide opening (canAccessModule reads settings.pilot). Clear
+   the list at launch — the gate covers everyone from then on. */
+const ptIds = ref<string[]>([])
+const ptPick = ref('')
+const ptBusy = ref(false)
+const ptDone = ref<string | null>(null)
+const ptInit = ref(false)
+
+watch(
+  () => sched.settings.value,
+  () => {
+    if (ptInit.value) return
+    const p = (sched.settings.value['pilot'] ?? {}) as { user_ids?: unknown }
+    ptIds.value = Array.isArray(p.user_ids)
+      ? (p.user_ids as unknown[]).filter((x): x is string => typeof x === 'string')
+      : []
+    if (Object.keys(sched.settings.value).length > 0) ptInit.value = true
+  },
+  { immediate: true },
+)
+
+const ptCandidates = computed(() => sched.people.value.filter((p) => !ptIds.value.includes(p.id)))
+
+function ptName(id: string): string {
+  return sched.personById.value.get(id)?.fullName ?? 'Unknown'
+}
+
+function ptAdd() {
+  if (ptPick.value && !ptIds.value.includes(ptPick.value)) {
+    ptIds.value = [...ptIds.value, ptPick.value]
+  }
+  ptPick.value = ''
+}
+
+function ptRemove(id: string) {
+  ptIds.value = ptIds.value.filter((x) => x !== id)
+}
+
+async function ptSave() {
+  ptBusy.value = true
+  ptDone.value = null
+  err.value = null
+  const e = await sched.saveSetting('pilot', { user_ids: ptIds.value })
+  ptBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  ptDone.value = ptIds.value.length
+    ? 'Saved — these members can open the module now.'
+    : 'Saved — pilot access cleared.'
+}
+
 // ── Paycom earning codes (global admins) ─────────────────────────────
 
 /* One row per earning code: pick the time category the schedule
@@ -866,6 +922,36 @@ async function saveWarnCfg() {
           <p v-if="rpDone" class="setup__done">{{ rpDone }}</p>
           <button class="setup__btn setup__btn--primary" :disabled="rpBusy" @click="rpSave">
             {{ rpBusy ? 'Saving…' : 'Save positions' }}
+          </button>
+        </section>
+
+        <section v-if="sched.isGlobalAdmin.value" class="setup__card">
+          <h2 class="setup__h">Pilot access</h2>
+          <p class="setup__muted">
+            Pre-launch testers: these members get the crew experience — My schedule, open-shift
+            pickups, requests, trades, notification settings — before the module opens to the
+            whole crew. Clear the list at launch; the crew-wide gate covers everyone from then
+            on.
+          </p>
+          <div class="setup__rplist">
+            <span v-for="id in ptIds" :key="id" class="setup__rpchip">
+              {{ ptName(id) }}
+              <button class="setup__rpx" :aria-label="`Remove ${ptName(id)}`" @click="ptRemove(id)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              </button>
+            </span>
+            <span v-if="!ptIds.length" class="setup__muted">No testers yet.</span>
+          </div>
+          <form class="setup__rpadd" @submit.prevent="ptAdd">
+            <select v-model="ptPick" class="setup__input">
+              <option value="" disabled>Add a member…</option>
+              <option v-for="p in ptCandidates" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+            </select>
+            <button type="submit" class="setup__btn" :disabled="!ptPick">Add</button>
+          </form>
+          <p v-if="ptDone" class="setup__done">{{ ptDone }}</p>
+          <button class="setup__btn setup__btn--primary" :disabled="ptBusy" @click="ptSave">
+            {{ ptBusy ? 'Saving…' : 'Save pilot list' }}
           </button>
         </section>
 

@@ -4000,11 +4000,22 @@ export function useSchedule() {
   )
   const isGlobalAdmin = computed(() => level.value === 'global_admin')
   const canPageOut = computed(() => canEdit.value || level.value === 'supervisor')
+  /** Pre-launch pilot testers (Setup → Pilot access): named field staff
+   *  get the crew experience before the crew-wide opening, so bugs get
+   *  found by three people instead of eighty. */
+  const isPilotTester = computed(() => {
+    const p = (settings.value['pilot'] ?? {}) as { user_ids?: unknown }
+    const ids = Array.isArray(p.user_ids) ? (p.user_ids as unknown[]) : []
+    const me = auth.appUser?.id
+    return !!me && ids.includes(me)
+  })
   /** Soft-launch gate: editors always; supervisors added 2026-09-14 so
    *  field sups (Brittany testing the crew-side experience) get in
    *  before the crew-wide opening ~Sep 24. Supervisors get NO edit
    *  tools — they see the crew view: pickups, requests, trades. */
-  const canAccessModule = computed(() => canEdit.value || level.value === 'supervisor')
+  const canAccessModule = computed(
+    () => canEdit.value || level.value === 'supervisor' || isPilotTester.value,
+  )
 
   const myUserId = computed(() => auth.appUser?.id ?? null)
 
