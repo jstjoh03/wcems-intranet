@@ -13,6 +13,7 @@ import { useAuthStore } from '@/stores/auth'
  */
 
 const allowed = ref(false)
+const probedLevel = ref('member')
 let loadStarted = false
 
 async function load() {
@@ -27,6 +28,7 @@ async function load() {
     supabase.from('sched_settings').select('value').eq('key', 'pilot').maybeSingle(),
   ])
   const level = (lvlRes.data as string | null) ?? 'member'
+  probedLevel.value = level
   const ids = (pilotRes.data?.value as { user_ids?: unknown } | null)?.user_ids
   allowed.value =
     level === 'global_admin' ||
@@ -41,5 +43,17 @@ export function useScheduleAccess() {
   const canSeeSchedule = computed(() =>
     auth.usingDevStub ? auth.isAdmin || auth.isSupervisor : allowed.value,
   )
-  return { canSeeSchedule }
+  /** The probed sched_level — lets light consumers (profile modal's
+   *  Scheduling section) branch on editor/supervisor without booting
+   *  the scheduling store. */
+  const level = computed(() =>
+    auth.usingDevStub
+      ? auth.isAdmin
+        ? 'global_admin'
+        : auth.isSupervisor
+          ? 'supervisor'
+          : 'member'
+      : probedLevel.value,
+  )
+  return { canSeeSchedule, level }
 }

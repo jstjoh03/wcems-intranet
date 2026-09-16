@@ -5,18 +5,13 @@ import {
   todayCentralIso,
   addDaysIso,
   hhmm,
-  NOTIFY_TYPES,
-  NOTIFY_CHANNELS,
-  notifyOn,
-  type Availability,
-  type MemberSettings,
-  type NotifyChannel,
   type SchedRequest,
 } from '@/composables/useSchedule'
 import ScheduleMonthBoard from './ScheduleMonthBoard.vue'
 import ScheduleDayBoard from './ScheduleDayBoard.vue'
 import ScheduleWeekBoard from './ScheduleWeekBoard.vue'
 import SchedulePeriodBoard from './SchedulePeriodBoard.vue'
+import ScheduleMemberSettingsForm from './ScheduleMemberSettingsForm.vue'
 
 /**
  * My schedule — the same calendar views as the main boards (month
@@ -24,9 +19,43 @@ import SchedulePeriodBoard from './SchedulePeriodBoard.vue'
  * member and open seats, with their own pending requests and a
  * shifts/hours summary on top. Clicking an open seat still opens the
  * pickup/assign modal.
+ *
+ * A "Schedule for" picker swaps the calendar to any other member —
+ * office staff without shifts of their own use it to answer "what days
+ * does X work" without hunting the full boards. Requests, settings,
+ * and the pending strip stay the signed-in user's own.
  */
 
 const sched = useSchedule()
+
+// ── whose calendar is displayed (default: mine) ─────────────────────
+
+const viewUserId = ref<string>('') // '' = the signed-in member
+const viewingId = computed(() => viewUserId.value || sched.myUserId.value)
+const viewingSelf = computed(
+  () => !viewUserId.value || viewUserId.value === sched.myUserId.value,
+)
+const viewingName = computed(() =>
+  viewingSelf.value
+    ? null
+    : (sched.personById.value.get(viewUserId.value)?.fullName ?? null),
+)
+const myOptionLabel = computed(() => {
+  const n = sched.personById.value.get(sched.myUserId.value ?? '')?.fullName
+  return n ? `${n} (me)` : 'Me'
+})
+
+function lastNameKey(full: string): string {
+  const parts = full.trim().split(/\s+/)
+  return (parts[parts.length - 1] ?? full).toLowerCase()
+}
+
+const peopleOptions = computed(() =>
+  sched.people.value
+    .filter((p) => p.id !== sched.myUserId.value)
+    .slice()
+    .sort((a, b) => lastNameKey(a.fullName).localeCompare(lastNameKey(b.fullName))),
+)
 
 type MyView = 'month' | 'day' | 'week' | 'period'
 const view = ref<MyView>('month')
@@ -44,11 +73,17 @@ const monthAnchor = computed(() => dateIso.value.slice(0, 7))
 /* The phone month is a personal calendar (gold day markers only); the
    other views — and desktop month — still list open seats too. */
 const isPhone = window.matchMedia('(max-width: 900px)').matches
-const showingLabel = computed(() =>
-  isPhone && view.value === 'month'
+const showingLabel = computed(() => {
+  if (!viewingSelf.value) {
+    const first = viewingName.value?.split(' ')[0] ?? 'Their'
+    return isPhone && view.value === 'month'
+      ? `${first}'s days are marked in gold`
+      : `Showing ${viewingName.value ?? 'them'} + open seats`
+  }
+  return isPhone && view.value === 'month'
     ? 'Your days are marked in gold'
-    : 'Showing you + open seats',
-)
+    : 'Showing you + open seats'
+})
 
 const navLabel = computed(() => {
   if (view.value === 'month') {
@@ -123,9 +158,9 @@ watch(view, (v, prev) => {
 
 // ── summary + own pending ────────────────────────────────────────────
 
-/** How many of my shift days land in the displayed month. */
+/** How many of the displayed member's shift days land in the month. */
 const monthShiftCount = computed(() => {
-  const me = sched.myUserId.value
+  const me = viewingId.value
   if (!me) return 0
   const first = `${monthAnchor.value}-01`
   const endD = new Date(`${first}T00:00:00`)
@@ -158,84 +193,19 @@ const TYPE_LABELS: Record<string, string> = {
   giveaway: 'Giveaway',
 }
 
-// ── my settings (contact, notifications, unavailable days) ──────────
+// ── my settings (shared form — same one the profile modal hosts) ────
 
 const setOpen = ref(false)
-const mySet = ref<MemberSettings | null>(null)
-const myUnavail = ref<Availability[]>([])
-const setBusy = ref(false)
-const setSaved = ref(false)
-const setErr = ref<string | null>(null)
 
-const myPerson = computed(() =>
-  sched.myUserId.value ? (sched.personById.value.get(sched.myUserId.value) ?? null) : null,
-)
-
-/** Editors and supervisors also get the approvals row. */
-const myNotifyTypes = computed(() =>
-  NOTIFY_TYPES.filter(
-    (t) => !t.editorOnly || sched.canEdit.value || sched.level.value === 'supervisor',
-  ),
-)
-
-async function openSettings() {
+function openSettings() {
   setOpen.value = true
-  setSaved.value = false
-  setErr.value = null
-  mySet.value = null
-  const me = sched.myUserId.value
-  if (!me) return
-  const s = await sched.fetchMemberSettings(me)
-  // Consent is tied to a number entered on this form — prefill from the
-  // roster so most people just confirm what's already right.
-  if (!s.smsPhone && myPerson.value?.phone) s.smsPhone = myPerson.value.phone
-  mySet.value = s
-  myUnavail.value = await sched.listMyUnavailable()
 }
 
-function nChecked(key: string, ch: NotifyChannel): boolean {
-  return mySet.value ? notifyOn(mySet.value.notify, key, ch) : true
-}
-
-function nToggle(key: string, ch: NotifyChannel, ev: Event) {
-  if (!mySet.value) return
-  const on = (ev.target as HTMLInputElement).checked
-  const n = { ...(mySet.value.notify as Record<string, Record<string, boolean>>) }
-  n[key] = { ...(n[key] ?? {}), [ch]: on }
-  mySet.value.notify = n
-}
-
-async function saveSettings() {
-  if (!mySet.value) return
-  setBusy.value = true
-  setErr.value = null
-  setSaved.value = false
-  const e = await sched.saveMemberSettings(mySet.value)
-  setBusy.value = false
-  if (e) {
-    setErr.value = e
-    return
-  }
-  setSaved.value = true
-}
-
-async function removeUnavail(id: string) {
-  setErr.value = null
-  const e = await sched.clearUnavailable(id)
-  if (e) {
-    setErr.value = e
-    return
-  }
-  myUnavail.value = await sched.listMyUnavailable()
-}
-
-function fmtUnavail(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
+/** The form flashes "Saved." — give it a beat to register, then close. */
+function onSettingsSaved() {
+  window.setTimeout(() => {
+    setOpen.value = false
+  }, 900)
 }
 
 function pendingLine(r: SchedRequest): string {
@@ -266,6 +236,19 @@ function pendingLine(r: SchedRequest): string {
         <span class="my__chip">{{ r.status === 'partner_accepted' ? 'Awaiting approval' : 'Pending' }}</span>
       </div>
     </section>
+
+    <div class="my__whorow">
+      <label class="my__who">
+        <span class="my__wholabel">Schedule for</span>
+        <select v-model="viewUserId" class="my__whoselect" aria-label="Whose schedule to show">
+          <option value="">{{ myOptionLabel }}</option>
+          <option v-for="p in peopleOptions" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+        </select>
+      </label>
+      <span v-if="!viewingSelf" class="my__whohint">
+        Viewing {{ viewingName }}'s calendar — requests and settings below stay yours.
+      </span>
+    </div>
 
     <div class="my__nav">
       <div class="my__views" role="tablist">
@@ -311,101 +294,33 @@ function pendingLine(r: SchedRequest): string {
     <div v-if="setOpen" class="my__overlay" @click.self="setOpen = false">
       <div class="my__modal" role="dialog" aria-label="My settings">
         <h3 class="my__mtitle">My settings</h3>
-        <p v-if="setErr" class="my__merr">{{ setErr }}</p>
-
-        <template v-if="mySet">
-          <section class="my__msec">
-            <h4 class="my__mh">Contact on file</h4>
-            <p class="my__mline">
-              {{ myPerson?.phone ?? 'No phone on file' }} · {{ myPerson?.email ?? 'no email on file' }}
-            </p>
-            <p class="my__mhint">Wrong or missing? Ask the office to update your roster record.</p>
-            <label class="my__mcheck">
-              <input v-model="mySet.smsOptIn" type="checkbox" />
-              Send me text messages about scheduling
-            </label>
-            <label class="my__mphone">
-              <span class="my__mphonelabel">Mobile number for text messages</span>
-              <input
-                v-model="mySet.smsPhone"
-                type="tel"
-                class="my__mphoneinput"
-                placeholder="(555) 555-5555"
-                :disabled="!mySet.smsOptIn"
-                autocomplete="tel"
-              />
-            </label>
-            <p class="my__mhint">
-              Optional — never required. Texts go to the number above (prefilled from your
-              roster record — you can change it). Frequency varies with schedule activity;
-              message &amp; data rates may apply. Reply STOP to any message to opt out (or
-              untick this box), HELP for help. See the
-              <a href="/sms-terms.html" target="_blank" rel="noopener">SMS Terms</a> and
-              <a href="/sms-privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.
-            </p>
-          </section>
-
-          <section class="my__msec">
-            <h4 class="my__mh">Notifications</h4>
-            <table class="my__ntable">
-              <thead>
-                <tr>
-                  <th></th>
-                  <th v-for="ch in NOTIFY_CHANNELS" :key="ch.key">{{ ch.label }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="t in myNotifyTypes" :key="t.key">
-                  <td class="my__ntype">{{ t.label }}</td>
-                  <td v-for="ch in NOTIFY_CHANNELS" :key="ch.key">
-                    <input
-                      type="checkbox"
-                      :checked="nChecked(t.key, ch.key)"
-                      :disabled="ch.key === 'sms' && !mySet.smsOptIn"
-                      :aria-label="`${t.label} — ${ch.label}`"
-                      @change="nToggle(t.key, ch.key, $event)"
-                    />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <p class="my__mhint">
-              Delivery starts with the notifications rollout — your choices here are ready for it.
-            </p>
-          </section>
-
-          <section class="my__msec">
-            <h4 class="my__mh">Unavailable days</h4>
-            <p v-if="myUnavail.length === 0" class="my__mhint">
-              None marked. Protect a rotation day off from Requests → Time off → “Mark unavailable”.
-            </p>
-            <ul v-else class="my__ulist">
-              <li v-for="a in myUnavail" :key="a.id" class="my__urow">
-                <span class="my__udate">{{ fmtUnavail(a.onDate) }}</span>
-                <span v-if="a.reason" class="my__ureason">{{ a.reason }}</span>
-                <button class="my__uremove" @click="removeUnavail(a.id)">Remove</button>
-              </li>
-            </ul>
-          </section>
-
-          <div class="my__mfoot">
-            <span v-if="setSaved" class="my__msaved">Saved.</span>
+        <ScheduleMemberSettingsForm @saved="onSettingsSaved">
+          <template #foot>
             <button class="my__navbtn" @click="setOpen = false">Close</button>
-            <button class="my__msave" :disabled="setBusy" @click="saveSettings">
-              {{ setBusy ? 'Saving…' : 'Save settings' }}
-            </button>
-          </div>
-        </template>
-        <p v-else class="my__mhint">Loading…</p>
+          </template>
+        </ScheduleMemberSettingsForm>
       </div>
     </div>
 
-    <ScheduleMonthBoard v-if="view === 'month'" :month="monthAnchor" mine @open-day="openDay" />
-    <ScheduleDayBoard v-else-if="view === 'day'" :date-iso="dateIso" mine />
-    <ScheduleWeekBoard v-else-if="view === 'week'" :date-iso="dateIso" mine @open-day="openDay" />
+    <ScheduleMonthBoard
+      v-if="view === 'month'"
+      :month="monthAnchor"
+      mine
+      :for-user="viewUserId || null"
+      @open-day="openDay"
+    />
+    <ScheduleDayBoard v-else-if="view === 'day'" :date-iso="dateIso" mine :for-user="viewUserId || null" />
+    <ScheduleWeekBoard
+      v-else-if="view === 'week'"
+      :date-iso="dateIso"
+      mine
+      :for-user="viewUserId || null"
+      @open-day="openDay"
+    />
     <SchedulePeriodBoard
       v-else
       mine
+      :for-user="viewUserId || null"
       @open-day="openDay"
       @range="(s: string, e: string) => sched.loadRange(s, e)"
     />
@@ -591,191 +506,50 @@ function pendingLine(r: SchedRequest): string {
   margin: 0 0 0.6rem;
 }
 
-.my__msec {
-  border-top: 1px solid var(--color-line-soft);
-  padding: 0.7rem 0 0.4rem;
+/* ── "Schedule for" picker ── */
+
+.my__whorow {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
 }
 
-.my__mh {
+.my__who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.my__wholabel {
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-muted);
-  margin: 0 0 0.4rem;
+  white-space: nowrap;
 }
 
-.my__mline {
-  font-size: 0.86rem;
-  color: var(--color-ink);
-  margin: 0 0 0.15rem;
-  overflow-wrap: anywhere;
-}
-
-.my__mhint {
-  font-size: 0.75rem;
-  color: var(--color-muted);
-  margin: 0.15rem 0 0.4rem;
-}
-
-.my__mcheck {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-size: 0.84rem;
-  color: var(--color-ink-soft);
-  margin: 0.35rem 0 0.2rem;
-}
-
-/* the number consent applies to — same form as the checkbox (A2P) */
-.my__mphone {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  margin: 0.25rem 0 0.3rem;
-}
-
-.my__mphonelabel {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-muted);
-}
-
-.my__mphoneinput {
+.my__whoselect {
   font: inherit;
-  font-size: 0.88rem;
-  padding: 0.35rem 0.5rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--color-ink);
+  background: var(--color-surface);
   border: 1px solid var(--color-line);
   border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-ink);
-  max-width: 220px;
+  padding: 0.32rem 0.5rem;
+  max-width: min(260px, 70vw);
 }
 
-.my__mphoneinput:disabled {
-  opacity: 0.55;
+.my__whoselect:focus-visible {
+  outline: 2px solid var(--color-brand-300);
+  outline-offset: 1px;
 }
 
-.my__merr {
-  font-size: 0.8rem;
-  color: var(--color-danger-600, oklch(0.5 0.19 27));
-  background: oklch(0.98 0.013 27);
-  border: 1px solid oklch(0.88 0.06 27);
-  border-radius: 8px;
-  padding: 0.35rem 0.6rem;
-  margin: 0 0 0.6rem;
-}
-
-.my__ntable {
-  border-collapse: collapse;
-  font-size: 0.82rem;
-  width: 100%;
-}
-
-.my__ntable th {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.my__whohint {
+  font-size: 0.76rem;
   color: var(--color-muted);
-  padding: 0.25rem 0.5rem;
-  text-align: center;
-}
-
-.my__ntable td {
-  padding: 0.3rem 0.5rem;
-  border-top: 1px solid var(--color-line-soft);
-  text-align: center;
-}
-
-.my__ntable td.my__ntype {
-  text-align: left;
-  color: var(--color-ink-soft);
-  padding-left: 0;
-}
-
-.my__ntable input[type='checkbox']:disabled {
-  opacity: 0.4;
-}
-
-.my__ulist {
-  list-style: none;
-  margin: 0.2rem 0 0.3rem;
-  padding: 0;
-}
-
-.my__urow {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  padding: 0.3rem 0;
-  border-bottom: 1px solid var(--color-line-soft);
-  font-size: 0.84rem;
-  flex-wrap: wrap;
-}
-
-.my__urow:last-child {
-  border-bottom: 0;
-}
-
-.my__udate {
-  font-weight: 600;
-  color: var(--color-ink);
-}
-
-.my__ureason {
-  color: var(--color-muted);
-  font-size: 0.78rem;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.my__uremove {
-  margin-left: auto;
-  font: inherit;
-  font-size: 0.74rem;
-  font-weight: 600;
-  color: var(--color-danger-600, oklch(0.5 0.19 27));
-  background: transparent;
-  border: 1px solid oklch(0.88 0.06 27);
-  border-radius: 7px;
-  padding: 0.1rem 0.5rem;
-  cursor: pointer;
-}
-
-.my__mfoot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  border-top: 1px solid var(--color-line-soft);
-  padding-top: 0.7rem;
-  margin-top: 0.4rem;
-}
-
-.my__msaved {
-  font-size: 0.8rem;
-  color: var(--color-success-600, oklch(0.55 0.13 150));
-  margin-right: auto;
-}
-
-.my__msave {
-  font: inherit;
-  font-size: 0.84rem;
-  font-weight: 600;
-  padding: 0.4rem 1rem;
-  border: 0;
-  border-radius: 8px;
-  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
-  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.18), 0 1px 2px oklch(0.2 0.04 260 / 0.2);
-  color: white;
-  cursor: pointer;
-}
-
-.my__msave:disabled {
-  opacity: 0.6;
-  cursor: default;
 }
 </style>

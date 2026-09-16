@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { X, LogOut, Mail, Camera, Trash2 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
@@ -10,6 +10,15 @@ import { formatPhoneInput } from '@/utils/phone'
 import { useStationOptions } from '@/composables/useStationOptions'
 import type { ShiftLetter } from '@/types'
 import { usePushNotifications } from '@/composables/usePushNotifications'
+import { useScheduleAccess } from '@/composables/useScheduleAccess'
+
+/* Async so the scheduling composable (a big chunk) stays out of the
+   main bundle — it loads only when a schedule-eligible user opens
+   their profile. Same form the My schedule "My settings" modal hosts,
+   same sched_member_settings row, one consent record. */
+const ScheduleMemberSettingsForm = defineAsyncComponent(
+  () => import('@/views/schedule/ScheduleMemberSettingsForm.vue'),
+)
 
 /**
  * Self-serve profile modal — the comprehensive "manage my info" surface.
@@ -28,6 +37,8 @@ import { usePushNotifications } from '@/composables/usePushNotifications'
 
 const auth = useAuthStore()
 const router = useRouter()
+
+const { canSeeSchedule } = useScheduleAccess()
 
 const push = usePushNotifications()
 const pushBusyError = ref<string | null>(null)
@@ -437,6 +448,15 @@ async function signOut() {
         </label>
       </section>
 
+      <section v-if="canSeeSchedule" class="upm__section">
+        <Eyebrow>Scheduling</Eyebrow>
+        <p class="upm__sched-sub">
+          Text and notification preferences for the scheduling module — the same
+          settings as My schedule → My settings.
+        </p>
+        <ScheduleMemberSettingsForm class="upm__sched" />
+      </section>
+
       <div v-if="fieldError" class="upm__error">{{ fieldError }}</div>
 
       <footer class="upm__foot">
@@ -704,6 +724,19 @@ async function signOut() {
   color: var(--color-muted);
   font-weight: 400;
   margin-top: 1px;
+}
+
+.upm__sched-sub {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  color: var(--color-muted);
+  line-height: 1.4;
+}
+/* The shared form draws its own section rules — soften the first so it
+   doesn't double up under the Eyebrow. */
+.upm__sched :deep(.msf__sec:first-of-type) {
+  border-top: 0;
+  padding-top: 0.35rem;
 }
 
 .upm__error {

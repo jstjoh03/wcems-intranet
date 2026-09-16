@@ -12,13 +12,14 @@ import { useScheduleEditor } from '@/composables/useScheduleEditor'
  * the event manager — the same behavior as every other view.
  */
 
-// mine: "My schedule" mode — only the signed-in member + open seats
-const props = defineProps<{ dateIso: string; mine?: boolean }>()
+// mine: "My schedule" mode — only one member + open seats. forUser
+// swaps that member (the My-panel "Schedule for" picker); default me.
+const props = defineProps<{ dateIso: string; mine?: boolean; forUser?: string | null }>()
 const sched = useSchedule()
 const editor = useScheduleEditor()
 
 const model = computed(() =>
-  sched.dayModel(props.dateIso, props.mine ? sched.myUserId.value : null),
+  sched.dayModel(props.dateIso, props.mine ? (props.forUser ?? sched.myUserId.value) : null),
 )
 
 const stations = computed(() => {

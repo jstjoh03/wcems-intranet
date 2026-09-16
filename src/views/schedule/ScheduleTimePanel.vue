@@ -608,8 +608,26 @@ function toggleSelected(userId: string) {
   selectedIds.value = s
 }
 
+/* name/EE-code filter over the punch list — supervisors review one
+   member at a time without unticking seventy-nine others. */
+const punchFilter = ref('')
+
+const visibleGroups = computed<PunchGroup[]>(() => {
+  const q = punchFilter.value.trim().toLowerCase()
+  if (!q) return punchGroups.value
+  return punchGroups.value.filter(
+    (g) => g.name.toLowerCase().includes(q) || (g.code ?? '').toLowerCase().includes(q),
+  )
+})
+
+/** All/None act on what the filter shows — with no filter, everyone. */
 function selectAll(on: boolean) {
-  selectedIds.value = on ? new Set(punchGroups.value.map((g) => g.userId)) : new Set()
+  const s = new Set(selectedIds.value)
+  for (const g of visibleGroups.value) {
+    if (on) s.add(g.userId)
+    else s.delete(g.userId)
+  }
+  selectedIds.value = s
 }
 
 function centralPunch(ms: number): { date: string; time: string } {
@@ -661,6 +679,11 @@ function downloadPaycom(onlySelected = false): void {
 }
 
 const showPunches = ref(false)
+
+function openPunches() {
+  punchFilter.value = ''
+  showPunches.value = true
+}
 </script>
 
 <template>
@@ -723,7 +746,7 @@ const showPunches = ref(false)
       <span class="tm__actions">
         <button v-if="payrollAccess" class="tm__btn" :disabled="busy || summary.length === 0" @click="csvReport">CSV</button>
         <button class="tm__btn" :disabled="busy || summary.length === 0" @click="printReport">Print</button>
-        <button v-if="preset === 'period'" class="tm__btn" @click="showPunches = true">
+        <button v-if="preset === 'period'" class="tm__btn" @click="openPunches">
           {{ payrollAccess ? 'Verify / select punches' : 'Review punches' }}
         </button>
         <button
@@ -890,6 +913,19 @@ const showPunches = ref(false)
           scheduler. OUT punches at the 0600 changeover show as 05:59 (Paycom convention).
         </p>
 
+        <div class="tm__punchfilter">
+          <input
+            v-model="punchFilter"
+            type="search"
+            class="tm__pfinput"
+            placeholder="Filter by name or EE code…"
+            aria-label="Filter punch list by employee"
+          />
+          <span v-if="punchFilter" class="tm__muted">
+            {{ visibleGroups.length }} of {{ punchGroups.length }} members
+          </span>
+        </div>
+
         <div class="tm__modal-scroll">
           <table class="tm__table tm__table--punch">
             <thead>
@@ -902,7 +938,12 @@ const showPunches = ref(false)
               </tr>
             </thead>
             <tbody>
-              <template v-for="g in punchGroups" :key="g.userId">
+              <tr v-if="visibleGroups.length === 0">
+                <td colspan="5" class="tm__muted" style="padding: 0.7rem 0">
+                  No members match “{{ punchFilter }}”.
+                </td>
+              </tr>
+              <template v-for="g in visibleGroups" :key="g.userId">
                 <tr class="tm__emprow">
                   <td colspan="4">
                     <label class="tm__empcheck">
@@ -1301,6 +1342,29 @@ const showPunches = ref(false)
 .tm__modal-hint {
   font-size: 0.8rem;
   margin: 0;
+}
+
+.tm__punchfilter {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.tm__pfinput {
+  font: inherit;
+  font-size: 0.84rem;
+  padding: 0.32rem 0.55rem;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  width: min(280px, 100%);
+}
+
+.tm__pfinput:focus-visible {
+  outline: 2px solid var(--color-brand-300);
+  outline-offset: 1px;
 }
 
 .tm__modal-scroll {

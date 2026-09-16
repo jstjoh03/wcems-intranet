@@ -11,14 +11,15 @@ import { useScheduleEditor } from '@/composables/useScheduleEditor'
  * students, and events — and the "+" adds to the day in place.
  */
 
-// mine: "My schedule" mode — only the signed-in member + open seats
-const props = defineProps<{ dateIso: string; mine?: boolean }>()
+// mine: "My schedule" mode — only one member + open seats. forUser
+// swaps that member (the My-panel "Schedule for" picker); default me.
+const props = defineProps<{ dateIso: string; mine?: boolean; forUser?: string | null }>()
 const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 
 const sched = useSchedule()
 const editor = useScheduleEditor()
 const model = computed(() =>
-  sched.dayModel(props.dateIso, props.mine ? sched.myUserId.value : null),
+  sched.dayModel(props.dateIso, props.mine ? (props.forUser ?? sched.myUserId.value) : null),
 )
 const isToday = computed(() => props.dateIso === todayCentralIso())
 

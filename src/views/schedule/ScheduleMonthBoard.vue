@@ -14,8 +14,9 @@ import { useScheduleEditor } from '@/composables/useScheduleEditor'
  * and the cell links into the Day view.
  */
 
-// mine: "My schedule" mode — only the signed-in member + open seats
-const props = defineProps<{ month: string; mine?: boolean }>() // 'YYYY-MM'
+// mine: "My schedule" mode — only one member + open seats. forUser
+// swaps that member (the My-panel "Schedule for" picker); default me.
+const props = defineProps<{ month: string; mine?: boolean; forUser?: string | null }>() // 'YYYY-MM'
 const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 
 const sched = useSchedule()
@@ -72,7 +73,7 @@ function notesTitle(notes: { note: string }[]): string {
 const weeks = computed<Cell[][]>(() => {
   const first = new Date(`${props.month}-01T00:00:00`)
   const gridStart = addDaysIso(`${props.month}-01`, -first.getDay())
-  const me = sched.myUserId.value
+  const me = (props.mine ? props.forUser : null) ?? sched.myUserId.value
   const out: Cell[][] = []
   for (let w = 0; w < 6; w++) {
     const row: Cell[] = []

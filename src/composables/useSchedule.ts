@@ -4130,7 +4130,13 @@ async function saveMemberSettings(s: MemberSettings): Promise<string | null> {
     { onConflict: 'user_id' },
   )
   if (res.error) return res.error.message
-  audit('member.settings', `Updated ${displayName(s.userId).name}'s scheduler settings`, { entity: 'member', entityId: s.userId })
+  /* Self-saves can come from the profile modal, where the people map
+     isn't loaded — fall back to the signed-in name over 'Unknown'. */
+  let who = displayName(s.userId).name
+  if (who === 'Unknown' && s.userId === auth.appUser?.id && auth.appUser?.fullName) {
+    who = auth.appUser.fullName
+  }
+  audit('member.settings', `Updated ${who}'s scheduler settings`, { entity: 'member', entityId: s.userId })
   return null
 }
 
