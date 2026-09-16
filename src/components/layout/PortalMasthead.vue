@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
 import { useClinicalAccess } from '@/composables/useClinicalAccess'
 import { useTrainingInstructor } from '@/training/composables/useTrainingInstructor'
+import { useScheduleAccess } from '@/composables/useScheduleAccess'
 
 /**
  * Desktop masthead + primary nav (approved portal mockup v2): serif
@@ -40,6 +41,7 @@ const route = useRoute()
 const { links } = useQuickLinks()
 const { clinicalNav } = useClinicalAccess()
 const { isInstructor: isTrainingInstructor } = useTrainingInstructor()
+const { canSeeSchedule } = useScheduleAccess()
 
 const ADMIN_CHILDREN: NavChild[] = [
   { label: 'Manage Employees', to: '/admin/employees' },
@@ -80,6 +82,12 @@ const nav = computed<NavItem[]>(() => [
         : []),
     ],
   },
+  /* Soft-launch: appears for exactly the people the module admits —
+     editors, supervisors, and Setup-listed pilot testers; the whole
+     crew sees it when the gate opens. */
+  ...(canSeeSchedule.value
+    ? [{ label: 'Scheduling', to: '/schedule', match: '/schedule' } as NavItem]
+    : []),
   { label: 'Policies', to: '/policies', match: '/policies' },
   { label: 'Hospitals', to: '/hospitals', match: '/hospitals' },
   { label: 'MIH Referral', to: '/mih-referral', match: '/mih-referral' },

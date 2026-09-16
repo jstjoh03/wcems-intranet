@@ -1,0 +1,15 @@
+# Never let the update-critical files sit in an HTTP cache: the service
+# worker script and the shell must always revalidate so a new deploy is
+# visible the moment a client checks. Hashed assets under /assets stay
+# long-cached by Cloudflare's defaults.
+/sw.js
+  Cache-Control: no-cache
+
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache
+
+/
+  Cache-Control: no-cache

@@ -19,6 +19,7 @@ import {
   Home,
   Film,
   Contact,
+  CalendarDays,
   ChevronDown,
   ShieldCheck,
   BookOpen,
@@ -32,6 +33,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
 import { useClinicalAccess } from '@/composables/useClinicalAccess'
 import { useTrainingInstructor } from '@/training/composables/useTrainingInstructor'
+import { useScheduleAccess } from '@/composables/useScheduleAccess'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import Avatar from '@/components/primitives/Avatar.vue'
 
@@ -45,6 +47,7 @@ const auth = useAuthStore()
 const { links: systemLinks } = useQuickLinks()
 const { clinicalNav } = useClinicalAccess()
 const { isInstructor: isTrainingInstructor } = useTrainingInstructor()
+const { canSeeSchedule } = useScheduleAccess()
 
 /* "On this page" anchors only make sense on the dashboard — every
    other route has its own content and no #section hashes. */
@@ -96,6 +99,9 @@ const sections: NavItem[] = [
 const pages = computed<NavItem[]>(() => [
   { label: 'Home', to: '/', icon: Home },
   { label: 'Protocols', to: '/protocols', icon: BookOpen },
+  /* Soft-launch: editors, supervisors, and pilot testers only until
+     the crew-wide opening. */
+  ...(canSeeSchedule.value ? [{ label: 'Scheduling', to: '/schedule', icon: CalendarDays }] : []),
   { label: 'MIH Patient Referral', to: '/mih-referral', icon: HeartHandshake },
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
   { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },

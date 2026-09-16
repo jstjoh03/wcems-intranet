@@ -415,10 +415,46 @@ router.beforeEach(async (to) => {
   if (to.meta.public) return true
 
   if (!auth.isAuthenticated) {
+    // Stash the deep link: the Microsoft OAuth round trip always lands
+    // back on '/', so ?next= alone never survives it. Page-out links
+    // and shared /schedule URLs restore from here after sign-in.
+    if (to.fullPath !== '/') {
+      try {
+        sessionStorage.setItem(
+          'wcems:post-login',
+          JSON.stringify({ path: to.fullPath, ts: Date.now() }),
+        )
+      } catch {
+        /* storage blocked (private mode) — sign-in still works, just lands home */
+      }
+    }
     return {
       name: 'signin',
       query: to.fullPath !== '/' ? { next: to.fullPath } : undefined,
     }
+  }
+
+  // First authenticated navigation after the OAuth landing: consume the
+  // stashed deep link (kept fresh — 15 min — so an abandoned sign-in
+  // attempt doesn't hijack a later session).
+  try {
+    const raw = sessionStorage.getItem('wcems:post-login')
+    if (raw) {
+      sessionStorage.removeItem('wcems:post-login')
+      const saved = JSON.parse(raw) as { path?: string; ts?: number }
+      if (
+        typeof saved.path === 'string' &&
+        saved.path.startsWith('/') &&
+        !saved.path.startsWith('//') &&
+        typeof saved.ts === 'number' &&
+        Date.now() - saved.ts < 15 * 60 * 1000 &&
+        to.fullPath !== saved.path
+      ) {
+        return saved.path
+      }
+    }
+  } catch {
+    /* malformed stash or blocked storage — continue to the requested route */
   }
 
   if (to.meta.adminOnly && !auth.isAdmin) {

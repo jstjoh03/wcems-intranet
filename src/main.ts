@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import { router } from './router'
 import { useAuthStore } from './stores/auth'
+import { installSwUpdateManager } from './lib/swUpdates'
 import './assets/main.css'
 import './assets/protocols-theme.css'
 
@@ -20,6 +21,7 @@ async function bootstrap() {
   await auth.init()
 
   app.use(router)
+  installSwUpdateManager(router)
   app.mount('#app')
 }
 
