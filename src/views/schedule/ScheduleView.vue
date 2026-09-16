@@ -61,12 +61,14 @@ const TABS = computed<{ key: Tab; label: string; group?: boolean }[]>(() => {
   if (sched.canPageOut.value) {
     t.push({ key: 'pages', label: 'Page-outs' })
   }
+  /* Time Reports serves two duties from one tab: supervisors review
+     punches to verify schedules are accurate; editors additionally get
+     the full payroll flow (CSV, Paycom export, earning codes). */
+  if (sched.canEdit.value || sched.level.value === 'supervisor') {
+    t.push({ key: 'time', label: 'Time Reports', group: true })
+  }
   if (sched.canEdit.value) {
-    t.push(
-      { key: 'time', label: 'Payroll', group: true },
-      { key: 'members', label: 'Members' },
-      { key: 'setup', label: 'Setup' },
-    )
+    t.push({ key: 'members', label: 'Members' }, { key: 'setup', label: 'Setup' })
   }
   return t
 })
