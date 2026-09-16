@@ -790,8 +790,16 @@ const msComment = ref('')
 const msTo = ref('')
 
 const msToCandidates = computed(() =>
-  sched.people.value.filter((p) => p.id !== sched.myUserId.value),
+  sched.people.value
+    .filter((p) => p.id !== sched.myUserId.value)
+    .slice()
+    .sort((a, b) => msLastKey(a.fullName).localeCompare(msLastKey(b.fullName))),
 )
+
+function msLastKey(full: string): string {
+  const parts = full.trim().split(/\s+/)
+  return (parts[parts.length - 1] ?? full).toLowerCase()
+}
 
 watch(
   () => editor.myShift.value,
@@ -1547,7 +1555,7 @@ async function reqCancel() {
           >
             <option value="">Post to the trade board — anyone can respond</option>
             <option v-for="p in msToCandidates" :key="p.id" :value="p.id">
-              Send directly to {{ p.fullName }}
+              {{ p.fullName }}
             </option>
           </select>
           <input

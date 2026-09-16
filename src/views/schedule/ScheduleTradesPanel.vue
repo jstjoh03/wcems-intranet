@@ -42,8 +42,16 @@ const err = ref<string | null>(null)
 const done = ref<string | null>(null)
 
 const sendToCandidates = computed(() =>
-  sched.people.value.filter((p) => p.id !== sched.myUserId.value),
+  sched.people.value
+    .filter((p) => p.id !== sched.myUserId.value)
+    .slice()
+    .sort((a, b) => lastNameKey(a.fullName).localeCompare(lastNameKey(b.fullName))),
 )
+
+function lastNameKey(full: string): string {
+  const parts = full.trim().split(/\s+/)
+  return (parts[parts.length - 1] ?? full).toLowerCase()
+}
 
 const myShifts = ref<UpcomingShift[]>([])
 
@@ -385,7 +393,7 @@ async function cancelPosting(r: SchedRequest) {
         <select v-model="postTo" class="tr__input">
           <option value="">The trade board — anyone can respond</option>
           <option v-for="p in sendToCandidates" :key="p.id" :value="p.id">
-            Directly to {{ p.fullName }}
+            {{ p.fullName }}
           </option>
         </select>
       </label>

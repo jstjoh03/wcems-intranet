@@ -1050,7 +1050,9 @@ function unitDayWindow(unit: SchedUnit | undefined | null, dateIso: string) {
   }
 }
 
-export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
+/** hideOpen (only meaningful with onlyFor): personal calendar with the
+ *  "Show open seats" box unticked — just that member's rows, no opens. */
+export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = false): DayModel {
   const platoon = platoonFor(dateIso)
   const dayEntries = entries.value.filter((e) => e.workDate === dateIso)
   const unitModels: UnitModel[] = []
@@ -1110,7 +1112,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
         ]
       }
       if (onlyFor) {
-        rows = rows.filter((r) => r.open || r.userId === onlyFor)
+        rows = rows.filter((r) => (r.open && !hideOpen) || r.userId === onlyFor)
       }
       openCount += rows.filter((r) => r.open).length
       seatModels.push({ seat, rows })
@@ -1143,7 +1145,9 @@ export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
         }
       })
     if (onlyFor) {
-      extras = extras.filter((r) => r.userId === onlyFor || (r.kind === 'rider' && r.open))
+      extras = extras.filter(
+        (r) => r.userId === onlyFor || (r.kind === 'rider' && r.open && !hideOpen),
+      )
     }
     openCount += extras.filter((r) => r.open).length
 
@@ -1209,7 +1213,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null): DayModel {
           note: null,
         }
       })
-    if (onlyFor) boxRows = boxRows.filter((r) => r.open || r.userId === onlyFor)
+    if (onlyFor) boxRows = boxRows.filter((r) => (r.open && !hideOpen) || r.userId === onlyFor)
     openCount += boxRows.filter((r) => r.open).length
     if (onlyFor && boxRows.length === 0) continue
     eventBoxes.push({

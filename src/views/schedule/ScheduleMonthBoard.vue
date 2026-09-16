@@ -16,7 +16,12 @@ import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 // mine: "My schedule" mode — only one member + open seats. forUser
 // swaps that member (the My-panel "Schedule for" picker); default me.
-const props = defineProps<{ month: string; mine?: boolean; forUser?: string | null }>() // 'YYYY-MM'
+const props = defineProps<{
+  month: string // 'YYYY-MM'
+  mine?: boolean
+  forUser?: string | null
+  hideOpen?: boolean
+}>()
 const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 
 const sched = useSchedule()
@@ -79,7 +84,7 @@ const weeks = computed<Cell[][]>(() => {
     const row: Cell[] = []
     for (let d = 0; d < 7; d++) {
       const iso = addDaysIso(gridStart, w * 7 + d)
-      const model = sched.dayModel(iso, props.mine ? me : null)
+      const model = sched.dayModel(iso, props.mine ? me : null, props.mine && props.hideOpen)
       row.push({
         iso,
         dayNum: Number(iso.slice(8, 10)),

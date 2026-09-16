@@ -57,6 +57,23 @@ const peopleOptions = computed(() =>
     .sort((a, b) => lastNameKey(a.fullName).localeCompare(lastNameKey(b.fullName))),
 )
 
+/* Open seats on the personal calendar are an invitation to pick up —
+   useful to some, noise to others. Off switch persists per device. */
+const SHOW_OPEN_KEY = 'wcems:sched-show-open'
+const showOpen = ref(true)
+try {
+  showOpen.value = localStorage.getItem(SHOW_OPEN_KEY) !== '0'
+} catch {
+  /* storage unavailable (private mode) — default stands */
+}
+watch(showOpen, (v) => {
+  try {
+    localStorage.setItem(SHOW_OPEN_KEY, v ? '1' : '0')
+  } catch {
+    /* best-effort persistence only */
+  }
+})
+
 type MyView = 'month' | 'day' | 'week' | 'period'
 const view = ref<MyView>('month')
 const dateIso = ref(todayCentralIso())
@@ -74,15 +91,16 @@ const monthAnchor = computed(() => dateIso.value.slice(0, 7))
    other views — and desktop month — still list open seats too. */
 const isPhone = window.matchMedia('(max-width: 900px)').matches
 const showingLabel = computed(() => {
+  const opens = showOpen.value ? ' + open seats' : ''
   if (!viewingSelf.value) {
     const first = viewingName.value?.split(' ')[0] ?? 'Their'
     return isPhone && view.value === 'month'
       ? `${first}'s days are marked in gold`
-      : `Showing ${viewingName.value ?? 'them'} + open seats`
+      : `Showing ${viewingName.value ?? 'them'}${opens}`
   }
   return isPhone && view.value === 'month'
     ? 'Your days are marked in gold'
-    : 'Showing you + open seats'
+    : `Showing you${opens}`
 })
 
 const navLabel = computed(() => {
@@ -245,6 +263,10 @@ function pendingLine(r: SchedRequest): string {
           <option v-for="p in peopleOptions" :key="p.id" :value="p.id">{{ p.fullName }}</option>
         </select>
       </label>
+      <label class="my__openchk">
+        <input v-model="showOpen" type="checkbox" />
+        Show open seats
+      </label>
       <span v-if="!viewingSelf" class="my__whohint">
         Viewing {{ viewingName }}'s calendar — requests and settings below stay yours.
       </span>
@@ -307,20 +329,29 @@ function pendingLine(r: SchedRequest): string {
       :month="monthAnchor"
       mine
       :for-user="viewUserId || null"
+      :hide-open="!showOpen"
       @open-day="openDay"
     />
-    <ScheduleDayBoard v-else-if="view === 'day'" :date-iso="dateIso" mine :for-user="viewUserId || null" />
+    <ScheduleDayBoard
+      v-else-if="view === 'day'"
+      :date-iso="dateIso"
+      mine
+      :for-user="viewUserId || null"
+      :hide-open="!showOpen"
+    />
     <ScheduleWeekBoard
       v-else-if="view === 'week'"
       :date-iso="dateIso"
       mine
       :for-user="viewUserId || null"
+      :hide-open="!showOpen"
       @open-day="openDay"
     />
     <SchedulePeriodBoard
       v-else
       mine
       :for-user="viewUserId || null"
+      :hide-open="!showOpen"
       @open-day="openDay"
       @range="(s: string, e: string) => sched.loadRange(s, e)"
     />
@@ -551,5 +582,20 @@ function pendingLine(r: SchedRequest): string {
 .my__whohint {
   font-size: 0.76rem;
   color: var(--color-muted);
+}
+
+.my__openchk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.my__openchk input {
+  accent-color: var(--color-brand-600);
 }
 </style>

@@ -13,13 +13,22 @@ import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 // mine: "My schedule" mode — only one member + open seats. forUser
 // swaps that member (the My-panel "Schedule for" picker); default me.
-const props = defineProps<{ dateIso: string; mine?: boolean; forUser?: string | null }>()
+const props = defineProps<{
+  dateIso: string
+  mine?: boolean
+  forUser?: string | null
+  hideOpen?: boolean
+}>()
 const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 
 const sched = useSchedule()
 const editor = useScheduleEditor()
 const model = computed(() =>
-  sched.dayModel(props.dateIso, props.mine ? (props.forUser ?? sched.myUserId.value) : null),
+  sched.dayModel(
+    props.dateIso,
+    props.mine ? (props.forUser ?? sched.myUserId.value) : null,
+    props.mine && props.hideOpen,
+  ),
 )
 const isToday = computed(() => props.dateIso === todayCentralIso())
 
