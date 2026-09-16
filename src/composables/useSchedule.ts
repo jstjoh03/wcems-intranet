@@ -142,6 +142,9 @@ export interface MemberSettings {
   unitExclusions: string[]
   notify: Record<string, unknown>
   smsOptIn: boolean
+  /** Number texts go to — entered on the same form as the consent
+   *  checkbox (A2P requirement); prefilled from the roster phone. */
+  smsPhone: string | null
 }
 
 /** Message types × channels for the per-member notification matrix
@@ -4075,7 +4078,7 @@ async function setAccess(
 }
 
 async function fetchMemberSettings(userId: string): Promise<MemberSettings> {
-  const empty: MemberSettings = { userId, qualOverrides: {}, unitExclusions: [], notify: {}, smsOptIn: false }
+  const empty: MemberSettings = { userId, qualOverrides: {}, unitExclusions: [], notify: {}, smsOptIn: false, smsPhone: null }
   const auth = useAuthStore()
   if (auth.usingDevStub) return empty
   const res = await supabase
@@ -4090,6 +4093,7 @@ async function fetchMemberSettings(userId: string): Promise<MemberSettings> {
     unitExclusions: res.data.unit_exclusions ?? [],
     notify: res.data.notify ?? {},
     smsOptIn: !!res.data.sms_opt_in,
+    smsPhone: (res.data.sms_phone as string | null) ?? null,
   }
 }
 
@@ -4120,6 +4124,7 @@ async function saveMemberSettings(s: MemberSettings): Promise<string | null> {
       unit_exclusions: s.unitExclusions,
       notify: s.notify,
       sms_opt_in: s.smsOptIn,
+      sms_phone: s.smsPhone?.trim() || null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id' },

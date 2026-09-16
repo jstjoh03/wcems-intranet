@@ -185,7 +185,11 @@ async function openSettings() {
   mySet.value = null
   const me = sched.myUserId.value
   if (!me) return
-  mySet.value = await sched.fetchMemberSettings(me)
+  const s = await sched.fetchMemberSettings(me)
+  // Consent is tied to a number entered on this form — prefill from the
+  // roster so most people just confirm what's already right.
+  if (!s.smsPhone && myPerson.value?.phone) s.smsPhone = myPerson.value.phone
+  mySet.value = s
   myUnavail.value = await sched.listMyUnavailable()
 }
 
@@ -320,10 +324,22 @@ function pendingLine(r: SchedRequest): string {
               <input v-model="mySet.smsOptIn" type="checkbox" />
               Send me text messages about scheduling
             </label>
+            <label class="my__mphone">
+              <span class="my__mphonelabel">Mobile number for text messages</span>
+              <input
+                v-model="mySet.smsPhone"
+                type="tel"
+                class="my__mphoneinput"
+                placeholder="(555) 555-5555"
+                :disabled="!mySet.smsOptIn"
+                autocomplete="tel"
+              />
+            </label>
             <p class="my__mhint">
-              Optional — never required. Frequency varies with schedule activity; message &amp;
-              data rates may apply. Reply STOP to any message to opt out (or untick this box),
-              HELP for help. See the
+              Optional — never required. Texts go to the number above (prefilled from your
+              roster record — you can change it). Frequency varies with schedule activity;
+              message &amp; data rates may apply. Reply STOP to any message to opt out (or
+              untick this box), HELP for help. See the
               <a href="/sms-terms.html" target="_blank" rel="noopener">SMS Terms</a> and
               <a href="/sms-privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.
             </p>
@@ -609,6 +625,37 @@ function pendingLine(r: SchedRequest): string {
   font-size: 0.84rem;
   color: var(--color-ink-soft);
   margin: 0.35rem 0 0.2rem;
+}
+
+/* the number consent applies to — same form as the checkbox (A2P) */
+.my__mphone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0.25rem 0 0.3rem;
+}
+
+.my__mphonelabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.my__mphoneinput {
+  font: inherit;
+  font-size: 0.88rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  max-width: 220px;
+}
+
+.my__mphoneinput:disabled {
+  opacity: 0.55;
 }
 
 .my__merr {

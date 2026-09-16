@@ -230,15 +230,16 @@ async function deliver(
 
   const [uRes, sRes, pRes] = await Promise.all([
     sb.from('app_users').select('id, full_name, email, phone, active, account_type').in('id', ids),
-    sb.from('sched_member_settings').select('user_id, notify, sms_opt_in').in('user_id', ids),
+    sb.from('sched_member_settings').select('user_id, notify, sms_opt_in, sms_phone').in('user_id', ids),
     sb.from('push_subscriptions').select('id, user_id, endpoint, p256dh, auth').in('user_id', ids),
   ])
   if (uRes.error) {
     out.errors.push(`users: ${uRes.error.message}`)
     return out
   }
-  const settings = new Map<string, { notify: unknown; sms_opt_in: boolean }>()
-  for (const r of sRes.data ?? []) settings.set(r.user_id, { notify: r.notify, sms_opt_in: !!r.sms_opt_in })
+  const settings = new Map<string, { notify: unknown; sms_opt_in: boolean; sms_phone: string | null }>()
+  for (const r of sRes.data ?? [])
+    settings.set(r.user_id, { notify: r.notify, sms_opt_in: !!r.sms_opt_in, sms_phone: r.sms_phone ?? null })
 
   const people = (uRes.data ?? []).filter((u) => u.active && (!u.account_type || u.account_type === 'person'))
   const chOn = { push: m.channels?.push !== false, email: m.channels?.email !== false, sms: m.channels?.sms !== false }
@@ -303,7 +304,9 @@ async function deliver(
         const st = settings.get(u.id)
         if (!st?.sms_opt_in) return null
         if (!notifyOn(st.notify ?? {}, typeKey, 'sms')) return null
-        const to = e164(u.phone)
+        // Texts go to the number consented to on the opt-in form; the
+        // roster phone is only the fallback for pre-existing opt-ins.
+        const to = e164(st.sms_phone || u.phone)
         if (!to) {
           out.skippedSms++
           return null
