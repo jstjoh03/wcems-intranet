@@ -323,7 +323,9 @@ function pendingLine(r: SchedRequest): string {
             <p class="my__mhint">
               Optional — never required. Frequency varies with schedule activity; message &amp;
               data rates may apply. Reply STOP to any message to opt out (or untick this box),
-              HELP for help.
+              HELP for help. See the
+              <a href="/sms-terms.html" target="_blank" rel="noopener">SMS Terms</a> and
+              <a href="/sms-privacy.html" target="_blank" rel="noopener">Privacy Policy</a>.
             </p>
           </section>
 
