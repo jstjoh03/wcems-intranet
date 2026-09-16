@@ -430,6 +430,9 @@ function segCategory(s: TimeSegment): { key: string; label: string } | null {
   if (s.kind === 'student') return null
   if (s.timeType === 'instructor') return { key: 'instructor', label: 'instructor' }
   if (s.timeType === 'meeting') return { key: 'meeting', label: 'meeting' }
+  // Extra hours worked AT a special event (crew picked "Special Event"
+  // on the request) pay double time exactly like event staffing.
+  if (s.timeType === 'event') return { key: 'event', label: 'special event' }
   if (s.kind === 'event') {
     // events marked regular pay punch like ordinary coverage (unless
     // the date itself is a holiday)
@@ -713,6 +716,7 @@ const showPunches = ref(false)
           <option value="regular">Regular</option>
           <option value="instructor">Instructor</option>
           <option value="meeting">Meeting</option>
+          <option value="event">Special Event</option>
         </select>
       </label>
 

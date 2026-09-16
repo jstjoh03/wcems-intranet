@@ -785,6 +785,13 @@ const msOffType = ref('vacation')
 const msFrom = ref('06:00')
 const msUntil = ref('06:00')
 const msComment = ref('')
+/* '' = the public trade board; a user id = sent directly to that
+   member (they already talked it out — the system catches up). */
+const msTo = ref('')
+
+const msToCandidates = computed(() =>
+  sched.people.value.filter((p) => p.id !== sched.myUserId.value),
+)
 
 watch(
   () => editor.myShift.value,
@@ -792,6 +799,7 @@ watch(
     msMode.value = 'menu'
     msOffType.value = 'vacation'
     msComment.value = ''
+    msTo.value = ''
     err.value = null
     if (v) {
       msFrom.value = toInput(v.start)
@@ -820,6 +828,7 @@ async function msSubmit() {
       from: msFrom.value,
       until: msUntil.value,
       comments: msComment.value,
+      toUserId: msTo.value || null,
     })
   }
   busy.value = false
@@ -827,12 +836,15 @@ async function msSubmit() {
     err.value = e
     return
   }
+  const toName = msTo.value ? (sched.personById.value.get(msTo.value)?.fullName ?? '') : ''
   flash(
     msMode.value === 'off'
       ? 'Time-off request submitted — pending approval.'
-      : msMode.value === 'trade'
-        ? 'Trade posted — offers land on the Trades tab.'
-        : 'Giveaway posted — claims land on the Trades tab.',
+      : toName
+        ? `Sent to ${toName} — they'll get a notification to respond.`
+        : msMode.value === 'trade'
+          ? 'Trade posted — offers land on the Trades tab.'
+          : 'Giveaway posted — claims land on the Trades tab.',
   )
   editor.closeAll()
 }
@@ -1527,6 +1539,17 @@ async function reqCancel() {
             <label>From <input v-model="msFrom" type="time" class="em__input em__input--time" /></label>
             <label>Until <input v-model="msUntil" type="time" class="em__input em__input--time" /></label>
           </div>
+          <select
+            v-if="msMode !== 'off'"
+            v-model="msTo"
+            class="em__input"
+            aria-label="Send to"
+          >
+            <option value="">Post to the trade board — anyone can respond</option>
+            <option v-for="p in msToCandidates" :key="p.id" :value="p.id">
+              Send directly to {{ p.fullName }}
+            </option>
+          </select>
           <input
             v-model="msComment"
             type="text"
@@ -1537,13 +1560,17 @@ async function reqCancel() {
             {{
               msMode === 'off'
                 ? 'Goes to the Chief for approval; the approved window posts your seat open.'
-                : msMode === 'trade'
-                  ? 'Posts to the Trades board — you accept an offer, then the Chief approves the swap.'
-                  : 'Posts to the Trades board — you accept a claim, then the Chief approves the coverage.'
+                : msTo
+                  ? msMode === 'trade'
+                    ? 'They get a notification to offer a shift back or decline; once you both agree, the Chief gives final approval.'
+                    : 'They get a notification to accept or decline; once they accept, the Chief gives final approval.'
+                  : msMode === 'trade'
+                    ? 'Posts to the Trades board — you accept an offer, then the Chief approves the swap.'
+                    : 'Posts to the Trades board — you accept a claim, then the Chief approves the coverage.'
             }}
           </p>
           <button class="em__btn em__btn--primary" :disabled="busy" @click="msSubmit">
-            {{ busy ? 'Submitting…' : msMode === 'off' ? 'Submit time-off request' : msMode === 'trade' ? 'Post trade' : 'Post giveaway' }}
+            {{ busy ? 'Submitting…' : msMode === 'off' ? 'Submit time-off request' : msTo ? 'Send the request' : msMode === 'trade' ? 'Post trade' : 'Post giveaway' }}
           </button>
           <button class="em__btn" :disabled="busy" @click="msMode = 'menu'">Back</button>
         </template>

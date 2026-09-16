@@ -34,9 +34,16 @@ const postPartial = ref(false)
 const postFrom = ref('06:00')
 const postUntil = ref('06:00')
 const postComments = ref('')
+/* '' = the public board; a user id = sent directly to that member,
+   who accepts/declines (or offers a shift back) before the Chief. */
+const postTo = ref('')
 const busy = ref(false)
 const err = ref<string | null>(null)
 const done = ref<string | null>(null)
+
+const sendToCandidates = computed(() =>
+  sched.people.value.filter((p) => p.id !== sched.myUserId.value),
+)
 
 const myShifts = ref<UpcomingShift[]>([])
 
@@ -73,25 +80,81 @@ async function submitPost() {
     from: postPartial.value ? postFrom.value : '06:00',
     until: postPartial.value ? postUntil.value : '06:00',
     comments: postComments.value,
+    toUserId: postTo.value || null,
   })
   busy.value = false
   if (e) {
     err.value = e
     return
   }
+  const toName = postTo.value ? (sched.personById.value.get(postTo.value)?.fullName ?? '') : ''
   posting.value = false
   postComments.value = ''
   postPartial.value = false
-  done.value = 'Posted — it is now on the board for the crew.'
+  postTo.value = ''
+  done.value = toName
+    ? `Sent to ${toName} — they'll get a notification to respond.`
+    : 'Posted — it is now on the board for the crew.'
 }
 
 // ── board ────────────────────────────────────────────────────────────
 
+/* Public postings, plus directed ones the viewer is part of (a request
+   sent to one member never shows on everyone else's board). */
 const board = computed(() =>
   sched.requests.value.filter(
-    (r) => (r.type === 'giveaway' || r.type === 'trade') && r.status === 'pending',
+    (r) =>
+      (r.type === 'giveaway' || r.type === 'trade') &&
+      r.status === 'pending' &&
+      (!r.counterpartyId ||
+        r.requesterId === sched.myUserId.value ||
+        r.counterpartyId === sched.myUserId.value ||
+        sched.canEdit.value),
   ),
 )
+
+/** Directed requests waiting on ME — the "Sent to you" inbox. */
+const sentToMe = computed(() =>
+  board.value.filter(
+    (r) => r.counterpartyId === sched.myUserId.value && r.requesterId !== sched.myUserId.value,
+  ),
+)
+
+function isDirected(r: SchedRequest): boolean {
+  return !!r.counterpartyId && r.status === 'pending'
+}
+
+function directedToName(r: SchedRequest): string {
+  return r.counterpartyId
+    ? (sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown')
+    : ''
+}
+
+async function acceptDirect(r: SchedRequest) {
+  busy.value = true
+  err.value = null
+  if (!(r.id in hourWarnFor.value)) {
+    const w = await checkMyHours(r)
+    if (w.length > 0) {
+      hourWarnFor.value = { ...hourWarnFor.value, [r.id]: w }
+      busy.value = false
+      return
+    }
+  }
+  const e = await sched.respondToDirect(r, true)
+  busy.value = false
+  if (e) err.value = e
+  else done.value = 'Accepted — sent to the Chief for final approval.'
+}
+
+async function declineDirect(r: SchedRequest) {
+  busy.value = true
+  err.value = null
+  const e = await sched.respondToDirect(r, false)
+  busy.value = false
+  if (e) err.value = e
+  else done.value = 'Declined — the poster has been notified.'
+}
 
 const awaitingApproval = computed(() =>
   sched.requests.value.filter(
@@ -127,8 +190,18 @@ function offerShiftLine(o: TradeOffer): string {
   if (!o.offerWorkDate) return 'Claim (no shift offered back)'
   const seat = sched.seats.value.find((s) => s.id === o.offerSeatId)
   const unit = sched.units.value.find((u) => u.id === seat?.unitId)
-  return `${fmtDate(o.offerWorkDate)} · ${unit?.code ?? ''} ${seat?.label ?? ''}`
+  const times =
+    o.offerStartAt && o.offerEndAt ? ` · ${hhmm(o.offerStartAt)} – ${hhmm(o.offerEndAt)}` : ''
+  return `${fmtDate(o.offerWorkDate)} · ${unit?.code ?? ''} ${seat?.label ?? ''}${times}`
 }
+
+/* The main list — everything except requests sitting in MY inbox
+   (those render in "Sent to you" above, with their own actions). */
+const boardRest = computed(() =>
+  board.value.filter(
+    (r) => !(r.counterpartyId === sched.myUserId.value && r.requesterId !== sched.myUserId.value),
+  ),
+)
 
 function offersFor(r: SchedRequest): TradeOffer[] {
   return sched.tradeOffers.value.filter(
@@ -146,6 +219,11 @@ function myOfferOn(r: SchedRequest): TradeOffer | undefined {
 const offeringOn = ref<string | null>(null)
 const offerShiftKey = ref('')
 const offerNote = ref('')
+/* The offerer picks which part of the offered shift is on the table —
+   whole tour by default, or exact times. */
+const offerPartial = ref(false)
+const offerFrom = ref('06:00')
+const offerUntil = ref('06:00')
 
 /* Hour-threshold warnings for taking the POSTED shift: shown once, and
    the second click is the acknowledgment. */
@@ -172,6 +250,9 @@ function startOffer(r: SchedRequest) {
   myShifts.value = me ? sched.upcomingShiftsFor(me, todayCentralIso(), 45) : []
   offerShiftKey.value = myShifts.value[0] ? shiftKey(myShifts.value[0]) : ''
   offerNote.value = ''
+  offerPartial.value = false
+  offerFrom.value = '06:00'
+  offerUntil.value = '06:00'
   offeringOn.value = r.id
 }
 
@@ -210,7 +291,12 @@ async function submitOffer(r: SchedRequest) {
   }
   const e = await sched.makeOffer({
     requestId: r.id,
-    offerShift: { dateIso: sel.dateIso, seatId: sel.seatId },
+    offerShift: {
+      dateIso: sel.dateIso,
+      seatId: sel.seatId,
+      from: offerPartial.value ? offerFrom.value : '06:00',
+      until: offerPartial.value ? offerUntil.value : '06:00',
+    },
     note: offerNote.value,
   })
   busy.value = false
@@ -294,6 +380,20 @@ async function cancelPosting(r: SchedRequest) {
           </select>
         </label>
       </div>
+      <label class="tr__field">
+        <span class="tr__label">Send to</span>
+        <select v-model="postTo" class="tr__input">
+          <option value="">The trade board — anyone can respond</option>
+          <option v-for="p in sendToCandidates" :key="p.id" :value="p.id">
+            Directly to {{ p.fullName }}
+          </option>
+        </select>
+      </label>
+      <p v-if="postTo" class="tr__muted tr__muted--sm">
+        Already worked it out with them? They'll get a notification to
+        {{ postType === 'giveaway' ? 'accept or decline' : 'offer a shift back or decline' }};
+        once you both agree it goes to the Chief for final approval.
+      </p>
       <label class="tr__check">
         <input v-model="postPartial" type="checkbox" /> Part of the shift only
       </label>
@@ -306,24 +406,106 @@ async function cancelPosting(r: SchedRequest) {
         <input v-model="postComments" type="text" class="tr__input" placeholder="Optional" />
       </label>
       <button type="submit" class="tr__submit" :disabled="busy">
-        {{ busy ? 'Posting…' : 'Post to the board' }}
+        {{ busy ? 'Sending…' : postTo ? 'Send the request' : 'Post to the board' }}
       </button>
     </form>
 
+    <!-- directed requests waiting on ME -->
+    <section v-if="sentToMe.length > 0" class="tr__section">
+      <h2 class="tr__h">Sent to you</h2>
+      <div v-for="r in sentToMe" :key="r.id" class="tr__card tr__card--direct">
+        <div class="tr__card-top">
+          <span class="tr__type" :data-type="r.type">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap wanted' }}</span>
+          <p class="tr__who">{{ posterName(r) }} sent this to you</p>
+          <p class="tr__line">{{ postingLine(r) }}</p>
+        </div>
+        <p v-if="r.comments" class="tr__comments">"{{ r.comments }}"</p>
+        <div v-if="hourWarnFor[r.id]" class="tr__warnbox">
+          <p class="tr__warnhead">Before you take this:</p>
+          <ul class="tr__warnlist">
+            <li v-for="(w, i) in hourWarnFor[r.id]" :key="i">{{ w.message }}</li>
+          </ul>
+        </div>
+        <div v-if="r.type === 'trade' && offeringOn === r.id" class="tr__offerform">
+          <label class="tr__field">
+            <span class="tr__label">Offer one of your shifts back</span>
+            <select v-model="offerShiftKey" class="tr__input">
+              <option v-if="myShifts.length === 0" value="" disabled>No upcoming shifts found</option>
+              <option v-for="s in myShifts" :key="shiftKey(s)" :value="shiftKey(s)">
+                {{ shiftLabel(s) }}
+              </option>
+            </select>
+          </label>
+          <label class="tr__check">
+            <input v-model="offerPartial" type="checkbox" /> Part of that shift only
+          </label>
+          <div v-if="offerPartial" class="tr__times">
+            <label>From <input v-model="offerFrom" type="time" class="tr__input tr__input--time" /></label>
+            <label>Until <input v-model="offerUntil" type="time" class="tr__input tr__input--time" /></label>
+          </div>
+          <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
+          <div class="tr__offer-actions">
+            <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">
+              {{
+                hourWarnFor[r.id]
+                  ? warnConfirm(hourWarnFor[r.id]!)
+                    ? 'I understand — send offer'
+                    : 'Send offer anyway'
+                  : 'Send offer'
+              }}
+            </button>
+            <button class="tr__btn" @click="offeringOn = null">Cancel</button>
+          </div>
+        </div>
+        <div v-else class="tr__cardfoot">
+          <button
+            v-if="r.type === 'giveaway'"
+            class="tr__btn tr__btn--primary"
+            :disabled="busy"
+            @click="acceptDirect(r)"
+          >
+            {{
+              hourWarnFor[r.id]
+                ? warnConfirm(hourWarnFor[r.id]!)
+                  ? 'I understand — accept the shift'
+                  : 'Accept anyway'
+                : 'Accept the shift'
+            }}
+          </button>
+          <button v-else class="tr__btn tr__btn--primary" @click="startOffer(r)">
+            Offer a shift back
+          </button>
+          <button class="tr__btn" :disabled="busy" @click="declineDirect(r)">Decline</button>
+        </div>
+      </div>
+    </section>
+
     <section class="tr__section">
       <h2 class="tr__h">Available trades</h2>
-      <p v-if="board.length === 0" class="tr__muted">Nothing on the board right now.</p>
+      <p v-if="boardRest.length === 0" class="tr__muted">Nothing on the board right now.</p>
 
-      <div v-for="r in board" :key="r.id" class="tr__card">
+      <div v-for="r in boardRest" :key="r.id" class="tr__card">
         <div class="tr__card-top">
           <span class="tr__type" :data-type="r.type">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap wanted' }}</span>
           <p class="tr__who">{{ posterName(r) }}</p>
           <p class="tr__line">{{ postingLine(r) }}</p>
+          <span v-if="isDirected(r)" class="tr__direct">Sent directly to {{ directedToName(r) }}</span>
         </div>
         <p v-if="r.comments" class="tr__comments">"{{ r.comments }}"</p>
 
+        <!-- a directed request in the main list = poster (or editor) watching it -->
+        <template v-if="isDirected(r)">
+          <p class="tr__muted tr__muted--sm">
+            Waiting on {{ directedToName(r) }} to
+            {{ r.type === 'giveaway' ? 'accept or decline' : 'offer a shift back or decline' }}.
+          </p>
+          <div v-if="r.requesterId === sched.myUserId.value" class="tr__cardfoot">
+            <button class="tr__btn" :disabled="busy" @click="cancelPosting(r)">Cancel request</button>
+          </div>
+        </template>
+
         <!-- poster's view: manage offers -->
-        <template v-if="r.requesterId === sched.myUserId.value || sched.canEdit.value">
+        <template v-else-if="r.requesterId === sched.myUserId.value || sched.canEdit.value">
           <div v-if="offersFor(r).length === 0" class="tr__muted tr__muted--sm">No takers yet.</div>
           <div v-for="o in offersFor(r)" :key="o.id" class="tr__offer">
             <div class="tr__offer-main">
@@ -341,8 +523,8 @@ async function cancelPosting(r: SchedRequest) {
           </div>
         </template>
 
-        <!-- everyone else: take or offer -->
-        <template v-if="r.requesterId !== sched.myUserId.value">
+        <!-- everyone else: take or offer (directed cards take no outside offers) -->
+        <template v-if="!isDirected(r) && r.requesterId !== sched.myUserId.value">
           <div v-if="hourWarnFor[r.id]" class="tr__warnbox">
             <p class="tr__warnhead">Before you take this:</p>
             <ul class="tr__warnlist">
@@ -363,6 +545,13 @@ async function cancelPosting(r: SchedRequest) {
                 </option>
               </select>
             </label>
+            <label class="tr__check">
+              <input v-model="offerPartial" type="checkbox" /> Part of that shift only
+            </label>
+            <div v-if="offerPartial" class="tr__times">
+              <label>From <input v-model="offerFrom" type="time" class="tr__input tr__input--time" /></label>
+              <label>Until <input v-model="offerUntil" type="time" class="tr__input tr__input--time" /></label>
+            </div>
             <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
             <div class="tr__offer-actions">
               <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">
@@ -692,6 +881,20 @@ async function cancelPosting(r: SchedRequest) {
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+
+.tr__card--direct {
+  border-color: oklch(0.8 0.07 86.8);
+  background: oklch(0.985 0.015 86.8);
+}
+
+.tr__direct {
+  font-size: 11px;
+  font-weight: 600;
+  color: oklch(0.5 0.11 86.8);
+  border: 1px solid oklch(0.82 0.08 86.8);
+  border-radius: 999px;
+  padding: 2px 9px;
 }
 
 .tr__chip {

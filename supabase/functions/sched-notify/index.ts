@@ -8,7 +8,8 @@
 //   { kind: 'request_submitted', requestIds: [uuid, …] }
 //   { kind: 'request_decided',   requestId }
 //   { kind: 'schedule_change',   userId, summary }
-//   { kind: 'trade_activity',    requestId, event: 'offer'|'accepted'|'declined', offerUserId? }
+//   { kind: 'trade_activity',    requestId, offerUserId?,
+//     event: 'offer'|'accepted'|'declined'|'direct_request'|'direct_accepted'|'direct_declined' }
 //
 // Recipients and their addresses are ALWAYS resolved server-side:
 // the caller supplies ids, this function decides who may be told what
@@ -633,6 +634,7 @@ Deno.serve(async (req: Request) => {
 
       let targets: string[] = []
       let line = ''
+      const kindWord = r.type === 'trade' ? 'swap' : 'giveaway'
       if (event === 'offer') {
         targets = [r.requester_id]
         line = `${caller.name} offered to take your ${postLabel}.`
@@ -646,6 +648,26 @@ Deno.serve(async (req: Request) => {
           event === 'accepted'
             ? `${caller.name} accepted your offer on their ${postLabel} — awaiting Chief approval.`
             : `${caller.name} declined your offer on the ${postLabel}.`
+      } else if (event === 'direct_request') {
+        // Poster sent the giveaway/swap straight to one member.
+        if (caller.id !== r.requester_id && !isEditor(caller))
+          return Response.json({ ok: false, error: 'Not your posting' }, { status: 403, headers: CORS })
+        const target = String(r.counterparty_id ?? '')
+        if (!target) return Response.json({ ok: false, error: 'No direct recipient on this request' }, { status: 400, headers: CORS })
+        targets = [target]
+        line =
+          r.type === 'trade'
+            ? `${caller.name} sent you a swap request — ${postLabel}. Open the Trades tab to offer a shift back or decline.`
+            : `${caller.name} asked you to take their ${postLabel}. Open the Trades tab to accept or decline.`
+      } else if (event === 'direct_accepted' || event === 'direct_declined') {
+        // The direct recipient answered — tell the poster.
+        if (caller.id !== r.counterparty_id && !isEditor(caller))
+          return Response.json({ ok: false, error: 'Not your request to answer' }, { status: 403, headers: CORS })
+        targets = [r.requester_id]
+        line =
+          event === 'direct_accepted'
+            ? `${caller.name} accepted your ${kindWord} — ${postLabel}. Awaiting Chief approval.`
+            : `${caller.name} declined your ${kindWord} request — ${postLabel}.`
       } else {
         return Response.json({ ok: false, error: 'Unknown event' }, { status: 400, headers: CORS })
       }

@@ -2179,33 +2179,103 @@ async function createTradePosting(opts: {
   from: string
   until: string
   comments: string
+  /** Send directly to one member instead of the public board — they
+   *  accept/decline (or offer a swap shift back) before the Chief. */
+  toUserId?: string | null
 }): Promise<string | null> {
   const auth = useAuthStore()
   const me = auth.appUser?.id
   if (!me) return 'Not signed in'
+  if (opts.toUserId) {
+    if (opts.toUserId === me) return 'Pick someone other than yourself.'
+    // The target ends up covering the poster's seat either way — check
+    // the qualification up front, not after they've agreed.
+    const q = await canFillSeat(opts.toUserId, opts.seatId)
+    if (!q.ok) return q.reason
+  }
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
   const seat = seats.value.find((s) => s.id === opts.seatId)
   const unit = units.value.find((u) => u.id === seat?.unitId)
-  const res = await supabase.from('sched_requests').insert({
-    type: opts.type,
-    requester_id: me,
-    seat_id: opts.seatId,
-    work_date: opts.dateIso,
-    start_at: w.reqStart,
-    end_at: w.reqEnd,
-    unit_code: unit?.code ?? null,
-    position_label: seat?.label ?? null,
-    comments: opts.comments || null,
-  })
+  const res = await supabase
+    .from('sched_requests')
+    .insert({
+      type: opts.type,
+      requester_id: me,
+      counterparty_id: opts.toUserId ?? null,
+      seat_id: opts.seatId,
+      work_date: opts.dateIso,
+      start_at: w.reqStart,
+      end_at: w.reqEnd,
+      unit_code: unit?.code ?? null,
+      position_label: seat?.label ?? null,
+      comments: opts.comments || null,
+    })
+    .select('id')
+    .single()
   if (res.error) return res.error.message
-  audit(`request.${opts.type}`, `Posted a ${opts.type === 'trade' ? 'swap' : 'giveaway'} — ${unit?.code ?? ''} ${seat?.label ?? ''} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'request' })
+  const label = opts.type === 'trade' ? 'swap' : 'giveaway'
+  if (opts.toUserId) {
+    audit(`request.${opts.type}`, `Sent a ${label} directly to ${displayName(opts.toUserId).name} — ${unit?.code ?? ''} ${seat?.label ?? ''} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'request', entityId: res.data.id })
+    notify('trade_activity', { requestId: res.data.id, event: 'direct_request' })
+  } else {
+    audit(`request.${opts.type}`, `Posted a ${label} — ${unit?.code ?? ''} ${seat?.label ?? ''} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'request', entityId: res.data.id })
+  }
+  await loadRequests()
+  return null
+}
+
+/** The member a giveaway/swap was sent to answers it. Accepting a
+ *  giveaway moves it straight to the Chief's queue; declining either
+ *  kind hands it back to the poster (cancelled, with the reason on the
+ *  card). A directed SWAP is accepted by offering a shift back
+ *  (makeOffer), not here. */
+async function respondToDirect(req: SchedRequest, accept: boolean): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (!me) return 'Not signed in'
+  if (req.counterpartyId !== me) return 'This request was sent to someone else.'
+  if (req.status !== 'pending') return 'This request has already been resolved.'
+  if (accept) {
+    if (req.type !== 'giveaway') return 'Accept a swap by offering one of your shifts back.'
+    const warnings: HoursWarning[] = []
+    if (req.workDate && req.startAt && req.endAt) {
+      const info = await hoursCheck(
+        me,
+        [{ dateIso: req.workDate, startAt: req.startAt, endAt: req.endAt }],
+        displayName(me).name || 'The claimant',
+      )
+      warnings.push(...info.warnings)
+    }
+    const res = await supabase
+      .from('sched_requests')
+      .update({ status: 'partner_accepted', warnings, updated_at: new Date().toISOString() })
+      .eq('id', req.id)
+      .eq('status', 'pending')
+    if (res.error) return res.error.message
+    audit('trade.accept', `Accepted ${displayName(req.requesterId).name}'s giveaway sent to them directly`, { entity: 'request', entityId: req.id })
+    notify('request_submitted', { requestIds: [req.id] })
+    notify('trade_activity', { requestId: req.id, event: 'direct_accepted' })
+  } else {
+    const res = await supabase
+      .from('sched_requests')
+      .update({
+        status: 'cancelled',
+        decision_note: `Declined by ${displayName(me).name}`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.id)
+      .eq('status', 'pending')
+    if (res.error) return res.error.message
+    audit('trade.decline', `Declined a ${req.type === 'trade' ? 'swap' : 'giveaway'} ${displayName(req.requesterId).name} sent them directly`, { entity: 'request', entityId: req.id })
+    notify('trade_activity', { requestId: req.id, event: 'direct_declined' })
+  }
   await loadRequests()
   return null
 }
 
 async function makeOffer(opts: {
   requestId: string
-  offerShift: { dateIso: string; seatId: string } | null
+  offerShift: { dateIso: string; seatId: string; from?: string; until?: string } | null
   note: string
 }): Promise<string | null> {
   const auth = useAuthStore()
@@ -2213,13 +2283,22 @@ async function makeOffer(opts: {
   if (!me) return 'Not signed in'
   // taking/covering the posted shift means filling the poster's seat
   const posting = requests.value.find((r) => r.id === opts.requestId)
+  if (posting?.counterpartyId && posting.counterpartyId !== me && posting.status === 'pending') {
+    return 'That request was sent directly to someone else.'
+  }
   if (posting?.seatId) {
     const q = await canFillSeat(me, posting.seatId)
     if (!q.ok) return q.reason
   }
   let offerFields: Record<string, unknown> = {}
   if (opts.offerShift) {
-    const w = shiftWindow(opts.offerShift.dateIso, '06:00', '06:00')
+    // The offerer picks which part of their shift they're putting up —
+    // dates AND times (defaults to the whole 0600 tour).
+    const w = shiftWindow(
+      opts.offerShift.dateIso,
+      opts.offerShift.from ?? '06:00',
+      opts.offerShift.until ?? '06:00',
+    )
     offerFields = {
       offer_seat_id: opts.offerShift.seatId,
       offer_work_date: opts.offerShift.dateIso,
@@ -3195,6 +3274,73 @@ async function cancelRequest(id: string): Promise<string | null> {
   return null
 }
 
+/** Editors: adjust a PENDING request's window before deciding it — the
+ *  "times were close but not quite right" fix without making the member
+ *  refile. */
+async function updateRequestWindow(
+  req: SchedRequest,
+  from: string,
+  until: string,
+): Promise<string | null> {
+  if (!req.workDate) return 'This request has no date to anchor the times to.'
+  if (req.status !== 'pending') return 'Only pending requests can be re-timed.'
+  const w = shiftWindow(req.workDate, from, until)
+  const res = await supabase
+    .from('sched_requests')
+    .update({ start_at: w.reqStart, end_at: w.reqEnd, updated_at: new Date().toISOString() })
+    .eq('id', req.id)
+    .eq('status', 'pending')
+  if (res.error) return res.error.message
+  audit('request.retime', `Adjusted request times to ${from}–${until} (${req.workDate}) before deciding`, { entity: 'request', entityId: req.id })
+  await loadRequests()
+  return null
+}
+
+/** Editors: reopen a decided request so the decision (or its times) can
+ *  be redone. Reopening an APPROVED request first deletes every calendar
+ *  row the approval wrote (rows tagged with this request id) —
+ *  rotation-backed seats re-render on their own, but if the approval had
+ *  reshaped existing override rows, check the day afterward. Agreed
+ *  trades/giveaways go back to partner_accepted (the deal still stands);
+ *  everything else returns to pending. */
+async function reopenRequest(req: SchedRequest): Promise<string | null> {
+  if (req.status === 'pending' || req.status === 'partner_accepted') return 'Already open.'
+  let removed = 0
+  if (req.status === 'approved') {
+    const del = await supabase
+      .from('sched_entries')
+      .delete()
+      .eq('source_request', req.id)
+      .select('id')
+    if (del.error) return del.error.message
+    removed = del.data?.length ?? 0
+  }
+  const backTo =
+    (req.type === 'trade' || req.type === 'giveaway') &&
+    req.counterpartyId &&
+    req.status !== 'cancelled'
+      ? 'partner_accepted'
+      : 'pending'
+  const res = await supabase
+    .from('sched_requests')
+    .update({
+      status: backTo,
+      decided_by: null,
+      decided_at: null,
+      decision_note: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.id)
+  if (res.error) return res.error.message
+  audit(
+    'request.reopen',
+    `Reopened a ${req.status} ${REQ_TYPE_LABELS[req.type] ?? req.type} request${removed ? ` — removed ${removed} calendar row${removed === 1 ? '' : 's'} the approval had written` : ''}`,
+    { entity: 'request', entityId: req.id },
+  )
+  await Promise.all([loadRequests(), reloadRangeIfLoaded()])
+  return null
+}
+
 /** Find the seat a user effectively holds on a date (entry override first,
  *  then rotation), or null if they aren't on the board that day. */
 function seatHeldBy(userId: string, dateIso: string): string | null {
@@ -4099,6 +4245,8 @@ export function useSchedule() {
     canFillSeat,
     cancelRequest,
     decideRequest,
+    updateRequestWindow,
+    reopenRequest,
     // day editor + availability
     dayMarkOff,
     dayOpenWindow,
@@ -4137,6 +4285,7 @@ export function useSchedule() {
     tradeOffers,
     loadTradeOffers,
     createTradePosting,
+    respondToDirect,
     makeOffer,
     withdrawOffer,
     acceptOffer,

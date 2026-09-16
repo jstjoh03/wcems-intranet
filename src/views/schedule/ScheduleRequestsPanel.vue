@@ -235,7 +235,11 @@ function requestLine(r: SchedRequest): string {
   if (r.positionLabel) bits.push(r.positionLabel)
   if (r.offType) bits.push(OFF_TYPES.find(([v]) => v === r.offType)?.[1] ?? r.offType)
   if (r.timeType && r.type === 'extra_hours') {
-    bits.push(r.timeType.charAt(0).toUpperCase() + r.timeType.slice(1))
+    bits.push(
+      r.timeType === 'event'
+        ? 'Special Event'
+        : r.timeType.charAt(0).toUpperCase() + r.timeType.slice(1),
+    )
   }
   return bits.join(' · ')
 }
@@ -251,6 +255,97 @@ const myRequests = computed(() =>
 const pendingQueue = computed(() =>
   sched.requests.value.filter((r) => r.status === 'pending' || r.status === 'partner_accepted'),
 )
+
+/* A 26-deep queue shouldn't bury the page — show the first few, expand
+   on demand. */
+const PENDING_PREVIEW = 4
+const showAllPending = ref(false)
+const visibleQueue = computed(() =>
+  showAllPending.value ? pendingQueue.value : pendingQueue.value.slice(0, PENDING_PREVIEW),
+)
+
+// ── inline time edit on a pending card (editors) ─────────────────────
+
+const editTimesFor = ref<string | null>(null)
+const editFrom = ref('06:00')
+const editUntil = ref('06:00')
+
+function canRetime(r: SchedRequest): boolean {
+  return (
+    r.status === 'pending' &&
+    !!r.workDate &&
+    (r.type === 'time_off' || r.type === 'extra_hours' || r.type === 'pickup')
+  )
+}
+
+function hmInput(ts: string): string {
+  const s = hhmm(ts)
+  return `${s.slice(0, 2)}:${s.slice(2)}`
+}
+
+function startEditTimes(r: SchedRequest) {
+  editTimesFor.value = r.id
+  editFrom.value = r.startAt ? hmInput(r.startAt) : '06:00'
+  editUntil.value = r.endAt ? hmInput(r.endAt) : '06:00'
+}
+
+async function saveEditTimes(r: SchedRequest) {
+  busyId.value = r.id
+  decideError.value = null
+  const e = await sched.updateRequestWindow(r, editFrom.value, editUntil.value)
+  busyId.value = null
+  if (e) {
+    decideError.value = e
+    return
+  }
+  editTimesFor.value = null
+}
+
+// ── decision history (editors): what was decided, by whom — and undo ─
+
+const decided = computed(() =>
+  sched.requests.value
+    .filter((r) => r.status === 'approved' || r.status === 'denied' || r.status === 'cancelled')
+    .slice()
+    .sort((a, b) =>
+      String(b.decidedAt ?? b.createdAt ?? '').localeCompare(String(a.decidedAt ?? a.createdAt ?? '')),
+    ),
+)
+const showHistory = ref(false)
+const HISTORY_PREVIEW = 15
+const showAllHistory = ref(false)
+const visibleHistory = computed(() =>
+  showAllHistory.value ? decided.value : decided.value.slice(0, HISTORY_PREVIEW),
+)
+
+function decidedLine(r: SchedRequest): string {
+  const by = r.decidedBy ? (sched.personById.value.get(r.decidedBy)?.fullName ?? 'admin') : null
+  const at = r.decidedAt
+    ? new Date(r.decidedAt as string).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: 'America/Chicago',
+      })
+    : null
+  return [by ? `by ${by}` : null, at].filter(Boolean).join(' · ')
+}
+
+const reopenArm = ref<string | null>(null)
+
+async function reopen(r: SchedRequest) {
+  if (reopenArm.value !== r.id) {
+    reopenArm.value = r.id
+    return
+  }
+  reopenArm.value = null
+  busyId.value = r.id
+  decideError.value = null
+  const e = await sched.reopenRequest(r)
+  busyId.value = null
+  if (e) decideError.value = e
+}
 
 // ── hours context for the approval queue ─────────────────────────────
 
@@ -523,6 +618,7 @@ async function cancel(r: SchedRequest) {
                 <option value="regular">Regular</option>
                 <option value="instructor">Instructor</option>
                 <option value="meeting">Meeting</option>
+                <option value="event">Special Event</option>
               </select>
             </label>
           </div>
@@ -565,7 +661,7 @@ async function cancel(r: SchedRequest) {
       <h2 class="rq__h">Pending approval</h2>
       <p v-if="decideError" class="rq__error">{{ decideError }}</p>
       <p v-if="pendingQueue.length === 0" class="rq__muted">Nothing waiting.</p>
-      <div v-for="r in pendingQueue" :key="r.id" class="rq__card">
+      <div v-for="r in visibleQueue" :key="r.id" class="rq__card">
         <div class="rq__card-main">
           <p class="rq__card-title">
             {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}
@@ -586,6 +682,14 @@ async function cancel(r: SchedRequest) {
             </span>
           </div>
           <p v-if="r.comments" class="rq__card-comments">"{{ r.comments }}"</p>
+          <div v-if="editTimesFor === r.id" class="rq__edittimes">
+            <label>From <input v-model="editFrom" type="time" class="rq__input rq__input--time" /></label>
+            <label>Until <input v-model="editUntil" type="time" class="rq__input rq__input--time" /></label>
+            <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="saveEditTimes(r)">
+              Save times
+            </button>
+            <button class="rq__btn" @click="editTimesFor = null">Cancel</button>
+          </div>
           <p v-if="confirmApprove === r.id" class="rq__confirmnote">
             This crosses an hour threshold that needs admin sign-off — approve anyway?
           </p>
@@ -613,8 +717,68 @@ async function cancel(r: SchedRequest) {
           >
             Deny
           </button>
+          <button
+            v-if="canRetime(r) && editTimesFor !== r.id && confirmApprove !== r.id"
+            class="rq__btn"
+            @click="startEditTimes(r)"
+          >
+            Edit times
+          </button>
         </div>
       </div>
+      <button
+        v-if="pendingQueue.length > PENDING_PREVIEW"
+        class="rq__btn rq__expander"
+        @click="showAllPending = !showAllPending"
+      >
+        {{ showAllPending ? 'Show fewer' : `Show all ${pendingQueue.length} pending` }}
+      </button>
+    </section>
+
+    <section v-if="sched.canEdit.value" class="rq__section">
+      <div class="rq__histhead">
+        <h2 class="rq__h">Decision history</h2>
+        <button class="rq__btn" @click="showHistory = !showHistory">
+          {{ showHistory ? 'Hide' : `Show (${decided.length})` }}
+        </button>
+      </div>
+      <template v-if="showHistory">
+        <p v-if="decided.length === 0" class="rq__muted">No decided requests yet.</p>
+        <div v-for="r in visibleHistory" :key="r.id" class="rq__card rq__card--hist">
+          <div class="rq__card-main">
+            <p class="rq__card-title">
+              {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}<template v-if="r.counterpartyId">
+                → {{ sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown' }}</template>
+            </p>
+            <p class="rq__card-line">{{ requestLine(r) }}</p>
+            <p class="rq__histmeta">
+              <span class="rq__status" :data-status="r.status">{{ STATUS_LABELS[r.status] }}</span>
+              <span v-if="decidedLine(r)" class="rq__muted">{{ decidedLine(r) }}</span>
+            </p>
+            <p v-if="r.decisionNote" class="rq__card-comments">"{{ r.decisionNote }}"</p>
+            <p v-if="reopenArm === r.id" class="rq__confirmnote">
+              {{
+                r.status === 'approved'
+                  ? 'Reopening removes what this approval wrote on the calendar and puts the request back in the queue — double-check the day afterward.'
+                  : 'Puts this request back in the pending queue to re-decide.'
+              }}
+            </p>
+          </div>
+          <div class="rq__card-actions">
+            <button class="rq__btn" :disabled="busyId === r.id" @click="reopen(r)">
+              {{ reopenArm === r.id ? 'Really reopen?' : 'Reopen' }}
+            </button>
+            <button v-if="reopenArm === r.id" class="rq__btn" @click="reopenArm = null">Back</button>
+          </div>
+        </div>
+        <button
+          v-if="decided.length > HISTORY_PREVIEW"
+          class="rq__btn rq__expander"
+          @click="showAllHistory = !showAllHistory"
+        >
+          {{ showAllHistory ? 'Show fewer' : `Show all ${decided.length}` }}
+        </button>
+      </template>
     </section>
 
     <section class="rq__section">
@@ -666,6 +830,40 @@ async function cancel(r: SchedRequest) {
   font-size: 1.2rem;
   color: var(--color-brand-800);
   margin: 0 0 0.6rem;
+}
+
+.rq__histhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.rq__histmeta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+}
+
+.rq__card--hist .rq__card-title {
+  font-size: 0.88rem;
+}
+
+.rq__edittimes {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
+.rq__expander {
+  display: block;
+  margin-top: 0.2rem;
 }
 
 .rq__kinds {
