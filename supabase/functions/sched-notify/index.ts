@@ -329,7 +329,11 @@ async function deliver(
       } else {
         for (const r of smsTo) {
           try {
-            await sendSms(r.to, m.sms.slice(0, 320))
+            // 480 clears the worst legit page-out (120-char lead + two
+            // shift lines + urgent note + link) without cutting the
+            // link; the composer caps custom text so nothing real
+            // gets near this.
+            await sendSms(r.to, m.sms.slice(0, 480))
             out.sms++
           } catch (e) {
             out.errors.push(`sms ${r.name}: ${(e as Error).message}`)
@@ -520,7 +524,7 @@ Deno.serve(async (req: Request) => {
       // Multi-line SMS: lead, one line per shift, link and STOP each on
       // their own line — the single-line pipe format read as clutter.
       // Lead capped so a long custom message can't push the link/STOP
-      // lines past the 320-char send cap.
+      // lines past the send cap (composer enforces the same 120).
       const smsLead = lead.length > 120 ? `${lead.slice(0, 119)}…` : lead
       let sms = `${urgent ? 'URGENT — ' : ''}WCEMS: ${smsLead}`
       for (const s of shifts.slice(0, 2)) sms += `\n${s.text ?? ''}`

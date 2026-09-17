@@ -29,6 +29,13 @@ onMounted(async () => {
 
 const message = ref('')
 const msgType = ref<'scheduling' | 'announcement'>('scheduling')
+
+/** Scheduling page-out text is hard-capped so the SMS always fits the
+ *  shifts, link, and STOP footer un-truncated (matches the function's
+ *  120-char lead cap). Announcements may run longer — email/push carry
+ *  the full text; texts show the first 120. */
+const SMS_LEAD_MAX = 120
+const msgMax = computed(() => (msgType.value === 'scheduling' ? SMS_LEAD_MAX : 600))
 const urgent = ref(false)
 const chPush = ref(true)
 const chEmail = ref(true)
@@ -162,6 +169,12 @@ async function toPreview() {
       msgType.value === 'announcement'
         ? 'Write the announcement first.'
         : 'Write a message or attach at least one open shift.'
+    return
+  }
+  // Belt-and-suspenders for text typed before a type switch — the
+  // textarea maxlength already blocks new typing past the cap.
+  if (msgType.value === 'scheduling' && message.value.trim().length > SMS_LEAD_MAX) {
+    err.value = `Scheduling page-out text is capped at ${SMS_LEAD_MAX} characters so the text message keeps the shifts, link, and opt-out line intact — currently ${message.value.trim().length}.`
     return
   }
   if (!chPush.value && !chEmail.value && !chSms.value) {
@@ -339,8 +352,18 @@ function deliveryLine(p: PageLogRow): string {
             v-model="message"
             class="pg__textarea"
             rows="3"
+            :maxlength="msgMax"
             placeholder="Open medic seat this weekend — see the shifts below and put in for what you can take."
           ></textarea>
+          <p class="pg__charcount" :class="{ 'pg__charcount--max': message.length >= msgMax }">
+            {{ message.length }} / {{ msgMax }}
+            <template v-if="msgType === 'scheduling'">
+              — capped so the text message keeps shifts, link, and opt-out intact
+            </template>
+            <template v-else-if="message.length > 120">
+              — texts show the first 120 characters; email and push carry the full announcement
+            </template>
+          </p>
 
           <div class="pg__row">
             <span class="pg__label">Channels</span>
@@ -552,6 +575,17 @@ function deliveryLine(p: PageLogRow): string {
   border-radius: 8px;
   padding: 0.35rem 0.6rem;
   margin: 0 0 0.6rem;
+}
+
+.pg__charcount {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  margin: 0.2rem 0 0.5rem;
+}
+
+.pg__charcount--max {
+  color: oklch(0.5 0.13 60);
+  font-weight: 600;
 }
 
 .pg__label {
