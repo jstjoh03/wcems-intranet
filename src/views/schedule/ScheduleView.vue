@@ -55,20 +55,26 @@ const TABS = computed<{ key: Tab; label: string; group?: boolean }[]>(() => {
     { key: 'week', label: 'Week' },
     { key: 'period', label: 'Pay period' },
     { key: 'mine', label: 'My schedule', group: true },
-    { key: 'requests', label: 'Requests', group: true },
-    { key: 'trades', label: 'Trades' },
   ]
+  /* View-only accounts get the boards and nothing self-service. */
+  if (sched.canRequest.value) {
+    t.push({ key: 'requests', label: 'Requests', group: true }, { key: 'trades', label: 'Trades' })
+  }
   if (sched.canPageOut.value) {
     t.push({ key: 'pages', label: 'Page-outs' })
   }
-  /* Time Reports serves two duties from one tab: supervisors review
-     punches to verify schedules are accurate; editors additionally get
-     the full payroll flow (CSV, Paycom export, earning codes). */
-  if (sched.canEdit.value || sched.level.value === 'supervisor') {
+  /* Time Reports serves three duties from one tab: supervisors review
+     punches to verify schedules are accurate; HR and editors get the
+     full payroll flow (CSV, Paycom export, earning codes). */
+  if (sched.canEdit.value || sched.level.value === 'supervisor' || sched.isHr.value) {
     t.push({ key: 'time', label: 'Time Reports', group: true })
   }
   if (sched.canEdit.value) {
-    t.push({ key: 'members', label: 'Members' }, { key: 'setup', label: 'Setup' })
+    t.push({ key: 'members', label: 'Members' })
+  }
+  /* HR sees Setup too, trimmed to the payroll cards inside the panel. */
+  if (sched.canEdit.value || sched.isHr.value) {
+    t.push({ key: 'setup', label: 'Setup' })
   }
   return t
 })

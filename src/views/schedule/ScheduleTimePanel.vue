@@ -26,7 +26,7 @@ const sched = useSchedule()
    hours summary, per-day drill-down, punch review — because verifying
    the schedule matches reality is their duty. The payroll flow (CSV,
    Paycom export, earning codes, EE codes) stays editor-only. */
-const payrollAccess = computed(() => sched.canEdit.value)
+const payrollAccess = computed(() => sched.canEdit.value || sched.isHr.value)
 
 // ── range controls ───────────────────────────────────────────────────
 

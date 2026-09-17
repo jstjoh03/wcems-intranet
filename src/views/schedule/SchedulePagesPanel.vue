@@ -63,7 +63,7 @@ function inGroup(p: SchedPerson, key: string): boolean {
     case 'supervisors':
       return p.role === 'supervisor' || cred === 'Supervisor'
     case 'paramedics':
-      return ['P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO'].includes(cred)
+      return ['P1C', 'P1', 'P2', 'P3', 'P4', 'P2-FTO', 'P3-FTO'].includes(cred)
     case 'aemts':
       return cred === 'AEMT'
     case 'emts':
@@ -106,23 +106,48 @@ function toggleShift(i: number) {
   pickedShifts.value = s
 }
 
-// ── preview + send ───────────────────────────────────────────────────
+// ── review + send (modal) ────────────────────────────────────────────
 
-const step = ref<'compose' | 'preview'>('compose')
-const removed = ref<Set<string>>(new Set())
-const added = ref<Set<string>>(new Set())
+interface RecipRow {
+  p: SchedPerson
+  on: boolean
+  source: 'group' | 'always' | 'added'
+}
+
+const previewOpen = ref(false)
+const recip = ref<RecipRow[]>([])
 const addPick = ref('')
 const err = ref<string | null>(null)
 const busy = ref(false)
 const sentResult = ref<string | null>(null)
 const offDutyExcluded = ref(0)
-const baseRecipients = ref<SchedPerson[]>([])
 
 const selectedShifts = computed(() =>
   msgType.value === 'scheduling'
     ? [...pickedShifts.value].sort((a, b) => a - b).map((i) => openItems.value[i]).filter(Boolean)
     : [],
 )
+
+/** Mirrors sched-notify's no-text default so the preview shows exactly
+ *  what recipients get when the message box is left empty. */
+const previewLead = computed(() => {
+  const m = message.value.trim()
+  if (m) return m
+  if (msgType.value === 'announcement') return ''
+  const n = selectedShifts.value.length
+  if (n === 1) return 'Open shift available — can you take it?'
+  if (n > 1) return `${n} open shifts available — grab what you can.`
+  return ''
+})
+
+/** Setup → Page-outs → "Always include" (the Chief wants every message
+ *  even when a group filter wouldn't catch her). Preseeds the list —
+ *  still untickable for a specific send. */
+const alwaysIncludeIds = computed(() => {
+  const v = (sched.settings.value['pageout'] ?? {}) as { always_include?: unknown }
+  const ids = Array.isArray(v.always_include) ? (v.always_include as unknown[]) : []
+  return ids.filter((x): x is string => typeof x === 'string')
+})
 
 async function toPreview() {
   err.value = null
@@ -132,10 +157,6 @@ async function toPreview() {
       msgType.value === 'announcement'
         ? 'Write the announcement first.'
         : 'Write a message or attach at least one open shift.'
-    return
-  }
-  if (pickedGroups.value.size === 0) {
-    err.value = 'Pick at least one audience group.'
     return
   }
   if (!chPush.value && !chEmail.value && !chSms.value) {
@@ -151,45 +172,39 @@ async function toPreview() {
     pool = pool.filter((p) => !working.has(p.id))
     offDutyExcluded.value = before - pool.length
   }
-  removed.value = new Set()
-  added.value = new Set()
-  baseRecipients.value = pool
+  const rows: RecipRow[] = pool.map((p) => ({ p, on: true, source: 'group' as const }))
+  for (const id of alwaysIncludeIds.value) {
+    if (rows.some((r) => r.p.id === id)) continue
+    const p = sched.personById.value.get(id)
+    if (p) rows.push({ p, on: true, source: 'always' })
+  }
+  recip.value = rows
   busy.value = false
-  step.value = 'preview'
+  previewOpen.value = true
 }
 
-const previewList = computed(() => {
-  const base = baseRecipients.value.filter((p) => !removed.value.has(p.id))
-  const extra = sched.people.value.filter(
-    (p) => added.value.has(p.id) && !base.some((b) => b.id === p.id),
-  )
-  return [...base, ...extra].sort((a, b) => a.fullName.localeCompare(b.fullName))
-})
+const selectedCount = computed(() => recip.value.filter((r) => r.on).length)
+
+function setAllRecip(on: boolean) {
+  recip.value = recip.value.map((r) => ({ ...r, on }))
+}
 
 const addable = computed(() =>
-  sched.people.value.filter((p) => !previewList.value.some((r) => r.id === p.id)),
+  sched.people.value.filter((p) => !recip.value.some((r) => r.p.id === p.id)),
 )
-
-function removePerson(id: string) {
-  if (added.value.has(id)) {
-    const s = new Set(added.value)
-    s.delete(id)
-    added.value = s
-  } else {
-    removed.value = new Set([...removed.value, id])
-  }
-}
 
 function addPerson() {
   if (!addPick.value) return
-  added.value = new Set([...added.value, addPick.value])
+  const p = sched.personById.value.get(addPick.value)
+  if (p) recip.value = [...recip.value, { p, on: true, source: 'added' }]
   addPick.value = ''
 }
 
 async function send() {
   err.value = null
-  if (previewList.value.length === 0) {
-    err.value = 'Nobody left on the recipient list.'
+  const finals = recip.value.filter((r) => r.on)
+  if (finals.length === 0) {
+    err.value = 'Nobody selected — tick at least one recipient.'
     return
   }
   busy.value = true
@@ -202,10 +217,10 @@ async function send() {
     audience: {
       groups: [...pickedGroups.value],
       offDutyDate: offDutyDate.value || null,
-      removed: [...removed.value],
-      added: [...added.value],
+      removed: recip.value.filter((r) => !r.on).map((r) => r.p.id),
+      added: recip.value.filter((r) => r.on && r.source !== 'group').map((r) => r.p.id),
     },
-    recipients: previewList.value.map((p) => p.id),
+    recipients: finals.map((r) => r.p.id),
   })
   if (error || !id) {
     err.value = error ?? 'Could not save the page-out.'
@@ -231,7 +246,8 @@ async function send() {
   offDutyDate.value = ''
   openLoaded.value = false
   openItems.value = []
-  step.value = 'compose'
+  recip.value = []
+  previewOpen.value = false
   await refreshLog()
 }
 
@@ -285,7 +301,7 @@ function deliveryLine(p: PageLogRow): string {
         <p v-if="err" class="pg__error">{{ err }}</p>
         <p v-if="sentResult" class="pg__sent">{{ sentResult }}</p>
 
-        <template v-if="step === 'compose'">
+        <template v-if="true">
           <div class="pg__row">
             <span class="pg__label">Type</span>
             <div class="pg__seg">
@@ -367,45 +383,9 @@ function deliveryLine(p: PageLogRow): string {
 
           <div class="pg__foot">
             <span class="pg__muted" v-if="pickedGroups.size > 0">{{ groupPool.length }} in the selected groups</span>
+            <span class="pg__muted" v-else>No groups picked — you can add individual people on the next step.</span>
             <button class="pg__btn pg__btn--primary" :disabled="busy" @click="toPreview">
-              {{ busy ? 'Working…' : 'Preview recipients' }}
-            </button>
-          </div>
-        </template>
-
-        <template v-else>
-          <p class="pg__label">
-            {{ msgType === 'announcement' ? 'Announcement' : 'Message' }} that will go out
-            <span v-if="urgent" class="pg__urgentchip">URGENT</span>
-          </p>
-          <pre v-if="message.trim()" class="pg__previewmsg">{{ message.trim() }}</pre>
-          <div v-if="selectedShifts.length > 0" class="pg__previewshifts">
-            <p class="pg__label">Attached shifts — each is a tap-to-request link in the message</p>
-            <p v-for="(sh, i) in selectedShifts" :key="i" class="pg__previewshift">{{ sh.text }}</p>
-          </div>
-
-          <p class="pg__label">
-            Recipients ({{ previewList.length }})
-            <span v-if="offDutyExcluded > 0" class="pg__muted"> · {{ offDutyExcluded }} excluded as on duty {{ offDutyDate }}</span>
-          </p>
-          <div class="pg__people">
-            <span v-for="p in previewList" :key="p.id" class="pg__person">
-              {{ p.fullName }}
-              <button class="pg__x" type="button" :aria-label="`Remove ${p.fullName}`" @click="removePerson(p.id)">×</button>
-            </span>
-          </div>
-          <div class="pg__row">
-            <select v-model="addPick" class="pg__input" aria-label="Add a recipient">
-              <option value="">Add a person…</option>
-              <option v-for="p in addable" :key="p.id" :value="p.id">{{ p.fullName }}</option>
-            </select>
-            <button class="pg__mini" type="button" :disabled="!addPick" @click="addPerson">Add</button>
-          </div>
-
-          <div class="pg__foot">
-            <button class="pg__btn" :disabled="busy" @click="step = 'compose'">Back</button>
-            <button class="pg__btn pg__btn--primary" :disabled="busy || previewList.length === 0" @click="send">
-              {{ busy ? 'Sending…' : `Send to ${previewList.length} ${previewList.length === 1 ? 'person' : 'people'}` }}
+              {{ busy ? 'Working…' : 'Review recipients & send' }}
             </button>
           </div>
         </template>
@@ -436,6 +416,76 @@ function deliveryLine(p: PageLogRow): string {
           </p>
         </div>
       </section>
+    </div>
+
+    <!-- review & send modal: the exact message up top, recipient table
+         with per-person checkboxes below -->
+    <div v-if="previewOpen" class="pg__overlay" @click.self="previewOpen = false">
+      <div class="pg__modal" role="dialog" aria-label="Review and send">
+        <h3 class="pg__mtitle">Review &amp; send</h3>
+
+        <div class="pg__msgbox">
+          <p class="pg__msghead">
+            {{ msgType === 'announcement' ? 'Announcement' : 'Message' }}
+            <span v-if="urgent" class="pg__urgentchip">URGENT</span>
+          </p>
+          <p v-if="previewLead" class="pg__msgtext">{{ previewLead }}</p>
+          <p v-for="(sh, i) in selectedShifts" :key="i" class="pg__msgshift">{{ sh.text }}</p>
+          <p v-if="!message.trim() && msgType === 'scheduling' && selectedShifts.length > 0" class="pg__msgnote">
+            No custom text — the line above is the automatic lead recipients get.
+          </p>
+        </div>
+
+        <div class="pg__recbar">
+          <span class="pg__label">
+            Recipients — {{ selectedCount }} of {{ recip.length }} selected
+            <span v-if="offDutyExcluded > 0"> · {{ offDutyExcluded }} on duty {{ offDutyDate }} excluded</span>
+          </span>
+          <span class="pg__recbtns">
+            <button class="pg__mini" type="button" @click="setAllRecip(true)">Select all</button>
+            <button class="pg__mini" type="button" @click="setAllRecip(false)">Deselect all</button>
+          </span>
+        </div>
+
+        <div class="pg__recwrap">
+          <table class="pg__rectable">
+            <tbody>
+              <tr v-for="r in recip" :key="r.p.id" :class="{ 'pg__rec--off': !r.on }">
+                <td class="pg__reccheck">
+                  <input v-model="r.on" type="checkbox" :aria-label="`Include ${r.p.fullName}`" />
+                </td>
+                <td class="pg__recname">
+                  {{ r.p.fullName }}<span v-if="r.p.credential" class="pg__reccred"> — {{ r.p.credential }}</span>
+                </td>
+                <td class="pg__recsrc">
+                  <span v-if="r.source === 'always'" class="pg__srcchip">Always included</span>
+                  <span v-else-if="r.source === 'added'" class="pg__srcchip pg__srcchip--add">Added</span>
+                </td>
+              </tr>
+              <tr v-if="recip.length === 0">
+                <td colspan="3" class="pg__recempty">Nobody yet — add people below.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="pg__row pg__row--add">
+          <select v-model="addPick" class="pg__input" aria-label="Add a recipient">
+            <option value="">Add a person…</option>
+            <option v-for="p in addable" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+          </select>
+          <button class="pg__mini" type="button" :disabled="!addPick" @click="addPerson">Add</button>
+        </div>
+
+        <p v-if="err" class="pg__error">{{ err }}</p>
+
+        <div class="pg__foot">
+          <button class="pg__btn" :disabled="busy" @click="previewOpen = false">Back</button>
+          <button class="pg__btn pg__btn--primary" :disabled="busy || selectedCount === 0" @click="send">
+            {{ busy ? 'Sending…' : `Send to ${selectedCount} ${selectedCount === 1 ? 'person' : 'people'}` }}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -845,5 +895,171 @@ function deliveryLine(p: PageLogRow): string {
   color: oklch(0.5 0.19 27);
   margin: 0.15rem 0 0;
   overflow-wrap: anywhere;
+}
+
+/* ── review & send modal ── */
+
+.pg__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: oklch(0.25 0.03 260 / 0.42);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 6vh 1rem 2rem;
+  overflow-y: auto;
+}
+
+.pg__modal {
+  width: min(620px, 100%);
+  background:
+    linear-gradient(180deg, oklch(1 0 0 / 0.9), oklch(0.985 0.004 84 / 0.9)),
+    var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-top: 3px solid var(--color-brand-700);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px oklch(0.2 0.04 260 / 0.28), 0 4px 14px oklch(0.2 0.04 260 / 0.12);
+  padding: 1rem 1.2rem 1.1rem;
+}
+
+.pg__mtitle {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  color: var(--color-ink);
+  margin: 0 0 0.6rem;
+}
+
+.pg__msgbox {
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface);
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.7rem;
+}
+
+.pg__msghead {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin: 0 0 0.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.pg__msgtext {
+  font-size: 0.88rem;
+  color: var(--color-ink);
+  margin: 0 0 0.25rem;
+  white-space: pre-wrap;
+}
+
+.pg__msgshift {
+  font-size: 0.82rem;
+  color: var(--color-brand-700);
+  font-weight: 600;
+  margin: 0.1rem 0 0;
+}
+
+.pg__msgnote {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  margin: 0.35rem 0 0;
+  font-style: italic;
+}
+
+.pg__recbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.pg__recbtns {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.pg__recwrap {
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  max-height: 44vh;
+  overflow-y: auto;
+  background: var(--color-surface);
+}
+
+.pg__rectable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.pg__rectable td {
+  padding: 0.32rem 0.5rem;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.pg__rectable tr:last-child td {
+  border-bottom: 0;
+}
+
+.pg__reccheck {
+  width: 30px;
+  text-align: center;
+}
+
+.pg__recname {
+  color: var(--color-ink);
+}
+
+.pg__reccred {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+}
+
+.pg__recsrc {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pg__rec--off .pg__recname {
+  color: var(--color-muted);
+  text-decoration: line-through;
+  text-decoration-color: oklch(0.7 0.02 260);
+}
+
+.pg__srcchip {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-accent-700, oklch(0.5 0.1 86));
+  background: oklch(0.97 0.05 86);
+  border: 1px solid oklch(0.85 0.09 86);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.pg__srcchip--add {
+  color: var(--color-brand-700);
+  background: oklch(0.96 0.015 260);
+  border-color: oklch(0.85 0.03 260);
+}
+
+.pg__recempty {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  text-align: center;
+  padding: 0.7rem;
+}
+
+.pg__row--add {
+  margin-top: 0.5rem;
 }
 </style>

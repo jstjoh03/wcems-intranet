@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import {
   useSchedule,
   INTERNAL_CREDENTIALS,
+  QUAL_RULE_CREDENTIALS,
   NOTIFY_TYPES,
   NOTIFY_CHANNELS,
   notifyOn,
@@ -38,6 +39,8 @@ const LEVEL_LABELS: Record<string, string> = {
   global_admin: 'Global admin',
   scheduler: 'Scheduler',
   supervisor: 'Supervisor',
+  hr: 'HR (payroll)',
+  view_only: 'View only',
   member: 'Member',
   none: 'No access',
 }
@@ -50,18 +53,23 @@ function effectiveLevel(p: { id: string; role: string }): string {
   return access.value.get(p.id) ?? defaultLevel(p)
 }
 
+/* Members lists the FULL roster (incl. anyone hidden from scheduling
+   pickers) so a hide can be undone; last-name order comes from the
+   store. */
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  const list = sched.people.value
+  const list = sched.allPeople.value
   if (!q) return list
   return list.filter((p) => p.fullName.toLowerCase().includes(q))
 })
 
+const STORABLE_LEVELS = ['global_admin', 'scheduler', 'hr', 'view_only', 'none'] as const
+type StorableLevel = (typeof STORABLE_LEVELS)[number]
+
 async function changeAccess(userId: string, ev: Event) {
   err.value = null
   const val = (ev.target as HTMLSelectElement).value
-  const lvl =
-    val === 'global_admin' || val === 'scheduler' || val === 'none' ? val : null
+  const lvl = (STORABLE_LEVELS as readonly string[]).includes(val) ? (val as StorableLevel) : null
   const e = await sched.setAccess(userId, lvl)
   if (e) {
     err.value = e
@@ -70,6 +78,27 @@ async function changeAccess(userId: string, ev: Event) {
   if (lvl) access.value.set(userId, lvl)
   else access.value.delete(userId)
   access.value = new Map(access.value)
+}
+
+// ── hide from scheduling (rosters, pickers, boards) ──────────────────
+
+const hiddenIds = computed(() => {
+  const v = (sched.settings.value['roster'] ?? {}) as { exclude_user_ids?: unknown }
+  const ids = Array.isArray(v.exclude_user_ids) ? (v.exclude_user_ids as unknown[]) : []
+  return new Set(ids.filter((x): x is string => typeof x === 'string'))
+})
+
+async function toggleHidden(p: SchedPerson) {
+  err.value = null
+  const ids = new Set(hiddenIds.value)
+  if (ids.has(p.id)) ids.delete(p.id)
+  else ids.add(p.id)
+  const e = await sched.saveSetting('roster', { exclude_user_ids: [...ids] })
+  if (e) {
+    err.value = e
+    return
+  }
+  sched.applyRosterVisibility()
 }
 
 // ── member detail ────────────────────────────────────────────────────
@@ -100,15 +129,34 @@ async function toggleMember(p: SchedPerson) {
   detail.value = await sched.fetchMemberSettings(p.id)
 }
 
-function qualState(key: string): string {
-  return detail.value?.qualOverrides[key] ?? ''
+/** What the member's credential qualifies them for with NO override. */
+function qualDefault(p: SchedPerson, key: string): boolean {
+  const allowed = QUAL_RULE_CREDENTIALS[key] ?? []
+  return !!p.credential && allowed.includes(p.credential)
 }
 
-function setQual(key: string, ev: Event) {
+/** Effective state the checkbox shows: override wins, else the default. */
+function qualEffective(p: SchedPerson, key: string): boolean {
+  const o = detail.value?.qualOverrides[key]
+  if (o === 'allow') return true
+  if (o === 'deny') return false
+  return qualDefault(p, key)
+}
+
+/** Ticking back to what the credential already implies clears the
+ *  override, so the row keeps tracking credential changes. */
+function toggleQual(p: SchedPerson, key: string, ev: Event) {
   if (!detail.value) return
-  const val = (ev.target as HTMLSelectElement).value
-  if (val === 'allow' || val === 'deny') detail.value.qualOverrides[key] = val
-  else delete detail.value.qualOverrides[key]
+  const on = (ev.target as HTMLInputElement).checked
+  if (on === qualDefault(p, key)) delete detail.value.qualOverrides[key]
+  else detail.value.qualOverrides[key] = on ? 'allow' : 'deny'
+}
+
+function qualHint(p: SchedPerson, key: string): string {
+  const dflt = qualDefault(p, key)
+  const o = detail.value?.qualOverrides[key]
+  if (o) return `override — ${p.credential ?? 'credential'} default is ${dflt ? 'qualified' : 'not qualified'}`
+  return `default from ${p.credential ?? 'no credential'}`
 }
 
 function unitExcluded(unitId: string): boolean {
@@ -202,6 +250,7 @@ function credSourceLine(p: SchedPerson): string {
             </p>
             <p class="mem__hint">{{ p.title ?? '' }}</p>
           </div>
+          <span v-if="hiddenIds.has(p.id)" class="mem__chip mem__chip--hidden">Hidden from scheduling</span>
           <span
             class="mem__chip"
             :class="{ 'mem__chip--none': effectiveLevel(p) === 'none' }"
@@ -245,20 +294,25 @@ function credSourceLine(p: SchedPerson): string {
 
             <section class="mem__block">
               <h3 class="mem__block-h">Position qualifications</h3>
-              <p class="mem__note-sm">Default comes from the clinical pipeline; set an override here.</p>
+              <p class="mem__note-sm">
+                Checked = can hold that seat type. Defaults come from the credential;
+                ticking away from the default saves an override.
+              </p>
               <div v-if="detail" class="mem__quals">
                 <div v-for="pos in POSITIONS" :key="pos.key" class="mem__qualrow">
-                  <span>{{ pos.label }}</span>
-                  <select
-                    class="mem__select"
-                    :value="qualState(pos.key)"
-                    :disabled="!sched.canEdit.value"
-                    @change="setQual(pos.key, $event)"
-                  >
-                    <option value="">Default</option>
-                    <option value="allow">Qualified</option>
-                    <option value="deny">Excluded</option>
-                  </select>
+                  <label class="mem__check">
+                    <input
+                      type="checkbox"
+                      :checked="qualEffective(p, pos.key)"
+                      :disabled="!sched.canEdit.value"
+                      @change="toggleQual(p, pos.key, $event)"
+                    />
+                    {{ pos.label }}
+                  </label>
+                  <span
+                    class="mem__qualsrc"
+                    :class="{ 'mem__qualsrc--override': !!detail.qualOverrides[pos.key] }"
+                  >{{ qualHint(p, pos.key) }}</span>
                 </div>
               </div>
               <p v-else class="mem__note-sm">Loading…</p>
@@ -322,8 +376,18 @@ function credSourceLine(p: SchedPerson): string {
               <option value="">Access: default ({{ LEVEL_LABELS[defaultLevel(p)] }})</option>
               <option value="scheduler">Access: Scheduler</option>
               <option value="global_admin">Access: Global admin</option>
+              <option value="hr">Access: HR (payroll only)</option>
+              <option value="view_only">Access: View only</option>
               <option value="none">Access: No access</option>
             </select>
+            <button
+              v-if="sched.isGlobalAdmin.value"
+              class="mem__hidebtn"
+              type="button"
+              @click="toggleHidden(p)"
+            >
+              {{ hiddenIds.has(p.id) ? 'Show in scheduling again' : 'Hide from scheduling' }}
+            </button>
             <button
               v-if="sched.canEdit.value || p.id === sched.myUserId.value"
               class="mem__save"
@@ -516,11 +580,44 @@ function credSourceLine(p: SchedPerson): string {
 
 .mem__qualrow {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.1rem;
   font-size: 0.84rem;
   color: var(--color-ink);
+  padding: 0.15rem 0;
+}
+
+.mem__qualsrc {
+  font-size: 0.68rem;
+  color: var(--color-muted);
+  padding-left: 1.35rem;
+}
+
+.mem__qualsrc--override {
+  color: oklch(0.5 0.13 60);
+  font-weight: 600;
+}
+
+.mem__chip--hidden {
+  color: oklch(0.5 0.13 60);
+  border-color: oklch(0.88 0.05 60);
+  background: var(--color-warning-50, oklch(0.98 0.02 85));
+}
+
+.mem__hidebtn {
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+.mem__hidebtn:hover {
+  border-color: var(--color-muted-soft);
 }
 
 .mem__units {

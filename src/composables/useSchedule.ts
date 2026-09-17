@@ -25,7 +25,14 @@ import { useAuthStore } from '@/stores/auth'
 // ── types ────────────────────────────────────────────────────────────
 
 export type Platoon = 'A' | 'B' | 'C'
-export type SchedLevel = 'global_admin' | 'scheduler' | 'supervisor' | 'member' | 'none'
+export type SchedLevel =
+  | 'global_admin'
+  | 'scheduler'
+  | 'supervisor'
+  | 'hr'
+  | 'view_only'
+  | 'member'
+  | 'none'
 
 export interface SchedUnit {
   id: string
@@ -489,7 +496,29 @@ const availability = ref<Availability[]>([])
 const dayNotes = ref<DayNote[]>([])
 const schedEvents = ref<SchedEventRec[]>([])
 const people = ref<SchedPerson[]>([])
+/** Full roster incl. members hidden from scheduling (Members tab needs
+ *  them so a hide can be undone). Everything else uses `people`. */
+const allPeople = ref<SchedPerson[]>([])
 const settings = ref<Record<string, Record<string, unknown>>>({})
+
+function lastNameSortKey(full: string): string {
+  const parts = full.trim().split(/\s+/)
+  return `${(parts[parts.length - 1] ?? full).toLowerCase()} ${full.toLowerCase()}`
+}
+
+function rosterHiddenIds(): Set<string> {
+  const v = (settings.value['roster'] ?? {}) as { exclude_user_ids?: unknown }
+  const ids = Array.isArray(v.exclude_user_ids) ? (v.exclude_user_ids as unknown[]) : []
+  return new Set(ids.filter((x): x is string => typeof x === 'string'))
+}
+
+/** Re-derive the visible roster from allPeople + the hide list — called
+ *  by loadCore and after the Members tab edits the hide list. */
+function applyRosterVisibility(): void {
+  const hidden = rosterHiddenIds()
+  people.value =
+    hidden.size === 0 ? allPeople.value : allPeople.value.filter((p) => !hidden.has(p.id))
+}
 const level = ref<SchedLevel>('member')
 const loaded = ref(false)
 const loading = ref(false)
@@ -651,7 +680,7 @@ async function loadCore(): Promise<void> {
       if (r.credential) pipeCredByUser.set(r.user_id, r.credential)
     }
   }
-  people.value = (pRes.data ?? []).map((r) => {
+  const mapped = (pRes.data ?? []).map((r) => {
     const explicit = credByUser.get(r.id) ?? null
     const pipeline = pipeCredByUser.get(r.id) ?? null
     const titleCred = defaultInternalCredential(r.role, r.title)
@@ -682,6 +711,14 @@ async function loadCore(): Promise<void> {
     setMap[r.key] = r.value ?? {}
   }
   settings.value = setMap
+  /* Roster ordering + visibility: every list in the module goes by last
+     name (matching the rest of the portal's rosters), and members on
+     the Setup-managed hide list (roster.exclude_user_ids — e.g. the
+     medical director) drop out of scheduling pickers entirely.
+     allPeople keeps the full set so the Members tab can un-hide. */
+  mapped.sort((a, b) => lastNameSortKey(a.fullName).localeCompare(lastNameSortKey(b.fullName)))
+  allPeople.value = mapped
+  applyRosterVisibility()
   level.value = (lvlRes.data as SchedLevel) ?? 'member'
   loaded.value = true
 }
@@ -730,21 +767,27 @@ function seedDevStub(): void {
     { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', credentialAuto: 'P2', credentialSource: 'pipeline', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X', employmentType: 'full_time' },
     { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', credentialAuto: 'EMT', credentialSource: 'title', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null, employmentType: 'part_time' },
   ]
+  allPeople.value = people.value
 }
 
 export const INTERNAL_CREDENTIALS = [
-  'Supervisor', 'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'EMT-FTO', 'P2-FTO', 'P3-FTO',
+  'Chief', 'Assistant Chief', 'CDO', 'Supervisor',
+  'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'P4', 'EMT-FTO', 'P2-FTO', 'P3-FTO',
 ] as const
 
+/** Command staff + P4 hold any seat (Justin, 2026-09-17). */
+const ANY_SEAT_CREDENTIALS = ['Chief', 'Assistant Chief', 'CDO', 'P4', 'Supervisor'] as const
+
 /** Which internal credentials satisfy each seat rule for SELF-SERVICE
- *  (pickups, trade claims). Supervisors hold any seat. P1s may cover a
- *  Paramedic-in-charge seat ONLY by Chief assignment — never listed
- *  here for p2, so they cannot pick those up themselves; the Chief's
- *  direct-assign path is the approval and bypasses this list. */
+ *  (pickups, trade claims). Command staff/Supervisor/P4 hold any seat.
+ *  P1s may cover a Paramedic-in-charge seat ONLY by Chief assignment —
+ *  never listed here for p2, so they cannot pick those up themselves;
+ *  the Chief's direct-assign path is the approval and bypasses this
+ *  list. */
 export const QUAL_RULE_CREDENTIALS: Record<string, readonly string[]> = {
-  p2: ['P2', 'P3', 'P2-FTO', 'P3-FTO', 'Supervisor'],
-  aemt_or_higher: ['AEMT', 'P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', 'Supervisor'],
-  supervisor: ['Supervisor'],
+  p2: ['P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
+  aemt_or_higher: ['AEMT', 'P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
+  supervisor: [...ANY_SEAT_CREDENTIALS],
   any_field: [...INTERNAL_CREDENTIALS],
   any: [...INTERNAL_CREDENTIALS],
 }
@@ -4204,7 +4247,7 @@ async function sendPageOut(pageId: string): Promise<{
 
 async function setAccess(
   userId: string,
-  lvl: 'global_admin' | 'scheduler' | 'none' | null,
+  lvl: 'global_admin' | 'scheduler' | 'hr' | 'view_only' | 'none' | null,
 ): Promise<string | null> {
   if (lvl === null) {
     const res = await supabase.from('sched_access').delete().eq('user_id', userId)
@@ -4308,13 +4351,27 @@ export function useSchedule() {
     const me = auth.appUser?.id
     return !!me && ids.includes(me)
   })
+  /** HR: payroll surfaces (Time Reports export + Paycom setup card),
+   *  no rotation/day editing. */
+  const isHr = computed(() => level.value === 'hr')
+  /** View-only: every board, zero self-service (no requests/trades). */
+  const isViewOnly = computed(() => level.value === 'view_only')
   /** Soft-launch gate: editors always; supervisors added 2026-09-14 so
    *  field sups (Brittany testing the crew-side experience) get in
    *  before the crew-wide opening ~Sep 24. Supervisors get NO edit
-   *  tools — they see the crew view: pickups, requests, trades. */
+   *  tools — they see the crew view: pickups, requests, trades.
+   *  hr / view_only added 2026-09-17. */
   const canAccessModule = computed(
-    () => canEdit.value || level.value === 'supervisor' || isPilotTester.value,
+    () =>
+      canEdit.value ||
+      level.value === 'supervisor' ||
+      level.value === 'hr' ||
+      level.value === 'view_only' ||
+      isPilotTester.value,
   )
+  /** May file requests / offers / claims — everyone in the module
+   *  except view-only (RLS enforces the same rule server-side). */
+  const canRequest = computed(() => canAccessModule.value && !isViewOnly.value)
 
   const myUserId = computed(() => auth.appUser?.id ?? null)
 
@@ -4338,6 +4395,8 @@ export function useSchedule() {
     availability,
     dayNotes,
     people,
+    allPeople,
+    applyRosterVisibility,
     personById,
     level,
     loaded,
@@ -4350,6 +4409,9 @@ export function useSchedule() {
     isGlobalAdmin,
     canPageOut,
     canAccessModule,
+    isHr,
+    isViewOnly,
+    canRequest,
     myUserId,
     // loaders
     ensureLoaded,

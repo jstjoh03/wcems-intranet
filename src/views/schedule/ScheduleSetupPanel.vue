@@ -22,7 +22,9 @@ const PLATOONS: Platoon[] = ['A', 'B', 'C']
 
 onMounted(async () => {
   await sched.ensureLoaded()
-  void loadLog()
+  // HR opens Setup for the earning-codes card only — the audit log
+  // is editor territory (and its RLS would refuse anyway).
+  if (sched.canEdit.value) void loadLog()
 })
 
 // ── activity log ─────────────────────────────────────────────────────
@@ -635,13 +637,41 @@ const poNote = ref('')
 const poBusy = ref(false)
 const poSaved = ref(false)
 
+/* Always-include list: these members ride along on EVERY page-out and
+   announcement regardless of the group filter (Chief Getschman wants
+   eyes on everything when she's away). Composer preseeds them ticked. */
+const poAlways = ref<string[]>([])
+const poPick = ref('')
+
 watch(
   () => sched.settings.value['pageout'],
   (v) => {
     poNote.value = String((v as { urgent_note?: string } | undefined)?.urgent_note ?? '')
+    const ids = (v as { always_include?: unknown } | undefined)?.always_include
+    poAlways.value = Array.isArray(ids)
+      ? ids.filter((x): x is string => typeof x === 'string')
+      : []
   },
   { immediate: true },
 )
+
+const poCandidates = computed(() =>
+  sched.people.value.filter((p) => !poAlways.value.includes(p.id)),
+)
+
+function poName(id: string): string {
+  return sched.personById.value.get(id)?.fullName ?? 'Former member'
+}
+
+function poAdd() {
+  if (!poPick.value) return
+  poAlways.value = [...poAlways.value, poPick.value]
+  poPick.value = ''
+}
+
+function poRemove(id: string) {
+  poAlways.value = poAlways.value.filter((x) => x !== id)
+}
 
 async function savePageoutCfg() {
   poBusy.value = true
@@ -651,6 +681,7 @@ async function savePageoutCfg() {
   const e = await sched.saveSetting('pageout', {
     ...existing,
     urgent_note: poNote.value.trim(),
+    always_include: poAlways.value,
   })
   poBusy.value = false
   if (e) {
@@ -689,7 +720,7 @@ async function saveWarnCfg() {
 
     <div class="setup__cols">
       <div class="setup__main">
-        <section class="setup__card">
+        <section v-if="sched.canEdit.value" class="setup__card">
           <div class="setup__card-head">
             <h2 class="setup__h">Rotation template — who holds each seat, per shift</h2>
           </div>
@@ -784,7 +815,7 @@ async function saveWarnCfg() {
           </p>
         </section>
 
-        <section class="setup__card">
+        <section v-if="sched.canEdit.value" class="setup__card">
           <h2 class="setup__h">Scheduled template changes</h2>
           <p v-if="scheduledChanges.length === 0" class="setup__muted">
             None scheduled — changes with a future effective date appear here.
@@ -801,7 +832,7 @@ async function saveWarnCfg() {
           </div>
         </section>
 
-        <section class="setup__card">
+        <section v-if="sched.canEdit.value" class="setup__card">
           <div class="setup__card-head">
             <h2 class="setup__h">Activity log</h2>
             <input
@@ -833,7 +864,7 @@ async function saveWarnCfg() {
       </div>
 
       <aside class="setup__side">
-        <section class="setup__card">
+        <section v-if="sched.canEdit.value" class="setup__card">
           <div class="setup__card-head">
             <h2 class="setup__h">Units &amp; display order</h2>
             <button class="setup__btn" @click="addingUnit = !addingUnit">
@@ -1029,7 +1060,7 @@ async function saveWarnCfg() {
           </button>
         </section>
 
-        <section v-if="sched.isGlobalAdmin.value" class="setup__card">
+        <section v-if="sched.isGlobalAdmin.value || sched.isHr.value" class="setup__card">
           <h2 class="setup__h">Paycom earning codes</h2>
           <p class="setup__muted">
             Regular shifts export as ID/OD punches and need no code. Everything else — special
@@ -1112,6 +1143,27 @@ async function saveWarnCfg() {
             maxlength="180"
             :placeholder="PO_NOTE_DEFAULT"
           />
+          <p class="setup__muted" style="margin-top: 0.7rem">
+            <strong>Always include</strong> — these members are pre-selected on every
+            page-out and announcement, whatever groups are picked (they can still be
+            unticked for a specific send).
+          </p>
+          <div class="setup__rplist">
+            <span v-for="id in poAlways" :key="id" class="setup__rpchip">
+              {{ poName(id) }}
+              <button class="setup__rpx" :aria-label="`Remove ${poName(id)}`" @click="poRemove(id)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              </button>
+            </span>
+            <span v-if="!poAlways.length" class="setup__muted">Nobody yet.</span>
+          </div>
+          <form class="setup__rpadd" @submit.prevent="poAdd">
+            <select v-model="poPick" class="setup__input">
+              <option value="" disabled>Add a member…</option>
+              <option v-for="p in poCandidates" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+            </select>
+            <button type="submit" class="setup__btn" :disabled="!poPick">Add</button>
+          </form>
           <div class="setup__row">
             <span v-if="poSaved" class="setup__saved">Saved.</span>
             <button class="setup__btn setup__btn--primary" :disabled="poBusy" @click="savePageoutCfg">
@@ -1120,7 +1172,7 @@ async function saveWarnCfg() {
           </div>
         </section>
 
-        <section class="setup__card">
+        <section v-if="sched.canEdit.value" class="setup__card">
           <h2 class="setup__h">Access</h2>
           <p class="setup__muted">Access levels are managed on the Members tab.</p>
         </section>

@@ -1243,7 +1243,12 @@ async function reqCancel() {
             }}
           </button>
         </template>
-        <button v-else class="em__btn em__btn--primary" :disabled="busy" @click="submitPickup">
+        <button
+          v-else-if="sched.canRequest.value"
+          class="em__btn em__btn--primary"
+          :disabled="busy"
+          @click="submitPickup"
+        >
           {{
             pickupWarn && pickupWarn.length
               ? pickupHasConfirm
@@ -1252,6 +1257,9 @@ async function reqCancel() {
               : 'Request this shift'
           }}
         </button>
+        <p v-else class="em__sub">
+          Your access is view-only — contact the office if you need to pick up a shift.
+        </p>
 
         <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
       </div>

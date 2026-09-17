@@ -34,6 +34,8 @@ async function load() {
     level === 'global_admin' ||
     level === 'scheduler' ||
     level === 'supervisor' ||
+    level === 'hr' ||
+    level === 'view_only' ||
     (Array.isArray(ids) && ids.includes(uid))
 }
 

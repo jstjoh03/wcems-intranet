@@ -22,7 +22,7 @@
 // Channels:
 //   push  — web-push over the portal's existing VAPID keys +
 //           push_subscriptions rows (per-user).
-//   email — Graph app-only Mail.Send from office@wallercountyems.com
+//   email — Graph app-only Mail.Send from schedule@wallercountyems.com
 //           (same LIFECYCLE app registration as the birthday digest).
 //   sms   — Twilio REST. Secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
 //           and TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM (E.164).
@@ -48,7 +48,10 @@ const CORS = {
 }
 
 const PORTAL = 'https://employee.wallercountyems.com'
-const SENDER = 'office@wallercountyems.com'
+/* Dedicated scheduling mailbox (shared, created 2026-09-17) so crews
+ * see where the message came from; the LIFECYCLE app's tenant-wide
+ * Mail.Send covers it like any mailbox. */
+const SENDER = 'schedule@wallercountyems.com'
 
 const VAPID_PUBLIC_KEY = env.get('VAPID_PUBLIC_KEY') ?? ''
 const VAPID_PRIVATE_KEY = env.get('VAPID_PRIVATE_KEY') ?? ''
@@ -480,6 +483,18 @@ Deno.serve(async (req: Request) => {
       } else if (shifts.length > 1) subject = `${pre}WCEMS Scheduling: ${shifts.length} open shifts`
       else subject = `${pre}WCEMS Scheduling`
 
+      // With no custom text the message must still say what it IS — a
+      // bare shift line + link read like spam (Justin, 2026-09-17).
+      const n = shifts.length
+      const defaultLead = isAnn
+        ? ''
+        : n === 1
+          ? 'Open shift available — can you take it?'
+          : n > 1
+            ? `${n} open shifts available — grab what you can.`
+            : ''
+      const lead = msg || defaultLead
+
       const emailLines: string[] = []
       if (msg) emailLines.push(esc(msg).replace(/\n/g, '<br/>'))
       if (shifts.length > 0) {
@@ -499,7 +514,9 @@ Deno.serve(async (req: Request) => {
         emailLines.push(`<b style="color:#b3261e;">${esc(urgentNote)}</b>`)
       }
 
-      let sms = `${urgent ? 'URGENT ' : ''}WCEMS${isAnn ? '' : ' page-out'}: ${msg}`
+      // "WCEMS page-out:" read as jargon — plain brand prefix + a lead
+      // that says what it is.
+      let sms = `${urgent ? 'URGENT ' : ''}WCEMS: ${lead}`
       for (const s of shifts.slice(0, 2)) sms += ` | ${s.text ?? ''}`
       if (shifts.length > 2) sms += ` (+${shifts.length - 2} more)`
       if (urgent) sms += ` ${urgentNote}`
@@ -516,7 +533,15 @@ Deno.serve(async (req: Request) => {
         (page.recipients ?? []) as string[],
         isAnn ? 'announcements' : 'open_shift',
         {
-          title: `${urgent ? 'URGENT ' : ''}${isAnn ? 'WCEMS announcement' : 'WCEMS page-out'}`,
+          title: `${urgent ? 'URGENT — ' : ''}${
+            isAnn
+              ? 'WCEMS announcement'
+              : n === 1
+                ? 'Open shift available'
+                : n > 1
+                  ? `${n} open shifts available`
+                  : 'WCEMS scheduling'
+          }`,
           body: [msg, shifts[0]?.text].filter(Boolean).join(' — '),
           tag: `sched-page-${page.id}`,
           subject,
