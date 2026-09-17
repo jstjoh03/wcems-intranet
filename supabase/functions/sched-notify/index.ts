@@ -167,9 +167,9 @@ async function sendMail(tok: string, to: string, subject: string, html: string):
 
 /* Every outbound text carries opt-out language — CTIA best practice,
  * and toll-free/A2P reviewers check message samples against actual
- * traffic (rejection 30499 taught us they mean it). Appended here so
- * no call site can miss it. */
-const SMS_OPT_OUT = ' Reply STOP to opt out, HELP for help.'
+ * traffic (rejection 30909 taught us they mean it). Own line so the
+ * message body stays readable. */
+const SMS_OPT_OUT = '\nReply STOP to opt out, HELP for help.'
 
 async function sendSms(to: string, body: string): Promise<void> {
   const params = new URLSearchParams({ To: to, Body: body + SMS_OPT_OUT })
@@ -496,7 +496,10 @@ Deno.serve(async (req: Request) => {
       const lead = msg || defaultLead
 
       const emailLines: string[] = []
-      if (msg) emailLines.push(esc(msg).replace(/\n/g, '<br/>'))
+      // The email intro gets the automatic lead too when the sender
+      // typed nothing — a bare shift list didn't say what it was.
+      const emailIntro = msg || defaultLead
+      if (emailIntro) emailLines.push(esc(emailIntro).replace(/\n/g, '<br/>'))
       if (shifts.length > 0) {
         const items = shifts
           .map((s) => {
@@ -514,13 +517,16 @@ Deno.serve(async (req: Request) => {
         emailLines.push(`<b style="color:#b3261e;">${esc(urgentNote)}</b>`)
       }
 
-      // "WCEMS page-out:" read as jargon — plain brand prefix + a lead
-      // that says what it is.
-      let sms = `${urgent ? 'URGENT ' : ''}WCEMS: ${lead}`
-      for (const s of shifts.slice(0, 2)) sms += ` | ${s.text ?? ''}`
-      if (shifts.length > 2) sms += ` (+${shifts.length - 2} more)`
-      if (urgent) sms += ` ${urgentNote}`
-      sms += ` ${PORTAL}/schedule`
+      // Multi-line SMS: lead, one line per shift, link and STOP each on
+      // their own line — the single-line pipe format read as clutter.
+      // Lead capped so a long custom message can't push the link/STOP
+      // lines past the 320-char send cap.
+      const smsLead = lead.length > 120 ? `${lead.slice(0, 119)}…` : lead
+      let sms = `${urgent ? 'URGENT — ' : ''}WCEMS: ${smsLead}`
+      for (const s of shifts.slice(0, 2)) sms += `\n${s.text ?? ''}`
+      if (shifts.length > 2) sms += `\n+${shifts.length - 2} more on the portal`
+      if (urgent) sms += `\n${urgentNote}`
+      sms += `\n${PORTAL}/schedule`
 
       const url =
         shifts.length === 1 && shifts[0].entryId
