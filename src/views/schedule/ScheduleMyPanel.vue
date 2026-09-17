@@ -30,6 +30,13 @@ const sched = useSchedule()
 
 // ── whose calendar is displayed (default: mine) ─────────────────────
 
+/** The "Schedule for" picker is a leadership/office tool (Justin,
+ *  2026-09-17): editors, supervisors, and HR — not regular members,
+ *  who use the main boards to see other people. */
+const canPickPerson = computed(
+  () => sched.canEdit.value || sched.level.value === 'supervisor' || sched.isHr.value,
+)
+
 const viewUserId = ref<string>('') // '' = the signed-in member
 const viewingId = computed(() => viewUserId.value || sched.myUserId.value)
 const viewingSelf = computed(
@@ -249,7 +256,7 @@ function pendingLine(r: SchedRequest): string {
     </section>
 
     <div class="my__whorow">
-      <label class="my__who">
+      <label v-if="canPickPerson" class="my__who">
         <span class="my__wholabel">Schedule for</span>
         <select v-model="viewUserId" class="my__whoselect" aria-label="Whose schedule to show">
           <option value="">{{ myOptionLabel }}</option>
