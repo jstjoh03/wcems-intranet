@@ -10,6 +10,13 @@
 //   { kind: 'schedule_change',   userId, summary }
 //   { kind: 'trade_activity',    requestId, offerUserId?,
 //     event: 'offer'|'accepted'|'declined'|'direct_request'|'direct_accepted'|'direct_declined' }
+//   { kind: 'shift_reminders',   dryRun? }   ← pg_cron every 15 min (also
+//     editors, for testing). System calls authenticate with the
+//     x-sync-secret header (ROSTER_SYNC_SECRET) + the anon key as the
+//     gateway bearer; sched_settings 'reminders' {enabled, lead_hours}
+//     controls it (default: on, 12h). Sends once per merged shift start
+//     (sched_reminders_sent claims), honoring each member's 'reminders'
+//     notification row.
 //
 // Recipients and their addresses are ALWAYS resolved server-side:
 // the caller supplies ids, this function decides who may be told what
@@ -417,6 +424,78 @@ function reqLine(r: ReqRow): string {
   return `${label} — ${fmtDate(r.work_date)}${windowText(r.start_at, r.end_at)}${where ? ` (${where})` : ''}`
 }
 
+// ── schedule math for shift reminders ────────────────────────────────
+// Ported from useSchedule.ts (platoonFor / unitPlatoonFor / shiftWindow
+// / segsForUserOnDate / mergeSegs) — KEEP IN LOCKSTEP with the client:
+// if rendering rules change there, reminders must change here.
+
+const ROT_ANCHOR = '2026-04-06'
+const ROT_SEQ = ['B', 'B', 'C', 'C', 'A', 'A']
+
+function daysBetweenIso(aIso: string, bIso: string): number {
+  return Math.round((Date.parse(`${bIso}T00:00:00Z`) - Date.parse(`${aIso}T00:00:00Z`)) / 86_400_000)
+}
+
+function platoonFor(dateIso: string): string {
+  const d = daysBetweenIso(ROT_ANCHOR, dateIso)
+  return ROT_SEQ[((d % 6) + 6) % 6]
+}
+
+function unitPlatoonFor(pattern: string[] | null, anchor: string | null, dateIso: string): string | null {
+  if (!pattern || pattern.length === 0) return platoonFor(dateIso)
+  const a = anchor ?? ROT_ANCHOR
+  const len = pattern.length
+  const d = daysBetweenIso(a, dateIso)
+  const tok = (pattern[((d % len) + len) % len] ?? '').toUpperCase()
+  return tok === 'A' || tok === 'B' || tok === 'C' ? tok : null
+}
+
+function todayCentralIso(): string {
+  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'America/Chicago' }).format(new Date())
+}
+
+function addDaysIso(dateIso: string, n: number): string {
+  const d = new Date(`${dateIso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+/** Epoch ms of dateIso + 'HH:MM' Central (CDT/CST probed like the client). */
+function centralMs(dateIso: string, time: string): number {
+  for (const off of ['-05:00', '-06:00']) {
+    const c = new Date(`${dateIso}T${time}:00${off}`)
+    const chk = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+      hour12: false, timeZone: 'America/Chicago',
+    }).format(c).replace(', ', 'T')
+    if (chk === `${dateIso}T${time}`) return c.getTime()
+  }
+  return new Date(`${dateIso}T${time}:00-05:00`).getTime()
+}
+
+/** A unit's rotation window on a work date, clamped inside 0600→0600. */
+function unitWindow(fromRaw: string | null, untilRaw: string | null, dateIso: string): { start: number; end: number } {
+  const f = (fromRaw ?? '06:00').slice(0, 5)
+  const u = (untilRaw ?? '06:00').slice(0, 5)
+  const dayEnd = centralMs(addDaysIso(dateIso, 1), '06:00')
+  const start = f >= '06:00' ? centralMs(dateIso, f) : centralMs(addDaysIso(dateIso, 1), f)
+  let end = u > '06:00' && u > f && f >= '06:00' ? centralMs(dateIso, u) : centralMs(addDaysIso(dateIso, 1), u)
+  if (u === '06:00' || end <= start) end = dayEnd
+  if (end > dayEnd) end = dayEnd
+  return { start, end }
+}
+
+function fmtStamp(ms: number): string {
+  const d = new Date(ms)
+  const date = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/Chicago' })
+  const t = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Chicago' }).format(d).replace(':', '')
+  return `${date} ${t}`
+}
+
+function centralDateOf(ms: number): string {
+  return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'America/Chicago' }).format(new Date(ms))
+}
+
 // ── main ─────────────────────────────────────────────────────────────
 
 // @ts-expect-error Deno.serve in Edge Runtime
@@ -425,7 +504,15 @@ Deno.serve(async (req: Request) => {
   if (req.method !== 'POST')
     return Response.json({ ok: false, error: 'POST only' }, { status: 405, headers: CORS })
 
-  const caller = await resolveCaller(req)
+  /* pg_cron calls carry the anon key (passes the gateway JWT check) +
+   * the shared sync secret — same trust pattern as roster-sync. A
+   * system caller may ONLY run shift_reminders (its empty id and
+   * non-editor level dead-end every other branch). */
+  const syncSecret = env.get('ROSTER_SYNC_SECRET')
+  const caller: Caller | null =
+    syncSecret && req.headers.get('x-sync-secret') === syncSecret
+      ? { id: '', name: 'System', level: 'system' }
+      : await resolveCaller(req)
   if (!caller) return Response.json({ ok: false, error: 'Not authorized' }, { status: 401, headers: CORS })
 
   let body: Record<string, unknown>
@@ -729,6 +816,174 @@ Deno.serve(async (req: Request) => {
         caller.id,
       )
       return Response.json({ ok: true, delivery: d }, { headers: CORS })
+    }
+
+    // ── shift reminders (cron every 15 min) ──────────────────────────
+    if (kind === 'shift_reminders') {
+      if (caller.level !== 'system' && !isEditor(caller))
+        return Response.json({ ok: false, error: 'Not authorized' }, { status: 403, headers: CORS })
+      const dryRun = body.dryRun === true
+
+      const { data: remSet } = await sb.from('sched_settings').select('value').eq('key', 'reminders').maybeSingle()
+      const cfg = (remSet?.value ?? {}) as { enabled?: boolean; lead_hours?: number }
+      if (cfg.enabled === false) return Response.json({ ok: true, disabled: true }, { headers: CORS })
+      const leadH = Number(cfg.lead_hours ?? 12) || 12
+      const now = Date.now()
+      const windowEnd = now + leadH * 3_600_000
+
+      // Work dates: 3 back for multi-day-block continuity (a 48/72-hr
+      // run must merge so day 2 doesn't get a mid-shift "reminder"),
+      // 1 forward so a 12h+ lead still sees tomorrow.
+      const today = todayCentralIso()
+      const dates: string[] = []
+      for (let i = -3; i <= 1; i++) dates.push(addDaysIso(today, i))
+
+      const [uR, sR, rR, eR, pR] = await Promise.all([
+        sb.from('sched_units').select('id, code, active, rotation_pattern, rotation_anchor, shift_start, shift_end'),
+        sb.from('sched_seats').select('id, unit_id, label, active'),
+        sb.from('sched_rotation_assignments').select('seat_id, platoon, user_id, effective_from, effective_to'),
+        sb.from('sched_entries').select('work_date, seat_id, user_id, kind, status, start_at, end_at, note')
+          .gte('work_date', dates[0]).lte('work_date', dates[dates.length - 1]),
+        sb.from('app_users').select('id, full_name').eq('active', true).eq('account_type', 'person'),
+      ])
+      const err0 = uR.error ?? sR.error ?? rR.error ?? eR.error ?? pR.error
+      if (err0) return Response.json({ ok: false, error: err0.message }, { status: 500, headers: CORS })
+      const unitsA = (uR.data ?? []).filter((u) => u.active)
+      const unitById = new Map(unitsA.map((u) => [u.id, u]))
+      const seatsA = (sR.data ?? []).filter((s) => s.active && unitById.has(s.unit_id))
+      const rot = rR.data ?? []
+      const rows = eR.data ?? []
+      const nameById = new Map((pR.data ?? []).map((p) => [p.id, p.full_name as string]))
+
+      const rotOccupant = (seatId: string, platoon: string, dateIso: string): string | null => {
+        let best: { from: string; user: string | null } | null = null
+        for (const a of rot) {
+          if (a.seat_id !== seatId || a.platoon !== platoon) continue
+          if (a.effective_from > dateIso) continue
+          if (a.effective_to !== null && a.effective_to < dateIso) continue
+          if (best === null || a.effective_from > best.from) best = { from: a.effective_from, user: a.user_id }
+        }
+        return best?.user ?? null
+      }
+
+      interface LSeg { start: number; end: number; label: string }
+      const byUser = new Map<string, LSeg[]>()
+      const pushSeg = (uid: string, seg: LSeg) => {
+        const l = byUser.get(uid) ?? []
+        l.push(seg)
+        byUser.set(uid, l)
+      }
+
+      for (const dateIso of dates) {
+        const dayRows = rows.filter((r) => r.work_date === dateIso)
+        for (const seat of seatsA) {
+          const unit = unitById.get(seat.unit_id)!
+          const label = `${unit.code} ${seat.label}`
+          const seatRows = dayRows.filter((r) => r.seat_id === seat.id && r.kind !== 'timeoff' && r.status !== 'off')
+          if (seatRows.length > 0) {
+            for (const r of seatRows) {
+              if (r.user_id && r.status === 'scheduled')
+                pushSeg(r.user_id, { start: Date.parse(r.start_at), end: Date.parse(r.end_at), label })
+            }
+          } else {
+            const platoon = unitPlatoonFor(unit.rotation_pattern, unit.rotation_anchor, dateIso)
+            if (!platoon) continue
+            const occ = rotOccupant(seat.id, platoon, dateIso)
+            if (!occ) continue
+            const w = unitWindow(unit.shift_start, unit.shift_end, dateIso)
+            pushSeg(occ, { start: w.start, end: w.end, label })
+          }
+        }
+        for (const r of dayRows) {
+          if (r.seat_id !== null || !r.user_id || r.status !== 'scheduled') continue
+          if (r.kind === 'extra' || r.kind === 'event' || r.kind === 'student' || r.kind === 'rider') {
+            const label =
+              r.kind === 'event' ? (r.note || 'Special event')
+              : r.kind === 'extra' ? 'Extra hours'
+              : r.kind === 'student' ? 'Student ride'
+              : 'Rider'
+            pushSeg(r.user_id, { start: Date.parse(r.start_at), end: Date.parse(r.end_at), label })
+          }
+        }
+      }
+
+      // merge per user (multi-day blocks become one segment; the label
+      // of the run's FIRST piece names the shift) → due = merged starts
+      // inside the lead window
+      const due: { userId: string; name: string; start: number; end: number; label: string }[] = []
+      for (const [uid, segs] of byUser) {
+        const name = nameById.get(uid)
+        if (!name) continue
+        const sorted = segs.filter((s) => s.end - s.start >= 60_000).sort((a, b) => a.start - b.start)
+        const merged: LSeg[] = []
+        for (const s of sorted) {
+          const last = merged[merged.length - 1]
+          if (last && s.start <= last.end + 60_000) last.end = Math.max(last.end, s.end)
+          else merged.push({ ...s })
+        }
+        for (const m of merged) {
+          if (m.start > now && m.start <= windowEnd) due.push({ userId: uid, name, start: m.start, end: m.end, label: m.label })
+        }
+      }
+
+      if (dryRun) {
+        return Response.json(
+          {
+            ok: true, dryRun: true, leadHours: leadH, checked: byUser.size,
+            due: due.map((d) => ({ name: d.name, label: d.label, start: fmtStamp(d.start), end: fmtStamp(d.end) })),
+          },
+          { headers: CORS },
+        )
+      }
+
+      let sent = 0
+      const delivery = { push: 0, email: 0, sms: 0 }
+      const errors: string[] = []
+      for (const d of due) {
+        // claim first — the unique (user_id, shift_start) row is the
+        // exactly-once guarantee across cron runs
+        const ins = await sb
+          .from('sched_reminders_sent')
+          .upsert(
+            { user_id: d.userId, shift_start: new Date(d.start).toISOString(), label: d.label },
+            { onConflict: 'user_id,shift_start', ignoreDuplicates: true },
+          )
+          .select('id')
+        if (ins.error) {
+          errors.push(`claim ${d.name}: ${ins.error.message}`)
+          continue
+        }
+        if (!ins.data || ins.data.length === 0) continue // already reminded
+        const hrs = Math.round(((d.end - d.start) / 3_600_000) * 10) / 10
+        const line = `${d.label} — ${fmtStamp(d.start)} to ${fmtStamp(d.end)} (${hrs} hrs)`
+        const del = await deliver(
+          [d.userId],
+          'reminders',
+          {
+            title: 'Shift reminder',
+            body: line,
+            tag: `sched-rem-${d.userId}-${d.start}`,
+            subject: 'WCEMS Scheduling — shift reminder',
+            emailLines: [
+              `Reminder: you're on <b>${esc(d.label)}</b> — ${esc(fmtStamp(d.start))} to ${esc(fmtStamp(d.end))} (${hrs} hrs).`,
+            ],
+            sms: `WCEMS: Shift reminder — ${d.label}, ${fmtStamp(d.start)} to ${fmtStamp(d.end)}.`,
+            url: `/schedule?d=${centralDateOf(d.start)}&v=day`,
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        delivery.sms += del.sms
+        errors.push(...del.errors)
+      }
+      // prune claims older than two weeks
+      await sb.from('sched_reminders_sent').delete().lt('sent_at', new Date(now - 14 * 86_400_000).toISOString())
+      return Response.json(
+        { ok: true, checked: byUser.size, due: due.length, sent, delivery, errors: errors.slice(0, 20) },
+        { headers: CORS },
+      )
     }
 
     return Response.json({ ok: false, error: `Unknown kind "${kind}"` }, { status: 400, headers: CORS })

@@ -691,6 +691,39 @@ async function savePageoutCfg() {
   poSaved.value = true
 }
 
+// ── shift reminders ──────────────────────────────────────────────────
+
+const rmEnabled = ref(true)
+const rmLead = ref(12)
+const rmBusy = ref(false)
+const rmSaved = ref(false)
+
+watch(
+  () => sched.settings.value['reminders'],
+  (v) => {
+    const c = (v ?? {}) as { enabled?: boolean; lead_hours?: number }
+    rmEnabled.value = c.enabled !== false
+    rmLead.value = Number(c.lead_hours ?? 12) || 12
+  },
+  { immediate: true },
+)
+
+async function saveReminderCfg() {
+  rmBusy.value = true
+  rmSaved.value = false
+  err.value = null
+  const e = await sched.saveSetting('reminders', {
+    enabled: rmEnabled.value,
+    lead_hours: Math.min(48, Math.max(1, Math.round(rmLead.value || 12))),
+  })
+  rmBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  rmSaved.value = true
+}
+
 async function saveWarnCfg() {
   wBusy.value = true
   wDone.value = null
@@ -1170,6 +1203,36 @@ async function saveWarnCfg() {
           </div>
         </section>
 
+        <section v-if="sched.isGlobalAdmin.value" class="setup__card">
+          <h2 class="setup__h">Shift reminders</h2>
+          <p class="setup__muted">
+            One reminder per member before each shift starts, over the channels they have
+            enabled under Notifications (multi-day blocks remind once, at the start).
+            Runs automatically every 15 minutes.
+          </p>
+          <label class="setup__checkrow">
+            <input v-model="rmEnabled" type="checkbox" />
+            Send shift reminders
+          </label>
+          <label class="setup__field">
+            <span>Lead time — hours before the shift</span>
+            <input
+              v-model.number="rmLead"
+              type="number"
+              min="1"
+              max="48"
+              class="setup__input"
+              :disabled="!rmEnabled"
+            />
+          </label>
+          <div class="setup__row">
+            <span v-if="rmSaved" class="setup__saved">Saved.</span>
+            <button class="setup__btn setup__btn--primary" :disabled="rmBusy" @click="saveReminderCfg">
+              {{ rmBusy ? 'Saving…' : 'Save' }}
+            </button>
+          </div>
+        </section>
+
         <section v-if="sched.canEdit.value" class="setup__card">
           <h2 class="setup__h">Access</h2>
           <p class="setup__muted">Access levels are managed on the Members tab.</p>
@@ -1212,6 +1275,15 @@ async function saveWarnCfg() {
   box-shadow:
     inset 0 1px 0 oklch(1 0 0 / 0.18),
     0 2px 6px oklch(0.3 0.06 260 / 0.35);
+}
+
+.setup__checkrow {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.86rem;
+  color: var(--color-ink-soft);
+  margin: 0.35rem 0 0.5rem;
 }
 
 .setup__warngrid {
