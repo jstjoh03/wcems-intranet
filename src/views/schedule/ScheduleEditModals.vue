@@ -66,6 +66,9 @@ const conflict = ref<{
   items: string[]
   leaveOpen: boolean
   proceed: () => Promise<void>
+  /** When set, these replace "Schedule anyway" — each is a distinct
+   *  resolution (rotation swap vs. leave-the-old-seat-open). */
+  choices?: { label: string; run: () => Promise<void> }[]
 } | null>(null)
 const conflictAcknowledged = ref(false)
 
@@ -76,7 +79,14 @@ async function conflictProceed(): Promise<void> {
   busy.value = false
 }
 
-/** Unavailability + would-be hours for scheduling `userId` into a window. */
+async function conflictChoice(run: () => Promise<void>): Promise<void> {
+  busy.value = true
+  await run()
+  busy.value = false
+}
+
+/** Double-booking + unavailability + would-be hours for scheduling
+ *  `userId` into a window. */
 async function gatherConflicts(
   userId: string,
   dateIso: string,
@@ -89,6 +99,11 @@ async function gatherConflicts(
     sched.hoursCheckWindow(userId, dateIso, from, until, name),
   ])
   const items: string[] = []
+  for (const o of sched.dayOverlaps(userId, dateIso, from, until)) {
+    items.push(
+      `${name} already works ${o.label} ${o.window} that day — this would double-book them.`,
+    )
+  }
   if (un) {
     items.push(
       `${name} marked ${fmtLong(dateIso)} unavailable${un.reason ? ` — "${un.reason}"` : ''}. Scheduling them anyway overrides that.`,
@@ -284,14 +299,50 @@ async function runEdit(): Promise<void> {
       if (!editReplaceWith.value) {
         e = 'Pick a replacement.'
       } else {
+        const who = sched.personById.value.get(editReplaceWith.value)?.fullName ?? 'This member'
         const items = await gatherConflicts(
           editReplaceWith.value,
           ctx.dateIso,
           editFrom.value,
           editUntil.value,
         )
+        // Permanent replace: if the replacement already holds a rotation
+        // seat, Save becomes a choice — swap the two people, or move
+        // them here and leave their old seat open.
+        const rc =
+          editScope.value === 'permanent'
+            ? sched.findRotationClashes(
+                editReplaceWith.value,
+                ctx.seatId,
+                platoonFor(ctx.dateIso),
+                ctx.dateIso,
+              )[0]
+            : undefined
+        if (rc) {
+          const outgoing = sched.personById.value.get(ctx.userId)?.fullName ?? 'The current holder'
+          conflict.value = {
+            title: `Before you schedule ${who}`,
+            items: [
+              ...items,
+              `${who} currently holds ${rc.seatTitle} on ${rc.platoon} Shift — one person can't hold two rotation seats.`,
+            ],
+            leaveOpen: false,
+            proceed: async () => {},
+            choices: [
+              {
+                label: `Swap the two — ${outgoing} takes ${rc.seatTitle} (${rc.platoon} Shift)`,
+                run: () => applyReplaceResolved('swap'),
+              },
+              {
+                label: `Move ${who} here only — leave ${rc.seatTitle} open`,
+                run: () => applyReplaceResolved('open'),
+              },
+            ],
+          }
+          busy.value = false
+          return
+        }
         if (items.length > 0) {
-          const who = sched.personById.value.get(editReplaceWith.value)?.fullName ?? 'This member'
           conflict.value = {
             title: `Before you schedule ${who}`,
             items,
@@ -349,6 +400,39 @@ async function applyReplace(): Promise<void> {
       toUserId: editReplaceWith.value,
       from: editFrom.value,
       until: editUntil.value,
+    })
+  }
+  if (e) {
+    err.value = e
+    return
+  }
+  conflict.value = null
+  editor.closeAll()
+  flash('Done.')
+}
+
+/** Permanent replace where the replacement holds another rotation seat:
+ *  one stroke moves them here and settles their old seat per the choice. */
+async function applyReplaceResolved(resolution: 'swap' | 'open'): Promise<void> {
+  const ctx = editor.person.value
+  if (!ctx) return
+  let e = await sched.assignRotationResolved(
+    ctx.seatId,
+    platoonFor(ctx.dateIso),
+    editReplaceWith.value,
+    ctx.dateIso,
+    resolution,
+  )
+  // entry-backed today: also swap the day's rows (template covers the
+  // rotation days that render from it)
+  if (!e && sched.holdsViaOverride(ctx.userId, ctx.seatId, ctx.dateIso)) {
+    e = await sched.dayReplace({
+      dateIso: ctx.dateIso,
+      seatId: ctx.seatId,
+      fromUserId: ctx.userId,
+      toUserId: editReplaceWith.value,
+      from: '06:00',
+      until: '06:00',
     })
   }
   if (e) {
@@ -1078,17 +1162,31 @@ async function reqCancel() {
           <li v-for="(item, i) in conflict.items" :key="i">{{ item }}</li>
         </ul>
         <p v-if="err" class="em__error">{{ err }}</p>
-        <button class="em__btn em__btn--primary" :disabled="busy" @click="conflictProceed">
-          Schedule anyway
-        </button>
-        <button
-          v-if="conflict.leaveOpen && editor.person.value"
-          class="em__btn"
-          :disabled="busy"
-          @click="conflictLeaveOpen"
-        >
-          Post the seat as open instead
-        </button>
+        <template v-if="conflict.choices">
+          <button
+            v-for="(c, i) in conflict.choices"
+            :key="i"
+            class="em__btn"
+            :class="{ 'em__btn--primary': i === 0 }"
+            :disabled="busy"
+            @click="conflictChoice(c.run)"
+          >
+            {{ c.label }}
+          </button>
+        </template>
+        <template v-else>
+          <button class="em__btn em__btn--primary" :disabled="busy" @click="conflictProceed">
+            Schedule anyway
+          </button>
+          <button
+            v-if="conflict.leaveOpen && editor.person.value"
+            class="em__btn"
+            :disabled="busy"
+            @click="conflictLeaveOpen"
+          >
+            Post the seat as open instead
+          </button>
+        </template>
         <button class="em__btn em__btn--ghost" @click="conflict = null">Go back</button>
       </div>
     </div>

@@ -1311,6 +1311,59 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
   }
 }
 
+/** 'HH:MM' or 'HHmm' → minutes since the 0600 changeover. */
+function hmAnchored(hm: string): number {
+  const digits = hm.replace(':', '')
+  const mins = Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2, 4))
+  return (mins - 360 + 1440) % 1440
+}
+
+export interface DayOverlap {
+  label: string
+  window: string
+}
+
+/**
+ * Everywhere `userId` already works on `dateIso` that overlaps the
+ * window — the double-booking guard for editor assignments. Built from
+ * dayModel so overrides count (someone marked off / already covered
+ * doesn't false-positive). `until <= from` means it runs to next day.
+ */
+export function dayOverlaps(
+  userId: string,
+  dateIso: string,
+  fromHm: string,
+  untilHm: string,
+): DayOverlap[] {
+  const s2 = hmAnchored(fromHm)
+  let e2 = hmAnchored(untilHm)
+  if (e2 <= s2) e2 += 1440
+  const out: DayOverlap[] = []
+  const push = (label: string, start: string, end: string) => {
+    const s1 = hmAnchored(start)
+    let e1 = hmAnchored(end)
+    if (e1 <= s1) e1 += 1440
+    if (s1 < e2 && s2 < e1) out.push({ label, window: `${start}–${end}` })
+  }
+  const m = dayModel(dateIso, userId)
+  for (const um of m.units) {
+    for (const sm of um.seats)
+      for (const r of sm.rows)
+        if (!r.open && r.userId === userId) push(`${um.unit.code} ${sm.seat.label}`, r.start, r.end)
+    for (const r of um.extras)
+      if (!r.open && r.userId === userId)
+        push(`${um.unit.code} ${r.posLabel ?? r.kind}`, r.start, r.end)
+  }
+  for (const box of m.events)
+    for (const r of box.rows)
+      if (!r.open && r.userId === userId) push(box.label, r.start, r.end)
+  for (const r of m.extraHours)
+    if (r.userId === userId) push(r.sub ? `Extra hours (${r.sub})` : 'Extra hours', r.start, r.end)
+  for (const r of m.trades) if (r.userId === userId) push('Trade coverage', r.start, r.end)
+  for (const r of m.unattached) if (r.userId === userId) push('Student rider', r.start, r.end)
+  return out
+}
+
 /** Lightweight month-cell summary without building full unit models. */
 export function daySummary(dateIso: string, myUserId: string | null) {
   const platoon = platoonFor(dateIso)
@@ -3616,28 +3669,54 @@ async function decideRequest(
  * open-ended assignment that would overlap, so history stays intact and
  * past days keep rendering who actually held the seat.
  */
-async function assignRotation(
+/** "M242 Paramedic" for messages. */
+function seatTitle(seatId: string): string {
+  const seat = seats.value.find((s) => s.id === seatId)
+  const unit = units.value.find((u) => u.id === seat?.unitId)
+  return `${unit?.code ?? '?'} ${seat?.label ?? ''}`.trim()
+}
+
+export interface RotationClash {
+  seatId: string
+  platoon: Platoon
+  seatTitle: string
+  effectiveFrom: string
+  effectiveTo: string | null
+}
+
+/** Every OTHER rotation seat `userId` holds on/after `effectiveFrom` —
+ *  the one-person-one-seat rule. Empty array = clear to assign. */
+function findRotationClashes(
+  userId: string,
   seatId: string,
   platoon: Platoon,
-  userId: string | null,
   effectiveFrom: string,
-): Promise<string | null> {
-  // Protection: one person, one seat at a time. Block if they already
-  // hold ANY other seat (any platoon) for an overlapping period.
-  if (userId !== null) {
-    const clash = rotation.value.find(
+): RotationClash[] {
+  return rotation.value
+    .filter(
       (a) =>
         a.userId === userId &&
         !(a.seatId === seatId && a.platoon === platoon) &&
         (a.effectiveTo === null || a.effectiveTo >= effectiveFrom),
     )
-    if (clash) {
-      const seat = seats.value.find((s) => s.id === clash.seatId)
-      const unit = units.value.find((u) => u.id === seat?.unitId)
-      const who = personById.value.get(userId)?.fullName ?? 'This person'
-      return `${who} already holds ${unit?.code ?? '?'} ${seat?.label ?? ''} on ${clash.platoon} Shift (from ${clash.effectiveFrom}${clash.effectiveTo ? ` to ${clash.effectiveTo}` : ''}). End or reassign that seat first.`
-    }
-  }
+    .map((a) => ({
+      seatId: a.seatId,
+      platoon: a.platoon,
+      seatTitle: seatTitle(a.seatId),
+      effectiveFrom: a.effectiveFrom,
+      effectiveTo: a.effectiveTo,
+    }))
+}
+
+/** One seat/platoon chain write: trim or delete whatever overlaps from
+ *  `effectiveFrom`, insert the new row. No clash guard, no reload —
+ *  composition pieces for assignRotation / assignRotationResolved. */
+async function applyRotationRow(
+  seatId: string,
+  platoon: Platoon,
+  userId: string | null,
+  effectiveFrom: string,
+): Promise<string | null> {
   const overlapping = rotation.value.filter(
     (a) =>
       a.seatId === seatId &&
@@ -3665,9 +3744,68 @@ async function assignRotation(
     created_by: auth.appUser?.id ?? null,
   })
   if (ins.error) return ins.error.message
-  const seatR = seats.value.find((s) => s.id === seatId)
-  const unitR = units.value.find((u) => u.id === seatR?.unitId)
-  audit('rotation.assign', `Rotation: ${userId ? displayName(userId).name : 'OPEN'} → ${unitR?.code ?? '?'} ${seatR?.label ?? ''} (${platoon} Shift) from ${effectiveFrom}`, { entity: 'rotation' })
+  return null
+}
+
+async function assignRotation(
+  seatId: string,
+  platoon: Platoon,
+  userId: string | null,
+  effectiveFrom: string,
+): Promise<string | null> {
+  // Protection: one person, one seat at a time. Block if they already
+  // hold ANY other seat (any platoon) for an overlapping period — the
+  // UIs catch this first via findRotationClashes and offer swap/open.
+  if (userId !== null) {
+    const clash = findRotationClashes(userId, seatId, platoon, effectiveFrom)[0]
+    if (clash) {
+      const who = personById.value.get(userId)?.fullName ?? 'This person'
+      return `${who} already holds ${clash.seatTitle} on ${clash.platoon} Shift (from ${clash.effectiveFrom}${clash.effectiveTo ? ` to ${clash.effectiveTo}` : ''}). End or reassign that seat first.`
+    }
+  }
+  const e = await applyRotationRow(seatId, platoon, userId, effectiveFrom)
+  if (e) return e
+  audit('rotation.assign', `Rotation: ${userId ? displayName(userId).name : 'OPEN'} → ${seatTitle(seatId)} (${platoon} Shift) from ${effectiveFrom}`, { entity: 'rotation' })
+  await loadCore()
+  return null
+}
+
+/**
+ * Put `userId` on a rotation seat they'd otherwise clash into, resolving
+ * their current seat in the same stroke: 'swap' backfills it with the
+ * person this assignment displaces (if any), 'open' leaves it vacant.
+ * Extra clash seats beyond the first (shouldn't exist under the guard)
+ * are opened.
+ */
+async function assignRotationResolved(
+  seatId: string,
+  platoon: Platoon,
+  userId: string,
+  effectiveFrom: string,
+  resolution: 'swap' | 'open',
+): Promise<string | null> {
+  const clashes = findRotationClashes(userId, seatId, platoon, effectiveFrom)
+  if (clashes.length === 0) return assignRotation(seatId, platoon, userId, effectiveFrom)
+  const displaced = rotationOccupant(seatId, platoon, effectiveFrom)
+  let e = await applyRotationRow(seatId, platoon, userId, effectiveFrom)
+  if (e) return e
+  for (let i = 0; i < clashes.length; i++) {
+    const backfill = i === 0 && resolution === 'swap' ? displaced : null
+    e = await applyRotationRow(clashes[i].seatId, clashes[i].platoon, backfill, effectiveFrom)
+    if (e) {
+      await loadCore()
+      return e
+    }
+  }
+  const who = displayName(userId).name
+  const other = clashes[0]
+  audit(
+    'rotation.assign',
+    resolution === 'swap' && displaced
+      ? `Rotation swap from ${effectiveFrom}: ${who} → ${seatTitle(seatId)} (${platoon} Shift), ${displayName(displaced).name} → ${other.seatTitle} (${other.platoon} Shift)`
+      : `Rotation: ${who} → ${seatTitle(seatId)} (${platoon} Shift) from ${effectiveFrom}; ${other.seatTitle} (${other.platoon} Shift) opened`,
+    { entity: 'rotation' },
+  )
   await loadCore()
   return null
 }
@@ -4233,6 +4371,10 @@ export function useSchedule() {
     displayName,
     // mutations
     assignRotation,
+    assignRotationResolved,
+    findRotationClashes,
+    rotationOccupantAt: rotationOccupant,
+    dayOverlaps,
     removeRotationAssignment,
     addUnit,
     saveUnitOrder,

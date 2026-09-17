@@ -77,6 +77,24 @@ const editUserId = ref('')
 const editFrom = ref(todayCentralIso())
 const saving = ref(false)
 const err = ref<string | null>(null)
+/* Errors from the cell editor show IN the cell — the shared `err` at
+   the top of the panel scrolls out of view mid-table, which read as
+   "the Save button does nothing". */
+const editErr = ref<string | null>(null)
+/* One-person-one-seat: picking someone who already holds a rotation
+   seat turns Save into a choice — swap the two, or open their old
+   seat — instead of a dead-end error. */
+const clash = ref<{
+  seatTitle: string
+  platoon: Platoon
+  personName: string
+  displacedName: string | null
+} | null>(null)
+
+watch([editUserId, editFrom], () => {
+  clash.value = null
+  editErr.value = null
+})
 
 function currentOccupant(seatId: string, platoon: Platoon): string | null {
   const today = todayCentralIso()
@@ -107,23 +125,58 @@ function startEdit(seatId: string, platoon: Platoon) {
   editUserId.value = currentOccupant(seatId, platoon) ?? ''
   editFrom.value = todayCentralIso()
   err.value = null
+  editErr.value = null
+  clash.value = null
 }
 
 async function saveEdit() {
   if (!editing.value) return
+  editErr.value = null
+  clash.value = null
+  const { seatId, platoon } = editing.value
+  if (editUserId.value) {
+    const c = sched.findRotationClashes(editUserId.value, seatId, platoon, editFrom.value)[0]
+    if (c) {
+      const displaced = sched.rotationOccupantAt(seatId, platoon, editFrom.value)
+      clash.value = {
+        seatTitle: c.seatTitle,
+        platoon: c.platoon,
+        personName: sched.personById.value.get(editUserId.value)?.fullName ?? 'This person',
+        displacedName:
+          displaced && displaced !== editUserId.value
+            ? (sched.personById.value.get(displaced)?.fullName ?? 'Unknown')
+            : null,
+      }
+      return
+    }
+  }
   saving.value = true
-  err.value = null
-  const e = await sched.assignRotation(
+  const e = await sched.assignRotation(seatId, platoon, editUserId.value || null, editFrom.value)
+  saving.value = false
+  if (e) {
+    editErr.value = e
+    return
+  }
+  editing.value = null
+}
+
+async function resolveClash(resolution: 'swap' | 'open') {
+  if (!editing.value || !editUserId.value) return
+  saving.value = true
+  editErr.value = null
+  const e = await sched.assignRotationResolved(
     editing.value.seatId,
     editing.value.platoon,
-    editUserId.value || null,
+    editUserId.value,
     editFrom.value,
+    resolution,
   )
   saving.value = false
   if (e) {
-    err.value = e
+    editErr.value = e
     return
   }
+  clash.value = null
   editing.value = null
 }
 
@@ -675,12 +728,33 @@ async function saveWarnCfg() {
                           <span>Effective</span>
                           <input v-model="editFrom" type="date" class="setup__date" />
                         </label>
-                        <div class="setup__editbtns">
+                        <template v-if="clash">
+                          <p class="setup__clash">
+                            {{ clash.personName }} already holds
+                            <strong>{{ clash.seatTitle }}</strong> ({{ clash.platoon }} Shift).
+                          </p>
+                          <div class="setup__editbtns setup__editbtns--stack">
+                            <button
+                              v-if="clash.displacedName"
+                              class="setup__btn setup__btn--primary"
+                              :disabled="saving"
+                              @click="resolveClash('swap')"
+                            >
+                              {{ saving ? 'Saving…' : `Swap — ${clash.displacedName} takes ${clash.seatTitle}` }}
+                            </button>
+                            <button class="setup__btn" :disabled="saving" @click="resolveClash('open')">
+                              Move only — leave {{ clash.seatTitle }} open
+                            </button>
+                            <button class="setup__btn" :disabled="saving" @click="clash = null">Back</button>
+                          </div>
+                        </template>
+                        <div v-else class="setup__editbtns">
                           <button class="setup__btn setup__btn--primary" :disabled="saving" @click="saveEdit">
                             {{ saving ? 'Saving…' : 'Save' }}
                           </button>
                           <button class="setup__btn" :disabled="saving" @click="editing = null">Cancel</button>
                         </div>
+                        <p v-if="editErr" class="setup__cellerr">{{ editErr }}</p>
                       </div>
                     </template>
                     <template v-else>
@@ -1487,6 +1561,35 @@ async function saveWarnCfg() {
 .setup__editbtns {
   display: flex;
   gap: 0.35rem;
+}
+
+.setup__editbtns--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.setup__editbtns--stack .setup__btn {
+  white-space: normal;
+  text-align: left;
+  line-height: 1.3;
+}
+
+.setup__clash {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: oklch(0.5 0.13 60);
+  background: var(--color-warning-50, oklch(0.98 0.02 85));
+  border: 1px solid oklch(0.88 0.05 60);
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+}
+
+.setup__cellerr {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: var(--color-danger-500);
 }
 
 .setup__btn {
