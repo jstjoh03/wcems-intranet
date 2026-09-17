@@ -4,12 +4,10 @@ import { useAuthStore } from '@/stores/auth'
 
 /**
  * Lightweight schedule-access probe for global chrome (masthead/drawer)
- * — shows the Scheduling nav entry to exactly the people the module's
- * soft-launch gate admits (editors, supervisors, Setup-listed pilot
- * testers) with two small queries, instead of pulling the whole
- * scheduling store into every page. useSchedule.canAccessModule stays
- * the in-module authority; keep the two predicates in step when the
- * crew-wide gate opens (~Sep 24: every level except 'none').
+ * — one small query instead of pulling the whole scheduling store into
+ * every page. COMPANY-WIDE since 2026-09-17: everyone except explicit
+ * 'none' sees the nav entry. useSchedule.canAccessModule stays the
+ * in-module authority; keep the two predicates in step.
  */
 
 const allowed = ref(false)
@@ -23,28 +21,16 @@ async function load() {
   if (auth.usingDevStub) return // dev derives from the role toggle below
   const uid = auth.appUser?.id
   if (!uid || auth.isKiosk) return
-  const [lvlRes, pilotRes] = await Promise.all([
-    supabase.rpc('sched_level'),
-    supabase.from('sched_settings').select('value').eq('key', 'pilot').maybeSingle(),
-  ])
+  const lvlRes = await supabase.rpc('sched_level')
   const level = (lvlRes.data as string | null) ?? 'member'
   probedLevel.value = level
-  const ids = (pilotRes.data?.value as { user_ids?: unknown } | null)?.user_ids
-  allowed.value =
-    level === 'global_admin' ||
-    level === 'scheduler' ||
-    level === 'supervisor' ||
-    level === 'hr' ||
-    level === 'view_only' ||
-    (Array.isArray(ids) && ids.includes(uid))
+  allowed.value = level !== 'none'
 }
 
 export function useScheduleAccess() {
   void load()
   const auth = useAuthStore()
-  const canSeeSchedule = computed(() =>
-    auth.usingDevStub ? auth.isAdmin || auth.isSupervisor : allowed.value,
-  )
+  const canSeeSchedule = computed(() => (auth.usingDevStub ? true : allowed.value))
   /** The probed sched_level — lets light consumers (profile modal's
    *  Scheduling section) branch on editor/supervisor without booting
    *  the scheduling store. */

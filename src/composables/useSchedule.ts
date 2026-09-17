@@ -730,7 +730,7 @@ async function loadCore(): Promise<void> {
 function seedDevStub(): void {
   settings.value = {
     pay: { period_days: 14, period_anchor: PAY_ANCHOR, workday_start: '06:00', ot_week_hours: 40 },
-    warnings: { consecutive_warn_hours: 60, consecutive_confirm_hours: 72, weekly_warn_hours: 84 },
+    warnings: { consecutive_warn_hours: 60, consecutive_confirm_hours: 72, weekly_warn_hours: 72 },
   }
   const DEV_UNITS: [string, string, string][] = [
     ['S201', 'Station 201 Supervisor', 'Station 201 · Hempstead'],
@@ -1922,7 +1922,7 @@ function warningThresholds() {
   return {
     consecutiveWarn: Number(w.consecutive_warn_hours ?? 60),
     consecutiveConfirm: Number(w.consecutive_confirm_hours ?? 72),
-    weeklyWarn: Number(w.weekly_warn_hours ?? 84),
+    weeklyWarn: Number(w.weekly_warn_hours ?? 72),
     otWeek: Number(p.ot_week_hours ?? 40),
   }
 }
@@ -2078,19 +2078,15 @@ async function hoursCheck(
       message: `${subjectName} would be on duty ${cons} consecutive hours (warning starts at ${t.consecutiveWarn}).`,
     })
   }
-  if (weekHours >= t.weeklyWarn) {
+  /* No "overtime" nag at 40 — normal rotation weeks run 48+ here. One
+     weekly warning past the threshold (72 by default), showing the
+     actual total (Justin, 2026-09-17). */
+  if (weekHours > t.weeklyWarn) {
     warnings.push({
       code: 'weekly',
       hours: wk,
       limit: t.weeklyWarn,
-      message: `${subjectName} would reach ${wk} hours this week (warning starts at ${t.weeklyWarn}).`,
-    })
-  } else if (weekHours > t.otWeek) {
-    warnings.push({
-      code: 'ot',
-      hours: wk,
-      limit: t.otWeek,
-      message: `${subjectName} would be over ${t.otWeek} hours this week — overtime.`,
+      message: `${subjectName} would be at ${wk} hours that week (over ${t.weeklyWarn}).`,
     })
   }
   return { weekHours: wk, periodHours: round1(periodHours), consecutiveHours: cons, warnings }
@@ -4346,33 +4342,15 @@ export function useSchedule() {
   )
   const isGlobalAdmin = computed(() => level.value === 'global_admin')
   const canPageOut = computed(() => canEdit.value || level.value === 'supervisor')
-  /** Pre-launch pilot testers (Setup → Pilot access): named field staff
-   *  get the crew experience before the crew-wide opening, so bugs get
-   *  found by three people instead of eighty. */
-  const isPilotTester = computed(() => {
-    const p = (settings.value['pilot'] ?? {}) as { user_ids?: unknown }
-    const ids = Array.isArray(p.user_ids) ? (p.user_ids as unknown[]) : []
-    const me = auth.appUser?.id
-    return !!me && ids.includes(me)
-  })
   /** HR: payroll surfaces (Time Reports export + Paycom setup card),
    *  no rotation/day editing. */
   const isHr = computed(() => level.value === 'hr')
   /** View-only: every board, zero self-service (no requests/trades). */
   const isViewOnly = computed(() => level.value === 'view_only')
-  /** Soft-launch gate: editors always; supervisors added 2026-09-14 so
-   *  field sups (Brittany testing the crew-side experience) get in
-   *  before the crew-wide opening ~Sep 24. Supervisors get NO edit
-   *  tools — they see the crew view: pickups, requests, trades.
-   *  hr / view_only added 2026-09-17. */
-  const canAccessModule = computed(
-    () =>
-      canEdit.value ||
-      level.value === 'supervisor' ||
-      level.value === 'hr' ||
-      level.value === 'view_only' ||
-      isPilotTester.value,
-  )
+  /** COMPANY-WIDE since 2026-09-17 (Justin: "swap on for company"):
+   *  everyone except explicit 'none' is in. The pilot list no longer
+   *  gates anything. KEEP IN STEP with useScheduleAccess (nav probe). */
+  const canAccessModule = computed(() => level.value !== 'none')
   /** May file requests / offers / claims — everyone in the module
    *  except view-only (RLS enforces the same rule server-side). */
   const canRequest = computed(() => canAccessModule.value && !isViewOnly.value)

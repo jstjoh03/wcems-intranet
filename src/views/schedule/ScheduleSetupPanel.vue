@@ -1033,10 +1033,8 @@ async function saveWarnCfg() {
         <section v-if="sched.isGlobalAdmin.value" class="setup__card">
           <h2 class="setup__h">Pilot access</h2>
           <p class="setup__muted">
-            Pre-launch testers: these members get the crew experience — My schedule, open-shift
-            pickups, requests, trades, notification settings — before the module opens to the
-            whole crew. Clear the list at launch; the crew-wide gate covers everyone from then
-            on.
+            The module is open to the whole company (launched Sep 17) — this pre-launch
+            tester list no longer gates anything and can stay empty.
           </p>
           <div class="setup__rplist">
             <span v-for="id in ptIds" :key="id" class="setup__rpchip">
@@ -1114,11 +1112,11 @@ async function saveWarnCfg() {
               <input v-model.number="wConfirm" type="number" min="0" max="240" class="setup__input" />
             </label>
             <label class="setup__field">
-              <span>Weekly hours — warn</span>
+              <span>Weekly hours — warn (shows the total)</span>
               <input v-model.number="wWeekly" type="number" min="0" max="168" class="setup__input" />
             </label>
             <label class="setup__field">
-              <span>Overtime after (hrs/week)</span>
+              <span>Overtime after (hrs/week — payroll only, no warning)</span>
               <input v-model.number="wOt" type="number" min="0" max="168" class="setup__input" />
             </label>
           </div>
