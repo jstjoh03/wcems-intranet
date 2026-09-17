@@ -805,26 +805,46 @@ export const QUAL_RULE_CREDENTIALS: Record<string, readonly string[]> = {
 async function canFillSeat(
   userId: string,
   seatId: string,
+  subjectName = 'You',
 ): Promise<{ ok: boolean; reason: string | null }> {
   const seat = seats.value.find((s) => s.id === seatId)
   if (!seat) return { ok: true, reason: null }
   const unit = units.value.find((u) => u.id === seat.unitId)
   const person = personById.value.get(userId)
-  const settings = await fetchMemberSettings(userId)
-  if (unit && settings.unitExclusions.includes(unit.id)) {
-    return { ok: false, reason: `You are excluded from ${unit.code}.` }
+  const auth = useAuthStore()
+  /* Overrides/exclusions come from a narrow SECURITY DEFINER rpc, not
+     fetchMemberSettings: members can't read OTHER people's settings
+     rows (RLS protects sms_phone/notify), so a directed trade's
+     target check silently missed saved qualification overrides —
+     the Kim/Fulton bug, 2026-09-17. */
+  let overrides: Record<string, 'allow' | 'deny'> = {}
+  let exclusions: string[] = []
+  if (!auth.usingDevStub) {
+    const res = await supabase.rpc('sched_qual_info', { target: userId })
+    const v = (res.data ?? {}) as {
+      qual_overrides?: Record<string, 'allow' | 'deny'>
+      unit_exclusions?: string[]
+    }
+    overrides = v.qual_overrides ?? {}
+    exclusions = v.unit_exclusions ?? []
   }
-  const override = settings.qualOverrides[seat.qualRule]
+  const self = subjectName === 'You'
+  const isAre = self ? 'are' : 'is'
+  const poss = self ? 'Your' : `${subjectName}'s`
+  if (unit && exclusions.includes(unit.id)) {
+    return { ok: false, reason: `${subjectName} ${isAre} excluded from ${unit.code}.` }
+  }
+  const override = overrides[seat.qualRule]
   if (override === 'allow') return { ok: true, reason: null }
   if (override === 'deny') {
-    return { ok: false, reason: `You are excluded from ${seat.label} seats.` }
+    return { ok: false, reason: `${subjectName} ${isAre} excluded from ${seat.label} seats.` }
   }
   const allowed = QUAL_RULE_CREDENTIALS[seat.qualRule] ?? []
   const cred = person?.credential ?? null
   if (cred && allowed.includes(cred)) return { ok: true, reason: null }
   return {
     ok: false,
-    reason: `Your credential (${cred ?? 'not set'}) does not qualify for this ${seat.label} seat. The Chief can still assign it directly.`,
+    reason: `${poss} credential (${cred ?? 'not set'}) does not qualify for this ${seat.label} seat. The Chief can still assign it directly.`,
   }
 }
 
@@ -2293,7 +2313,11 @@ async function createTradePosting(opts: {
     if (opts.toUserId === me) return 'Pick someone other than yourself.'
     // The target ends up covering the poster's seat either way — check
     // the qualification up front, not after they've agreed.
-    const q = await canFillSeat(opts.toUserId, opts.seatId)
+    const q = await canFillSeat(
+      opts.toUserId,
+      opts.seatId,
+      displayName(opts.toUserId).name || 'They',
+    )
     if (!q.ok) return q.reason
   }
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
