@@ -873,17 +873,10 @@ const msComment = ref('')
    member (they already talked it out — the system catches up). */
 const msTo = ref('')
 
+/* people arrives last-name sorted from the store (personSortKey). */
 const msToCandidates = computed(() =>
-  sched.people.value
-    .filter((p) => p.id !== sched.myUserId.value)
-    .slice()
-    .sort((a, b) => msLastKey(a.fullName).localeCompare(msLastKey(b.fullName))),
+  sched.people.value.filter((p) => p.id !== sched.myUserId.value),
 )
-
-function msLastKey(full: string): string {
-  const parts = full.trim().split(/\s+/)
-  return (parts[parts.length - 1] ?? full).toLowerCase()
-}
 
 watch(
   () => editor.myShift.value,

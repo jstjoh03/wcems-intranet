@@ -41,17 +41,10 @@ const busy = ref(false)
 const err = ref<string | null>(null)
 const done = ref<string | null>(null)
 
+/* people arrives last-name sorted from the store (personSortKey). */
 const sendToCandidates = computed(() =>
-  sched.people.value
-    .filter((p) => p.id !== sched.myUserId.value)
-    .slice()
-    .sort((a, b) => lastNameKey(a.fullName).localeCompare(lastNameKey(b.fullName))),
+  sched.people.value.filter((p) => p.id !== sched.myUserId.value),
 )
-
-function lastNameKey(full: string): string {
-  const parts = full.trim().split(/\s+/)
-  return (parts[parts.length - 1] ?? full).toLowerCase()
-}
 
 const myShifts = ref<UpcomingShift[]>([])
 

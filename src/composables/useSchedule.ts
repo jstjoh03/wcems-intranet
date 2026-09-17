@@ -501,9 +501,13 @@ const people = ref<SchedPerson[]>([])
 const allPeople = ref<SchedPerson[]>([])
 const settings = ref<Record<string, Record<string, unknown>>>({})
 
-function lastNameSortKey(full: string): string {
+/** Roster sort key: surname = everything AFTER the first name, so
+ *  multi-word surnames file where people look ("Justin St John" under
+ *  St John, not John). Exported — every people list sorts with this. */
+export function personSortKey(full: string): string {
   const parts = full.trim().split(/\s+/)
-  return `${(parts[parts.length - 1] ?? full).toLowerCase()} ${full.toLowerCase()}`
+  const surname = parts.length > 1 ? parts.slice(1).join(' ') : full
+  return `${surname.toLowerCase()} ${full.toLowerCase()}`
 }
 
 function rosterHiddenIds(): Set<string> {
@@ -716,7 +720,7 @@ async function loadCore(): Promise<void> {
      the Setup-managed hide list (roster.exclude_user_ids — e.g. the
      medical director) drop out of scheduling pickers entirely.
      allPeople keeps the full set so the Members tab can un-hide. */
-  mapped.sort((a, b) => lastNameSortKey(a.fullName).localeCompare(lastNameSortKey(b.fullName)))
+  mapped.sort((a, b) => personSortKey(a.fullName).localeCompare(personSortKey(b.fullName)))
   allPeople.value = mapped
   applyRosterVisibility()
   level.value = (lvlRes.data as SchedLevel) ?? 'member'

@@ -45,16 +45,9 @@ const myOptionLabel = computed(() => {
   return n ? `${n} (me)` : 'Me'
 })
 
-function lastNameKey(full: string): string {
-  const parts = full.trim().split(/\s+/)
-  return (parts[parts.length - 1] ?? full).toLowerCase()
-}
-
+/* people arrives last-name sorted from the store (personSortKey). */
 const peopleOptions = computed(() =>
-  sched.people.value
-    .filter((p) => p.id !== sched.myUserId.value)
-    .slice()
-    .sort((a, b) => lastNameKey(a.fullName).localeCompare(lastNameKey(b.fullName))),
+  sched.people.value.filter((p) => p.id !== sched.myUserId.value),
 )
 
 /* Open seats on the personal calendar are an invitation to pick up —

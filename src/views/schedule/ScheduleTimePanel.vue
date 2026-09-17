@@ -7,6 +7,7 @@ import {
   payPeriodFor,
   payPeriodList,
   holidayName,
+  personSortKey,
   OFF_LABELS,
   type PayPeriod,
   type TimeSegment,
@@ -124,14 +125,10 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-/** Paycom sorts people by LAST name — every list here follows suit. */
-function lastNameKey(name: string): string {
-  const parts = name.trim().split(/\s+/)
-  return `${parts[parts.length - 1] ?? ''} ${name}`.toLowerCase()
-}
-
+/** Paycom sorts people by LAST name — every list here follows suit
+ *  (personSortKey handles multi-word surnames like St John). */
 function byLast(a: string, b: string): number {
-  return lastNameKey(a).localeCompare(lastNameKey(b))
+  return personSortKey(a).localeCompare(personSortKey(b))
 }
 
 function weekStartFor(iso: string): string {

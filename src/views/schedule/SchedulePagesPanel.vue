@@ -61,7 +61,12 @@ function inGroup(p: SchedPerson, key: string): boolean {
     case 'everyone':
       return true
     case 'supervisors':
-      return p.role === 'supervisor' || cred === 'Supervisor'
+      // leadership blast: field sups + command staff (Chief/Asst/CDO)
+      return (
+        p.role === 'supervisor' ||
+        p.role === 'admin' ||
+        ['Supervisor', 'Chief', 'Assistant Chief', 'CDO'].includes(cred)
+      )
     case 'paramedics':
       return ['P1C', 'P1', 'P2', 'P3', 'P4', 'P2-FTO', 'P3-FTO'].includes(cred)
     case 'aemts':
