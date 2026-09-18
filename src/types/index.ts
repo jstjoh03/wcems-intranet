@@ -532,3 +532,104 @@ export interface PipelineRequirementCompletion {
   source: string
   note: string | null
 }
+
+/* ── Equipment check-out (event gear chain of custody) ─────────────
+   Custody only — PSTrax stays the system of record for the assets.
+   Status is derived from each asset's latest custody event. */
+
+export type EquipmentEventKind =
+  | 'checked_out'
+  | 'delivered'
+  | 'confirmed_present'
+  | 'reported_missing'
+  | 'event_closed'
+  | 'picked_up'
+  | 'returned'
+  | 'canceled'
+  | 'written_off'
+
+/** The custody steps a person records on a check-out (reported_missing
+ *  rides along with confirmed_present; checked_out has its own flow). */
+export type EquipmentActionKind =
+  | 'delivered'
+  | 'canceled'
+  | 'confirmed_present'
+  | 'event_closed'
+  | 'picked_up'
+  | 'returned'
+  | 'written_off'
+
+/** available = on the shelf at Admin · in_transit = headed to the unit ·
+ *  on_unit = on the event truck · missing = crew reported it not found ·
+ *  returning = picked up, headed back to Admin · lost = written off. */
+export type EquipmentStatus =
+  | 'available'
+  | 'in_transit'
+  | 'on_unit'
+  | 'missing'
+  | 'returning'
+  | 'lost'
+
+export interface EquipmentType {
+  id: string
+  name: string
+  sort: number
+  active: boolean
+}
+
+export interface EquipmentAsset {
+  id: string
+  /** PSTrax asset tag — text; leading zeros matter ("00432"). */
+  tag: string
+  name: string
+  typeId: string | null
+  notes: string
+  active: boolean
+  createdAt: string
+}
+
+export interface EquipmentCheckout {
+  id: string
+  /** What the gear is for — the event. */
+  purpose: string
+  /** The unit it's going to. */
+  destination: string
+  eventDate: string | null
+  note: string
+  createdBy: string | null
+  createdByName: string
+  createdAt: string
+  closedAt: string | null
+  assetIds: string[]
+}
+
+export interface EquipmentCustodyEvent {
+  id: string
+  seq: number
+  assetId: string
+  checkoutId: string
+  /** Shared by every per-item row one action wrote. */
+  actionId: string
+  kind: EquipmentEventKind
+  actorId: string | null
+  actorName: string
+  recordedBy: string | null
+  destination: string
+  handedToId: string | null
+  handedToName: string | null
+  note: string
+  photoPath: string | null
+  at: string
+  /** Present when the query embedded the check-out (history/activity). */
+  checkoutPurpose?: string
+  checkoutDestination?: string
+}
+
+export interface EquipmentAssetState {
+  status: EquipmentStatus
+  /** Where it is (or is headed): the unit, or "Admin". */
+  location: string
+  since: string | null
+  checkoutId: string | null
+  lastEvent: EquipmentCustodyEvent | null
+}

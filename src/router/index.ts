@@ -257,6 +257,39 @@ const routes: RouteRecordRaw[] = [
     name: 'skills-evaluate',
     component: () => import('@/views/SkillsEvaluateView.vue'),
   },
+  /* ── Event equipment check-out (chain of custody) ────────────────
+     Soft-launched: reachable by URL only, no nav entry until approved.
+     The board, check-out records, and item pages are open to everyone
+     signed in; check-out and the registry are for equipment handlers
+     (supervisors, admins, granted staff). RLS + RPCs enforce it all
+     server-side. "new" is a static segment, so it outranks :id. */
+  {
+    path: '/equipment',
+    name: 'equipment',
+    component: () => import('@/views/equipment/EquipmentBoardView.vue'),
+  },
+  {
+    path: '/equipment/checkout/new',
+    name: 'equipment-new',
+    component: () => import('@/views/equipment/EquipmentNewCheckoutView.vue'),
+    meta: { equipmentHandler: true },
+  },
+  {
+    path: '/equipment/checkout/:id',
+    name: 'equipment-checkout',
+    component: () => import('@/views/equipment/EquipmentCheckoutView.vue'),
+  },
+  {
+    path: '/equipment/item/:tag',
+    name: 'equipment-item',
+    component: () => import('@/views/equipment/EquipmentItemView.vue'),
+  },
+  {
+    path: '/equipment/manage',
+    name: 'equipment-manage',
+    component: () => import('@/views/equipment/EquipmentManageView.vue'),
+    meta: { equipmentHandler: true },
+  },
   /* ── Protocols section (absorbed standalone app) ─────────────────
      Chromeless: these views are a self-contained full-viewport dark
      app (own header, 100dvh scroll) — the portal chrome stays out of
@@ -459,6 +492,13 @@ router.beforeEach(async (to) => {
 
   if (to.meta.adminOnly && !auth.isAdmin) {
     return { name: 'not-found' }
+  }
+
+  /* Equipment check-out + registry: supervisors/admins by role, plus
+     the equipment_handlers grant list (needs a fetch, so it's lazy). */
+  if (to.meta.equipmentHandler) {
+    const { canHandleEquipment } = await import('@/composables/useEquipment')
+    if (!(await canHandleEquipment())) return { name: 'equipment' }
   }
 
   /* Training management (/training/manage/*) — gated by the
