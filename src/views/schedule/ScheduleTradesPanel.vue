@@ -352,11 +352,21 @@ async function decline(o: TradeOffer) {
   if (e) err.value = e
 }
 
+/* Two-tap withdraw — a single stray tap silently pulled Kaleb's offer
+   while the poster's email still said one was waiting (day-2). */
+const withdrawArm = ref<string | null>(null)
+
 async function withdraw(o: TradeOffer) {
+  if (withdrawArm.value !== o.id) {
+    withdrawArm.value = o.id
+    return
+  }
+  withdrawArm.value = null
   busy.value = true
   const e = await sched.withdrawOffer(o.id)
   busy.value = false
   if (e) err.value = e
+  else done.value = 'Offer withdrawn.'
 }
 
 async function cancelPosting(r: SchedRequest) {
@@ -496,7 +506,9 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
         </div>
         <div v-else-if="myOfferOn(r)" class="tr__cardfoot">
           <span class="tr__mine">Your offer is in — waiting on {{ posterName(r) }} to accept.</span>
-          <button class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">Withdraw</button>
+          <button class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">
+            {{ withdrawArm === myOfferOn(r)!.id ? 'Really withdraw?' : 'Withdraw' }}
+          </button>
         </div>
         <div v-else class="tr__cardfoot">
           <button
@@ -577,7 +589,9 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
           </div>
           <div v-if="myOfferOn(r)" class="tr__cardfoot">
             <span class="tr__mine">Your {{ r.type === 'giveaway' ? 'claim' : 'offer' }} is in.</span>
-            <button class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">Withdraw</button>
+            <button class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">
+              {{ withdrawArm === myOfferOn(r)!.id ? 'Really withdraw?' : 'Withdraw' }}
+            </button>
           </div>
           <div v-else-if="offeringOn === r.id" class="tr__offerform">
             <label class="tr__field">

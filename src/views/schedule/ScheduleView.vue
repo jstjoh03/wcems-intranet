@@ -39,10 +39,11 @@ type Tab =
   | 'time'
   | 'members'
   | 'setup'
-/* Phones open on the personal calendar (Aladtec habit — your days at a
-   glance); the full board is one tab away. Desktop keeps Month. */
+/* Phones open on the DAY board — crews voted for the full picture of
+   who's on every truck today (2026-09-18); My schedule is one tab
+   over. Desktop keeps Month. */
 const isPhone = window.matchMedia('(max-width: 900px)').matches
-const tab = ref<Tab>(isPhone ? 'mine' : 'month')
+const tab = ref<Tab>(isPhone ? 'day' : 'month')
 const dateIso = ref(todayCentralIso())
 
 /* Members and Setup are editor tools — non-editors (supervisors during
@@ -161,10 +162,10 @@ onMounted(async () => {
     tab.value = 'day'
     void router.replace({ query: { ...route.query, v: undefined } })
   }
-  // Requests load with the shell (not just on the Requests tab) so
-  // pending pickups/time-off show on the boards and the tab badge is
-  // right from the first paint; realtime keeps both fresh after that.
-  await Promise.all([loadVisibleRange(), sched.loadRequests()])
+  // Requests + trade offers load with the shell (not just on their
+  // tabs) so pending rows show on the boards and the tab badges are
+  // right from the first paint; realtime keeps them fresh after that.
+  await Promise.all([loadVisibleRange(), sched.loadRequests(), sched.loadTradeOffers()])
   sched.startRealtime()
   // Page-out deep link: /schedule?d=<date>&pickup=<entryId> opens the
   // pickup modal for that open entry straight from the email/push.
@@ -200,14 +201,54 @@ async function openPickupLink(entryId: string) {
   })
 }
 
-/** Undecided requests → red badge on the Requests tab (editors). */
+/** ACTIONABLE requests → red badge on the Requests tab (editors).
+ *  Matches the queue: trades/giveaways only count once both members
+ *  have agreed. */
 const pendingCount = computed(() =>
   sched.canEdit.value
     ? sched.requests.value.filter(
-        (r) => r.status === 'pending' || r.status === 'partner_accepted',
+        (r) =>
+          r.status === 'partner_accepted' ||
+          (r.status === 'pending' && r.type !== 'trade' && r.type !== 'giveaway'),
       ).length
     : 0,
 )
+
+/** Actions waiting on ME → red badge on the Trades tab (everyone):
+ *  directed requests in my inbox + offers awaiting my accept/decline
+ *  on my own postings. Points people at where the ball is in their
+ *  court, like the Requests badge does for admin. */
+const tradesCount = computed(() => {
+  const me = sched.myUserId.value
+  if (!me || !sched.canRequest.value) return 0
+  const inbox = sched.requests.value.filter(
+    (r) =>
+      (r.type === 'trade' || r.type === 'giveaway') &&
+      r.status === 'pending' &&
+      r.counterpartyId === me &&
+      r.requesterId !== me,
+  ).length
+  const myPostingIds = new Set(
+    sched.requests.value
+      .filter(
+        (r) =>
+          (r.type === 'trade' || r.type === 'giveaway') &&
+          r.status === 'pending' &&
+          r.requesterId === me,
+      )
+      .map((r) => r.id),
+  )
+  const offers = sched.tradeOffers.value.filter(
+    (o) => o.status === 'queued' && myPostingIds.has(o.requestId) && o.userId !== me,
+  ).length
+  return inbox + offers
+})
+
+function badgeFor(key: Tab): number {
+  if (key === 'requests') return pendingCount.value
+  if (key === 'trades') return tradesCount.value
+  return 0
+}
 
 watch(monthAnchor, () => {
   void loadVisibleRange()
@@ -257,8 +298,8 @@ watch(dateIso, (v) => {
               @click="tab = t.key"
             >
               {{ t.label
-              }}<span v-if="t.key === 'requests' && pendingCount > 0" class="sched__tab-badge">{{
-                pendingCount
+              }}<span v-if="badgeFor(t.key) > 0" class="sched__tab-badge">{{
+                badgeFor(t.key)
               }}</span>
             </button>
           </template>

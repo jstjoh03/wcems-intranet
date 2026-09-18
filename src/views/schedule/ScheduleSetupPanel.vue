@@ -182,12 +182,6 @@ async function resolveClash(resolution: 'swap' | 'open') {
   editing.value = null
 }
 
-interface TplRow {
-  seat: SchedSeat
-  unitCode: string
-  firstOfUnit: boolean
-}
-
 const QUAL_LABELS: Record<string, string> = {
   p2: 'P2',
   aemt_or_higher: 'AEMT or higher',
@@ -196,13 +190,16 @@ const QUAL_LABELS: Record<string, string> = {
   any: 'any',
 }
 
-const tplRows = computed<TplRow[]>(() => {
-  const out: TplRow[] = []
+/* Grouped by unit with a full-width band row per unit — per-person
+   zebra wasn't enough to find a truck when shuffling assignments
+   (Justin, day-2). */
+const tplGroups = computed(() => {
+  const out: { unit: (typeof sched.units.value)[number]; seats: SchedSeat[] }[] = []
   for (const u of sched.units.value.filter((x) => x.active)) {
     const seats = sched.seats.value
       .filter((s) => s.unitId === u.id && s.active)
       .sort((a, b) => a.sortOrder - b.sortOrder)
-    seats.forEach((seat, i) => out.push({ seat, unitCode: u.code, firstOfUnit: i === 0 }))
+    if (seats.length > 0) out.push({ unit: u, seats })
   }
   return out
 })
@@ -769,18 +766,20 @@ async function saveWarnCfg() {
                 </tr>
               </thead>
               <tbody>
-                <tr
-                  v-for="row in tplRows"
-                  :key="row.seat.id"
-                  :class="{ 'setup__tr--unit': row.firstOfUnit }"
-                >
+                <template v-for="g in tplGroups" :key="g.unit.id">
+                <tr class="setup__unitband">
+                  <td colspan="4">
+                    <span class="setup__unitband-code">{{ g.unit.code }}</span>
+                    <span class="setup__unitband-label">{{ g.unit.label }}</span>
+                  </td>
+                </tr>
+                <tr v-for="seat in g.seats" :key="seat.id">
                   <td class="setup__seatcell">
-                    <span class="setup__unitcode">{{ row.unitCode }}</span>
-                    <span class="setup__seatlabel">{{ row.seat.label }}</span>
-                    <span class="setup__qual">qual: {{ QUAL_LABELS[row.seat.qualRule] ?? row.seat.qualRule }}</span>
+                    <span class="setup__seatlabel">{{ seat.label }}</span>
+                    <span class="setup__qual">qual: {{ QUAL_LABELS[seat.qualRule] ?? seat.qualRule }}</span>
                   </td>
                   <td v-for="p in PLATOONS" :key="p" class="setup__cell">
-                    <template v-if="editing && editing.seatId === row.seat.id && editing.platoon === p">
+                    <template v-if="editing && editing.seatId === seat.id && editing.platoon === p">
                       <div class="setup__editcell">
                         <select v-model="editUserId" class="setup__select">
                           <option value="">— open seat —</option>
@@ -822,11 +821,17 @@ async function saveWarnCfg() {
                       </div>
                     </template>
                     <template v-else>
-                      <button class="setup__cellbtn" @click="startEdit(row.seat.id, p)">
-                        <span v-if="occupantName(row.seat.id, p)">{{ occupantName(row.seat.id, p) }}</span>
-                        <span v-else class="setup__open">Open</span>
+                      <button
+                        class="setup__cellbtn"
+                        :class="{ 'setup__cellbtn--open': !occupantName(seat.id, p) }"
+                        :title="occupantName(seat.id, p) ? 'Click to reassign this seat' : 'Click to assign this seat'"
+                        @click="startEdit(seat.id, p)"
+                      >
+                        <span v-if="occupantName(seat.id, p)" class="setup__cellname">{{ occupantName(seat.id, p) }}</span>
+                        <span v-else class="setup__open">Open — assign</span>
+                        <svg class="setup__editglyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
                         <span
-                          v-for="up in upcoming(row.seat.id, p)"
+                          v-for="up in upcoming(seat.id, p)"
                           :key="up.id"
                           class="setup__upcoming"
                         >
@@ -837,6 +842,7 @@ async function saveWarnCfg() {
                     </template>
                   </td>
                 </tr>
+                </template>
               </tbody>
             </table>
           </div>
@@ -1592,22 +1598,35 @@ async function saveWarnCfg() {
   vertical-align: top;
 }
 
-.setup__tr--unit td {
-  border-top: 1px solid var(--color-line);
+/* Unit band rows: the same navy identity as the boards, so a truck is
+   findable at a glance while shuffling assignments. */
+tr.setup__unitband td {
+  background: linear-gradient(180deg, var(--color-brand-700), var(--color-brand-800)) !important;
+  color: white;
+  padding: 0.32rem 0.6rem;
+  border-top: 0;
+}
+
+.setup__unitband-code {
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+}
+
+.setup__unitband-label {
+  font-size: 0.72rem;
+  color: oklch(0.85 0.04 86.8);
+  margin-left: 0.5rem;
 }
 
 .setup__seatcell {
   white-space: nowrap;
-}
-
-.setup__unitcode {
-  font-weight: 700;
-  color: var(--color-brand-700);
-  margin-right: 0.35rem;
+  padding-left: 0.9rem !important;
 }
 
 .setup__seatlabel {
   color: var(--color-ink);
+  font-weight: 600;
 }
 
 .setup__qual {
@@ -1616,22 +1635,52 @@ async function saveWarnCfg() {
   color: var(--color-muted);
 }
 
+/* Occupant cells LOOK like buttons now — border, surface, hover lift,
+   and a pencil glyph (names alone didn't read as clickable). */
 .setup__cellbtn {
-  border: 0;
-  background: transparent;
+  position: relative;
+  border: 1px solid var(--color-line);
+  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft));
+  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.07);
   font: inherit;
   color: var(--color-ink);
-  padding: 0.1rem 0.3rem;
-  margin: -0.1rem -0.3rem;
-  border-radius: 6px;
+  padding: 0.3rem 1.6rem 0.3rem 0.5rem;
+  border-radius: 8px;
   cursor: pointer;
   text-align: left;
   display: block;
   width: 100%;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .setup__cellbtn:hover {
-  background: var(--color-surface-sunk);
+  border-color: var(--color-brand-300);
+  box-shadow: 0 2px 6px oklch(0.3 0.03 260 / 0.14);
+}
+
+.setup__cellbtn--open {
+  border-style: dashed;
+  border-color: oklch(0.82 0.08 27);
+  background: oklch(0.995 0.004 27);
+}
+
+.setup__cellname {
+  font-weight: 500;
+}
+
+.setup__editglyph {
+  position: absolute;
+  top: 0.42rem;
+  right: 0.45rem;
+  width: 11px;
+  height: 11px;
+  color: var(--color-muted);
+  opacity: 0.7;
+}
+
+.setup__cellbtn:hover .setup__editglyph {
+  color: var(--color-brand-700);
+  opacity: 1;
 }
 
 .setup__open {

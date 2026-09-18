@@ -977,6 +977,7 @@ async function loadRequests(): Promise<void> {
 let liveChannel: ReturnType<typeof supabase.channel> | null = null
 let entriesReloadTimer: number | undefined
 let requestsReloadTimer: number | undefined
+let offersReloadTimer: number | undefined
 
 /** Subscribe once per session: entry/request changes made anywhere —
  *  another device, another member — reload the open boards and the
@@ -1005,6 +1006,16 @@ function startRealtime(): void {
         window.clearTimeout(requestsReloadTimer)
         requestsReloadTimer = window.setTimeout(() => {
           void loadRequests()
+        }, 400)
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'sched_trade_offers' },
+      () => {
+        window.clearTimeout(offersReloadTimer)
+        offersReloadTimer = window.setTimeout(() => {
+          void loadTradeOffers()
         }, 400)
       },
     )
