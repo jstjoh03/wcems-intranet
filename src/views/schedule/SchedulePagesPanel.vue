@@ -77,7 +77,7 @@ function inGroup(p: SchedPerson, key: string): boolean {
     case 'paramedics':
       return ['P1C', 'P1', 'P2', 'P3', 'P4', 'P2-FTO', 'P3-FTO'].includes(cred)
     case 'aemts':
-      return cred === 'AEMT'
+      return cred === 'AEMT' || cred === 'AEMT-FTO'
     case 'emts':
       return cred === 'EMT' || cred === 'EMT-FTO'
     case 'ftos':

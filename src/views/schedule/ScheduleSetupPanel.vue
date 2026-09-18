@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -77,6 +77,16 @@ function logWhen(at: string): string {
 const editing = ref<{ seatId: string; platoon: Platoon } | null>(null)
 const editUserId = ref('')
 const editFrom = ref(todayCentralIso())
+/* Combobox picker — one click opens the cell with the search box
+   focused; type to filter, click a row (or Enter) to pick. An empty
+   box means "open seat". */
+const pickQuery = ref('')
+const pickInput = ref<HTMLInputElement | null>(null)
+/* Function ref: a plain `ref` attr inside v-for collects an ARRAY, and
+   only one edit cell ever renders — bind the element directly. */
+function setPickInput(el: unknown) {
+  pickInput.value = (el as HTMLInputElement | null) ?? null
+}
 const saving = ref(false)
 const err = ref<string | null>(null)
 /* Errors from the cell editor show IN the cell — the shared `err` at
@@ -93,7 +103,11 @@ const clash = ref<{
   displacedName: string | null
 } | null>(null)
 
-watch([editUserId, editFrom], () => {
+/* Typing or a date change invalidates a shown clash card / error.
+   (Keyed off pickQuery, NOT editUserId — saveEdit assigns editUserId
+   right before setting `clash`, and a watch there would wipe the fresh
+   clash card on the next tick.) */
+watch([pickQuery, editFrom], () => {
   clash.value = null
   editErr.value = null
 })
@@ -125,14 +139,61 @@ function upcoming(seatId: string, platoon: Platoon) {
 function startEdit(seatId: string, platoon: Platoon) {
   editing.value = { seatId, platoon }
   editUserId.value = currentOccupant(seatId, platoon) ?? ''
+  pickQuery.value = editUserId.value
+    ? (sched.personById.value.get(editUserId.value)?.fullName ?? '')
+    : ''
   editFrom.value = todayCentralIso()
   err.value = null
   editErr.value = null
   clash.value = null
+  void nextTick(() => {
+    pickInput.value?.focus()
+    pickInput.value?.select()
+  })
+}
+
+const pickMatches = computed(() => {
+  const q = pickQuery.value.trim().toLowerCase()
+  if (!q) return sched.people.value
+  return sched.people.value.filter((p) => p.fullName.toLowerCase().includes(q))
+})
+
+/** '' = open seat, an id = that member, null = text doesn't name anyone yet. */
+const pickedId = computed<string | null>(() => {
+  const q = pickQuery.value.trim()
+  if (q === '') return ''
+  const cur = editUserId.value
+  if (cur && (sched.personById.value.get(cur)?.fullName ?? '') === q) return cur
+  const exact = sched.people.value.find((p) => p.fullName.toLowerCase() === q.toLowerCase())
+  return exact ? exact.id : null
+})
+
+function pick(id: string) {
+  editUserId.value = id
+  pickQuery.value = id ? (sched.personById.value.get(id)?.fullName ?? '') : ''
+}
+
+/** Enter: resolved pick saves; otherwise adopt the top match. */
+function pickEnter() {
+  if (pickedId.value !== null) {
+    void saveEdit()
+    return
+  }
+  const first = pickMatches.value[0]
+  if (first) pick(first.id)
 }
 
 async function saveEdit() {
   if (!editing.value) return
+  const target = pickedId.value ?? (pickMatches.value.length === 1 ? pickMatches.value[0]!.id : null)
+  if (target === null) {
+    editErr.value =
+      pickMatches.value.length === 0
+        ? 'No one matches that name — pick from the list.'
+        : 'More than one match — keep typing or click a name.'
+    return
+  }
+  editUserId.value = target
   editErr.value = null
   clash.value = null
   const { seatId, platoon } = editing.value
@@ -761,7 +822,7 @@ async function saveWarnCfg() {
                 <tr>
                   <th class="setup__th-seat">Seat</th>
                   <th v-for="p in PLATOONS" :key="p" class="setup__th" :data-platoon="p">
-                    {{ p }} Shift
+                    <span class="setup__shiftchip" :data-platoon="p"><span class="setup__shiftdot" />{{ p }} Shift</span>
                   </th>
                 </tr>
               </thead>
@@ -778,15 +839,42 @@ async function saveWarnCfg() {
                     <span class="setup__seatlabel">{{ seat.label }}</span>
                     <span class="setup__qual">qual: {{ QUAL_LABELS[seat.qualRule] ?? seat.qualRule }}</span>
                   </td>
-                  <td v-for="p in PLATOONS" :key="p" class="setup__cell">
+                  <td v-for="p in PLATOONS" :key="p" class="setup__cell" :data-platoon="p">
                     <template v-if="editing && editing.seatId === seat.id && editing.platoon === p">
                       <div class="setup__editcell">
-                        <select v-model="editUserId" class="setup__select">
-                          <option value="">— open seat —</option>
-                          <option v-for="person in sched.people.value" :key="person.id" :value="person.id">
-                            {{ person.fullName }}
-                          </option>
-                        </select>
+                        <input
+                          :ref="setPickInput"
+                          v-model="pickQuery"
+                          type="text"
+                          class="setup__pickinput"
+                          placeholder="Type a name…"
+                          autocomplete="off"
+                          @keydown.enter.prevent="pickEnter"
+                          @keydown.esc.prevent="editing = null"
+                        />
+                        <div class="setup__picklist">
+                          <button
+                            type="button"
+                            class="setup__pickrow setup__pickrow--openseat"
+                            :class="{ 'setup__pickrow--sel': pickedId === '' }"
+                            @mousedown.prevent="pick('')"
+                          >
+                            — Open seat —
+                          </button>
+                          <button
+                            v-for="person in pickMatches"
+                            :key="person.id"
+                            type="button"
+                            class="setup__pickrow"
+                            :class="{ 'setup__pickrow--sel': pickedId === person.id }"
+                            @mousedown.prevent="pick(person.id)"
+                          >
+                            {{ person.fullName }}<span v-if="person.credential" class="setup__pickcred"> - {{ person.credential }}</span>
+                          </button>
+                          <p v-if="pickMatches.length === 0" class="setup__pickempty">
+                            No one matches "{{ pickQuery }}"
+                          </p>
+                        </div>
                         <label class="setup__from">
                           <span>Effective</span>
                           <input v-model="editFrom" type="date" class="setup__date" />
@@ -848,8 +936,9 @@ async function saveWarnCfg() {
           </div>
 
           <p class="setup__foot">
-            Click any cell to reassign with an <strong>effective date</strong> (earlier days keep
-            the previous assignment; a vacancy posts as open seats automatically). Seat
+            Click any cell and <strong>start typing a name</strong> to reassign with an
+            <strong>effective date</strong> (earlier days keep the previous assignment; a vacancy
+            posts as open seats automatically). Clear the box to leave the seat open. Seat
             qualifications enforce from the clinical pipeline.
           </p>
         </section>
@@ -1564,7 +1653,11 @@ async function saveWarnCfg() {
 
 .setup__table {
   width: 100%;
-  border-collapse: collapse;
+  /* separate (not collapse): collapsed borders detach from sticky
+     header cells in Chrome, so the shift color bars would stay behind
+     while the header scrolled. */
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.85rem;
 }
 
@@ -1578,6 +1671,27 @@ async function saveWarnCfg() {
   color: var(--color-muted);
   padding: 0.35rem 0.5rem;
   border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface);
+}
+
+/* Shift headers wear the full platoon colors — they were quiet grey
+   text before and got lost while scrolling the table. */
+.setup__shiftchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.setup__shiftdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .setup__th[data-platoon='A'] {
@@ -1590,6 +1704,65 @@ async function saveWarnCfg() {
 
 .setup__th[data-platoon='C'] {
   border-top: 3px solid oklch(0.55 0.15 150);
+}
+
+.setup__th[data-platoon='A'] .setup__shiftchip {
+  background: oklch(0.93 0.06 27);
+  color: oklch(0.45 0.19 27);
+}
+
+.setup__th[data-platoon='B'] .setup__shiftchip {
+  background: oklch(0.93 0.05 262);
+  color: oklch(0.42 0.16 262);
+}
+
+.setup__th[data-platoon='C'] .setup__shiftchip {
+  background: oklch(0.93 0.06 148);
+  color: oklch(0.4 0.14 148);
+}
+
+/* Every occupant cell carries its shift color — a faint column wash
+   plus a solid left edge on the button — so you always know which
+   shift you are editing, however far down the table you are. */
+.setup__cell[data-platoon='A'] {
+  background: oklch(0.55 0.2 27 / 0.04);
+}
+
+.setup__cell[data-platoon='B'] {
+  background: oklch(0.5 0.16 262 / 0.04);
+}
+
+.setup__cell[data-platoon='C'] {
+  background: oklch(0.55 0.15 148 / 0.045);
+}
+
+.setup__cell[data-platoon='A'] .setup__cellbtn {
+  border-left: 3px solid oklch(0.6 0.19 27);
+}
+
+.setup__cell[data-platoon='B'] .setup__cellbtn {
+  border-left: 3px solid oklch(0.55 0.15 262);
+}
+
+.setup__cell[data-platoon='C'] .setup__cellbtn {
+  border-left: 3px solid oklch(0.58 0.14 148);
+}
+
+/* Desktop: the header row (Seat / A / B / C chips) pins to the top of
+   the viewport while the table scrolls (the portal nav scrolls away
+   with the masthead, so nothing sits above it). Phone keeps
+   overflow-x scrolling instead, where sticky can't apply. */
+@media (min-width: 901px) {
+  .setup__scroll {
+    overflow-x: visible;
+  }
+
+  .setup__table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    box-shadow: 0 2px 4px oklch(0.3 0.03 260 / 0.08);
+  }
 }
 
 .setup__table td {
@@ -1699,7 +1872,70 @@ tr.setup__unitband td {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  min-width: 185px;
+  min-width: 210px;
+}
+
+/* Type-to-search member picker (replaced the two-click select). */
+.setup__pickinput {
+  font: inherit;
+  font-size: 0.84rem;
+  padding: 0.32rem 0.45rem;
+  border: 1px solid var(--color-brand-300);
+  border-radius: 7px;
+  background: var(--color-surface);
+  width: 100%;
+}
+
+.setup__picklist {
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: var(--color-surface);
+  max-height: 170px;
+  overflow-y: auto;
+  box-shadow: var(--shadow-sm);
+}
+
+.setup__pickrow {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.3rem 0.5rem;
+  border: 0;
+  border-bottom: 1px solid var(--color-line-soft);
+  background: transparent;
+  cursor: pointer;
+}
+
+.setup__pickrow:last-of-type {
+  border-bottom: 0;
+}
+
+.setup__pickrow:hover {
+  background: var(--color-surface-soft);
+}
+
+.setup__pickrow--sel {
+  background: oklch(0.95 0.02 260);
+  font-weight: 600;
+}
+
+.setup__pickrow--openseat {
+  color: var(--color-danger-500);
+  font-weight: 600;
+}
+
+.setup__pickcred {
+  color: var(--color-muted);
+  font-weight: 400;
+}
+
+.setup__pickempty {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  padding: 0.3rem 0.5rem;
+  margin: 0;
 }
 
 .setup__select,

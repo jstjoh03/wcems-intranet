@@ -776,7 +776,7 @@ function seedDevStub(): void {
 
 export const INTERNAL_CREDENTIALS = [
   'Chief', 'Assistant Chief', 'CDO', 'Supervisor',
-  'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'P4', 'EMT-FTO', 'P2-FTO', 'P3-FTO',
+  'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'P4', 'EMT-FTO', 'AEMT-FTO', 'P2-FTO', 'P3-FTO',
 ] as const
 
 /** Command staff + P4 hold any seat (Justin, 2026-09-17). */
@@ -790,7 +790,7 @@ const ANY_SEAT_CREDENTIALS = ['Chief', 'Assistant Chief', 'CDO', 'P4', 'Supervis
  *  list. */
 export const QUAL_RULE_CREDENTIALS: Record<string, readonly string[]> = {
   p2: ['P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
-  aemt_or_higher: ['AEMT', 'P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
+  aemt_or_higher: ['AEMT', 'AEMT-FTO', 'P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
   supervisor: [...ANY_SEAT_CREDENTIALS],
   any_field: [...INTERNAL_CREDENTIALS],
   any: [...INTERNAL_CREDENTIALS],

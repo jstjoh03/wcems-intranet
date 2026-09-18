@@ -104,6 +104,13 @@ const weeks = computed<Cell[][]>(() => {
 
 <template>
   <div class="mb" :class="{ 'mb--mine': props.mine }">
+    <div class="mb__legend">
+      <span class="mb__platoon" data-platoon="A"><span class="mb__dot" />A Shift</span>
+      <span class="mb__platoon" data-platoon="B"><span class="mb__dot" />B Shift</span>
+      <span class="mb__platoon" data-platoon="C"><span class="mb__dot" />C Shift</span>
+      <span class="mb__legend-note">48/96 rotation · 0600 changeover</span>
+    </div>
+
     <div class="mb__weekdays">
       <span v-for="w in WEEKDAYS" :key="w" class="mb__weekday">{{ w }}</span>
     </div>
@@ -367,12 +374,6 @@ const weeks = computed<Cell[][]>(() => {
       </div>
     </div>
 
-    <div class="mb__legend">
-      <span class="mb__platoon" data-platoon="A"><span class="mb__dot" />A Shift</span>
-      <span class="mb__platoon" data-platoon="B"><span class="mb__dot" />B Shift</span>
-      <span class="mb__platoon" data-platoon="C"><span class="mb__dot" />C Shift</span>
-      <span class="mb__legend-note">48/96 rotation · 0600 changeover</span>
-    </div>
   </div>
 </template>
 
@@ -809,7 +810,7 @@ const weeks = computed<Cell[][]>(() => {
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
-  margin-top: 0.6rem;
+  margin-bottom: 0.6rem;
 }
 
 .mb__legend-note {
