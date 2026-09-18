@@ -10,6 +10,8 @@ import {
   Warehouse,
   Undo2,
   CircleOff,
+  LogIn,
+  LogOut,
   X,
   ChevronRight,
   ImageIcon,
@@ -19,6 +21,7 @@ import {
   HOME_LOCATION,
   KIND_LABEL,
   formatWhen,
+  placeName,
   pluralize,
   type CustodyAction,
 } from '@/lib/equipment'
@@ -49,24 +52,32 @@ const ICONS: Record<EquipmentEventKind, Component> = {
   returned: Warehouse,
   canceled: Undo2,
   written_off: CircleOff,
+  shift_start: LogIn,
+  shift_end: LogOut,
 }
 
 watch(
-  () => props.actions.map((a) => a.photoPath),
+  () => props.actions.flatMap((a) => [a.photoPath, a.signaturePath]),
   (paths) => void ensurePhotoUrls(paths),
   { immediate: true },
 )
 
+function tally(a: CustodyAction): string {
+  if (!a.missingAssetIds.length) return `${pluralize(a.assetIds.length, 'item')} here`
+  if (!a.assetIds.length) return `${pluralize(a.missingAssetIds.length, 'item')} not found`
+  return `${a.assetIds.length} here, ${a.missingAssetIds.length} not found`
+}
+
 function detail(a: CustodyAction): string {
   switch (a.kind) {
     case 'checked_out':
-      return `headed to ${a.destination}`
+      return `headed to ${placeName(a.destination)}`
     case 'delivered':
-      return a.handedToName ? `handed to ${a.handedToName}` : 'left on the unit'
+      return a.handedToName ? `handed to ${a.handedToName}` : 'left on the truck'
     case 'confirmed_present':
-      return a.missingAssetIds.length
-        ? `${a.assetIds.length} here, ${a.missingAssetIds.length} not found`
-        : `${pluralize(a.assetIds.length, 'item')} here`
+    case 'shift_start':
+    case 'shift_end':
+      return tally(a)
     case 'reported_missing':
       return `${pluralize(a.assetIds.length, 'item')} not found`
     case 'event_closed':
@@ -123,6 +134,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
           <span v-for="id in a.missingAssetIds" :key="`m-${id}`" class="eq-tag eqt__tag--missing">
             {{ tagOf(id) }} not found
           </span>
+        </div>
+        <div v-if="a.signaturePath" class="eqt__sig">
+          <span class="eqt__sig-label">Signed for by {{ a.handedToName }}</span>
+          <img
+            v-if="photoUrls[a.signaturePath]"
+            :src="photoUrls[a.signaturePath]"
+            :alt="`Signature: ${a.handedToName}`"
+            loading="lazy"
+          />
         </div>
         <button
           v-if="a.photoPath"
@@ -279,6 +299,30 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   color: oklch(0.48 0.18 25);
   background: var(--color-danger-50);
   border-color: oklch(0.88 0.06 25);
+}
+.eqt__sig {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 9px;
+  padding: 8px 12px 6px;
+  background: white;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+}
+.eqt__sig-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.eqt__sig img {
+  display: block;
+  width: 180px;
+  height: 48px;
+  object-fit: contain;
+  object-position: left center;
 }
 .eqt__photo {
   display: block;

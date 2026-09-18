@@ -31,8 +31,9 @@ import type { EquipmentAsset } from '@/types'
 /**
  * /equipment/manage — the registry, editable in-app by equipment
  * handlers (route guard + RLS): items (add, edit, retire, bulk paste
- * from Excel/PSTrax), item types (rename, reorder, retire), and — for
- * admins — who else may check equipment out.
+ * from Excel/PSTrax), item types (rename, reorder, retire), the truck
+ * list check-outs go to, and — for admins — who else may check
+ * equipment out.
  */
 
 const route = useRoute()
@@ -41,6 +42,7 @@ const {
   ready,
   assets,
   types,
+  trucks,
   handlerIds,
   people,
   isAdmin,
@@ -52,14 +54,20 @@ const {
   saveType,
   moveType,
   deleteType,
+  saveTruck,
+  moveTruck,
+  deleteTruck,
   addHandler,
   removeHandler,
   loadPeople,
   personName,
 } = useEquipment()
 
-type Tab = 'items' | 'types' | 'access'
-const tab = ref<Tab>(route.query.tab === 'types' || route.query.tab === 'access' ? route.query.tab : 'items')
+type Tab = 'items' | 'types' | 'trucks' | 'access'
+const TABS: Tab[] = ['items', 'types', 'trucks', 'access']
+const tab = ref<Tab>(
+  TABS.includes(route.query.tab as Tab) ? (route.query.tab as Tab) : 'items',
+)
 watch(tab, (t) => {
   router.replace({ query: { ...route.query, tab: t === 'items' ? undefined : t, edit: undefined } })
   if (t === 'access') void loadPeople()
@@ -327,6 +335,64 @@ async function move(id: string, dir: -1 | 1) {
   typeErr.value = res.ok ? null : res.error
 }
 
+/* ── Trucks ────────────────────────────────────────────────────────── */
+const sortedTrucks = computed(() => [...trucks.value].sort((a, b) => a.sort - b.sort))
+const truckLabels = ref<Record<string, string>>({})
+watch(
+  trucks,
+  (list) => {
+    truckLabels.value = Object.fromEntries(list.map((t) => [t.id, t.label]))
+  },
+  { immediate: true },
+)
+const newTruck = ref('')
+const truckErr = ref<string | null>(null)
+
+async function renameTruck(id: string) {
+  const t = trucks.value.find((x) => x.id === id)
+  const label = (truckLabels.value[id] ?? '').trim()
+  if (!t || label === t.label) return
+  const res = await saveTruck(id, { label, active: t.active })
+  if (!res.ok) {
+    truckErr.value = res.error
+    truckLabels.value[id] = t.label
+    return
+  }
+  truckErr.value = null
+  say(`Renamed to ${label}`)
+}
+
+async function toggleTruck(id: string) {
+  const t = trucks.value.find((x) => x.id === id)
+  if (!t) return
+  const res = await saveTruck(id, { label: t.label, active: !t.active })
+  truckErr.value = res.ok ? null : res.error
+}
+
+async function addTruckRow() {
+  const res = await saveTruck(null, { label: newTruck.value, active: true })
+  if (!res.ok) {
+    truckErr.value = res.error
+    return
+  }
+  truckErr.value = null
+  say(`Added ${newTruck.value.trim()}`)
+  newTruck.value = ''
+}
+
+async function removeTruck(id: string) {
+  const t = trucks.value.find((x) => x.id === id)
+  if (!t || !window.confirm(`Remove ${t.label} from the truck list? Past check-outs keep their record.`))
+    return
+  const res = await deleteTruck(id)
+  truckErr.value = res.ok ? null : res.error
+}
+
+async function moveTruckRow(id: string, dir: -1 | 1) {
+  const res = await moveTruck(id, dir)
+  truckErr.value = res.ok ? null : res.error
+}
+
 /* ── Access (admin) ────────────────────────────────────────────────── */
 const grantPick = ref<PickedPerson | null>(null)
 const accessErr = ref<string | null>(null)
@@ -371,6 +437,9 @@ async function revoke(userId: string) {
       </button>
       <button type="button" class="eqm__tab" :class="{ 'eqm__tab--on': tab === 'types' }" @click="tab = 'types'">
         Types <span>{{ types.filter((t) => t.active).length }}</span>
+      </button>
+      <button type="button" class="eqm__tab" :class="{ 'eqm__tab--on': tab === 'trucks' }" @click="tab = 'trucks'">
+        Trucks <span>{{ trucks.filter((t) => t.active).length }}</span>
       </button>
       <button
         v-if="isAdmin"
@@ -667,6 +736,80 @@ async function revoke(userId: string) {
       <p v-if="typeErr" class="eq-error eqm__type-err">{{ typeErr }}</p>
     </template>
 
+    <!-- ══ Trucks ══ -->
+    <template v-else-if="tab === 'trucks'">
+      <p class="eq-hint eqm__types-hint">
+        The ambulances event gear can go on, by truck number — not the Medic unit, which moves
+        between trucks. Retired trucks drop out of the check-out picker; past check-outs keep their
+        record either way.
+      </p>
+      <div class="eq-list">
+        <div
+          v-for="(t, i) in sortedTrucks"
+          :key="t.id"
+          class="eqm__type"
+          :class="{ 'eqm__type--off': !t.active }"
+        >
+          <div class="eqm__type-order">
+            <button
+              type="button"
+              class="eqm__icon-btn"
+              :disabled="i === 0"
+              aria-label="Move up"
+              @click="moveTruckRow(t.id, -1)"
+            >
+              <ArrowUp :size="15" :stroke-width="2" />
+            </button>
+            <button
+              type="button"
+              class="eqm__icon-btn"
+              :disabled="i === sortedTrucks.length - 1"
+              aria-label="Move down"
+              @click="moveTruckRow(t.id, 1)"
+            >
+              <ArrowDown :size="15" :stroke-width="2" />
+            </button>
+          </div>
+          <input
+            v-model="truckLabels[t.id]"
+            class="eq-input eqm__type-name eqm__truck-name"
+            type="text"
+            maxlength="40"
+            :aria-label="`Rename ${t.label}`"
+            @blur="renameTruck(t.id)"
+            @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
+          />
+          <label class="eqm__switch" :title="t.active ? 'In service — tap to retire' : 'Retired — tap to restore'">
+            <input type="checkbox" :checked="t.active" @change="toggleTruck(t.id)" />
+            <span class="eqm__switch-track"><span class="eqm__switch-knob"></span></span>
+            <span class="sr-only">{{ t.active ? 'In service' : 'Retired' }}</span>
+          </label>
+          <button
+            type="button"
+            class="eqm__icon-btn eqm__icon-btn--danger"
+            :aria-label="`Remove ${t.label}`"
+            @click="removeTruck(t.id)"
+          >
+            <Trash2 :size="15" :stroke-width="2" />
+          </button>
+        </div>
+        <form class="eqm__type eqm__type--new" @submit.prevent="addTruckRow">
+          <input
+            v-model="newTruck"
+            class="eq-input eqm__type-name eqm__truck-name"
+            type="text"
+            maxlength="40"
+            placeholder="Truck number — e.g. 8751"
+            autocomplete="off"
+          />
+          <button type="submit" class="eq-btn eq-btn--secondary" :disabled="!newTruck.trim()">
+            <Plus :size="15" :stroke-width="2.2" /> Add
+          </button>
+        </form>
+      </div>
+      <p v-if="truckErr" class="eq-error eqm__type-err">{{ truckErr }}</p>
+    </template>
+
     <!-- ══ Access (admin) ══ -->
     <template v-else-if="tab === 'access' && isAdmin">
       <p class="eq-hint eqm__types-hint">
@@ -711,8 +854,14 @@ async function revoke(userId: string) {
   border-radius: 12px;
   width: fit-content;
   max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.eqm__tabs::-webkit-scrollbar {
+  display: none;
 }
 .eqm__tab {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -726,6 +875,12 @@ async function revoke(userId: string) {
   border: none;
   border-radius: 9px;
   cursor: pointer;
+}
+@media (max-width: 419px) {
+  .eqm__tab {
+    padding: 0 11px;
+    gap: 5px;
+  }
 }
 .eqm__tab span {
   font-size: 11.5px;
@@ -1059,6 +1214,10 @@ async function revoke(userId: string) {
   flex: 1;
   min-width: 0;
   min-height: 44px;
+}
+.eqm__truck-name {
+  font-family: var(--font-mono);
+  letter-spacing: 0.03em;
 }
 .eqm__type-count {
   flex-shrink: 0;

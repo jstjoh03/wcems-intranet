@@ -5,6 +5,7 @@ import {
   checkoutFromRow,
   eventFromRow,
   supabaseEquipmentBackend,
+  truckFromRow,
   typeFromRow,
   type AssetInput,
   type CheckOutArgs,
@@ -21,6 +22,7 @@ import type {
   EquipmentCheckout,
   EquipmentCustodyEvent,
   EquipmentStatus,
+  EquipmentTruck,
   EquipmentType,
 } from '@/types'
 
@@ -41,6 +43,7 @@ type Fail = { ok: false; error: string }
 type Ok = { ok: true }
 
 const types = ref<EquipmentType[]>([])
+const trucks = ref<EquipmentTruck[]>([])
 const assets = ref<EquipmentAsset[]>([])
 const latestByAsset = ref<Record<string, EquipmentCustodyEvent>>({})
 const openCheckouts = ref<EquipmentCheckout[]>([])
@@ -92,6 +95,7 @@ async function refresh(): Promise<void> {
     const rows = await backend().loadBoard()
     if (token !== refreshToken) return
     types.value = rows.types.map(typeFromRow)
+    trucks.value = rows.trucks.map(truckFromRow)
     assets.value = rows.assets.map(assetFromRow).sort((a, b) => compareTags(a.tag, b.tag))
     latestByAsset.value = Object.fromEntries(rows.latest.map((r) => [r.asset_id, eventFromRow(r)]))
     openCheckouts.value = rows.open.map(checkoutFromRow)
@@ -147,6 +151,9 @@ export function useEquipment() {
     Object.fromEntries(types.value.map((t) => [t.id, t])),
   )
   const activeTypes = computed(() => types.value.filter((t) => t.active))
+  const activeTrucks = computed(() =>
+    [...trucks.value].filter((t) => t.active).sort((a, b) => a.sort - b.sort),
+  )
   const assetById = computed<Record<string, EquipmentAsset>>(() =>
     Object.fromEntries(assets.value.map((a) => [a.id, a])),
   )
@@ -252,7 +259,7 @@ export function useEquipment() {
     try {
       return await backend().loadSuggestions()
     } catch {
-      return { events: [], units: [], recentPurposes: [] }
+      return { events: [], recentPurposes: [] }
     }
   }
 
@@ -278,10 +285,15 @@ export function useEquipment() {
     photo?: Blob | null
     handedToId?: string | null
     handedToName?: string | null
+    /** The receiver's signature (PNG data URL) for a hand-off. */
+    signature?: string | null
   }): Promise<Ok | Fail> {
     try {
       const photoPath = input.photo
         ? await backend().uploadPhoto(input.checkoutId, input.photo)
+        : null
+      const signaturePath = input.signature
+        ? await backend().uploadPhoto(input.checkoutId, await (await fetch(input.signature)).blob())
         : null
       await backend().record({
         checkoutId: input.checkoutId,
@@ -292,6 +304,7 @@ export function useEquipment() {
         photoPath,
         handedToId: input.handedToId ?? null,
         handedToName: input.handedToName?.trim() || null,
+        signaturePath,
       })
       await refresh()
       return { ok: true }
@@ -317,15 +330,27 @@ export function useEquipment() {
 
   async function updateCheckoutDetails(
     id: string,
-    patch: { purpose: string; destination: string; eventDate: string | null; note: string },
+    patch: {
+      purpose: string
+      destination: string
+      eventDate: string | null
+      extended: boolean
+      endDate: string | null
+      note: string
+    },
   ): Promise<Ok | Fail> {
     if (!patch.purpose.trim()) return { ok: false, error: 'Add what the equipment is for.' }
-    if (!patch.destination.trim()) return { ok: false, error: 'Add the unit it’s going to.' }
+    if (!patch.destination.trim()) return { ok: false, error: 'Pick the truck it’s on.' }
+    const endDate = patch.extended ? patch.endDate || null : null
+    if (endDate && patch.eventDate && endDate < patch.eventDate)
+      return { ok: false, error: 'The assignment can’t end before it starts.' }
     try {
       await backend().updateCheckout(id, {
         purpose: patch.purpose.trim(),
         destination: patch.destination.trim(),
         event_date: patch.eventDate || null,
+        extended: patch.extended,
+        end_date: endDate,
         note: patch.note.trim(),
       })
       await refresh()
@@ -453,6 +478,60 @@ export function useEquipment() {
     }
   }
 
+  /* ── Trucks ────────────────────────────────────────────────────────── */
+  async function saveTruck(id: string | null, input: { label: string; active: boolean }): Promise<
+    { ok: true; truck?: EquipmentTruck } | Fail
+  > {
+    const label = input.label.trim()
+    if (!label) return { ok: false, error: 'Add the truck number.' }
+    try {
+      if (id) {
+        await backend().updateTruck(id, { label, active: input.active })
+        await refresh()
+        return { ok: true }
+      }
+      const row = await backend().insertTruck({
+        label,
+        active: input.active,
+        sort: Math.max(0, ...trucks.value.map((t) => t.sort)) + 1,
+      })
+      await refresh()
+      return { ok: true, truck: truckFromRow(row) }
+    } catch (e) {
+      return fail(e)
+    }
+  }
+
+  async function moveTruck(id: string, dir: -1 | 1): Promise<Ok | Fail> {
+    const list = [...trucks.value].sort((a, b) => a.sort - b.sort)
+    const i = list.findIndex((t) => t.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= list.length) return { ok: true }
+    try {
+      const reordered = [...list]
+      ;[reordered[i], reordered[j]] = [reordered[j], reordered[i]]
+      await Promise.all(
+        reordered.map((t, idx) =>
+          t.sort === idx + 1 ? null : backend().updateTruck(t.id, { sort: idx + 1 }),
+        ),
+      )
+      await refresh()
+      return { ok: true }
+    } catch (e) {
+      return fail(e)
+    }
+  }
+
+  async function deleteTruck(id: string): Promise<Ok | Fail> {
+    try {
+      await backend().deleteTruck(id)
+      await refresh()
+      return { ok: true }
+    } catch (e) {
+      return fail(e)
+    }
+  }
+
   async function addHandler(userId: string): Promise<Ok | Fail> {
     try {
       await backend().addHandler(userId)
@@ -479,6 +558,8 @@ export function useEquipment() {
     version,
     types,
     activeTypes,
+    trucks,
+    activeTrucks,
     assets,
     boardAssets,
     openCheckouts,
@@ -513,6 +594,9 @@ export function useEquipment() {
     saveType,
     moveType,
     deleteType,
+    saveTruck,
+    moveTruck,
+    deleteTruck,
     addHandler,
     removeHandler,
   }

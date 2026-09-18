@@ -11,8 +11,9 @@ import type {
  * Equipment check-out rules + display helpers. Pure functions shared
  * by the views, the composable, and the dev-stub backend. The server
  * enforces the same transition table in equipment_record() — keep the
- * two in sync (migrations 20260918010000_equipment_checkout.sql and
- * 20260918020000_equipment_write_off.sql).
+ * two in sync (migrations 20260918010000_equipment_checkout.sql,
+ * 20260918020000_equipment_write_off.sql, and
+ * 20260918040000_equipment_trucks_extended_signatures.sql).
  */
 
 /** Where the gear lives when it isn't out. */
@@ -29,7 +30,16 @@ export const ON_UNIT_KINDS: EquipmentEventKind[] = [
   'confirmed_present',
   'reported_missing',
   'event_closed',
+  'shift_start',
+  'shift_end',
 ]
+
+/** Equipment checks: the crew marks each item here or not found. */
+export const CHECK_KINDS: EquipmentActionKind[] = ['confirmed_present', 'shift_start', 'shift_end']
+
+export function isCheckKind(kind: EquipmentEventKind | EquipmentActionKind | null | undefined): boolean {
+  return kind === 'confirmed_present' || kind === 'shift_start' || kind === 'shift_end'
+}
 
 /** An item is done with a check-out once its latest event is one of these. */
 export const RESOLVED_KINDS: EquipmentEventKind[] = ['returned', 'canceled', 'written_off']
@@ -39,9 +49,9 @@ export interface ActionRule {
   from: EquipmentEventKind[]
   /** Supervisors, admins, and granted handlers only. */
   handlerOnly: boolean
-  /** photo = always required; photo-or-person = required unless handed
-   *  to a named person. */
-  evidence: 'photo' | 'photo-or-person' | 'none'
+  /** photo = always required; photo-or-person = a photo, or a named
+   *  person who signs to receive; optional-photo = offered, not needed. */
+  evidence: 'photo' | 'photo-or-person' | 'optional-photo' | 'none'
 }
 
 export const ACTION_RULES: Record<EquipmentActionKind, ActionRule> = {
@@ -53,6 +63,10 @@ export const ACTION_RULES: Record<EquipmentActionKind, ActionRule> = {
   /* From written_off too: a lost item that turned up comes home. */
   returned: { from: ['picked_up', 'written_off'], handlerOnly: true, evidence: 'photo-or-person' },
   written_off: { from: ['reported_missing'], handlerOnly: true, evidence: 'none' },
+  /* Extended assignments: every crew checks the gear as they take the
+     truck and again as they hand it over. */
+  shift_start: { from: ON_UNIT_KINDS, handlerOnly: false, evidence: 'none' },
+  shift_end: { from: ON_UNIT_KINDS, handlerOnly: false, evidence: 'optional-photo' },
 }
 
 export function statusFromKind(kind: EquipmentEventKind | null | undefined): EquipmentStatus {
@@ -68,6 +82,8 @@ export function statusFromKind(kind: EquipmentEventKind | null | undefined): Equ
     case 'delivered':
     case 'confirmed_present':
     case 'event_closed':
+    case 'shift_start':
+    case 'shift_end':
       return 'on_unit'
     default:
       return 'available'
@@ -77,31 +93,37 @@ export function statusFromKind(kind: EquipmentEventKind | null | undefined): Equ
 export const STATUS_LABEL: Record<EquipmentStatus, string> = {
   available: 'Available',
   in_transit: 'In transit',
-  on_unit: 'On unit',
+  on_unit: 'On a truck',
   missing: 'Not found',
   returning: 'Returning',
   lost: 'Lost',
 }
 
-/** One-line location phrase: "On M272", "In transit to M272", … */
+/** A destination in a sentence: truck numbers read "truck 8751"; named
+ *  vehicles ("Vannie Mae") and older free-text entries stay as-is. */
+export function placeName(dest: string): string {
+  return /^\d+$/.test(dest) ? `truck ${dest}` : dest
+}
+
+/** One-line location phrase: "On truck 8751", "In transit to truck 0081", … */
 export function statusLine(state: Pick<EquipmentAssetState, 'status' | 'location'>): string {
   switch (state.status) {
     case 'available':
       return `On the shelf at ${HOME_LOCATION}`
     case 'in_transit':
-      return `In transit to ${state.location}`
+      return `In transit to ${placeName(state.location)}`
     case 'on_unit':
-      return `On ${state.location}`
+      return `On ${placeName(state.location)}`
     case 'missing':
-      return `Not found on ${state.location}`
+      return `Not found on ${placeName(state.location)}`
     case 'returning':
       return `Headed back to ${HOME_LOCATION}`
     case 'lost':
-      return `Written off — last on ${state.location}`
+      return `Written off — last on ${placeName(state.location)}`
   }
 }
 
-/** Compact chip text: "Available", "→ M272", "On M272", … */
+/** Compact chip text: "Available", "To 8751", "On 8751", … */
 export function statusChip(state: Pick<EquipmentAssetState, 'status' | 'location'>): string {
   switch (state.status) {
     case 'available':
@@ -122,14 +144,16 @@ export function statusChip(state: Pick<EquipmentAssetState, 'status' | 'location
 /** Timeline phrasing per custody event. */
 export const KIND_LABEL: Record<EquipmentEventKind, string> = {
   checked_out: 'Checked out',
-  delivered: 'Delivered to the unit',
+  delivered: 'Delivered to the truck',
   confirmed_present: 'Confirmed on shift',
   reported_missing: 'Reported not found',
   event_closed: 'Event closed out',
-  picked_up: 'Picked up from the unit',
+  picked_up: 'Picked up from the truck',
   returned: `Returned to ${HOME_LOCATION}`,
   canceled: 'Check-out canceled',
   written_off: 'Written off as lost',
+  shift_start: 'Start-of-shift check',
+  shift_end: 'End-of-shift check',
 }
 
 /** Button + sheet titles per action. */
@@ -141,6 +165,8 @@ export const ACTION_LABEL: Record<EquipmentActionKind, string> = {
   picked_up: 'Pick up',
   returned: `Drop off at ${HOME_LOCATION}`,
   written_off: 'Write off as lost',
+  shift_start: 'Start-of-shift check',
+  shift_end: 'End-of-shift check',
 }
 
 /** The six custody steps a check-out walks through. */
@@ -167,11 +193,19 @@ export type CheckoutPhase =
   | 'in_transit'
   | 'delivered'
   | 'confirmed'
+  | 'assignment'
   | 'closed'
   | 'returning'
   | 'missing'
   | 'complete'
   | 'canceled'
+
+export interface LastCheck {
+  kind: EquipmentEventKind
+  at: string
+  by: string
+  missing: number
+}
 
 export interface CheckoutSummary {
   /** Latest event kind per item on this check-out. */
@@ -185,12 +219,17 @@ export interface CheckoutSummary {
   phaseLabel: string
   nextHint: string
   steps: CheckoutStep[]
+  /** Most recent equipment check (confirmation or shift check). */
+  lastCheck: LastCheck | null
+  /** Extended assignments: which shift check is due next. */
+  nextShiftCheck: 'shift_start' | 'shift_end'
 }
 
 const PHASE_LABEL: Record<CheckoutPhase, string> = {
   in_transit: 'In transit',
   delivered: 'Delivered',
   confirmed: 'Confirmed on shift',
+  assignment: 'On assignment',
   closed: 'Event closed',
   returning: 'Headed back',
   missing: 'Not found',
@@ -199,9 +238,10 @@ const PHASE_LABEL: Record<CheckoutPhase, string> = {
 }
 
 const PHASE_HINT: Record<CheckoutPhase, string> = {
-  in_transit: 'Waiting on delivery to the unit',
+  in_transit: 'Waiting on delivery to the truck',
   delivered: 'Waiting on the on-shift crew to confirm',
   confirmed: 'Photo of where it’s left when the event wraps',
+  assignment: 'Every crew checks the gear at the start and end of their shift',
   closed: 'Ready for pickup',
   returning: `Waiting on drop-off at ${HOME_LOCATION}`,
   missing: 'Still unaccounted for — pick it up if it turns up',
@@ -212,7 +252,7 @@ const PHASE_HINT: Record<CheckoutPhase, string> = {
 /** Roll a check-out's events up into per-item state, a phase, and the
  *  honest step ladder (done / partial / skipped / pending). */
 export function summarizeCheckout(
-  checkout: Pick<EquipmentCheckout, 'id' | 'assetIds'>,
+  checkout: Pick<EquipmentCheckout, 'id' | 'assetIds'> & { extended?: boolean },
   events: EquipmentCustodyEvent[],
 ): CheckoutSummary {
   const evs = events
@@ -244,25 +284,33 @@ export function summarizeCheckout(
     const present = openKinds.filter((k) => ON_UNIT_KINDS.includes(k) && k !== 'reported_missing')
     if (!present.length) phase = openKinds.includes('picked_up') ? 'returning' : 'missing'
     else if (present.every((k) => k === 'event_closed')) phase = 'closed'
-    else if (present.some((k) => k === 'confirmed_present') || missing) phase = 'confirmed'
+    else if (checkout.extended) phase = 'assignment'
+    else if (present.some((k) => isCheckKind(k)) || missing) phase = 'confirmed'
     else phase = 'delivered'
   } else {
     phase = 'returning'
   }
 
   /* A step counts for an item when that item has the step's event on
-     this check-out (a not-found report is still a shift confirmation). */
+     this check-out. Any equipment check — a confirmation, a shift check,
+     even a not-found report — counts toward the "Confirmed" step. */
+  const CHECK_STEP: EquipmentEventKind[] = [
+    'confirmed_present',
+    'shift_start',
+    'shift_end',
+    'reported_missing',
+  ]
   const reached = (id: string, kind: EquipmentEventKind) =>
-    seen[id]?.has(kind) || (kind === 'confirmed_present' && seen[id]?.has('reported_missing'))
+    kind === 'confirmed_present'
+      ? CHECK_STEP.some((k) => seen[id]?.has(k))
+      : !!seen[id]?.has(kind)
   const stepIndexReached = (id: string) =>
     STEPS.reduce((max, s, i) => (reached(id, s.kind) ? i : max), -1)
 
   const steps: CheckoutStep[] = STEPS.map((s, i) => {
     const count = live.filter((id) => reached(id, s.kind)).length
-    const first = evs.find(
-      (e) =>
-        e.kind === s.kind ||
-        (s.kind === 'confirmed_present' && e.kind === 'reported_missing'),
+    const first = evs.find((e) =>
+      s.kind === 'confirmed_present' ? CHECK_STEP.includes(e.kind) : e.kind === s.kind,
     )
     let state: StepState
     if (live.length > 0 && count === live.length) state = 'done'
@@ -271,12 +319,27 @@ export function summarizeCheckout(
     else state = 'pending'
     return {
       kind: s.kind,
-      label: s.label,
+      label: s.kind === 'confirmed_present' && checkout.extended ? 'Shift checks' : s.label,
       state,
       at: first?.at ?? null,
       by: first?.actorName ?? null,
     }
   })
+
+  /* The latest check, counted per action (one check covers many items). */
+  let lastCheck: LastCheck | null = null
+  const checkRows = evs.filter((e) => CHECK_STEP.includes(e.kind))
+  const lastRow = checkRows[checkRows.length - 1]
+  if (lastRow) {
+    const rows = checkRows.filter((e) => e.actionId === lastRow.actionId)
+    const primary = rows.find((e) => e.kind !== 'reported_missing')
+    lastCheck = {
+      kind: primary?.kind ?? 'reported_missing',
+      at: lastRow.at,
+      by: lastRow.actorName,
+      missing: rows.filter((e) => e.kind === 'reported_missing').length,
+    }
+  }
 
   return {
     itemKinds,
@@ -290,6 +353,8 @@ export function summarizeCheckout(
         ? `Closed — ${pluralize(lost, 'item')} written off as lost`
         : PHASE_HINT[phase],
     steps,
+    lastCheck,
+    nextShiftCheck: lastCheck?.kind === 'shift_start' ? 'shift_end' : 'shift_start',
   }
 }
 
@@ -318,6 +383,8 @@ export interface CustodyAction {
   handedToName: string | null
   note: string
   photoPath: string | null
+  /** The receiver's signature for a hand-off. */
+  signaturePath: string | null
   checkoutId: string
   checkoutPurpose?: string
   checkoutDestination?: string
@@ -343,6 +410,7 @@ export function groupActions(events: EquipmentCustodyEvent[]): CustodyAction[] {
         handedToName: e.handedToName,
         note: e.note,
         photoPath: e.photoPath,
+        signaturePath: e.signaturePath,
         checkoutId: e.checkoutId,
         checkoutPurpose: e.checkoutPurpose,
         checkoutDestination: e.checkoutDestination,
@@ -363,6 +431,7 @@ export function groupActions(events: EquipmentCustodyEvent[]): CustodyAction[] {
       }
       a.assetIds.push(e.assetId)
       a.photoPath ??= e.photoPath
+      a.signaturePath ??= e.signaturePath
     }
     a.seq = Math.max(a.seq, e.seq)
   }
@@ -403,6 +472,20 @@ export function formatWhen(iso: string | null | undefined): string {
     timeZone: TZ,
   })
   return `${date}, ${time}`
+}
+
+/** An event's dates: "Today", or "Sep 18 – Oct 3" for a span. */
+export function formatEventSpan(start: string | null | undefined, end?: string | null): string {
+  if (!start) return end ? `Through ${formatEventDate(end)}` : ''
+  if (!end || end === start) return formatEventDate(start)
+  const short = (iso: string) => {
+    const today = todayCentral()
+    if (iso === today) return 'Today'
+    if (iso === addDays(today, 1)) return 'Tomorrow'
+    const [y, m, d] = iso.split('-').map(Number)
+    return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+  return `${short(start)} – ${short(end)}`
 }
 
 /** 'YYYY-MM-DD' → "Fri, Sep 18" (or "Today" / "Tomorrow"). */

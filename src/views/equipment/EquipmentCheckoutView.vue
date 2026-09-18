@@ -12,6 +12,10 @@ import {
   Undo2,
   Check,
   ChevronRight,
+  Repeat,
+  Printer,
+  LogIn,
+  LogOut,
 } from 'lucide-vue-next'
 import '@/components/equipment/equipment.css'
 import EquipmentStatusChip from '@/components/equipment/EquipmentStatusChip.vue'
@@ -24,11 +28,13 @@ import {
   ACTION_LABEL,
   ACTION_RULES,
   HOME_LOCATION,
+  KIND_LABEL,
   compareTags,
   eligibleFor,
-  formatEventDate,
+  formatEventSpan,
   formatWhen,
   groupActions,
+  placeName,
   pluralize,
   statusFromKind,
   summarizeCheckout,
@@ -50,8 +56,16 @@ import type {
 
 const route = useRoute()
 const router = useRouter()
-const { version, canHandle, canRecord, assetById, typeName, fetchCheckout, updateCheckoutDetails } =
-  useEquipment()
+const {
+  version,
+  canHandle,
+  canRecord,
+  assetById,
+  typeName,
+  activeTrucks,
+  fetchCheckout,
+  updateCheckoutDetails,
+} = useEquipment()
 
 const checkout = ref<EquipmentCheckout | null>(null)
 const events = ref<EquipmentCustodyEvent[]>([])
@@ -109,6 +123,8 @@ const ITEM_LABEL: Record<EquipmentEventKind, string> = {
   returned: 'Returned',
   canceled: 'Canceled',
   written_off: 'Lost',
+  shift_start: 'Checked',
+  shift_end: 'Checked',
 }
 
 function itemKind(id: string): EquipmentEventKind | undefined {
@@ -116,21 +132,21 @@ function itemKind(id: string): EquipmentEventKind | undefined {
 }
 
 /* ── Actions ───────────────────────────────────────────────────────── */
-const ACTION_ORDER: EquipmentActionKind[] = [
-  'delivered',
-  'confirmed_present',
-  'event_closed',
-  'picked_up',
-  'returned',
-  'written_off',
-]
+/* Single-night events get one on-shift confirmation; extended
+   assignments get a start- and end-of-shift check from every crew. */
+const actionOrder = computed<EquipmentActionKind[]>(() =>
+  checkout.value?.extended
+    ? ['delivered', 'shift_start', 'shift_end', 'event_closed', 'picked_up', 'returned', 'written_off']
+    : ['delivered', 'confirmed_present', 'event_closed', 'picked_up', 'returned', 'written_off'],
+)
 const PRIMARY_FOR: Record<CheckoutPhase, EquipmentActionKind[]> = {
   in_transit: ['delivered'],
   delivered: ['confirmed_present'],
   confirmed: ['event_closed'],
+  assignment: [],
   closed: ['picked_up'],
   returning: ['returned'],
-  missing: ['picked_up', 'confirmed_present'],
+  missing: ['picked_up', 'confirmed_present', 'shift_start'],
   complete: [],
   canceled: [],
 }
@@ -142,10 +158,34 @@ function allowed(kind: EquipmentActionKind): boolean {
   return eligibleFor(kind, summary.value.itemKinds, checkout.value.assetIds).length > 0
 }
 
-const availableActions = computed(() => ACTION_ORDER.filter(allowed))
+const availableActions = computed(() => actionOrder.value.filter(allowed))
 const primaryAction = computed<EquipmentActionKind | null>(() => {
-  if (!summary.value) return null
-  return PRIMARY_FOR[summary.value.phase].find((k) => availableActions.value.includes(k)) ?? null
+  const s = summary.value
+  if (!s) return null
+  /* On an extended assignment the next check alternates start → end. */
+  const want = s.phase === 'assignment' ? [s.nextShiftCheck] : PRIMARY_FOR[s.phase]
+  return want.find((k) => availableActions.value.includes(k)) ?? null
+})
+
+function actionLabel(kind: EquipmentActionKind): string {
+  if (kind === 'event_closed' && checkout.value?.extended) return 'Final close-out'
+  return ACTION_LABEL[kind]
+}
+
+const truckTitle = computed(() => {
+  const d = checkout.value?.destination ?? ''
+  return /^\d+$/.test(d) ? `Truck ${d}` : d
+})
+const span = computed(() =>
+  checkout.value
+    ? formatEventSpan(checkout.value.eventDate, checkout.value.extended ? checkout.value.endDate : null)
+    : '',
+)
+const lastCheckText = computed(() => {
+  const c = summary.value?.lastCheck
+  if (!c) return 'No shift check yet'
+  const what = c.kind === 'reported_missing' ? 'Check' : KIND_LABEL[c.kind]
+  return `${what} · ${c.by} · ${formatWhen(c.at)}${c.missing ? ` · ${c.missing} not found` : ''}`
 })
 const secondaryActions = computed(() =>
   availableActions.value.filter((k) => k !== primaryAction.value),
@@ -192,8 +232,11 @@ watch(
 /* ── Share with the event crew ─────────────────────────────────────── */
 async function share() {
   if (!checkout.value) return
-  const url = `${window.location.origin}/equipment/checkout/${checkout.value.id}`
-  const text = `${checkout.value.purpose} (${checkout.value.destination}): event equipment is on the truck — confirm it's there, and snap a photo when the event wraps.`
+  const co = checkout.value
+  const url = `${window.location.origin}/equipment/checkout/${co.id}`
+  const text = co.extended
+    ? `${co.purpose} on ${placeName(co.destination)} (${span.value}): extended assignment. Every crew checks the equipment at the start and end of their shift here:`
+    : `${co.purpose} on ${placeName(co.destination)}: event equipment is on the truck. Confirm it's there, and snap a photo when the event wraps:`
   if (navigator.share) {
     try {
       await navigator.share({ title: 'WCEMS event equipment', text, url })
@@ -210,9 +253,48 @@ async function share() {
   }
 }
 
+/* ── Printable card with a QR code, to leave with the gear ────────── */
+const printing = ref(false)
+async function printCard() {
+  if (!checkout.value) return
+  printing.value = true
+  try {
+    const { generateShiftCardPdf } = await import('@/lib/equipmentShiftCardPdf')
+    const co = checkout.value
+    const doc = await generateShiftCardPdf({
+      checkout: co,
+      items: items.value.filter((a) => {
+        const k = summary.value?.itemKinds[a.id]
+        return k !== 'returned' && k !== 'canceled' && k !== 'written_off'
+      }),
+      typeName,
+      url: `${window.location.origin}/equipment/checkout/${co.id}`,
+    })
+    const safe = `${co.purpose}_${co.destination}`.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
+    doc.save(`WCEMS_Equipment_Card_${safe}.pdf`)
+  } catch (e) {
+    showToast(e instanceof Error ? `Couldn’t make the card: ${e.message}` : 'Couldn’t make the card')
+  } finally {
+    printing.value = false
+  }
+}
+
 /* ── Edit details (handlers, while open) ───────────────────────────── */
 const editing = ref(false)
-const draft = ref({ purpose: '', destination: '', eventDate: '', note: '' })
+const draft = ref({
+  purpose: '',
+  destination: '',
+  eventDate: '',
+  extended: false,
+  endDate: '',
+  note: '',
+})
+/* The truck list, plus the current destination if it isn't on it. */
+const truckOptions = computed(() => {
+  const labels = activeTrucks.value.map((t) => t.label)
+  const cur = draft.value.destination
+  return cur && !labels.includes(cur) ? [cur, ...labels] : labels
+})
 const editErr = ref<string | null>(null)
 const savingEdit = ref(false)
 function startEdit() {
@@ -221,6 +303,8 @@ function startEdit() {
     purpose: checkout.value.purpose,
     destination: checkout.value.destination,
     eventDate: checkout.value.eventDate ?? '',
+    extended: checkout.value.extended,
+    endDate: checkout.value.endDate ?? '',
     note: checkout.value.note,
   }
   editErr.value = null
@@ -233,6 +317,8 @@ async function saveEdit() {
     purpose: draft.value.purpose,
     destination: draft.value.destination,
     eventDate: draft.value.eventDate || null,
+    extended: draft.value.extended,
+    endDate: draft.value.endDate || null,
     note: draft.value.note,
   })
   savingEdit.value = false
@@ -276,9 +362,9 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
         <div class="eq-eyebrow">Check-out · {{ summary.phaseLabel }}</div>
         <h1 class="eq-h1 eqc__title">{{ checkout.purpose }}</h1>
         <div class="eqc__meta">
-          <span><Truck :size="14" :stroke-width="2" /> {{ checkout.destination }}</span>
-          <span v-if="checkout.eventDate">
-            <CalendarDays :size="14" :stroke-width="2" /> {{ formatEventDate(checkout.eventDate) }}
+          <span><Truck :size="14" :stroke-width="2" /> {{ truckTitle }}</span>
+          <span v-if="span">
+            <CalendarDays :size="14" :stroke-width="2" /> {{ span }}
           </span>
           <span>{{ pluralize(checkout.assetIds.length, 'item') }}</span>
         </div>
@@ -291,11 +377,44 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
           <button v-if="isOpen" type="button" class="eq-btn eq-btn--secondary" @click="share">
             <Share2 :size="15" :stroke-width="2" /> Send to crew
           </button>
+          <button
+            v-if="isOpen"
+            type="button"
+            class="eq-btn eq-btn--secondary"
+            :disabled="printing"
+            @click="printCard"
+          >
+            <Printer :size="15" :stroke-width="2" /> {{ printing ? 'Making card…' : 'Print card' }}
+          </button>
           <button v-if="isOpen && canHandle" type="button" class="eq-btn eq-btn--quiet" @click="startEdit">
             <Pencil :size="14" :stroke-width="2" /> Edit details
           </button>
         </div>
       </header>
+
+      <!-- Extended assignment: what every arriving crew needs to know -->
+      <section v-if="checkout.extended && isOpen" class="eqc__ext">
+        <div class="eqc__ext-eyebrow">
+          <Repeat :size="13" :stroke-width="2.4" /> Extended assignment<template v-if="span"> · {{ span }}</template>
+        </div>
+        <p class="eqc__ext-title">
+          Every crew: check this equipment at the <em>start</em> and <em>end</em> of your shift.
+        </p>
+        <div class="eqc__ext-rows">
+          <div class="eqc__ext-row">
+            <span class="eqc__ext-label">Last check</span>
+            <span>{{ lastCheckText }}</span>
+          </div>
+          <div v-if="summary.phase === 'assignment'" class="eqc__ext-row">
+            <span class="eqc__ext-label">Next up</span>
+            <span class="eqc__ext-next">
+              <LogIn v-if="summary.nextShiftCheck === 'shift_start'" :size="15" :stroke-width="2" />
+              <LogOut v-else :size="15" :stroke-width="2" />
+              {{ KIND_LABEL[summary.nextShiftCheck] }}
+            </span>
+          </div>
+        </div>
+      </section>
 
       <div v-if="checkout.closedAt" class="eqc__closed" :class="{ 'eqc__closed--canceled': summary.phase === 'canceled' }">
         <CircleCheck :size="18" :stroke-width="2" />
@@ -386,7 +505,10 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
               class="eq-btn eq-btn--primary eq-btn--lg eqc__primary"
               @click="openAction(primaryAction)"
             >
-              <Check :size="17" :stroke-width="2.2" /> {{ ACTION_LABEL[primaryAction] }}
+              <LogIn v-if="primaryAction === 'shift_start'" :size="17" :stroke-width="2.2" />
+              <LogOut v-else-if="primaryAction === 'shift_end'" :size="17" :stroke-width="2.2" />
+              <Check v-else :size="17" :stroke-width="2.2" />
+              {{ actionLabel(primaryAction) }}
             </button>
             <div v-if="secondaryActions.length || canCancel" class="eqc__secondary">
               <button
@@ -397,7 +519,7 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
                 :class="k === 'written_off' ? 'eq-btn--danger-quiet' : 'eq-btn--secondary'"
                 @click="openAction(k)"
               >
-                {{ ACTION_LABEL[k] }}
+                {{ actionLabel(k) }}
               </button>
               <button
                 v-if="canCancel"
@@ -427,7 +549,7 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
       <EquipmentSheet
         :open="editing"
         title="Edit details"
-        :eyebrow="`Check-out · ${checkout.destination}`"
+        :eyebrow="`Check-out · ${truckTitle}`"
         @close="editing = false"
       >
         <label class="eq-field">
@@ -435,13 +557,25 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
           <input v-model="draft.purpose" class="eq-input" type="text" maxlength="120" />
         </label>
         <label class="eq-field">
-          <span class="eq-label"><span>Unit</span></span>
-          <input v-model="draft.destination" class="eq-input" type="text" maxlength="40" autocapitalize="characters" />
+          <span class="eq-label"><span>Truck</span></span>
+          <select v-model="draft.destination" class="eq-select">
+            <option v-for="t in truckOptions" :key="t" :value="t">{{ /^\d+$/.test(t) ? `Truck ${t}` : t }}</option>
+          </select>
         </label>
-        <label class="eq-field">
-          <span class="eq-label"><span>Event date</span></span>
-          <input v-model="draft.eventDate" class="eq-input" type="date" />
+        <label class="eqc__edit-ext">
+          <input v-model="draft.extended" type="checkbox" />
+          <span><strong>Extended assignment</strong> — every crew checks at the start and end of their shift</span>
         </label>
+        <div class="eqc__edit-dates" :class="{ 'eqc__edit-dates--span': draft.extended }">
+          <label class="eq-field">
+            <span class="eq-label"><span>{{ draft.extended ? 'From' : 'Event date' }}</span></span>
+            <input v-model="draft.eventDate" class="eq-input" type="date" />
+          </label>
+          <label v-if="draft.extended" class="eq-field">
+            <span class="eq-label"><span>Through</span></span>
+            <input v-model="draft.endDate" class="eq-input" type="date" :min="draft.eventDate || undefined" />
+          </label>
+        </div>
         <label class="eq-field">
           <span class="eq-label"><span>Note</span></span>
           <textarea v-model="draft.note" class="eq-textarea" rows="2" maxlength="500"></textarea>
@@ -524,6 +658,123 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
   margin-top: 16px;
 }
 
+/* Extended assignment banner: navy lit surface, gold seam */
+.eqc__ext {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 18px;
+  padding: 18px 18px 16px;
+  color: white;
+  background:
+    radial-gradient(ellipse 80% 90% at 100% 0%, oklch(0.734 0.114 86.8 / 0.16), transparent 65%),
+    radial-gradient(ellipse 70% 80% at 0% 100%, oklch(0.4 0.13 250 / 0.5), transparent 60%),
+    linear-gradient(135deg, var(--color-brand-700), var(--color-brand-900));
+  border-radius: 16px;
+  box-shadow: var(--shadow-md);
+}
+.eqc__ext::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(200, 164, 77, 0.55) 18%,
+    #e8cb72 50%,
+    rgba(200, 164, 77, 0.55) 82%,
+    transparent
+  );
+}
+.eqc__ext-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent-on-dark);
+}
+.eqc__ext-title {
+  margin-top: 8px;
+  font-family: var(--font-display);
+  font-size: 23px;
+  line-height: 1.18;
+}
+.eqc__ext-title em {
+  font-style: italic;
+  color: var(--color-accent-on-dark);
+}
+.eqc__ext-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid oklch(1 0 0 / 0.12);
+}
+.eqc__ext-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: oklch(0.88 0.02 250);
+}
+.eqc__ext-label {
+  flex-shrink: 0;
+  width: 72px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: oklch(0.72 0.035 250);
+}
+.eqc__ext-next {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: white;
+}
+.eqc__ext-next svg {
+  color: var(--color-accent-on-dark);
+}
+.eqc__edit-ext {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 18px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+}
+.eqc__edit-ext input {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  accent-color: var(--color-brand-600);
+}
+.eqc__edit-ext strong {
+  color: var(--color-ink);
+}
+.eqc__edit-dates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 18px;
+}
+.eqc__edit-dates--span {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.eqc__edit-dates .eq-field + .eq-field {
+  margin-top: 0;
+}
 .eqc__closed {
   display: flex;
   align-items: center;

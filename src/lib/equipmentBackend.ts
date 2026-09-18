@@ -7,6 +7,7 @@ import type {
   EquipmentCheckout,
   EquipmentCustodyEvent,
   EquipmentEventKind,
+  EquipmentTruck,
   EquipmentType,
 } from '@/types'
 
@@ -31,6 +32,13 @@ export interface TypeRow {
   active: boolean
 }
 
+export interface TruckRow {
+  id: string
+  label: string
+  sort: number
+  active: boolean
+}
+
 export interface AssetRow {
   id: string
   tag: string
@@ -46,6 +54,8 @@ export interface CheckoutRow {
   purpose: string
   destination: string
   event_date: string | null
+  extended: boolean
+  end_date: string | null
   note: string
   created_by: string | null
   created_by_name: string
@@ -69,12 +79,14 @@ export interface EventRow {
   handed_to_name: string | null
   note: string
   photo_path: string | null
+  signature_path: string | null
   at: string
   checkout?: { purpose: string; destination: string } | null
 }
 
 export interface BoardRows {
   types: TypeRow[]
+  trucks: TruckRow[]
   assets: AssetRow[]
   /** Latest custody event per asset (equipment_asset_status). */
   latest: EventRow[]
@@ -93,6 +105,8 @@ export interface CheckOutArgs {
   destination: string
   eventDate: string | null
   note: string
+  extended: boolean
+  endDate: string | null
 }
 
 export interface RecordArgs {
@@ -104,6 +118,7 @@ export interface RecordArgs {
   photoPath: string | null
   handedToId: string | null
   handedToName: string | null
+  signaturePath: string | null
 }
 
 export interface EquipmentPerson {
@@ -112,11 +127,19 @@ export interface EquipmentPerson {
   title: string | null
 }
 
+export interface EventSuggestion {
+  label: string
+  /** First date of the run. */
+  date: string
+  /** Last date when the same event repeats (a multi-night run). */
+  endDate: string | null
+  /** How many scheduled dates the run covers. */
+  count: number
+}
+
 export interface EquipmentSuggestions {
   /** Upcoming events from the schedule (read-only), soonest first. */
-  events: { label: string; date: string }[]
-  /** Unit codes: recent destinations first, then schedule units. */
-  units: string[]
+  events: EventSuggestion[]
   recentPurposes: string[]
 }
 
@@ -138,7 +161,15 @@ export interface CheckoutPatch {
   purpose: string
   destination: string
   event_date: string | null
+  extended: boolean
+  end_date: string | null
   note: string
+}
+
+export interface TruckInput {
+  label: string
+  sort: number
+  active: boolean
 }
 
 export interface EquipmentBackend {
@@ -156,6 +187,9 @@ export interface EquipmentBackend {
   insertType(t: TypeInput): Promise<TypeRow>
   updateType(id: string, t: Partial<TypeInput>): Promise<void>
   deleteType(id: string): Promise<void>
+  insertTruck(t: TruckInput): Promise<TruckRow>
+  updateTruck(id: string, t: Partial<TruckInput>): Promise<void>
+  deleteTruck(id: string): Promise<void>
   addHandler(userId: string): Promise<void>
   removeHandler(userId: string): Promise<void>
   updateCheckout(id: string, patch: CheckoutPatch): Promise<void>
@@ -168,6 +202,10 @@ export interface EquipmentBackend {
 
 export function typeFromRow(r: TypeRow): EquipmentType {
   return { id: r.id, name: r.name, sort: r.sort, active: r.active }
+}
+
+export function truckFromRow(r: TruckRow): EquipmentTruck {
+  return { id: r.id, label: r.label, sort: r.sort, active: r.active }
 }
 
 export function assetFromRow(r: AssetRow): EquipmentAsset {
@@ -188,6 +226,8 @@ export function checkoutFromRow(r: CheckoutRow): EquipmentCheckout {
     purpose: r.purpose,
     destination: r.destination,
     eventDate: r.event_date,
+    extended: !!r.extended,
+    endDate: r.end_date ?? null,
     note: r.note ?? '',
     createdBy: r.created_by,
     createdByName: r.created_by_name ?? '',
@@ -213,18 +253,56 @@ export function eventFromRow(r: EventRow): EquipmentCustodyEvent {
     handedToName: r.handed_to_name,
     note: r.note ?? '',
     photoPath: r.photo_path,
+    signaturePath: r.signature_path ?? null,
     at: r.at,
     checkoutPurpose: r.checkout?.purpose,
     checkoutDestination: r.checkout?.destination,
   }
 }
 
+/**
+ * Group scheduled dates into runs per event label: dates of the same event
+ * no more than a week apart form one run (the fair's nights, a weekend
+ * tournament). A run of 2+ dates suggests an extended assignment.
+ */
+export function eventRuns(rows: { label: string; on_date: string }[]): EventSuggestion[] {
+  const byLabel = new Map<string, { label: string; dates: string[] }>()
+  for (const r of rows) {
+    const label = r.label.trim()
+    if (!label) continue
+    const key = label.toLowerCase()
+    const entry = byLabel.get(key) ?? { label, dates: [] }
+    if (!entry.dates.includes(r.on_date)) entry.dates.push(r.on_date)
+    byLabel.set(key, entry)
+  }
+  const runs: EventSuggestion[] = []
+  for (const { label, dates } of byLabel.values()) {
+    dates.sort()
+    let start = dates[0]
+    let prev = dates[0]
+    let count = 1
+    for (const d of dates.slice(1)) {
+      if (d <= addDays(prev, 7)) {
+        prev = d
+        count++
+        continue
+      }
+      runs.push({ label, date: start, endDate: count > 1 ? prev : null, count })
+      start = d
+      prev = d
+      count = 1
+    }
+    runs.push({ label, date: start, endDate: count > 1 ? prev : null, count })
+  }
+  return runs.sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label))
+}
+
 /* ── Supabase implementation ────────────────────────────────────────── */
 
 const EVENT_COLUMNS =
-  'id, seq, asset_id, checkout_id, action_id, kind, actor_id, actor_name, recorded_by, destination, handed_to_id, handed_to_name, note, photo_path, at'
+  'id, seq, asset_id, checkout_id, action_id, kind, actor_id, actor_name, recorded_by, destination, handed_to_id, handed_to_name, note, photo_path, signature_path, at'
 const CHECKOUT_COLUMNS =
-  'id, purpose, destination, event_date, note, created_by, created_by_name, created_at, closed_at, equipment_checkout_items(asset_id)'
+  'id, purpose, destination, event_date, extended, end_date, note, created_by, created_by_name, created_at, closed_at, equipment_checkout_items(asset_id)'
 
 interface PgError {
   message: string
@@ -233,7 +311,10 @@ interface PgError {
 }
 
 /** Turn a PostgREST error into a sentence a supervisor can act on. */
-function friendly(err: PgError, context: 'asset' | 'type' | 'handler' | 'general' = 'general'): Error {
+function friendly(
+  err: PgError,
+  context: 'asset' | 'type' | 'truck' | 'handler' | 'general' = 'general',
+): Error {
   if (err.code === '23505') {
     if (context === 'asset') {
       const m = /\(tag\)=\((.*)\)/.exec(err.details ?? '')
@@ -242,6 +323,7 @@ function friendly(err: PgError, context: 'asset' | 'type' | 'handler' | 'general
       )
     }
     if (context === 'type') return new Error('A type with that name already exists.')
+    if (context === 'truck') return new Error('That truck is already on the list.')
     if (context === 'handler') return new Error('They already have check-out access.')
   }
   if (err.code === '23503') {
@@ -262,8 +344,9 @@ function must<T>(res: { data: T | null; error: PgError | null }, context?: Param
 
 export const supabaseEquipmentBackend: EquipmentBackend = {
   async loadBoard() {
-    const [t, a, l, o, h, r] = await Promise.all([
+    const [t, tr, a, l, o, h, r] = await Promise.all([
       supabase.from('equipment_types').select('id, name, sort, active').order('sort').order('name'),
+      supabase.from('equipment_trucks').select('id, label, sort, active').order('sort').order('label'),
       supabase.from('equipment_assets').select('id, tag, name, type_id, notes, active, created_at'),
       supabase.from('equipment_asset_status').select(EVENT_COLUMNS),
       supabase
@@ -294,6 +377,7 @@ export const supabaseEquipmentBackend: EquipmentBackend = {
     }
     return {
       types: must(t) as TypeRow[],
+      trucks: must(tr) as TruckRow[],
       assets: must(a) as AssetRow[],
       latest: must(l) as unknown as EventRow[],
       open,
@@ -311,6 +395,8 @@ export const supabaseEquipmentBackend: EquipmentBackend = {
         p_destination: a.destination,
         p_event_date: a.eventDate,
         p_note: a.note,
+        p_extended: a.extended,
+        p_end_date: a.extended ? a.endDate : null,
       }),
     ) as string
   },
@@ -326,6 +412,7 @@ export const supabaseEquipmentBackend: EquipmentBackend = {
         p_handed_to_id: a.handedToId,
         p_handed_to_name: a.handedToName,
         p_missing_ids: a.missingIds.length ? a.missingIds : null,
+        p_signature_path: a.signaturePath,
       }),
     ) as string
   },
@@ -408,6 +495,21 @@ export const supabaseEquipmentBackend: EquipmentBackend = {
     must(await supabase.from('equipment_types').delete().eq('id', id), 'type')
   },
 
+  async insertTruck(t) {
+    return must(
+      await supabase.from('equipment_trucks').insert(t).select('id, label, sort, active').single(),
+      'truck',
+    ) as TruckRow
+  },
+
+  async updateTruck(id, t) {
+    must(await supabase.from('equipment_trucks').update(t).eq('id', id), 'truck')
+  },
+
+  async deleteTruck(id) {
+    must(await supabase.from('equipment_trucks').delete().eq('id', id), 'truck')
+  },
+
   async addHandler(userId) {
     must(await supabase.from('equipment_handlers').insert({ user_id: userId }), 'handler')
   },
@@ -434,54 +536,38 @@ export const supabaseEquipmentBackend: EquipmentBackend = {
 
   async loadSuggestions() {
     const today = todayCentral()
-    /* Schedule tables are read-only here, and optional: if the reader
-       can't see them the chips just fall back to recent history. */
-    const [ev, units, recent] = await Promise.all([
+    /* Schedule events are read-only here, and optional: if the reader
+       can't see them the chips fall back to recent history. Look 60 days
+       out so a multi-night run (the fair) shows its whole span. */
+    const [ev, recent] = await Promise.all([
       supabase
         .from('sched_events')
-        .select('label, on_date, start_time')
+        .select('label, on_date')
         .gte('on_date', today)
-        .lte('on_date', addDays(today, 10))
+        .lte('on_date', addDays(today, 60))
         .order('on_date')
-        .order('start_time')
-        .limit(40),
-      supabase.from('sched_units').select('code, sort_order').eq('active', true).order('sort_order'),
+        .limit(300),
       supabase
         .from('equipment_checkouts')
-        .select('purpose, destination')
+        .select('purpose')
         .order('created_at', { ascending: false })
         .limit(60),
     ])
-    const events: { label: string; date: string }[] = []
-    const seenEvents = new Set<string>()
-    for (const e of (ev.error ? [] : ev.data ?? []) as { label: string; on_date: string }[]) {
-      const key = `${e.label.trim().toLowerCase()}|${e.on_date}`
-      if (!e.label.trim() || seenEvents.has(key)) continue
-      seenEvents.add(key)
-      events.push({ label: e.label.trim(), date: e.on_date })
-    }
-    const recentRows = (recent.error ? [] : recent.data ?? []) as {
-      purpose: string
-      destination: string
-    }[]
-    const unitCodes = (units.error ? [] : units.data ?? []) as { code: string }[]
-    const unitList: string[] = []
-    for (const u of [...recentRows.map((r) => r.destination), ...unitCodes.map((u) => u.code)]) {
-      const v = u.trim()
-      if (v && !unitList.some((x) => x.toLowerCase() === v.toLowerCase())) unitList.push(v)
-    }
+    const rows = (ev.error ? [] : ev.data ?? []) as { label: string; on_date: string }[]
+    const events = eventRuns(rows).filter((r) => r.date <= addDays(today, 10))
     const purposes: string[] = []
-    for (const r of recentRows) {
+    for (const r of (recent.error ? [] : recent.data ?? []) as { purpose: string }[]) {
       const v = r.purpose.trim()
       if (v && !purposes.some((x) => x.toLowerCase() === v.toLowerCase())) purposes.push(v)
     }
-    return { events, units: unitList, recentPurposes: purposes }
+    return { events, recentPurposes: purposes }
   },
 
   subscribe(onChange) {
     const channel = supabase.channel('equipment-board')
     for (const table of [
       'equipment_types',
+      'equipment_trucks',
       'equipment_assets',
       'equipment_handlers',
       'equipment_checkouts',

@@ -547,9 +547,11 @@ export type EquipmentEventKind =
   | 'returned'
   | 'canceled'
   | 'written_off'
+  | 'shift_start'
+  | 'shift_end'
 
 /** The custody steps a person records on a check-out (reported_missing
- *  rides along with confirmed_present; checked_out has its own flow). */
+ *  rides along with the equipment checks; checked_out has its own flow). */
 export type EquipmentActionKind =
   | 'delivered'
   | 'canceled'
@@ -558,6 +560,8 @@ export type EquipmentActionKind =
   | 'picked_up'
   | 'returned'
   | 'written_off'
+  | 'shift_start'
+  | 'shift_end'
 
 /** available = on the shelf at Admin · in_transit = headed to the unit ·
  *  on_unit = on the event truck · missing = crew reported it not found ·
@@ -577,6 +581,15 @@ export interface EquipmentType {
   active: boolean
 }
 
+/** A physical ambulance, by truck number ("8751", "0081") or name
+ *  ("Vannie Mae") — the destination for event gear. In-app editable. */
+export interface EquipmentTruck {
+  id: string
+  label: string
+  sort: number
+  active: boolean
+}
+
 export interface EquipmentAsset {
   id: string
   /** PSTrax asset tag — text; leading zeros matter ("00432"). */
@@ -592,9 +605,14 @@ export interface EquipmentCheckout {
   id: string
   /** What the gear is for — the event. */
   purpose: string
-  /** The unit it's going to. */
+  /** The truck it's going on (truck number or vehicle name). */
   destination: string
   eventDate: string | null
+  /** Multiple nights: every crew checks the gear at the start and end
+   *  of their shift. */
+  extended: boolean
+  /** Last night of an extended assignment. */
+  endDate: string | null
   note: string
   createdBy: string | null
   createdByName: string
@@ -619,6 +637,8 @@ export interface EquipmentCustodyEvent {
   handedToName: string | null
   note: string
   photoPath: string | null
+  /** Receiver's signature (PNG in the photo bucket) for a hand-off. */
+  signaturePath: string | null
   at: string
   /** Present when the query embedded the check-out (history/activity). */
   checkoutPurpose?: string

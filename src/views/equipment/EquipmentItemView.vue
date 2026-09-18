@@ -8,9 +8,10 @@ import EquipmentTimeline from '@/components/equipment/EquipmentTimeline.vue'
 import { useEquipment } from '@/composables/useEquipment'
 import {
   STATUS_LABEL,
-  formatEventDate,
+  formatEventSpan,
   formatWhen,
   groupActions,
+  placeName,
   statusLine,
 } from '@/lib/equipment'
 import type { EquipmentCustodyEvent } from '@/types'
@@ -66,7 +67,15 @@ const actions = computed(() => groupActions(history.value))
 /** The check-out it's tied to right now — open, or (for a lost item)
  *  the closed one it was written off on. */
 const currentCheckout = computed(() => {
-  if (liveCheckout.value) return liveCheckout.value
+  const live = liveCheckout.value
+  if (live)
+    return {
+      id: live.id,
+      purpose: live.purpose,
+      destination: live.destination,
+      span: formatEventSpan(live.eventDate, live.extended ? live.endDate : null),
+      extended: live.extended,
+    }
   const id = state.value?.checkoutId
   const ev = id ? history.value.find((e) => e.checkoutId === id) : null
   return ev
@@ -74,7 +83,8 @@ const currentCheckout = computed(() => {
         id: ev.checkoutId,
         purpose: ev.checkoutPurpose ?? 'Check-out',
         destination: ev.checkoutDestination ?? ev.destination,
-        eventDate: null as string | null,
+        span: '',
+        extended: false,
       }
     : null
 })
@@ -138,8 +148,9 @@ const custodian = computed(() => {
         >
           <span>
             <strong>{{ currentCheckout.purpose }}</strong>
-            · {{ currentCheckout.destination }}<template v-if="currentCheckout.eventDate">
-              · {{ formatEventDate(currentCheckout.eventDate) }}</template>
+            · {{ placeName(currentCheckout.destination) }}<template v-if="currentCheckout.span">
+              · {{ currentCheckout.span }}</template><template v-if="currentCheckout.extended">
+              · extended</template>
           </span>
           <ArrowRight :size="16" :stroke-width="2" />
         </RouterLink>

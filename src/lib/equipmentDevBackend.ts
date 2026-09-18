@@ -1,20 +1,29 @@
-import { ACTION_RULES, HOME_LOCATION, RESOLVED_KINDS, addDays, todayCentral } from '@/lib/equipment'
-import type {
-  AssetInput,
-  AssetRow,
-  CheckoutRow,
-  EquipmentBackend,
-  EquipmentPerson,
-  EventRow,
-  TypeRow,
+import {
+  ACTION_RULES,
+  HOME_LOCATION,
+  RESOLVED_KINDS,
+  addDays,
+  isCheckKind,
+  todayCentral,
+} from '@/lib/equipment'
+import {
+  eventRuns,
+  type AssetInput,
+  type AssetRow,
+  type CheckoutRow,
+  type EquipmentBackend,
+  type EquipmentPerson,
+  type EventRow,
+  type TruckRow,
+  type TypeRow,
 } from '@/lib/equipmentBackend'
 import type { EquipmentEventKind } from '@/types'
 
 /**
  * In-memory stand-in for the equipment tables + RPCs, used only when
  * the dev stub is active (local `vite`, no Supabase session). Mirrors
- * the server's transition rules so the flows can be exercised end to
- * end in a browser. State resets on reload.
+ * the server's transition and evidence rules so the flows can be
+ * exercised end to end in a browser. State resets on reload.
  */
 
 interface DevUser {
@@ -30,6 +39,11 @@ const DEV_PEOPLE: EquipmentPerson[] = [
   { id: 'dev-p5', fullName: 'Priya Patel', title: 'Supply Coordinator' },
 ]
 
+const DEV_TRUCKS = [
+  '8751', '9238', '0081', '8237', '8744', '8750',
+  'Vannie Mae', '2795', '2793', '0379', '8665', '2794',
+]
+
 /** Neutral placeholder "photo" for seeded evidence. */
 function placeholderPhoto(label: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
@@ -37,6 +51,14 @@ function placeholderPhoto(label: string): string {
 <rect width="800" height="600" fill="url(#g)"/>
 <rect x="250" y="210" width="300" height="180" rx="14" fill="none" stroke="#C8A44D" stroke-width="4" stroke-dasharray="14 10"/>
 <text x="400" y="440" font-family="Georgia, serif" font-size="30" fill="#e8cb72" text-anchor="middle">${label}</text>
+</svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+/** Placeholder handwritten-looking signature for seeded hand-offs. */
+function placeholderSignature(): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="160" viewBox="0 0 600 160">
+<path d="M30 110 C 70 30, 110 30, 120 95 S 170 150, 200 70 S 260 20, 270 100 S 330 140, 360 80 C 380 50, 410 60, 420 95 S 480 120, 560 60" fill="none" stroke="#0F1A33" stroke-width="5" stroke-linecap="round"/>
 </svg>`
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
@@ -54,8 +76,14 @@ export function createDevEquipmentBackend(
     { id: 'type-radio', name: 'Radio', sort: 1, active: true },
     { id: 'type-ipad', name: 'iPad', sort: 2, active: true },
   ]
+  const trucks: TruckRow[] = DEV_TRUCKS.map((label, i) => ({
+    id: `truck-${i + 1}`,
+    label,
+    sort: i + 1,
+    active: true,
+  }))
   const assets: AssetRow[] = [
-    ...[431, 432, 433, 434, 435, 436, 437, 438].map((n, i) => ({
+    ...[431, 432, 433, 434, 435, 436, 437, 438, 439, 440].map((n, i) => ({
       id: `a-r${n}`,
       tag: `00${n}`,
       name: `APX 6000 portable #${i + 1}`,
@@ -108,6 +136,7 @@ export function createDevEquipmentBackend(
         handed_to_name: null,
         note: '',
         photo_path: null,
+        signature_path: null,
         at,
         ...extra,
       })
@@ -122,12 +151,15 @@ export function createDevEquipmentBackend(
     assetIds: string[],
     by: DevUser,
     at: string,
+    span: { extended: boolean; endDate: string | null } = { extended: false, endDate: null },
   ) {
     checkouts.push({
       id,
       purpose,
       destination,
       event_date: eventDate,
+      extended: span.extended,
+      end_date: span.endDate,
       note: '',
       created_by: by.id,
       created_by_name: by.fullName,
@@ -144,30 +176,56 @@ export function createDevEquipmentBackend(
   const sup = { id: 'dev-sup', fullName: 'Kelly Moreno' }
   const tara = { id: 'dev-p3', fullName: 'Tara Roth' }
   const dennis = { id: 'dev-p2', fullName: 'Dennis Ho' }
+  const brianna = { id: 'dev-p1', fullName: 'Brianna Smith' }
+  const sig = 'seed/signature.svg'
+  photos.set(sig, placeholderSignature())
 
   /* A finished check-out from last week, for item history. */
-  seedCheckout('co-old', 'Senior Health Fair', 'M221', addDays(today, -6), ['a-r437'], sup, hoursAgo(150))
+  seedCheckout('co-old', 'Senior Health Fair', '8237', addDays(today, -6), ['a-r437'], sup, hoursAgo(150))
   push('co-old', 'co-old-del', 'delivered', ['a-r437'], sup, hoursAgo(149), {
     handed_to_id: 'dev-p1',
     handed_to_name: 'Brianna Smith',
+    signature_path: sig,
   })
   push('co-old', 'co-old-up', 'picked_up', ['a-r437'], sup, hoursAgo(140))
   push('co-old', 'co-old-ret', 'returned', ['a-r437'], sup, hoursAgo(139), {
     handed_to_name: 'Front desk',
+    signature_path: sig,
   })
   checkouts.find((c) => c.id === 'co-old')!.closed_at = hoursAgo(139)
 
+  /* Extended: the fair, every crew checks at start and end of shift. */
+  seedCheckout(
+    'co-fair',
+    'Waller County Fair',
+    '8751',
+    addDays(today, -1),
+    ['a-r431', 'a-r432', 'a-i514'],
+    justin,
+    hoursAgo(28),
+    { extended: true, endDate: addDays(today, 14) },
+  )
+  push('co-fair', 'co-fair-del', 'delivered', ['a-r431', 'a-r432', 'a-i514'], justin, hoursAgo(27), {
+    handed_to_id: 'dev-p3',
+    handed_to_name: 'Tara Roth',
+    signature_path: sig,
+    note: 'Pelican case behind the driver seat.',
+  })
+  push('co-fair', 'co-fair-s1', 'shift_start', ['a-r431', 'a-r432', 'a-i514'], tara, hoursAgo(26.5))
+  push('co-fair', 'co-fair-e1', 'shift_end', ['a-r431', 'a-r432', 'a-i514'], tara, hoursAgo(14))
+  push('co-fair', 'co-fair-s2', 'shift_start', ['a-r431', 'a-r432', 'a-i514'], brianna, hoursAgo(2))
+
   photos.set('co-hemp/seed-left.jpg', placeholderPhoto('Left in the jump seat cabinet'))
+  photos.set('co-hemp/seed-drop.jpg', placeholderPhoto('Dropped on the stretcher'))
   seedCheckout(
     'co-hemp',
     'Hempstead HS Football',
-    'M231',
+    '0081',
     addDays(today, -1),
     ['a-r436', 'a-i513'],
     justin,
     hoursAgo(27),
   )
-  photos.set('co-hemp/seed-drop.jpg', placeholderPhoto('Dropped on the stretcher'))
   push('co-hemp', 'co-hemp-del', 'delivered', ['a-r436', 'a-i513'], justin, hoursAgo(26.5), {
     photo_path: 'co-hemp/seed-drop.jpg',
     note: 'Nobody on the truck yet — left on the stretcher.',
@@ -180,7 +238,7 @@ export function createDevEquipmentBackend(
   seedCheckout(
     'co-royal',
     'Royal HS Football',
-    'M272',
+    '9238',
     today,
     ['a-r433', 'a-r434', 'a-r435', 'a-i512'],
     sup,
@@ -189,6 +247,7 @@ export function createDevEquipmentBackend(
   push('co-royal', 'co-royal-del', 'delivered', ['a-r433', 'a-r434', 'a-r435', 'a-i512'], sup, hoursAgo(2.6), {
     handed_to_id: 'dev-p3',
     handed_to_name: 'Tara Roth',
+    signature_path: sig,
     note: 'Radios in the grey Pelican case, iPad in the cab.',
   })
   push('co-royal', 'co-royal-conf', 'confirmed_present', ['a-r433', 'a-r434', 'a-i512'], tara, hoursAgo(1.2), {
@@ -197,8 +256,6 @@ export function createDevEquipmentBackend(
   push('co-royal', 'co-royal-conf', 'reported_missing', ['a-r435'], tara, hoursAgo(1.2), {
     note: 'Radio #5 wasn’t in the case.',
   })
-
-  seedCheckout('co-fair', 'Waller County Fair', 'M206', today, ['a-r431', 'a-r432'], justin, hoursAgo(0.4))
 
   /* ── helpers ── */
   const withItems = (c: CheckoutRow): CheckoutRow => ({
@@ -231,6 +288,7 @@ export function createDevEquipmentBackend(
         .filter((e): e is EventRow => !!e)
       return {
         types: [...types].sort((a, b) => a.sort - b.sort),
+        trucks: [...trucks].sort((a, b) => a.sort - b.sort),
         assets: [...assets],
         latest,
         open: open.sort((a, b) => b.created_at.localeCompare(a.created_at)),
@@ -244,7 +302,10 @@ export function createDevEquipmentBackend(
       await delay()
       requireHandler()
       if (!a.purpose.trim()) throw new Error('Add what the equipment is for.')
-      if (!a.destination.trim()) throw new Error('Add the unit it’s going to.')
+      if (!a.destination.trim()) throw new Error('Pick the truck it’s going on.')
+      const endDate = a.extended ? a.endDate : null
+      if (endDate && a.eventDate && endDate < a.eventDate)
+        throw new Error('The assignment can’t end before it starts.')
       const ids = [...new Set(a.assetIds)]
       if (!ids.length) throw new Error('Select at least one item.')
       const busy = ids
@@ -254,7 +315,7 @@ export function createDevEquipmentBackend(
           return k && k !== 'returned' && k !== 'canceled'
         })
       if (busy.length)
-        throw new Error(`Already checked out: ${busy.map((b) => b.tag).join(', ')}. Refresh and pick again.`)
+        throw new Error(`Not on the shelf right now: ${busy.map((b) => b.tag).join(', ')}. Refresh and pick again.`)
       const id = uuid()
       const who = me()
       checkouts.push({
@@ -262,6 +323,8 @@ export function createDevEquipmentBackend(
         purpose: a.purpose.trim(),
         destination: a.destination.trim(),
         event_date: a.eventDate,
+        extended: a.extended,
+        end_date: endDate,
         note: a.note.trim(),
         created_by: who.id,
         created_by_name: who.fullName,
@@ -281,14 +344,21 @@ export function createDevEquipmentBackend(
       if (!co) throw new Error('Check-out not found.')
       const all = [...a.assetIds, ...a.missingIds]
       if (!all.length) throw new Error('Select at least one item.')
+      if (a.missingIds.length && !isCheckKind(a.kind))
+        throw new Error('Only an equipment check can report items missing.')
       if (a.missingIds.length && !a.note.trim()) throw new Error('Add a note about what’s missing.')
       if (a.kind === 'written_off' && !a.note.trim())
         throw new Error('Add a note: what happened, and who was notified.')
-      const handed = a.handedToId
-        ? DEV_PEOPLE.find((p) => p.id === a.handedToId)?.fullName ?? null
-        : a.handedToName?.trim() || null
+      const handoff = a.kind === 'delivered' || a.kind === 'returned'
+      const handed = !handoff
+        ? null
+        : a.handedToId
+          ? (DEV_PEOPLE.find((p) => p.id === a.handedToId)?.fullName ??
+            (a.handedToId === me().id ? me().fullName : null))
+          : a.handedToName?.trim() || null
       if (rule.evidence === 'photo-or-person' && !handed && !a.photoPath)
         throw new Error('Name who you handed the items to, or add a photo of where you left them.')
+      if (handed && !a.signaturePath) throw new Error(`${handed} needs to sign to receive the items.`)
       if (rule.evidence === 'photo' && !a.photoPath)
         throw new Error('A photo of where the items were left is required.')
       const stale = all.filter((id) => {
@@ -299,15 +369,18 @@ export function createDevEquipmentBackend(
       const actionId = uuid()
       const at = new Date().toISOString()
       const who = me()
-      const extra: Partial<EventRow> = {
+      push(co.id, actionId, a.kind, a.assetIds, who, at, {
         note: a.note.trim(),
         photo_path: a.photoPath,
-        handed_to_id: a.kind === 'delivered' || a.kind === 'returned' ? a.handedToId : null,
-        handed_to_name: a.kind === 'delivered' || a.kind === 'returned' ? handed : null,
-      }
-      push(co.id, actionId, a.kind, a.assetIds, who, at, extra)
+        handed_to_id: handoff ? a.handedToId : null,
+        handed_to_name: handed,
+        signature_path: handed ? a.signaturePath : null,
+      })
       if (a.missingIds.length)
-        push(co.id, actionId, 'reported_missing', a.missingIds, who, at, { note: a.note.trim() })
+        push(co.id, actionId, 'reported_missing', a.missingIds, who, at, {
+          note: a.note.trim(),
+          photo_path: a.photoPath,
+        })
       const stillOut = items
         .filter((i) => i.checkout_id === co.id)
         .some((i) => {
@@ -320,7 +393,8 @@ export function createDevEquipmentBackend(
 
     async uploadPhoto(checkoutId, blob) {
       await delay()
-      const path = `${checkoutId}/${Date.now()}.jpg`
+      const ext = blob.type === 'image/png' ? 'png' : 'jpg'
+      const path = `${checkoutId}/${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`
       photos.set(path, URL.createObjectURL(blob))
       return path
     },
@@ -406,6 +480,31 @@ export function createDevEquipmentBackend(
       )
     },
 
+    async insertTruck(t) {
+      requireHandler()
+      if (trucks.some((x) => x.label.toLowerCase() === t.label.trim().toLowerCase()))
+        throw new Error('That truck is already on the list.')
+      const row = { id: uuid(), ...t }
+      trucks.push(row)
+      return row
+    },
+
+    async updateTruck(id, t) {
+      requireHandler()
+      if (t.label && trucks.some((x) => x.id !== id && x.label.toLowerCase() === t.label!.toLowerCase()))
+        throw new Error('That truck is already on the list.')
+      const row = trucks.find((x) => x.id === id)
+      if (row) Object.assign(row, t)
+    },
+
+    async deleteTruck(id) {
+      requireHandler()
+      trucks.splice(
+        trucks.findIndex((x) => x.id === id),
+        1,
+      )
+    },
+
     async addHandler(userId) {
       if (!handlers.includes(userId)) handlers.push(userId)
     },
@@ -417,6 +516,8 @@ export function createDevEquipmentBackend(
 
     async updateCheckout(id, patch) {
       requireHandler()
+      if (patch.extended && patch.end_date && patch.event_date && patch.end_date < patch.event_date)
+        throw new Error('The assignment can’t end before it starts.')
       const c = checkouts.find((x) => x.id === id)
       if (c) Object.assign(c, patch)
     },
@@ -426,15 +527,19 @@ export function createDevEquipmentBackend(
     },
 
     async loadSuggestions() {
+      const schedule = [
+        { label: 'Royal HS Football', on_date: today },
+        { label: 'Waller County Fair', on_date: today },
+        { label: 'Waller County Fair', on_date: addDays(today, 1) },
+        { label: 'Waller County Fair', on_date: addDays(today, 6) },
+        { label: 'Waller County Fair', on_date: addDays(today, 7) },
+        { label: 'Waller County Fair', on_date: addDays(today, 8) },
+        { label: 'Senior Health Fair', on_date: addDays(today, 3) },
+        { label: 'City of Waller National Night Out', on_date: addDays(today, 5) },
+      ]
       return {
-        events: [
-          { label: 'Royal HS Football', date: today },
-          { label: 'Waller County Fair', date: addDays(today, 1) },
-          { label: 'Senior Health Fair', date: addDays(today, 3) },
-          { label: 'City of Waller National Night Out', date: addDays(today, 5) },
-        ],
-        units: ['M272', 'M206', 'M231', 'M211', 'M221', 'M242', 'M281', 'M271', 'S201', 'S202'],
-        recentPurposes: ['Royal HS Football', 'Waller County Fair', 'Hempstead HS Football'],
+        events: eventRuns(schedule),
+        recentPurposes: ['Royal HS Football', 'Hempstead HS Football'],
       }
     },
 

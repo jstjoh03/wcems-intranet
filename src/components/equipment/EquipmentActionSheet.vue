@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { Check, X, UserRound, Camera } from 'lucide-vue-next'
+import { Check, X, UserRound, Camera, PenLine } from 'lucide-vue-next'
 import EquipmentSheet from './EquipmentSheet.vue'
 import EquipmentPhotoField from './EquipmentPhotoField.vue'
 import EquipmentPersonPicker from './EquipmentPersonPicker.vue'
+import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { useEquipment } from '@/composables/useEquipment'
 import {
   ACTION_RULES,
   HOME_LOCATION,
   eligibleFor,
+  isCheckKind,
+  placeName,
   pluralize,
   type PickedPerson,
 } from '@/lib/equipment'
@@ -16,10 +19,12 @@ import type { EquipmentActionKind, EquipmentCheckout, EquipmentEventKind } from 
 
 /**
  * One form for every custody step on a check-out. Items eligible for
- * the step are pre-selected; evidence follows the step's rule (photo,
- * or photo-unless-handed-to-someone). The on-shift confirmation flips
- * the list around: every item starts as "here" and a tap marks it not
- * found (anything already reported missing starts as not found).
+ * the step are pre-selected; evidence follows the step's rule. A hand-off
+ * to a named person needs that person's signature on this phone; leaving
+ * the gear needs a photo. Equipment checks (the on-shift confirmation and
+ * the start/end-of-shift checks) flip the list around: every item starts
+ * as "here" and a tap marks it not found (anything already reported
+ * missing starts as not found).
  */
 const props = defineProps<{
   open: boolean
@@ -35,22 +40,24 @@ const selected = ref<string[]>([])
 const notFound = ref<string[]>([])
 const mode = ref<'person' | 'photo'>('person')
 const person = ref<PickedPerson | null>(null)
+const signature = ref<string | null>(null)
 const photo = ref<Blob | null>(null)
 const note = ref('')
 const submitting = ref(false)
 const error = ref<string | null>(null)
 
 const rule = computed(() => (props.kind ? ACTION_RULES[props.kind] : null))
-const isConfirm = computed(() => props.kind === 'confirmed_present')
+const isCheck = computed(() => isCheckKind(props.kind))
 const eligible = computed(() =>
   props.kind ? eligibleFor(props.kind, props.itemKinds, props.checkout.assetIds) : [],
 )
+const truck = computed(() => placeName(props.checkout.destination))
 
 watch(
   () => [props.open, props.kind] as const,
   ([open]) => {
     if (!open) return
-    if (isConfirm.value) {
+    if (isCheck.value) {
       notFound.value = eligible.value.filter((id) => props.itemKinds[id] === 'reported_missing')
       selected.value = eligible.value.filter((id) => !notFound.value.includes(id))
     } else {
@@ -64,6 +71,7 @@ watch(
     }
     mode.value = 'person'
     person.value = null
+    signature.value = null
     photo.value = null
     note.value = ''
     error.value = null
@@ -73,12 +81,17 @@ watch(
   { immediate: true },
 )
 
+/* A different receiver means a fresh signature. */
+watch(person, () => {
+  signature.value = null
+})
+
 function isHere(id: string) {
   return selected.value.includes(id)
 }
 
 function toggle(id: string) {
-  if (isConfirm.value) {
+  if (isCheck.value) {
     if (notFound.value.includes(id)) {
       notFound.value = notFound.value.filter((x) => x !== id)
       selected.value = [...selected.value, id]
@@ -98,22 +111,27 @@ function toggleAll() {
 
 const itemCount = computed(() => selected.value.length + notFound.value.length)
 const needsNote = computed(
-  () => (isConfirm.value && notFound.value.length > 0) || props.kind === 'written_off',
+  () => (isCheck.value && notFound.value.length > 0) || props.kind === 'written_off',
+)
+const handingOff = computed(
+  () => rule.value?.evidence === 'photo-or-person' && mode.value === 'person',
 )
 
 const evidenceOk = computed(() => {
   if (!rule.value) return false
   if (rule.value.evidence === 'photo') return !!photo.value
   if (rule.value.evidence === 'photo-or-person')
-    return mode.value === 'person' ? !!person.value : !!photo.value
+    return handingOff.value ? !!person.value && !!signature.value : !!photo.value
   return true
 })
 
 const blocker = computed<string | null>(() => {
   if (itemCount.value === 0) return 'Select at least one item.'
   if (!evidenceOk.value) {
-    if (rule.value?.evidence === 'photo-or-person' && mode.value === 'person')
-      return 'Pick who you handed it to — or switch to a photo.'
+    if (handingOff.value)
+      return person.value
+        ? `Have ${person.value.name} sign to receive.`
+        : 'Pick who you handed it to — or switch to a photo.'
     return 'Add a photo of where the items were left.'
   }
   if (needsNote.value && !note.value.trim())
@@ -124,18 +142,21 @@ const blocker = computed<string | null>(() => {
 })
 
 const title = computed(() => {
-  const unit = props.checkout.destination
   switch (props.kind) {
     case 'delivered':
-      return `Deliver to ${unit}`
+      return `Deliver to ${truck.value}`
     case 'canceled':
       return 'Cancel check-out'
     case 'confirmed_present':
       return 'Is everything here?'
+    case 'shift_start':
+      return 'Start-of-shift check'
+    case 'shift_end':
+      return 'End-of-shift check'
     case 'event_closed':
-      return 'Close out the event'
+      return props.checkout.extended ? 'Final close-out' : 'Close out the event'
     case 'picked_up':
-      return `Pick up from ${unit}`
+      return `Pick up from ${truck.value}`
     case 'returned':
       return `Drop off at ${HOME_LOCATION}`
     case 'written_off':
@@ -148,17 +169,23 @@ const title = computed(() => {
 const intro = computed(() => {
   switch (props.kind) {
     case 'delivered':
-      return 'Hand the gear to someone on the crew, or leave it and take a photo of where.'
+      return 'Hand the gear to someone on the crew — they sign for it on your phone — or leave it and take a photo of where.'
     case 'canceled':
       return 'Puts these items back on the shelf — for gear that never actually left.'
     case 'confirmed_present':
       return 'Tap anything you can’t find. Your name goes on the record as confirming the rest.'
+    case 'shift_start':
+      return `You’re taking over ${truck.value}. Check the gear before your shift gets going — tap anything you can’t find.`
+    case 'shift_end':
+      return 'Before you hand the truck over, make sure everything is still here — tap anything you can’t find. The next crew checks it again when they start.'
     case 'event_closed':
-      return 'Take a photo of where the equipment is being left so the pickup finds it fast.'
+      return props.checkout.extended
+        ? 'Last night of the assignment. Take a photo of where the equipment is being left so the pickup finds it fast.'
+        : 'Take a photo of where the equipment is being left so the pickup finds it fast.'
     case 'picked_up':
-      return 'Select what you’re taking off the unit. Anything left behind stays on the board.'
+      return 'Select what you’re taking off the truck. Anything left behind stays on the board.'
     case 'returned':
-      return `Hand it to someone at ${HOME_LOCATION}, or leave it and take a photo of where.`
+      return `Hand it to someone at ${HOME_LOCATION} — they sign for it — or leave it and take a photo of where.`
     case 'written_off':
       return `For gear that isn’t coming back. It stops holding this check-out open and shows as Lost; if it turns up, drop it off at ${HOME_LOCATION} from here.`
     default:
@@ -172,6 +199,8 @@ const photoHint = computed(() => {
       return 'Where you left it — the cabinet, the cab, the stretcher.'
     case 'event_closed':
       return 'Show where it’s sitting for pickup.'
+    case 'shift_end':
+      return 'Handy for the next crew: where the gear is sitting.'
     case 'returned':
       return `Where you left it at ${HOME_LOCATION}.`
     default:
@@ -186,7 +215,11 @@ const notePlaceholder = computed(() => {
     case 'canceled':
       return 'Why? (optional)'
     case 'confirmed_present':
-      return needsNote.value ? 'What’s missing, and where did you look?' : 'Anything off? Damage, missing chargers… (optional)'
+    case 'shift_start':
+    case 'shift_end':
+      return needsNote.value
+        ? 'What’s missing, and where did you look?'
+        : 'Anything off? Damage, dead batteries, missing chargers… (optional)'
     case 'event_closed':
       return 'e.g. Left in the jump-seat cabinet (optional)'
     case 'written_off':
@@ -195,6 +228,14 @@ const notePlaceholder = computed(() => {
       return 'Optional'
   }
 })
+
+function checkTally(): string {
+  const n = selected.value.length
+  const m = notFound.value.length
+  if (!m) return `${pluralize(n, 'item')} here`
+  if (!n) return `${pluralize(m, 'item')} not found`
+  return `${n} here, ${m} not found`
+}
 
 const submitLabel = computed(() => {
   const n = selected.value.length
@@ -207,8 +248,11 @@ const submitLabel = computed(() => {
       if (!notFound.value.length) return `Confirm ${pluralize(n, 'item')} here`
       if (!n) return `Report ${pluralize(notFound.value.length, 'item')} not found`
       return `Confirm ${n} here · ${notFound.value.length} not found`
+    case 'shift_start':
+    case 'shift_end':
+      return `Record check · ${checkTally()}`
     case 'event_closed':
-      return 'Close out the event'
+      return props.checkout.extended ? 'Close out the assignment' : 'Close out the event'
     case 'picked_up':
       return `Pick up ${pluralize(n, 'item')}`
     case 'returned':
@@ -222,21 +266,26 @@ const submitLabel = computed(() => {
 
 function doneMessage(): string {
   const n = selected.value.length
+  const who = handingOff.value && person.value ? ` · signed by ${person.value.name}` : ''
   switch (props.kind) {
     case 'delivered':
-      return `Delivered to ${props.checkout.destination} · ${pluralize(n, 'item')}`
+      return `Delivered to ${truck.value}${who}`
     case 'canceled':
       return 'Back on the shelf'
     case 'confirmed_present':
       return notFound.value.length
         ? `Recorded · ${n} here, ${notFound.value.length} not found`
         : `Confirmed · ${pluralize(n, 'item')} here`
+    case 'shift_start':
+      return `Start-of-shift check recorded · ${checkTally()}`
+    case 'shift_end':
+      return `End-of-shift check recorded · ${checkTally()}`
     case 'event_closed':
-      return 'Event closed out — ready for pickup'
+      return 'Closed out — ready for pickup'
     case 'picked_up':
       return `Picked up · ${pluralize(n, 'item')} headed to ${HOME_LOCATION}`
     case 'returned':
-      return `Back at ${HOME_LOCATION} · ${pluralize(n, 'item')}`
+      return `Back at ${HOME_LOCATION}${who || ` · ${pluralize(n, 'item')}`}`
     case 'written_off':
       return `Written off as lost · ${pluralize(n, 'item')}`
     default:
@@ -248,16 +297,17 @@ async function submit() {
   if (!props.kind || blocker.value || submitting.value) return
   submitting.value = true
   error.value = null
-  const handed = rule.value?.evidence === 'photo-or-person' && mode.value === 'person'
+  const handed = handingOff.value
   const res = await recordAction({
     checkoutId: props.checkout.id,
     kind: props.kind,
     assetIds: selected.value,
-    missingIds: isConfirm.value ? notFound.value : [],
+    missingIds: isCheck.value ? notFound.value : [],
     note: note.value,
     photo: handed ? null : photo.value,
     handedToId: handed ? (person.value?.id ?? null) : null,
     handedToName: handed ? (person.value?.name ?? null) : null,
+    signature: handed ? signature.value : null,
   })
   submitting.value = false
   if (!res.ok) {
@@ -272,7 +322,7 @@ async function submit() {
   <EquipmentSheet
     :open="open && !!kind"
     :title="title"
-    :eyebrow="`${checkout.purpose} · ${checkout.destination}`"
+    :eyebrow="`${checkout.purpose} · ${truck}`"
     @close="emit('close')"
   >
     <p class="eqa__intro">{{ intro }}</p>
@@ -280,9 +330,9 @@ async function submit() {
     <!-- Items -->
     <div class="eq-field">
       <div class="eq-label">
-        <span>{{ isConfirm ? 'Tap anything that isn’t here' : 'Items' }}</span>
+        <span>{{ isCheck ? 'Tap anything that isn’t here' : 'Items' }}</span>
         <button
-          v-if="!isConfirm && eligible.length > 1"
+          v-if="!isCheck && eligible.length > 1"
           type="button"
           class="eqa__all"
           @click="toggleAll"
@@ -316,13 +366,13 @@ async function submit() {
           </span>
           <span v-if="notFound.includes(id)" class="eqa__nf">Not found</span>
           <span
-            v-else-if="!isConfirm && itemKinds[id] === 'reported_missing'"
+            v-else-if="!isCheck && itemKinds[id] === 'reported_missing'"
             class="eqa__nf eqa__nf--soft"
           >
             Reported missing
           </span>
           <span
-            v-else-if="!isConfirm && itemKinds[id] === 'written_off'"
+            v-else-if="!isCheck && itemKinds[id] === 'written_off'"
             class="eqa__nf eqa__nf--soft"
           >
             Written off
@@ -331,10 +381,10 @@ async function submit() {
       </div>
     </div>
 
-    <!-- Evidence -->
+    <!-- Evidence: hand-off (with signature) or a photo -->
     <div v-if="rule?.evidence === 'photo-or-person'" class="eq-field">
       <div class="eq-label">
-        <span>{{ kind === 'returned' ? `At ${HOME_LOCATION}` : 'On the unit' }}</span>
+        <span>{{ kind === 'returned' ? `At ${HOME_LOCATION}` : 'On the truck' }}</span>
         <span class="eq-label__req">Required</span>
       </div>
       <div class="eq-seg" role="radiogroup">
@@ -359,13 +409,29 @@ async function submit() {
           <Camera :size="15" :stroke-width="2" /> Left it — photo
         </button>
       </div>
-      <EquipmentPersonPicker
-        v-if="mode === 'person'"
-        v-model="person"
-        :people="people"
-        allow-free-text
-        :placeholder="kind === 'returned' ? 'Who took it at Admin?' : 'Who took it?'"
-      />
+      <template v-if="mode === 'person'">
+        <EquipmentPersonPicker
+          v-model="person"
+          :people="people"
+          allow-free-text
+          :placeholder="kind === 'returned' ? 'Who took it at Admin?' : 'Who took it?'"
+        />
+        <div v-if="person" class="eqa__sign">
+          <div class="eqa__sign-head">
+            <PenLine :size="16" :stroke-width="2" />
+            <span><strong>{{ person.name }}</strong> signs to receive</span>
+          </div>
+          <p class="eqa__sign-attest">
+            “I received the {{ pluralize(selected.length, 'item') }} checked above.”
+            Hand them your phone to sign.
+          </p>
+          <SignaturePad
+            :key="person.name"
+            :height="136"
+            @change="(v: string) => (signature = v || null)"
+          />
+        </div>
+      </template>
       <EquipmentPhotoField v-else v-model="photo" :hint="photoHint" />
     </div>
 
@@ -376,6 +442,14 @@ async function submit() {
       label="Where it’s being left"
       :hint="photoHint"
       required
+    />
+
+    <EquipmentPhotoField
+      v-else-if="rule?.evidence === 'optional-photo'"
+      v-model="photo"
+      class="eq-field"
+      label="Where you’re leaving it (optional)"
+      :hint="photoHint"
     />
 
     <!-- Note -->
@@ -519,6 +593,38 @@ async function submit() {
   font-size: 10px;
   opacity: 0.85;
 }
+
+/* Receiver signature */
+.eqa__sign {
+  margin-top: 4px;
+  padding: 14px;
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-brand-200);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.eqa__sign-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--color-ink-soft);
+}
+.eqa__sign-head svg {
+  flex-shrink: 0;
+  color: var(--color-accent-700);
+}
+.eqa__sign-head strong {
+  font-weight: 700;
+  color: var(--color-ink);
+}
+.eqa__sign-attest {
+  margin: 6px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--color-muted);
+}
+
 .eqa__error {
   margin-bottom: 10px;
 }

@@ -13,6 +13,7 @@ import {
   Tablet,
   Package,
   ChevronRight,
+  Repeat,
   X,
 } from 'lucide-vue-next'
 import '@/components/equipment/equipment.css'
@@ -21,14 +22,17 @@ import EquipmentStepLadder from '@/components/equipment/EquipmentStepLadder.vue'
 import { useEquipment } from '@/composables/useEquipment'
 import {
   HOME_LOCATION,
-  formatEventDate,
+  KIND_LABEL,
+  formatEventSpan,
   formatWhen,
   groupActions,
   itemMatches,
+  placeName,
   pluralize,
   statusChip,
   summarizeCheckout,
   type CustodyAction,
+  type LastCheck,
 } from '@/lib/equipment'
 import type { EquipmentAsset, EquipmentStatus } from '@/types'
 
@@ -163,16 +167,25 @@ const activity = computed(() => groupActions(recentEvents.value).slice(0, 10))
 
 function sentence(a: CustodyAction): string {
   const items = pluralize(a.assetIds.length, 'item')
-  const unit = a.checkoutDestination ?? a.destination
+  const unit = placeName(a.checkoutDestination ?? a.destination)
+  const tally = a.missingAssetIds.length
+    ? `${a.assetIds.length} here, ${a.missingAssetIds.length} not found`
+    : `${items} here`
   switch (a.kind) {
     case 'checked_out':
-      return `checked out ${items} to ${a.destination}`
+      return `checked out ${items} to ${placeName(a.destination)}`
     case 'delivered':
-      return `delivered ${items} to ${unit}`
+      return a.handedToName
+        ? `delivered ${items} to ${unit}, signed for by ${a.handedToName}`
+        : `delivered ${items} to ${unit}`
     case 'confirmed_present':
       return a.missingAssetIds.length
         ? `confirmed ${a.assetIds.length} on ${unit}, ${a.missingAssetIds.length} not found`
         : `confirmed ${items} on ${unit}`
+    case 'shift_start':
+      return `did the start-of-shift check on ${unit} (${tally})`
+    case 'shift_end':
+      return `did the end-of-shift check on ${unit} (${tally})`
     case 'reported_missing':
       return `reported ${items} not found on ${unit}`
     case 'event_closed':
@@ -186,6 +199,13 @@ function sentence(a: CustodyAction): string {
     case 'written_off':
       return `wrote off ${items} as lost`
   }
+}
+
+/** "Start-of-shift check · Tara Roth · Today 6:40 AM" */
+function lastCheckLine(check: LastCheck | null): string {
+  if (!check) return 'No shift check yet'
+  const what = check.kind === 'reported_missing' ? 'Check' : KIND_LABEL[check.kind]
+  return `${what} · ${check.by} · ${formatWhen(check.at)}`
 }
 
 const heroOut = computed(() => counts.value.on_unit + counts.value.missing)
@@ -301,16 +321,22 @@ const heroMoving = computed(() => counts.value.in_transit + counts.value.returni
                 <div class="eqb-card__top">
                   <span class="eqb-card__unit">
                     <Truck :size="13" :stroke-width="2.2" /> {{ c.destination }}
-                    <template v-if="c.eventDate">
+                    <template v-if="c.eventDate || c.endDate">
                       <span class="eqb-card__dot">·</span>
-                      <CalendarDays :size="12" :stroke-width="2.2" /> {{ formatEventDate(c.eventDate) }}
+                      <CalendarDays :size="12" :stroke-width="2.2" />
+                      {{ formatEventSpan(c.eventDate, c.extended ? c.endDate : null) }}
                     </template>
                   </span>
                   <span class="eqb-card__phase" :class="`eqb-card__phase--${s.phase}`">
                     {{ s.phaseLabel }}
                   </span>
                 </div>
-                <div class="eqb-card__purpose">{{ c.purpose }}</div>
+                <div class="eqb-card__purpose">
+                  {{ c.purpose }}
+                  <span v-if="c.extended" class="eqb-card__ext">
+                    <Repeat :size="11" :stroke-width="2.4" /> Extended
+                  </span>
+                </div>
                 <div class="eqb-card__mix">
                   {{ pluralize(s.openAssetIds.length, 'item') }}<template v-if="mix"> · {{ mix }}</template>
                 </div>
@@ -320,7 +346,10 @@ const heroMoving = computed(() => counts.value.in_transit + counts.value.returni
                     <TriangleAlert :size="13" :stroke-width="2.2" />
                     {{ s.missing }} not found
                   </span>
-                  <span class="eqb-card__hint">{{ s.nextHint }}</span>
+                  <span v-if="c.extended && s.phase === 'assignment'" class="eqb-card__hint">
+                    <span class="eqb-card__hint-label">Last check</span> {{ lastCheckLine(s.lastCheck) }}
+                  </span>
+                  <span v-else class="eqb-card__hint">{{ s.nextHint }}</span>
                   <ArrowRight :size="15" :stroke-width="2" class="eqb-card__go" />
                 </div>
               </RouterLink>
@@ -727,6 +756,10 @@ const heroMoving = computed(() => counts.value.in_transit + counts.value.returni
   color: oklch(0.43 0.09 78);
   background: oklch(0.955 0.045 86.8);
 }
+.eqb-card__phase--assignment {
+  color: var(--color-accent-on-dark);
+  background: var(--color-brand-800);
+}
 .eqb-card__phase--missing {
   color: oklch(0.5 0.19 25);
   background: var(--color-danger-50);
@@ -741,6 +774,30 @@ const heroMoving = computed(() => counts.value.in_transit + counts.value.returni
   font-size: 23px;
   line-height: 1.12;
   color: var(--color-ink);
+}
+.eqb-card__ext {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 3px 8px;
+  vertical-align: 4px;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent-on-dark);
+  background: var(--color-brand-800);
+  border-radius: 999px;
+}
+.eqb-card__hint-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+  margin-right: 4px;
 }
 .eqb-card__mix {
   margin-top: 4px;

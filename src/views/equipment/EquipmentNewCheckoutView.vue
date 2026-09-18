@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ArrowRight, Search, Check, X, CalendarDays } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, Search, Check, X, CalendarDays, Plus, Repeat } from 'lucide-vue-next'
 import '@/components/equipment/equipment.css'
 import EquipmentStatusChip from '@/components/equipment/EquipmentStatusChip.vue'
 import { useEquipment } from '@/composables/useEquipment'
-import type { EquipmentSuggestions } from '@/lib/equipmentBackend'
+import type { EquipmentSuggestions, EventSuggestion } from '@/lib/equipmentBackend'
 import {
-  formatEventDate,
+  formatEventSpan,
   itemMatches,
   pluralize,
   statusChip,
@@ -17,8 +17,10 @@ import {
 /**
  * /equipment/checkout/new — handlers only (route guard + RPC). Two
  * steps sized for a phone in a parking lot: pick the items, then say
- * what they're for and which unit they're going to. Lands on the new
- * check-out, where "Mark delivered" is the next action.
+ * what they're for and which truck they're going on (truck numbers from
+ * the in-app list — not Medic unit designations). A multi-night event is
+ * an extended assignment with a date span. Lands on the new check-out,
+ * where "Mark delivered" is the next action.
  *
  * ?tag=00432 pre-selects an item (the item page's "Check out" button,
  * and later the Admin kiosk / QR stickers).
@@ -34,6 +36,8 @@ const {
   typeName,
   stateOf,
   assetByTag,
+  activeTrucks,
+  saveTruck,
   checkOut,
   loadSuggestions,
 } = useEquipment()
@@ -93,6 +97,8 @@ watch(
 const purpose = ref('')
 const destination = ref('')
 const eventDate = ref(todayCentral())
+const extended = ref(false)
+const endDate = ref('')
 const note = ref('')
 const sugs = ref<EquipmentSuggestions | null>(null)
 
@@ -107,11 +113,46 @@ const purposeChips = computed(() => {
     .filter((p) => !fromEvents.has(p.toLowerCase()))
     .slice(0, 4)
 })
-const unitChips = computed(() => (sugs.value?.units ?? []).slice(0, 12))
-
-function pickEvent(e: { label: string; date: string }) {
+/* Picking a scheduled event fills its dates; a run of nights turns on
+   the extended assignment through the last one. */
+function pickEvent(e: EventSuggestion) {
   purpose.value = e.label
   eventDate.value = e.date
+  extended.value = !!e.endDate
+  endDate.value = e.endDate ?? ''
+}
+function eventPicked(e: EventSuggestion) {
+  return (
+    purpose.value === e.label &&
+    eventDate.value === e.date &&
+    (extended.value ? endDate.value : '') === (e.endDate ?? '')
+  )
+}
+
+watch(extended, (on) => {
+  if (on && !endDate.value) endDate.value = eventDate.value
+})
+
+const spanError = computed(() =>
+  extended.value && endDate.value && eventDate.value && endDate.value < eventDate.value
+    ? 'The assignment can’t end before it starts.'
+    : null,
+)
+
+/* Add a truck that isn't on the list yet (handlers can edit the list). */
+const addingTruck = ref(false)
+const newTruck = ref('')
+const truckErr = ref<string | null>(null)
+async function addTruck() {
+  const res = await saveTruck(null, { label: newTruck.value, active: true })
+  if (!res.ok) {
+    truckErr.value = res.error
+    return
+  }
+  destination.value = res.truck?.label ?? newTruck.value.trim()
+  newTruck.value = ''
+  truckErr.value = null
+  addingTruck.value = false
 }
 
 const submitting = ref(false)
@@ -121,6 +162,7 @@ const canSubmit = computed(
     selected.value.length > 0 &&
     purpose.value.trim().length > 0 &&
     destination.value.trim().length > 0 &&
+    !spanError.value &&
     !submitting.value,
 )
 
@@ -140,6 +182,8 @@ async function submit() {
     destination: destination.value,
     eventDate: eventDate.value || null,
     note: note.value,
+    extended: extended.value,
+    endDate: extended.value ? endDate.value || null : null,
   })
   submitting.value = false
   if (!res.ok) {
@@ -163,7 +207,7 @@ async function submit() {
         {{
           step === 1
             ? 'Select everything leaving Admin together. Items show In transit until you mark them delivered.'
-            : 'Name the event and the unit. The on-shift crew confirms it when they find it on the truck.'
+            : 'Name the event and the truck. The crew on shift confirms the gear when they find it.'
         }}
       </p>
       <div class="eqn__progress" aria-hidden="true">
@@ -306,7 +350,7 @@ async function submit() {
             class="eq-input"
             type="text"
             maxlength="120"
-            placeholder="e.g. Royal HS Football"
+            placeholder="e.g. Waller County Fair"
             autocomplete="off"
             autocapitalize="words"
           />
@@ -316,10 +360,13 @@ async function submit() {
               :key="e.label + e.date"
               type="button"
               class="eq-sug"
-              :class="{ 'eq-sug--on': purpose === e.label && eventDate === e.date }"
+              :class="{ 'eq-sug--on': eventPicked(e) }"
               @click="pickEvent(e)"
             >
-              {{ e.label }} <span class="eq-sug__meta">{{ formatEventDate(e.date) }}</span>
+              {{ e.label }}
+              <span class="eq-sug__meta">
+                {{ formatEventSpan(e.date, e.endDate) }}<template v-if="e.count > 1"> · {{ e.count }} dates</template>
+              </span>
             </button>
             <button
               v-for="p in purposeChips"
@@ -332,48 +379,101 @@ async function submit() {
               {{ p }}
             </button>
           </div>
-          <p v-if="eventChips.length" class="eq-hint">Upcoming events from the schedule — tap one to fill the date too.</p>
+          <p v-if="eventChips.length" class="eq-hint">
+            Upcoming events from the schedule — tap one to fill in its dates too.
+          </p>
         </div>
 
         <div class="eq-field">
-          <label class="eq-label" for="eqn-unit">
-            <span>Which unit?</span>
+          <div class="eq-label">
+            <span>Which truck?</span>
             <span class="eq-label__req">Required</span>
-          </label>
-          <input
-            id="eqn-unit"
-            v-model="destination"
-            class="eq-input"
-            type="text"
-            maxlength="40"
-            placeholder="e.g. M272"
-            autocomplete="off"
-            autocapitalize="characters"
-          />
-          <div v-if="unitChips.length" class="eq-sugs">
+          </div>
+          <div class="eqn__trucks" role="radiogroup" aria-label="Truck">
             <button
-              v-for="u in unitChips"
-              :key="u"
+              v-for="t in activeTrucks"
+              :key="t.id"
               type="button"
-              class="eq-sug"
-              :class="{ 'eq-sug--on': destination.toLowerCase() === u.toLowerCase() }"
-              @click="destination = u"
+              role="radio"
+              class="eqn__truck"
+              :class="{ 'eqn__truck--on': destination === t.label, 'eqn__truck--name': !/^\d+$/.test(t.label) }"
+              :aria-checked="destination === t.label"
+              @click="destination = t.label"
             >
-              {{ u }}
+              {{ t.label }}
+            </button>
+            <button
+              v-if="!addingTruck"
+              type="button"
+              class="eqn__truck eqn__truck--add"
+              @click="addingTruck = true"
+            >
+              <Plus :size="14" :stroke-width="2.4" /> Add
             </button>
           </div>
+          <div v-if="addingTruck" class="eqn__addtruck">
+            <input
+              v-model="newTruck"
+              class="eq-input eq-input--mono"
+              type="text"
+              maxlength="40"
+              placeholder="Truck number"
+              autocomplete="off"
+              @keydown.enter.prevent="addTruck"
+            />
+            <button type="button" class="eq-btn eq-btn--secondary" :disabled="!newTruck.trim()" @click="addTruck">
+              Add truck
+            </button>
+            <button type="button" class="eq-btn eq-btn--quiet" @click="addingTruck = false">Cancel</button>
+          </div>
+          <p v-if="truckErr" class="eq-error">{{ truckErr }}</p>
+          <p v-if="destination && !activeTrucks.some((t) => t.label === destination)" class="eq-hint">
+            Going on {{ destination }}.
+          </p>
         </div>
 
         <div class="eq-field">
-          <label class="eq-label" for="eqn-date">
-            <span>Event date</span>
-            <span class="eq-label__aside">{{ eventDate ? formatEventDate(eventDate) : 'Optional' }}</span>
+          <label class="eqn__ext" :class="{ 'eqn__ext--on': extended }">
+            <input v-model="extended" type="checkbox" class="sr-only" />
+            <span class="eqn__ext-icon"><Repeat :size="17" :stroke-width="2" /></span>
+            <span class="eqn__ext-text">
+              <strong>Extended assignment</strong>
+              <span>Multiple nights. Every crew checks the gear at the start and end of their shift.</span>
+            </span>
+            <span class="eqn__switch" aria-hidden="true"><span></span></span>
           </label>
-          <div class="eqn__date">
-            <CalendarDays :size="17" :stroke-width="1.9" />
-            <input id="eqn-date" v-model="eventDate" type="date" class="eqn__date-input" />
+        </div>
+
+        <div class="eqn__dates" :class="{ 'eqn__dates--span': extended }">
+          <div class="eq-field">
+            <label class="eq-label" for="eqn-date">
+              <span>{{ extended ? 'From' : 'Event date' }}</span>
+              <span v-if="!extended" class="eq-label__aside">Optional</span>
+            </label>
+            <div class="eqn__date">
+              <CalendarDays :size="17" :stroke-width="1.9" />
+              <input id="eqn-date" v-model="eventDate" type="date" class="eqn__date-input" />
+            </div>
+          </div>
+          <div v-if="extended" class="eq-field">
+            <label class="eq-label" for="eqn-end"><span>Through</span></label>
+            <div class="eqn__date">
+              <CalendarDays :size="17" :stroke-width="1.9" />
+              <input
+                id="eqn-end"
+                v-model="endDate"
+                type="date"
+                class="eqn__date-input"
+                :min="eventDate || undefined"
+              />
+            </div>
           </div>
         </div>
+        <p v-if="spanError" class="eq-error">{{ spanError }}</p>
+        <p v-else-if="extended && eventDate" class="eq-hint eqn__span-hint">
+          {{ formatEventSpan(eventDate, endDate || null) }} — crews see a start- and end-of-shift check
+          on this check-out every shift.
+        </p>
 
         <div class="eq-field">
           <label class="eq-label" for="eqn-note"><span>Note</span><span class="eq-label__aside">Optional</span></label>
@@ -652,8 +752,178 @@ async function submit() {
   display: flex;
   flex-direction: column;
 }
-.eqn__form .eq-field + .eq-field {
+.eqn__form .eq-field + .eq-field,
+.eqn__form .eq-field + .eqn__dates,
+.eqn__dates + .eq-field {
   margin-top: 22px;
+}
+
+/* Truck picker */
+.eqn__trucks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+}
+.eqn__truck {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 48px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink);
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-line);
+  border-radius: 11px;
+  cursor: pointer;
+  transition:
+    border-color 130ms var(--ease-out),
+    background 130ms var(--ease-out),
+    color 130ms var(--ease-out),
+    box-shadow 130ms var(--ease-out);
+}
+.eqn__truck:hover {
+  border-color: var(--color-accent-600);
+}
+.eqn__truck--name {
+  grid-column: span 2;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  letter-spacing: 0;
+}
+.eqn__truck--on {
+  color: white;
+  background: var(--color-brand-800);
+  border-color: var(--color-brand-800);
+  box-shadow: 0 0 0 3px oklch(0.734 0.114 86.8 / 0.35);
+}
+.eqn__truck--add {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: 0;
+  color: var(--color-brand-600);
+  border-style: dashed;
+}
+.eqn__addtruck {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.eqn__addtruck .eq-input {
+  flex: 1 1 160px;
+}
+
+/* Extended switch */
+.eqn__ext {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-line);
+  border-radius: 14px;
+  cursor: pointer;
+  transition:
+    border-color 150ms var(--ease-out),
+    background 150ms var(--ease-out);
+}
+.eqn__ext--on {
+  border-color: var(--color-brand-600);
+  background:
+    radial-gradient(ellipse 70% 90% at 100% 0%, oklch(0.734 0.114 86.8 / 0.1), transparent 70%),
+    var(--color-surface);
+}
+.eqn__ext:focus-within {
+  box-shadow: 0 0 0 3px oklch(0.734 0.114 86.8 / 0.2);
+}
+.eqn__ext-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: var(--color-brand-600);
+  background: var(--color-brand-50);
+}
+.eqn__ext--on .eqn__ext-icon {
+  color: var(--color-accent-on-dark);
+  background: var(--color-brand-800);
+}
+.eqn__ext-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--color-muted);
+}
+.eqn__ext-text strong {
+  font-size: 14.5px;
+  color: var(--color-ink);
+}
+.eqn__switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--color-line);
+  transition: background 150ms var(--ease-out);
+}
+.eqn__switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: white;
+  box-shadow: var(--shadow-sm);
+  transition: transform 150ms var(--ease-out);
+}
+.eqn__ext--on .eqn__switch {
+  background: var(--color-brand-600);
+}
+.eqn__ext--on .eqn__switch span {
+  transform: translateX(18px);
+}
+
+.eqn__dates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 22px;
+}
+.eqn__dates--span {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.eqn__dates .eq-field + .eq-field {
+  margin-top: 0;
+}
+.eqn__span-hint {
+  margin-top: 8px;
+}
+.eqn__form > p + .eq-field {
+  margin-top: 22px;
+}
+/* Side-by-side From/Through on a phone: drop the leading icon so the
+   date itself fits (the native picker keeps its own). */
+@media (max-width: 479px) {
+  .eqn__dates--span .eqn__date > svg {
+    display: none;
+  }
+  .eqn__dates--span .eqn__date {
+    padding: 0 10px;
+  }
 }
 .eqn__date {
   display: flex;
