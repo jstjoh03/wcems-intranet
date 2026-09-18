@@ -751,39 +751,45 @@ const weeks = computed<Cell[][]>(() => {
   border-radius: 6px 6px 0 0;
 }
 
+/* Section boxes darkened a notch (Ng + Justin, day-2): stronger
+   borders, deeper header tints, darker label text. */
 .mb__section--extra {
-  border-color: oklch(0.85 0.06 250);
+  border-color: oklch(0.76 0.08 250);
+  background: oklch(0.985 0.008 250);
 }
 
 .mb__section--extra .mb__section-h {
-  background: var(--color-brand-50);
+  background: oklch(0.93 0.035 250);
   color: var(--color-brand-700);
 }
 
 .mb__section--trade {
-  border-color: oklch(0.85 0.07 150);
+  border-color: oklch(0.74 0.1 150);
+  background: oklch(0.985 0.012 150);
 }
 
 .mb__section--trade .mb__section-h {
-  background: var(--color-success-50);
-  color: var(--color-success-500);
+  background: oklch(0.92 0.05 150);
+  color: oklch(0.38 0.12 150);
 }
 
 .mb__section--off {
-  border-color: oklch(0.88 0.06 60);
+  border-color: oklch(0.76 0.09 60);
+  background: oklch(0.99 0.012 60);
 }
 
 .mb__section--off .mb__section-h {
-  background: var(--color-warning-50);
-  color: oklch(0.5 0.13 60);
+  background: oklch(0.93 0.05 60);
+  color: oklch(0.43 0.13 60);
 }
 
 .mb__section--pend {
-  border-color: oklch(0.85 0.09 27);
+  border-color: oklch(0.74 0.12 27);
+  background: oklch(0.99 0.008 27);
 }
 
 .mb__section--pend .mb__section-h {
-  background: oklch(0.97 0.02 27);
+  background: oklch(0.94 0.035 27);
   color: var(--color-danger-500);
 }
 
@@ -895,5 +901,19 @@ const weeks = computed<Cell[][]>(() => {
 .mb--mine .mb__cell--me {
   background: oklch(0.965 0.045 86.8);
   box-shadow: inset 0 0 0 1px oklch(0.85 0.08 86.8);
+}
+
+/* Phone: the cellhead paints the whole cell, so it must carry the gold
+   too (it was covering the cell fill) — and a touch stronger, since on
+   a 60px cell the wash is the only signal. */
+@media (max-width: 900px) {
+  .mb--mine .mb__cell--me,
+  .mb--mine .mb__cell--me .mb__cellhead {
+    background: oklch(0.95 0.06 86.8);
+  }
+
+  .mb--mine .mb__cell--me {
+    box-shadow: inset 0 0 0 1.5px oklch(0.8 0.1 86.8);
+  }
 }
 </style>
