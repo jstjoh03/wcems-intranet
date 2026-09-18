@@ -12,6 +12,7 @@ import {
   Settings,
   Film,
   Contact,
+  Boxes,
   type LucideIcon,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
@@ -100,6 +101,15 @@ const PAGE_ROUTES: SearchResult[] = [
     category: 'page',
     icon: Film,
     to: '/training/recordings',
+  },
+  {
+    id: 'page:equipment',
+    title: 'Event Equipment',
+    subtitle: 'Check-out, shift checks, custody',
+    category: 'page',
+    icon: Boxes,
+    to: '/equipment',
+    keywords: 'radio radios ipad ipads truck trucks gear check out return pickup',
   },
   {
     id: 'page:insights',

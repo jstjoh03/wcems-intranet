@@ -154,7 +154,7 @@ const title = computed(() => {
     case 'shift_end':
       return 'End-of-shift check'
     case 'event_closed':
-      return props.checkout.extended ? 'Final close-out' : 'Close out the event'
+      return 'Close out the event'
     case 'picked_up':
       return `Pick up from ${truck.value}`
     case 'returned':
@@ -177,11 +177,9 @@ const intro = computed(() => {
     case 'shift_start':
       return `You’re taking over ${truck.value}. Check the gear before your shift gets going — tap anything you can’t find.`
     case 'shift_end':
-      return 'Before you hand the truck over, make sure everything is still here — tap anything you can’t find. The next crew checks it again when they start.'
+      return 'Before you hand the truck over, make sure everything is still here — tap anything you can’t find — and take a photo of where you’re leaving it. The next crew, or the supervisor picking it up, starts from that photo.'
     case 'event_closed':
-      return props.checkout.extended
-        ? 'Last night of the assignment. Take a photo of where the equipment is being left so the pickup finds it fast.'
-        : 'Take a photo of where the equipment is being left so the pickup finds it fast.'
+      return 'Take a photo of where the equipment is being left so the pickup finds it fast.'
     case 'picked_up':
       return 'Select what you’re taking off the truck. Anything left behind stays on the board.'
     case 'returned':
@@ -200,7 +198,7 @@ const photoHint = computed(() => {
     case 'event_closed':
       return 'Show where it’s sitting for pickup.'
     case 'shift_end':
-      return 'Handy for the next crew: where the gear is sitting.'
+      return 'Show where the gear is sitting for the next crew or the pickup.'
     case 'returned':
       return `Where you left it at ${HOME_LOCATION}.`
     default:
@@ -252,7 +250,7 @@ const submitLabel = computed(() => {
     case 'shift_end':
       return `Record check · ${checkTally()}`
     case 'event_closed':
-      return props.checkout.extended ? 'Close out the assignment' : 'Close out the event'
+      return 'Close out the event'
     case 'picked_up':
       return `Pick up ${pluralize(n, 'item')}`
     case 'returned':
@@ -439,17 +437,9 @@ async function submit() {
       v-else-if="rule?.evidence === 'photo'"
       v-model="photo"
       class="eq-field"
-      label="Where it’s being left"
+      :label="kind === 'shift_end' ? 'Where you’re leaving it' : 'Where it’s being left'"
       :hint="photoHint"
       required
-    />
-
-    <EquipmentPhotoField
-      v-else-if="rule?.evidence === 'optional-photo'"
-      v-model="photo"
-      class="eq-field"
-      label="Where you’re leaving it (optional)"
-      :hint="photoHint"
     />
 
     <!-- Note -->

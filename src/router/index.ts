@@ -258,7 +258,7 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/SkillsEvaluateView.vue'),
   },
   /* ── Event equipment check-out (chain of custody) ────────────────
-     Soft-launched: reachable by URL only, no nav entry until approved.
+     In the masthead + drawer nav and the mobile dashboard strip.
      The board, check-out records, and item pages are open to everyone
      signed in; check-out and the registry are for equipment handlers
      (supervisors, admins, granted staff). RLS + RPCs enforce it all

@@ -135,11 +135,7 @@ export async function generateShiftCardPdf(input: ShiftCardInput): Promise<jsPDF
 
   /* ── Instructions box with the QR code ──────────────────────────── */
   const QR = 150
-  const boxH = 196
   const boxTop = y
-  doc.setDrawColor(...BLACK)
-  doc.setLineWidth(1.6)
-  doc.roundedRect(MARGIN, boxTop, CONTENT_W, boxH, 6, 6)
   doc.addImage(qr, 'PNG', W - MARGIN - QR - 18, boxTop + 18, QR, QR, 'equipment-qr')
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7)
@@ -164,7 +160,8 @@ export async function generateShiftCardPdf(input: ShiftCardInput): Promise<jsPDF
     ? [
         'Scan the code, or open the Equipment page in the portal.',
         'Sign in with your WCEMS Microsoft account.',
-        'Tap Start-of-shift check when you take the truck, End-of-shift check before you hand it over.',
+        'Tap Start-of-shift check when you take the truck.',
+        'Before you hand it over, tap End-of-shift check and photograph where you’re leaving the gear.',
         'Tap anything you can’t find and add a note.',
       ]
     : [
@@ -184,10 +181,15 @@ export async function generateShiftCardPdf(input: ShiftCardInput): Promise<jsPDF
     doc.text(lines, MARGIN + 34, ty)
     ty += lines.length * 13 + 5
   })
+  /* The box grows with the steps; never shorter than the QR block. */
+  const boxH = Math.max(QR + 46, ty - boxTop + 30)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9.5)
   doc.setTextColor(...BLACK)
   doc.text('Missing something? Tell your supervisor right away.', MARGIN + 18, boxTop + boxH - 16)
+  doc.setDrawColor(...BLACK)
+  doc.setLineWidth(1.6)
+  doc.roundedRect(MARGIN, boxTop, CONTENT_W, boxH, 6, 6)
   y = boxTop + boxH + 30
 
   /* ── Item list ──────────────────────────────────────────────────── */

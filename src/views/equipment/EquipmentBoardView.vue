@@ -39,7 +39,6 @@ import type { EquipmentAsset, EquipmentStatus } from '@/types'
 /**
  * /equipment — the live "where is everything" board. Everyone signed in
  * sees it; handlers get the check-out and registry entry points.
- * Soft-launched: reachable by URL, no nav entry yet.
  */
 
 const router = useRouter()

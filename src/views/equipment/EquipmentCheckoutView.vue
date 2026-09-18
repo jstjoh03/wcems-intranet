@@ -16,6 +16,7 @@ import {
   Printer,
   LogIn,
   LogOut,
+  HandHelping,
 } from 'lucide-vue-next'
 import '@/components/equipment/equipment.css'
 import EquipmentStatusChip from '@/components/equipment/EquipmentStatusChip.vue'
@@ -132,11 +133,13 @@ function itemKind(id: string): EquipmentEventKind | undefined {
 }
 
 /* ── Actions ───────────────────────────────────────────────────────── */
-/* Single-night events get one on-shift confirmation; extended
-   assignments get a start- and end-of-shift check from every crew. */
+/* Single-night events: confirm on shift, then close out with a photo.
+   Extended assignments: every crew does a start- and end-of-shift check,
+   and the end-of-shift photo IS the hand-over — no separate close-out.
+   Then a supervisor picks up and drops off at Admin. */
 const actionOrder = computed<EquipmentActionKind[]>(() =>
   checkout.value?.extended
-    ? ['delivered', 'shift_start', 'shift_end', 'event_closed', 'picked_up', 'returned', 'written_off']
+    ? ['delivered', 'shift_start', 'shift_end', 'picked_up', 'returned', 'written_off']
     : ['delivered', 'confirmed_present', 'event_closed', 'picked_up', 'returned', 'written_off'],
 )
 const PRIMARY_FOR: Record<CheckoutPhase, EquipmentActionKind[]> = {
@@ -168,7 +171,6 @@ const primaryAction = computed<EquipmentActionKind | null>(() => {
 })
 
 function actionLabel(kind: EquipmentActionKind): string {
-  if (kind === 'event_closed' && checkout.value?.extended) return 'Final close-out'
   return ACTION_LABEL[kind]
 }
 
@@ -400,6 +402,10 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
         <p class="eqc__ext-title">
           Every crew: check this equipment at the <em>start</em> and <em>end</em> of your shift.
         </p>
+        <p class="eqc__ext-sub">
+          The end-of-shift check includes a photo of where you leave it. A supervisor picks it up
+          when the assignment wraps.
+        </p>
         <div class="eqc__ext-rows">
           <div class="eqc__ext-row">
             <span class="eqc__ext-label">Last check</span>
@@ -411,6 +417,12 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
               <LogIn v-if="summary.nextShiftCheck === 'shift_start'" :size="15" :stroke-width="2" />
               <LogOut v-else :size="15" :stroke-width="2" />
               {{ KIND_LABEL[summary.nextShiftCheck] }}
+            </span>
+          </div>
+          <div v-else-if="summary.phase === 'closed'" class="eqc__ext-row">
+            <span class="eqc__ext-label">Next up</span>
+            <span class="eqc__ext-next">
+              <HandHelping :size="15" :stroke-width="2" /> Supervisor pickup
             </span>
           </div>
         </div>
@@ -707,6 +719,12 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
 .eqc__ext-title em {
   font-style: italic;
   color: var(--color-accent-on-dark);
+}
+.eqc__ext-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: oklch(0.82 0.025 250);
 }
 .eqc__ext-rows {
   display: flex;

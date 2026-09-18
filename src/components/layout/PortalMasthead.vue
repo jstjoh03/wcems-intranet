@@ -88,6 +88,9 @@ const nav = computed<NavItem[]>(() => [
   ...(canSeeSchedule.value
     ? [{ label: 'Scheduling', to: '/schedule', match: '/schedule' } as NavItem]
     : []),
+  /* Event equipment check-out: board for everyone, check-out/registry
+     for supervisors, admins, and granted staff. */
+  { label: 'Equipment', to: '/equipment', match: '/equipment' },
   { label: 'Policies', to: '/policies', match: '/policies' },
   { label: 'Hospitals', to: '/hospitals', match: '/hospitals' },
   { label: 'MIH Referral', to: '/mih-referral', match: '/mih-referral' },

@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { CheckCircle2, HeartHandshake } from 'lucide-vue-next'
+import { CheckCircle2, HeartHandshake, Boxes } from 'lucide-vue-next'
 import { useRequiredTraining } from '@/composables/useRequiredTraining'
 import { usePolicies } from '@/composables/usePolicies'
 
 /**
- * Mobile-only compact strips (the rail cards are desktop-only): the
- * MIH referral entry point and a slim compliance readout, up top where
- * a phone user actually sees them instead of three screens down.
+ * Mobile-only compact strips (the rail cards are desktop-only): event
+ * equipment (shift checks happen on phones), the MIH referral entry
+ * point, and a slim compliance readout, up top where a phone user
+ * actually sees them instead of three screens down.
  *
  * When compliance items ARE outstanding the required-training/policy
  * banners already occupy the top of the page with resolve CTAs, so
@@ -25,6 +26,15 @@ const allClear = computed(() => rtOutstanding.value + polOutstanding.value === 0
 
 <template>
   <div class="mqs">
+    <RouterLink to="/equipment" class="mqs__strip mqs__strip--equip">
+      <span class="mqs__badge"><Boxes :size="15" :stroke-width="2" /></span>
+      <span class="mqs__label">
+        Event equipment
+        <span class="mqs__sub">Shift checks · check-out · custody</span>
+      </span>
+      <span class="mqs__arrow mqs__arrow--equip">→</span>
+    </RouterLink>
+
     <RouterLink to="/mih-referral" class="mqs__strip mqs__strip--mih">
       <HeartHandshake :size="17" :stroke-width="1.9" class="mqs__icon" />
       <span class="mqs__label">Refer a patient to MIH</span>
@@ -64,6 +74,33 @@ const allClear = computed(() => rtOutstanding.value + polOutstanding.value === 0
 }
 .mqs__strip--mih .mqs__icon {
   color: var(--color-accent-on-dark);
+}
+.mqs__strip--equip {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-sm);
+}
+.mqs__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--color-accent-on-dark);
+  background: linear-gradient(135deg, var(--color-brand-700), var(--color-brand-900));
+}
+.mqs__sub {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+.mqs__arrow--equip {
+  color: var(--color-accent-700);
 }
 .mqs__strip--clear {
   background: var(--color-success-50);

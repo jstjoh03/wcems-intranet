@@ -12,8 +12,9 @@ import type {
  * by the views, the composable, and the dev-stub backend. The server
  * enforces the same transition table in equipment_record() — keep the
  * two in sync (migrations 20260918010000_equipment_checkout.sql,
- * 20260918020000_equipment_write_off.sql, and
- * 20260918040000_equipment_trucks_extended_signatures.sql).
+ * 20260918020000_equipment_write_off.sql,
+ * 20260918040000_equipment_trucks_extended_signatures.sql, and
+ * 20260918050000_equipment_shift_end_photo.sql).
  */
 
 /** Where the gear lives when it isn't out. */
@@ -50,8 +51,8 @@ export interface ActionRule {
   /** Supervisors, admins, and granted handlers only. */
   handlerOnly: boolean
   /** photo = always required; photo-or-person = a photo, or a named
-   *  person who signs to receive; optional-photo = offered, not needed. */
-  evidence: 'photo' | 'photo-or-person' | 'optional-photo' | 'none'
+   *  person who signs to receive. */
+  evidence: 'photo' | 'photo-or-person' | 'none'
 }
 
 export const ACTION_RULES: Record<EquipmentActionKind, ActionRule> = {
@@ -64,9 +65,10 @@ export const ACTION_RULES: Record<EquipmentActionKind, ActionRule> = {
   returned: { from: ['picked_up', 'written_off'], handlerOnly: true, evidence: 'photo-or-person' },
   written_off: { from: ['reported_missing'], handlerOnly: true, evidence: 'none' },
   /* Extended assignments: every crew checks the gear as they take the
-     truck and again as they hand it over. */
+     truck, and again as they hand it over — the end-of-shift check
+     carries the photo (it replaces a separate close-out). */
   shift_start: { from: ON_UNIT_KINDS, handlerOnly: false, evidence: 'none' },
-  shift_end: { from: ON_UNIT_KINDS, handlerOnly: false, evidence: 'optional-photo' },
+  shift_end: { from: ON_UNIT_KINDS, handlerOnly: false, evidence: 'photo' },
 }
 
 export function statusFromKind(kind: EquipmentEventKind | null | undefined): EquipmentStatus {
@@ -252,7 +254,10 @@ const PHASE_HINT: Record<CheckoutPhase, string> = {
 /** Roll a check-out's events up into per-item state, a phase, and the
  *  honest step ladder (done / partial / skipped / pending). */
 export function summarizeCheckout(
-  checkout: Pick<EquipmentCheckout, 'id' | 'assetIds'> & { extended?: boolean },
+  checkout: Pick<EquipmentCheckout, 'id' | 'assetIds'> & {
+    extended?: boolean
+    endDate?: string | null
+  },
   events: EquipmentCustodyEvent[],
 ): CheckoutSummary {
   const evs = events
@@ -283,8 +288,13 @@ export function summarizeCheckout(
        phase follows what's actually there; `missing` flags the rest. */
     const present = openKinds.filter((k) => ON_UNIT_KINDS.includes(k) && k !== 'reported_missing')
     if (!present.length) phase = openKinds.includes('picked_up') ? 'returning' : 'missing'
-    else if (present.every((k) => k === 'event_closed')) phase = 'closed'
-    else if (checkout.extended) phase = 'assignment'
+    else if (checkout.extended) {
+      /* The assignment is over once its last day has come and the last
+         crew has done their end-of-shift check: ready for pickup. */
+      const lastDay = !!checkout.endDate && todayCentral() >= checkout.endDate
+      const handedOver = present.every((k) => k === 'shift_end' || k === 'event_closed')
+      phase = lastDay && handedOver ? 'closed' : 'assignment'
+    } else if (present.every((k) => k === 'event_closed')) phase = 'closed'
     else if (present.some((k) => isCheckKind(k)) || missing) phase = 'confirmed'
     else phase = 'delivered'
   } else {
@@ -304,10 +314,13 @@ export function summarizeCheckout(
     kind === 'confirmed_present'
       ? CHECK_STEP.some((k) => seen[id]?.has(k))
       : !!seen[id]?.has(kind)
+  /* Extended assignments have no separate close-out step — the
+     end-of-shift check (with its photo) is the hand-over. */
+  const stepDefs = checkout.extended ? STEPS.filter((s) => s.kind !== 'event_closed') : STEPS
   const stepIndexReached = (id: string) =>
-    STEPS.reduce((max, s, i) => (reached(id, s.kind) ? i : max), -1)
+    stepDefs.reduce((max, s, i) => (reached(id, s.kind) ? i : max), -1)
 
-  const steps: CheckoutStep[] = STEPS.map((s, i) => {
+  const steps: CheckoutStep[] = stepDefs.map((s, i) => {
     const count = live.filter((id) => reached(id, s.kind)).length
     const first = evs.find((e) =>
       s.kind === 'confirmed_present' ? CHECK_STEP.includes(e.kind) : e.kind === s.kind,
@@ -347,11 +360,18 @@ export function summarizeCheckout(
     missing,
     lost,
     phase,
-    phaseLabel: phase === 'complete' && lost ? 'Closed' : PHASE_LABEL[phase],
+    phaseLabel:
+      phase === 'complete' && lost
+        ? 'Closed'
+        : phase === 'closed' && checkout.extended
+          ? 'Ready for pickup'
+          : PHASE_LABEL[phase],
     nextHint:
       phase === 'complete' && lost
         ? `Closed — ${pluralize(lost, 'item')} written off as lost`
-        : PHASE_HINT[phase],
+        : phase === 'closed' && checkout.extended
+          ? 'Assignment over — ready for a supervisor to pick up'
+          : PHASE_HINT[phase],
     steps,
     lastCheck,
     nextShiftCheck: lastCheck?.kind === 'shift_start' ? 'shift_end' : 'shift_start',

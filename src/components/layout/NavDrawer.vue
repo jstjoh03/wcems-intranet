@@ -28,6 +28,7 @@ import {
   TrendingUp,
   IdCard,
   ExternalLink,
+  Boxes,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
@@ -102,6 +103,7 @@ const pages = computed<NavItem[]>(() => [
   /* Soft-launch: editors, supervisors, and pilot testers only until
      the crew-wide opening. */
   ...(canSeeSchedule.value ? [{ label: 'Scheduling', to: '/schedule', icon: CalendarDays }] : []),
+  { label: 'Event Equipment', to: '/equipment', icon: Boxes },
   { label: 'MIH Patient Referral', to: '/mih-referral', icon: HeartHandshake },
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
   { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },

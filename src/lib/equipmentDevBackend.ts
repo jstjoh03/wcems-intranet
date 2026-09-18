@@ -215,6 +215,27 @@ export function createDevEquipmentBackend(
   push('co-fair', 'co-fair-e1', 'shift_end', ['a-r431', 'a-r432', 'a-i514'], tara, hoursAgo(14))
   push('co-fair', 'co-fair-s2', 'shift_start', ['a-r431', 'a-r432', 'a-i514'], brianna, hoursAgo(2))
 
+  /* Extended, over: the last crew's end-of-shift check is in on the
+     final day, so it's ready for a supervisor to pick up. */
+  photos.set('co-rodeo/seed-end.jpg', placeholderPhoto('Radio in the cab console'))
+  seedCheckout('co-rodeo', 'Bull Riding Event', '2795', addDays(today, -2), ['a-r439'], sup, hoursAgo(54), {
+    extended: true,
+    endDate: today,
+  })
+  push('co-rodeo', 'co-rodeo-del', 'delivered', ['a-r439'], sup, hoursAgo(53), {
+    handed_to_id: 'dev-p4',
+    handed_to_name: 'Marcus Lane',
+    signature_path: sig,
+  })
+  push('co-rodeo', 'co-rodeo-s1', 'shift_start', ['a-r439'], { id: 'dev-p4', fullName: 'Marcus Lane' }, hoursAgo(52))
+  push('co-rodeo', 'co-rodeo-e1', 'shift_end', ['a-r439'], { id: 'dev-p4', fullName: 'Marcus Lane' }, hoursAgo(40), {
+    photo_path: 'co-rodeo/seed-end.jpg',
+  })
+  push('co-rodeo', 'co-rodeo-s2', 'shift_start', ['a-r439'], dennis, hoursAgo(5))
+  push('co-rodeo', 'co-rodeo-e2', 'shift_end', ['a-r439'], dennis, hoursAgo(1), {
+    photo_path: 'co-rodeo/seed-end.jpg',
+  })
+
   photos.set('co-hemp/seed-left.jpg', placeholderPhoto('Left in the jump seat cabinet'))
   photos.set('co-hemp/seed-drop.jpg', placeholderPhoto('Dropped on the stretcher'))
   seedCheckout(
