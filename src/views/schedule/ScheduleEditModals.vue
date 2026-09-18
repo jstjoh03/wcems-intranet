@@ -71,7 +71,6 @@ const conflict = ref<{
    *  resolution (rotation swap vs. leave-the-old-seat-open). */
   choices?: { label: string; run: () => Promise<void> }[]
 } | null>(null)
-const conflictAcknowledged = ref(false)
 
 async function conflictProceed(): Promise<void> {
   if (!conflict.value) return
@@ -183,25 +182,33 @@ async function assignDirect(): Promise<void> {
   const s = editor.slot.value
   if (!s || !slotAssignee.value || busy.value) return
   busy.value = true
-  if (!conflictAcknowledged.value) {
-    const items = await gatherConflicts(slotAssignee.value, s.dateIso, slotFrom.value, slotUntil.value)
-    if (items.length > 0) {
-      const who = sched.personById.value.get(slotAssignee.value)?.fullName ?? 'This member'
-      conflict.value = {
-        title: `Before you schedule ${who}`,
-        items,
-        leaveOpen: false,
-        proceed: async () => {
-          conflictAcknowledged.value = true
-          conflict.value = null
-          await assignDirect()
-          conflictAcknowledged.value = false
-        },
-      }
-      busy.value = false
-      return
+  const items = await gatherConflicts(slotAssignee.value, s.dateIso, slotFrom.value, slotUntil.value)
+  if (items.length > 0) {
+    const who = sched.personById.value.get(slotAssignee.value)?.fullName ?? 'This member'
+    conflict.value = {
+      title: `Before you schedule ${who}`,
+      items,
+      leaveOpen: false,
+      /* Calls the unguarded worker, NOT assignDirect — conflictProceed
+         holds `busy` while running this, and assignDirect's re-entry
+         guard would silently no-op (Rhonda's bug: "Schedule anyway"
+         bounced her back to the assign modal without assigning). */
+      proceed: async () => {
+        await applyAssign()
+      },
     }
+    busy.value = false
+    return
   }
+  await applyAssign()
+  busy.value = false
+}
+
+/** The actual assignment write — no busy guard so the conflict
+ *  overlay's proceed can run it. */
+async function applyAssign(): Promise<void> {
+  const s = editor.slot.value
+  if (!s || !slotAssignee.value) return
   err.value = null
   let e: string | null
   if (s.seatId) {
@@ -218,7 +225,7 @@ async function assignDirect(): Promise<void> {
   } else {
     e = 'Nothing to assign.'
   }
-  busy.value = false
+  conflict.value = null
   if (e) {
     err.value = e
     return
