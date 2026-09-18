@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import {
   useSchedule,
   platoonFor,
+  payPeriodFor,
   hhmm,
   OFF_LABELS,
   REQ_TYPE_LABELS,
@@ -1085,20 +1086,48 @@ const reqRows = computed<[string, string][]>(() => {
   if (pos) rows.push(['Shift', pos])
   if (r.type === 'extra_hours' && r.timeType) rows.push(['Time type', r.timeType])
   if (r.counterpartyId) rows.push([r.type === 'trade' ? 'Partner' : 'Claimed by', personName(r.counterpartyId)])
-  if (r.type === 'trade' && r.counterWorkDate && r.counterStartAt && r.counterEndAt)
-    rows.push(['In return', `${fmtShort(r.counterWorkDate)} ${hhmm(r.counterStartAt)} – ${hhmm(r.counterEndAt)}`])
+  if (r.type === 'trade' && r.counterWorkDate && r.counterStartAt && r.counterEndAt) {
+    const cSeat = sched.seats.value.find((s) => s.id === r.counterSeatId)
+    const cUnit = sched.units.value.find((u) => u.id === cSeat?.unitId)
+    const cWho = r.counterpartyId
+      ? (sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Partner')
+      : 'Partner'
+    const cSeatTitle = `${cUnit?.code ?? ''} ${cSeat?.label ?? ''}`.trim()
+    rows.push([
+      'In return',
+      `${cWho} gives ${fmtShort(r.counterWorkDate)}${cSeatTitle ? ` ${cSeatTitle}` : ''} ${hhmm(r.counterStartAt)} – ${hhmm(r.counterEndAt)}`,
+    ])
+    if (r.workDate && payPeriodFor(r.workDate).start !== payPeriodFor(r.counterWorkDate).start) {
+      rows.push([
+        'Pay periods',
+        `Crosses periods (${payPeriodFor(r.workDate).label} ⇄ ${payPeriodFor(r.counterWorkDate).label}) — same-period swaps preferred, your call.`,
+      ])
+    }
+  }
   if (r.comments) rows.push(['Comments', r.comments])
   rows.push(['Status', r.status === 'partner_accepted' ? 'Partner accepted — awaiting approval' : r.status === 'pending' ? 'Pending approval' : r.status])
   return rows
 })
 
 const reqIsMine = computed(() => reqObj.value?.requesterId === sched.myUserId.value)
-const reqDecidable = computed(
-  () =>
-    !!reqObj.value &&
-    (reqObj.value.status === 'pending' || reqObj.value.status === 'partner_accepted') &&
-    sched.canEdit.value,
-)
+/** Trades/giveaways aren't approvable until both members agree —
+ *  a still-pending swap must not show Approve here (or in the queue). */
+const reqDecidable = computed(() => {
+  const r = reqObj.value
+  if (!r || !sched.canEdit.value) return false
+  if (r.status === 'partner_accepted') return true
+  if (r.status !== 'pending') return false
+  return r.type !== 'trade' && r.type !== 'giveaway'
+})
+const reqAwaitingMembers = computed(() => {
+  const r = reqObj.value
+  return (
+    !!r &&
+    sched.canEdit.value &&
+    r.status === 'pending' &&
+    (r.type === 'trade' || r.type === 'giveaway')
+  )
+})
 
 async function reqDecide(approve: boolean) {
   const r = reqObj.value
@@ -1692,6 +1721,11 @@ async function reqCancel() {
           <p v-if="err" class="em__error">{{ err }}</p>
           <p v-for="[k, v] in reqRows" :key="k" class="em__notetext">
             <strong>{{ k }}:</strong> {{ v }}
+          </p>
+          <p v-if="reqAwaitingMembers" class="em__notetext">
+            <strong>Waiting on the members</strong> — this
+            {{ reqObj.type === 'trade' ? 'swap' : 'giveaway' }} becomes approvable once both
+            have agreed (it moves to "Partner accepted"). Manage it on the Trades tab.
           </p>
           <template v-if="reqDecidable">
             <p v-for="(line, i) in reqHours.lines" :key="i" class="em__notetext">{{ line }}</p>

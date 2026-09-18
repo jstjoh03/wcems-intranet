@@ -113,7 +113,7 @@ const weeks = computed<Cell[][]>(() => {
         v-for="c in week"
         :key="c.iso"
         class="mb__cell"
-        :class="{ 'mb__cell--out': !c.inMonth, 'mb__cell--today': c.isToday }"
+        :class="{ 'mb__cell--out': !c.inMonth, 'mb__cell--today': c.isToday, 'mb__cell--me': props.mine && c.worksMe }"
       >
         <div class="mb__cellhead">
           <button class="mb__cellbtn" @click="emit('open-day', c.iso)">
@@ -575,16 +575,36 @@ const weeks = computed<Cell[][]>(() => {
   flex: none;
 }
 
+/* Whole-chip platoon color (Ng, day-1 feedback: dots alone let B and C
+   blend — the tinted chip + colored text reads at a glance). */
+.mb__platoon[data-platoon='A'] {
+  color: oklch(0.45 0.18 27);
+  border-color: oklch(0.82 0.09 27);
+  background: oklch(0.97 0.02 27);
+}
+
 .mb__platoon[data-platoon='A'] .mb__dot {
-  background: oklch(0.55 0.2 27);
+  background: oklch(0.5 0.19 27);
+}
+
+.mb__platoon[data-platoon='B'] {
+  color: oklch(0.4 0.15 262);
+  border-color: oklch(0.8 0.08 262);
+  background: oklch(0.96 0.02 262);
 }
 
 .mb__platoon[data-platoon='B'] .mb__dot {
-  background: oklch(0.5 0.16 255);
+  background: oklch(0.45 0.17 262);
+}
+
+.mb__platoon[data-platoon='C'] {
+  color: oklch(0.4 0.12 148);
+  border-color: oklch(0.78 0.09 148);
+  background: oklch(0.96 0.03 148);
 }
 
 .mb__platoon[data-platoon='C'] .mb__dot {
-  background: oklch(0.55 0.15 150);
+  background: oklch(0.46 0.14 148);
 }
 
 .mb__open {
@@ -868,5 +888,12 @@ const weeks = computed<Cell[][]>(() => {
   .mb--mine .mb__open {
     display: none;
   }
+}
+
+/* My schedule: the whole day carries the gold, not just the number
+   (Ng, day-1 feedback). */
+.mb--mine .mb__cell--me {
+  background: oklch(0.965 0.045 86.8);
+  box-shadow: inset 0 0 0 1px oklch(0.85 0.08 86.8);
 }
 </style>

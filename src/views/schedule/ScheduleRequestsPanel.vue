@@ -4,6 +4,7 @@ import {
   useSchedule,
   todayCentralIso,
   hhmm,
+  payPeriodFor,
   type SchedRequest,
   type UpcomingShift,
   type Availability,
@@ -252,9 +253,80 @@ const myRequests = computed(() =>
   sched.requests.value.filter((r) => r.requesterId === sched.myUserId.value),
 )
 
+/* ACTIONABLE queue only: trades/giveaways don't belong here until both
+   members have agreed (partner_accepted) — a still-pending swap showed
+   an Approve button on day 1 and confused the flow. Those wait in the
+   "in negotiation" strip below instead. */
 const pendingQueue = computed(() =>
-  sched.requests.value.filter((r) => r.status === 'pending' || r.status === 'partner_accepted'),
+  sched.requests.value.filter(
+    (r) =>
+      r.status === 'partner_accepted' ||
+      (r.status === 'pending' && r.type !== 'trade' && r.type !== 'giveaway'),
+  ),
 )
+
+/** Trades/giveaways the members are still working out — context only. */
+const negotiating = computed(() =>
+  sched.requests.value.filter(
+    (r) => (r.type === 'trade' || r.type === 'giveaway') && r.status === 'pending',
+  ),
+)
+
+function negotiatingLine(r: SchedRequest): string {
+  const target = r.counterpartyId
+    ? `sent to ${sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown'}`
+    : 'on the public board'
+  return `${requesterName(r)} — ${requestLine(r)} · ${target}`
+}
+
+// ── swap detail + pay-period check (Chief's full picture) ────────────
+
+function fmtD(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function seatTitleOf(seatId: string | null): string {
+  const seat = sched.seats.value.find((s) => s.id === seatId)
+  const unit = sched.units.value.find((u) => u.id === seat?.unitId)
+  return `${unit?.code ?? ''} ${seat?.label ?? ''}`.trim()
+}
+
+/** Both sides of an agreed swap/giveaway, spelled out for the queue. */
+function swapLines(r: SchedRequest): string[] {
+  if ((r.type !== 'trade' && r.type !== 'giveaway') || !r.counterpartyId) return []
+  const partner = sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Partner'
+  const lines = [`${requesterName(r)} gives: ${requestLine(r)}`]
+  if (r.type === 'trade' && r.counterWorkDate) {
+    const bits: string[] = [fmtD(r.counterWorkDate)]
+    if (r.counterStartAt && r.counterEndAt)
+      bits.push(`${hhmm(r.counterStartAt)} – ${hhmm(r.counterEndAt)}`)
+    const st = seatTitleOf(r.counterSeatId)
+    if (st) bits.push(st)
+    lines.push(`${partner} gives: ${bits.join(' · ')}`)
+  } else if (r.type === 'giveaway') {
+    lines.push(`${partner} takes the shift (giveaway — nothing back)`)
+  }
+  return lines
+}
+
+/** Same-pay-period preference: flag crossers; Chief can still approve. */
+function crossesPayPeriods(r: SchedRequest): boolean {
+  return (
+    r.type === 'trade' &&
+    !!r.workDate &&
+    !!r.counterWorkDate &&
+    payPeriodFor(r.workDate).start !== payPeriodFor(r.counterWorkDate).start
+  )
+}
+
+function periodPair(r: SchedRequest): string {
+  if (!r.workDate || !r.counterWorkDate) return ''
+  return `${payPeriodFor(r.workDate).label} ⇄ ${payPeriodFor(r.counterWorkDate).label}`
+}
 
 /* A 26-deep queue shouldn't bury the page — show the first few, expand
    on demand. */
@@ -664,13 +736,25 @@ async function cancel(r: SchedRequest) {
       <div v-for="r in visibleQueue" :key="r.id" class="rq__card">
         <div class="rq__card-main">
           <p class="rq__card-title">
-            {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}
+            {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}<template v-if="r.counterpartyId">
+              ⇄ {{ sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown' }}</template>
           </p>
-          <p class="rq__card-line">{{ requestLine(r) }}</p>
+          <template v-if="swapLines(r).length">
+            <p v-for="(line, i) in swapLines(r)" :key="'sw' + i" class="rq__card-line">{{ line }}</p>
+          </template>
+          <p v-else class="rq__card-line">{{ requestLine(r) }}</p>
           <p v-for="(line, i) in cardHours[r.id]?.lines ?? []" :key="i" class="rq__hoursline">
             {{ line }}
           </p>
-          <div v-if="cardChips(r).length" class="rq__chips">
+          <div v-if="cardChips(r).length || crossesPayPeriods(r)" class="rq__chips">
+            <span
+              v-if="crossesPayPeriods(r)"
+              class="rq__chip"
+              data-code="period"
+              :title="`Swap crosses pay periods: ${periodPair(r)} — your call.`"
+            >
+              Crosses pay periods
+            </span>
             <span
               v-for="(w, i) in cardChips(r)"
               :key="i"
@@ -733,6 +817,16 @@ async function cancel(r: SchedRequest) {
       >
         {{ showAllPending ? 'Show fewer' : `Show all ${pendingQueue.length} pending` }}
       </button>
+
+      <template v-if="negotiating.length > 0">
+        <h3 class="rq__subh">
+          In negotiation on the Trades board ({{ negotiating.length }}) — not ready for approval
+        </h3>
+        <p v-for="r in negotiating" :key="r.id" class="rq__negline">
+          {{ negotiatingLine(r) }}
+        </p>
+        <p class="rq__muted">These appear up top for approval once both members agree.</p>
+      </template>
     </section>
 
     <section v-if="sched.canEdit.value" class="rq__section">
@@ -750,7 +844,10 @@ async function cancel(r: SchedRequest) {
               {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}<template v-if="r.counterpartyId">
                 → {{ sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown' }}</template>
             </p>
-            <p class="rq__card-line">{{ requestLine(r) }}</p>
+            <template v-if="swapLines(r).length">
+              <p v-for="(line, i) in swapLines(r)" :key="'sw' + i" class="rq__card-line">{{ line }}</p>
+            </template>
+            <p v-else class="rq__card-line">{{ requestLine(r) }}</p>
             <p class="rq__histmeta">
               <span class="rq__status" :data-status="r.status">{{ STATUS_LABELS[r.status] }}</span>
               <span v-if="decidedLine(r)" class="rq__muted">{{ decidedLine(r) }}</span>
@@ -1167,6 +1264,29 @@ async function cancel(r: SchedRequest) {
   border-color: var(--color-line);
   background: var(--color-surface-soft);
   color: var(--color-muted);
+}
+
+.rq__chip[data-code='period'] {
+  border-color: oklch(0.8 0.06 262);
+  background: oklch(0.96 0.02 262);
+  color: oklch(0.42 0.12 262);
+}
+
+.rq__subh {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin: 1rem 0 0.35rem;
+}
+
+.rq__negline {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  margin: 0.15rem 0;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--color-line);
 }
 
 .rq__confirmnote {

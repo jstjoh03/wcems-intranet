@@ -24,7 +24,8 @@
 // pulls emails/phones/push subscriptions itself. Each person's
 // notification matrix (sched_member_settings.notify — absent = ON) and
 // SMS opt-in are honored per channel; nobody is notified about their
-// own action.
+// own action. SMS is reserved for the urgent lane: page-outs, same-day
+// approvals, shift reminders — routine lifecycle rides push + email.
 //
 // Channels:
 //   push  — web-push over the portal's existing VAPID keys +
@@ -687,7 +688,11 @@ Deno.serve(async (req: Request) => {
         dt.setUTCDate(dt.getUTCDate() + 1)
         return dt.toISOString().slice(0, 10)
       })()
-      const sameDay = soonest !== null && soonest <= tomorrow
+      // Same-day = TODAY or TOMORROW only. Past dates (after-the-fact
+      // extra-hours logs) are not urgent — one texted Justin as URGENT
+      // on day 1. And texts are reserved for the truly urgent: routine
+      // approver notifications ride push + email only.
+      const sameDay = soonest !== null && soonest >= todayC && soonest <= tomorrow
       const d = await deliver(
         await editorIds(),
         'approvals',
@@ -698,6 +703,7 @@ Deno.serve(async (req: Request) => {
           subject: `WCEMS Scheduling — ${sameDay ? 'SAME-DAY ' : ''}request needs approval`,
           emailLines: [esc(line) + awaiting, 'Review it on the Requests tab.'],
           sms: `${sameDay ? 'URGENT ' : ''}WCEMS: ${line} — approve on the portal.`,
+          channels: { sms: sameDay },
         },
         caller.id,
       )
@@ -725,6 +731,8 @@ Deno.serve(async (req: Request) => {
           subject: `WCEMS Scheduling — request ${verdict.toLowerCase()}`,
           emailLines: [esc(line)],
           sms: `WCEMS: ${line}`,
+          // texts are for urgent pickups — decisions ride push + email
+          channels: { sms: false },
         },
         caller.id,
       )
@@ -749,6 +757,8 @@ Deno.serve(async (req: Request) => {
           subject: 'WCEMS Scheduling — your schedule changed',
           emailLines: [esc(summary), `Changed by ${esc(caller.name)}.`],
           sms: `WCEMS: ${summary} (${caller.name})`,
+          // texts are for urgent pickups — changes ride push + email
+          channels: { sms: false },
         },
         caller.id,
       )
@@ -812,6 +822,8 @@ Deno.serve(async (req: Request) => {
           subject: 'WCEMS Scheduling — trade activity',
           emailLines: [esc(line)],
           sms: `WCEMS: ${line}`,
+          // texts are for urgent pickups — trade chatter rides push + email
+          channels: { sms: false },
         },
         caller.id,
       )

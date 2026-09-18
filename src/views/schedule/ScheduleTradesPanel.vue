@@ -4,6 +4,7 @@ import {
   useSchedule,
   todayCentralIso,
   hhmm,
+  payPeriodFor,
   type SchedRequest,
   type TradeOffer,
   type UpcomingShift,
@@ -48,12 +49,31 @@ const sendToCandidates = computed(() =>
 
 const myShifts = ref<UpcomingShift[]>([])
 
+/* 120 days out — 45 cut Kaleb's November days off the offer list when
+   Ashtin's posting was for Nov 27 (day-1 launch bug). */
+const SHIFT_HORIZON_DAYS = 120
+
+/** Shifts grouped by month so long lists stay scannable in the select. */
+const myShiftGroups = computed(() => {
+  const groups: { label: string; items: UpcomingShift[] }[] = []
+  for (const s of myShifts.value) {
+    const label = new Date(`${s.dateIso}T00:00:00`).toLocaleDateString('en-US', {
+      month: 'long',
+      year: 'numeric',
+    })
+    const g = groups[groups.length - 1]
+    if (g && g.label === label) g.items.push(s)
+    else groups.push({ label, items: [s] })
+  }
+  return groups
+})
+
 function openPost() {
   posting.value = !posting.value
   err.value = done.value = null
   if (posting.value) {
     const me = sched.myUserId.value
-    myShifts.value = me ? sched.upcomingShiftsFor(me, todayCentralIso(), 45) : []
+    myShifts.value = me ? sched.upcomingShiftsFor(me, todayCentralIso(), SHIFT_HORIZON_DAYS) : []
     postShiftKey.value = myShifts.value[0] ? shiftKey(myShifts.value[0]) : ''
   }
 }
@@ -248,7 +268,7 @@ async function checkMyHours(r: SchedRequest): Promise<HoursWarning[]> {
 function startOffer(r: SchedRequest) {
   err.value = done.value = null
   const me = sched.myUserId.value
-  myShifts.value = me ? sched.upcomingShiftsFor(me, todayCentralIso(), 45) : []
+  myShifts.value = me ? sched.upcomingShiftsFor(me, todayCentralIso(), SHIFT_HORIZON_DAYS) : []
   offerShiftKey.value = myShifts.value[0] ? shiftKey(myShifts.value[0]) : ''
   offerNote.value = ''
   offerPartial.value = false
@@ -345,6 +365,14 @@ async function cancelPosting(r: SchedRequest) {
   busy.value = false
   if (e) err.value = e
 }
+
+/** Swaps are preferred inside one pay period — soft warning only, the
+ *  Chief can still approve a crosser. */
+function offerCrossesPeriod(r: SchedRequest): boolean {
+  const sel = myShifts.value.find((s) => shiftKey(s) === offerShiftKey.value)
+  if (!sel || !r.workDate) return false
+  return payPeriodFor(sel.dateIso).start !== payPeriodFor(r.workDate).start
+}
 </script>
 
 <template>
@@ -375,9 +403,11 @@ async function cancelPosting(r: SchedRequest) {
           <span class="tr__label">Your shift</span>
           <select v-model="postShiftKey" class="tr__input">
             <option v-if="myShifts.length === 0" value="" disabled>No upcoming shifts found</option>
-            <option v-for="s in myShifts" :key="shiftKey(s)" :value="shiftKey(s)">
-              {{ shiftLabel(s) }}
-            </option>
+            <optgroup v-for="g in myShiftGroups" :key="g.label" :label="g.label">
+              <option v-for="s in g.items" :key="shiftKey(s)" :value="shiftKey(s)">
+                {{ shiftLabel(s) }}
+              </option>
+            </optgroup>
           </select>
         </label>
       </div>
@@ -432,9 +462,11 @@ async function cancelPosting(r: SchedRequest) {
             <span class="tr__label">Offer one of your shifts back</span>
             <select v-model="offerShiftKey" class="tr__input">
               <option v-if="myShifts.length === 0" value="" disabled>No upcoming shifts found</option>
-              <option v-for="s in myShifts" :key="shiftKey(s)" :value="shiftKey(s)">
-                {{ shiftLabel(s) }}
-              </option>
+              <optgroup v-for="g in myShiftGroups" :key="g.label" :label="g.label">
+                <option v-for="s in g.items" :key="shiftKey(s)" :value="shiftKey(s)">
+                  {{ shiftLabel(s) }}
+                </option>
+              </optgroup>
             </select>
           </label>
           <label class="tr__check">
@@ -445,6 +477,10 @@ async function cancelPosting(r: SchedRequest) {
             <label>Until <input v-model="offerUntil" type="time" class="tr__input tr__input--time" /></label>
           </div>
           <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
+          <p v-if="offerCrossesPeriod(r)" class="tr__ppwarn">
+            Heads up: that shift is in a different pay period than {{ posterName(r) }}'s —
+            the Chief prefers same-period swaps but can still approve it.
+          </p>
           <div class="tr__offer-actions">
             <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">
               {{
@@ -457,6 +493,10 @@ async function cancelPosting(r: SchedRequest) {
             </button>
             <button class="tr__btn" @click="offeringOn = null">Cancel</button>
           </div>
+        </div>
+        <div v-else-if="myOfferOn(r)" class="tr__cardfoot">
+          <span class="tr__mine">Your offer is in — waiting on {{ posterName(r) }} to accept.</span>
+          <button class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">Withdraw</button>
         </div>
         <div v-else class="tr__cardfoot">
           <button
@@ -494,8 +534,11 @@ async function cancelPosting(r: SchedRequest) {
         </div>
         <p v-if="r.comments" class="tr__comments">"{{ r.comments }}"</p>
 
-        <!-- a directed request in the main list = poster (or editor) watching it -->
-        <template v-if="isDirected(r)">
+        <!-- a directed request in the main list = poster (or editor) watching
+             it. Once the target has offered a shift back, fall through to the
+             offers branch below — the poster must SEE the offer to accept it
+             (day-1 bug: Ashtin never saw Kaleb's counter-offer). -->
+        <template v-if="isDirected(r) && offersFor(r).length === 0">
           <p class="tr__muted tr__muted--sm">
             Waiting on {{ directedToName(r) }} to
             {{ r.type === 'giveaway' ? 'accept or decline' : 'offer a shift back or decline' }}.
@@ -541,9 +584,11 @@ async function cancelPosting(r: SchedRequest) {
               <span class="tr__label">Offer one of your shifts</span>
               <select v-model="offerShiftKey" class="tr__input">
                 <option v-if="myShifts.length === 0" value="" disabled>No upcoming shifts found</option>
-                <option v-for="s in myShifts" :key="shiftKey(s)" :value="shiftKey(s)">
-                  {{ shiftLabel(s) }}
-                </option>
+                <optgroup v-for="g in myShiftGroups" :key="g.label" :label="g.label">
+                  <option v-for="s in g.items" :key="shiftKey(s)" :value="shiftKey(s)">
+                    {{ shiftLabel(s) }}
+                  </option>
+                </optgroup>
               </select>
             </label>
             <label class="tr__check">
@@ -554,6 +599,10 @@ async function cancelPosting(r: SchedRequest) {
               <label>Until <input v-model="offerUntil" type="time" class="tr__input tr__input--time" /></label>
             </div>
             <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
+            <p v-if="offerCrossesPeriod(r)" class="tr__ppwarn">
+              Heads up: that shift is in a different pay period than {{ posterName(r) }}'s —
+              the Chief prefers same-period swaps but can still approve it.
+            </p>
             <div class="tr__offer-actions">
               <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">
                 {{
@@ -938,5 +987,15 @@ async function cancelPosting(r: SchedRequest) {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+}
+
+.tr__ppwarn {
+  font-size: 0.76rem;
+  color: oklch(0.5 0.13 60);
+  background: var(--color-warning-50, oklch(0.98 0.02 85));
+  border: 1px solid oklch(0.88 0.05 60);
+  border-radius: 8px;
+  padding: 0.3rem 0.55rem;
+  margin: 0.1rem 0 0;
 }
 </style>

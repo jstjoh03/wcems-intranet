@@ -391,16 +391,35 @@ async function removeNote(id: string) {
   border-radius: 999px;
 }
 
+/* whole-chip platoon color — see MonthBoard note (Ng feedback) */
+.db__platoon[data-platoon='A'] {
+  color: oklch(0.45 0.18 27);
+  border-color: oklch(0.82 0.09 27);
+  background: oklch(0.97 0.02 27);
+}
+
 .db__platoon[data-platoon='A'] .db__dot {
-  background: oklch(0.55 0.2 27);
+  background: oklch(0.5 0.19 27);
+}
+
+.db__platoon[data-platoon='B'] {
+  color: oklch(0.4 0.15 262);
+  border-color: oklch(0.8 0.08 262);
+  background: oklch(0.96 0.02 262);
 }
 
 .db__platoon[data-platoon='B'] .db__dot {
-  background: oklch(0.5 0.16 255);
+  background: oklch(0.45 0.17 262);
+}
+
+.db__platoon[data-platoon='C'] {
+  color: oklch(0.4 0.12 148);
+  border-color: oklch(0.78 0.09 148);
+  background: oklch(0.96 0.03 148);
 }
 
 .db__platoon[data-platoon='C'] .db__dot {
-  background: oklch(0.55 0.15 150);
+  background: oklch(0.46 0.14 148);
 }
 
 .db__opencount {
@@ -670,16 +689,18 @@ async function removeNote(id: string) {
   height: 14px;
 }
 
+/* Bottom sections darkened + color-edged so they stop blending into
+   the schedule above (Ng, day-1 feedback). */
 .db__station-name--extra {
   color: var(--color-brand-700);
 }
 
 .db__station-name--trade {
-  color: var(--color-success-500);
+  color: oklch(0.42 0.13 150);
 }
 
 .db__station-name--off {
-  color: oklch(0.5 0.13 60);
+  color: oklch(0.45 0.13 60);
 }
 
 .db__station-name--pend {
@@ -742,5 +763,22 @@ async function removeNote(id: string) {
     grid-column: 1 / -1;
     padding-top: 0.15rem;
   }
+}
+
+/* color-edge the labeled boxes to match their section headers */
+.db__station-name--extra + .db__labeled {
+  border-left: 3px solid var(--color-brand-700);
+}
+
+.db__station-name--trade + .db__labeled {
+  border-left: 3px solid oklch(0.5 0.13 150);
+}
+
+.db__station-name--off + .db__labeled {
+  border-left: 3px solid oklch(0.6 0.12 60);
+}
+
+.db__station-name--pend + .db__labeled {
+  border-left: 3px solid var(--color-danger-500);
 }
 </style>
