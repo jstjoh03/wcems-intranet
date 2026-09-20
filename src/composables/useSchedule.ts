@@ -129,6 +129,10 @@ export interface SchedPerson {
   phone: string | null
   paycomCode: string | null
   employmentType: string | null
+  /** false = deactivated on the roster (quit/terminated). Kept in
+   *  allPeople so past schedule days and payroll still show the name;
+   *  excluded from `people` (pickers) and the Members tab. */
+  active: boolean
 }
 
 export interface TradeOffer {
@@ -520,8 +524,7 @@ function rosterHiddenIds(): Set<string> {
  *  by loadCore and after the Members tab edits the hide list. */
 function applyRosterVisibility(): void {
   const hidden = rosterHiddenIds()
-  people.value =
-    hidden.size === 0 ? allPeople.value : allPeople.value.filter((p) => !hidden.has(p.id))
+  people.value = allPeople.value.filter((p) => p.active && !hidden.has(p.id))
 }
 const level = ref<SchedLevel>('member')
 const loaded = ref(false)
@@ -530,9 +533,12 @@ const loadError = ref<string | null>(null)
 const rangeStart = ref('')
 const rangeEnd = ref('')
 
+/* Display lookup — built from the FULL roster (inactive + hidden
+   members included) so names on past days, history, and payroll always
+   resolve. Anything assignable lists from `people` instead. */
 const personById = computed(() => {
   const m = new Map<string, SchedPerson>()
-  for (const p of people.value) m.set(p.id, p)
+  for (const p of allPeople.value) m.set(p.id, p)
   return m
 })
 
@@ -631,9 +637,12 @@ async function loadCore(): Promise<void> {
     supabase.from('sched_rotation_assignments').select('*'),
     supabase
       .from('app_users')
+      /* Inactive (quit/terminated) members load too: their PAST shifts
+         and payroll rows must keep showing the name — dropping them
+         here rendered "Unknown" (Tara Roth, 2026-09-20). Pickers and
+         the Members tab filter on .active instead. */
       .select('id, full_name, shift, role, title, email, phone, account_type, active, employment_type, paycom_employee_code')
       .eq('account_type', 'person')
-      .eq('active', true)
       .order('full_name'),
     supabase.rpc('sched_level'),
     supabase.from('sched_credentials').select('user_id, credential'),
@@ -708,6 +717,7 @@ async function loadCore(): Promise<void> {
       phone: r.phone,
       paycomCode: r.paycom_employee_code ?? null,
       employmentType: r.employment_type ?? null,
+      active: r.active as boolean,
     }
   })
   const setMap: Record<string, Record<string, unknown>> = {}
@@ -768,8 +778,8 @@ function seedDevStub(): void {
   }
   seats.value = out
   people.value = [
-    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', credentialAuto: 'P2', credentialSource: 'pipeline', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X', employmentType: 'full_time' },
-    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', credentialAuto: 'EMT', credentialSource: 'title', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null, employmentType: 'part_time' },
+    { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', credentialAuto: 'P2', credentialSource: 'pipeline', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X', employmentType: 'full_time', active: true },
+    { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', credentialAuto: 'EMT', credentialSource: 'title', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null, employmentType: 'part_time', active: true },
   ]
   allPeople.value = people.value
 }

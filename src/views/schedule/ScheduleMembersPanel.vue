@@ -53,12 +53,13 @@ function effectiveLevel(p: { id: string; role: string }): string {
   return access.value.get(p.id) ?? defaultLevel(p)
 }
 
-/* Members lists the FULL roster (incl. anyone hidden from scheduling
-   pickers) so a hide can be undone; last-name order comes from the
-   store. */
+/* Members lists the full ACTIVE roster (incl. anyone hidden from
+   scheduling pickers, so a hide can be undone) — deactivated employees
+   stay loaded in the store only so their names render on past days.
+   Last-name order comes from the store. */
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  const list = sched.allPeople.value
+  const list = sched.allPeople.value.filter((p) => p.active)
   if (!q) return list
   return list.filter((p) => p.fullName.toLowerCase().includes(q))
 })
