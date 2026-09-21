@@ -257,6 +257,30 @@ watch(
   { immediate: true },
 )
 
+/* Review queue, collapsed: a 59-row wall at the top of the page was
+   "sore on the eyes" (Justin, 2026-09-21). Summary bar first; expand
+   to per-trainee groups, one trainee's rows at a time. */
+const queueOpenAll = ref(false)
+const queueTrainee = ref<string | null>(null)
+const queueGroups = computed(() => {
+  const m = new Map<string, { traineeId: string; name: string; rows: FtepReport[] }>()
+  for (const r of ftep.unreviewed.value) {
+    if (!m.has(r.traineeId))
+      m.set(r.traineeId, { traineeId: r.traineeId, name: nameOf(r.traineeId), rows: [] })
+    m.get(r.traineeId)!.rows.push(r)
+  }
+  return [...m.values()].sort((a, b) => a.name.localeCompare(b.name))
+})
+const queueStats = computed(() => {
+  const rows = ftep.unreviewed.value
+  const dors = rows.filter((r) => r.kind === 'dor').length
+  const oldest = rows.reduce<string | null>(
+    (acc, r) => (!acc || r.evalDate < acc ? r.evalDate : acc),
+    null,
+  )
+  return { total: rows.length, dors, icrs: rows.length - dors, oldest }
+})
+
 function statsFor(p: PipelinePerson) {
   const track = ftepTrackFor(p)
   const dors = ftep.activeDors(p.userId).length
@@ -414,11 +438,21 @@ async function review(r: FtepReport) {
     <template v-else>
       <!-- CDO queue -->
       <div v-if="canEdit && ftep.unreviewed.value.length" class="fh__queue">
-        <div class="fh__queue-hd">
+        <button type="button" class="fh__queue-hd fh__queue-hd--toggle" @click="queueOpenAll = !queueOpenAll">
           <AlertTriangle :size="15" :stroke-width="2" />
-          {{ ftep.unreviewed.value.length }} new report{{ ftep.unreviewed.value.length === 1 ? '' : 's' }} awaiting your review
-        </div>
-        <div v-for="r in ftep.unreviewed.value" :key="r.id" class="fh__queue-row">
+          {{ queueStats.total }} report{{ queueStats.total === 1 ? '' : 's' }} awaiting review
+          <span class="fh__queue-sub">{{ queueStats.dors }} DOR{{ queueStats.dors === 1 ? '' : 's' }} · {{ queueStats.icrs }} ICR{{ queueStats.icrs === 1 ? '' : 's' }} · oldest {{ fmt(queueStats.oldest) }}</span>
+          <ChevronDown class="fh__queue-chev" :class="{ 'fh__queue-chev--open': queueOpenAll }" :size="16" :stroke-width="2" />
+        </button>
+        <template v-if="queueOpenAll">
+        <div v-for="g in queueGroups" :key="g.traineeId" class="fh__qgroup">
+        <button type="button" class="fh__qgroup-hd" @click="queueTrainee = queueTrainee === g.traineeId ? null : g.traineeId">
+          <span class="fh__qgroup-name">{{ g.name }}</span>
+          <span class="fh__qgroup-n">{{ g.rows.length }}</span>
+          <ChevronDown class="fh__queue-chev" :class="{ 'fh__queue-chev--open': queueTrainee === g.traineeId }" :size="13" :stroke-width="2" />
+        </button>
+        <template v-if="queueTrainee === g.traineeId">
+        <div v-for="r in g.rows" :key="r.id" class="fh__queue-row">
           <span class="fh__kind" :class="`fh__kind--${r.kind}`">{{ r.kind.toUpperCase() }}</span>
           <span class="fh__queue-who">{{ nameOf(r.traineeId) }}</span>
           <span class="fh__queue-meta">
@@ -473,6 +507,9 @@ async function review(r: FtepReport) {
             </button>
           </span>
         </div>
+        </template>
+        </div>
+        </template>
       </div>
 
       <!-- Missing DORs — scheduled shift days past their grace window
@@ -684,6 +721,64 @@ async function review(r: FtepReport) {
 .fh__queue-who { font-weight: 700; color: var(--color-ink); }
 .fh__queue-meta { color: var(--color-ink-soft); font-size: 12px; }
 .fh__nrt-flag { color: oklch(0.45 0.15 30); }
+.fh__queue-hd--toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+
+.fh__queue-sub {
+  font-weight: 500;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.fh__queue-chev {
+  margin-left: auto;
+  color: var(--color-muted);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.fh__queue-chev--open {
+  transform: rotate(180deg);
+}
+
+.fh__qgroup {
+  border-top: 1px solid var(--color-line-soft);
+  margin-top: 6px;
+  padding-top: 4px;
+}
+
+.fh__qgroup-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--color-ink);
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.fh__qgroup-n {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-danger-500);
+  background: oklch(0.95 0.03 27);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
 .fh__plan-card {
   border: 1px solid oklch(0.85 0.07 86.8);
   border-left: 3px solid var(--color-accent-600);
