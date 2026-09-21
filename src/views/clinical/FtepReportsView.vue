@@ -18,7 +18,7 @@ import type { FtepReport } from '@/types'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, canViewBoard, canEdit, clinicalPeople } = useClinical()
+const { ready, canViewBoard, canEdit, personById } = useClinical()
 const ftep = useFtep()
 
 watch(
@@ -34,7 +34,7 @@ const kind = ref<'all' | 'dor' | 'icr'>('all')
 const shown = ref(40)
 
 function nameOf(userId: string): string {
-  return clinicalPeople.value.find((p) => p.userId === userId)?.fullName ?? 'Staff'
+  return personById(userId)?.fullName ?? 'Staff'
 }
 
 const filtered = computed<FtepReport[]>(() => {
@@ -120,6 +120,9 @@ async function downloadPdf(r: FtepReport) {
           class="fr__search"
           placeholder="Search trainee or evaluator…"
         />
+        <span v-if="query.trim()" class="fr__result-n">
+          {{ visible.length }} {{ visible.length === 1 ? 'result' : 'results' }}
+        </span>
       </div>
     </header>
 
@@ -171,6 +174,14 @@ async function downloadPdf(r: FtepReport) {
 .fr__title { font-size: 26px; line-height: 1.1; color: var(--color-ink); }
 .fr__sub { margin-top: 4px; font-size: 12.5px; color: var(--color-muted); }
 .fr__filters { display: flex; gap: 8px; }
+.fr__result-n {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-muted);
+  white-space: nowrap;
+  align-self: center;
+}
+
 .fr__select, .fr__search {
   font-family: var(--font-sans); font-size: 13px; color: var(--color-ink);
   border: 1px solid var(--color-line); border-radius: 9px; padding: 7px 11px;

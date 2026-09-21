@@ -26,7 +26,7 @@ import type { FtepReport, PipelinePerson } from '@/types'
 
 const router = useRouter()
 const auth = useAuthStore()
-const { ready, canViewBoard, canEdit, clinicalPeople, ftepTrackFor, manualRideouts, gateStatsFor, gatesFor } = useClinical()
+const { ready, canViewBoard, canEdit, clinicalPeople, personById, ftepTrackFor, manualRideouts, gateStatsFor, gatesFor } = useClinical()
 const { phasesFor } = usePipeline()
 const ftep = useFtep()
 
@@ -271,7 +271,7 @@ async function saveLegacyEval() {
 }
 
 function nameOf(userId: string): string {
-  return clinicalPeople.value.find((p) => p.userId === userId)?.fullName ?? 'Staff'
+  return personById(userId)?.fullName ?? 'Staff'
 }
 
 const pdfBusy = ref<string | null>(null)

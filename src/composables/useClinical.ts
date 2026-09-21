@@ -32,7 +32,7 @@ const DAY = 86_400_000
 
 export function useClinical() {
   const pipeline = usePipeline()
-  const { people, requirements, completionsFor, gatesFor } = pipeline
+  const { people, allPeople, requirements, completionsFor, gatesFor } = pipeline
 
   /** Everyone with a clinical file — active people with a clinical cert. */
   const clinicalPeople = computed<PipelinePerson[]>(() =>
@@ -41,10 +41,11 @@ export function useClinical() {
     ),
   )
 
-  /* Searches ALL records, not just the clinical scope — an excluded
-     person's file must stay reachable so they can be re-included. */
+  /* Searches ALL records — excluded people (so they can be
+     re-included) AND deactivated employees, whose names must keep
+     rendering on their old ICR/DOR submissions and phase history. */
   function personById(userId: string): PipelinePerson | null {
-    return people.value.find((p) => p.userId === userId) ?? null
+    return allPeople.value.find((p) => p.userId === userId) ?? null
   }
 
   function licDays(p: PipelinePerson): number | null {

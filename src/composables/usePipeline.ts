@@ -150,6 +150,8 @@ function rowToGate(r: GateRow): PipelineGateProgress {
 }
 
 const people = ref<PipelinePerson[]>([])
+/** Full list incl. deactivated employees — name/file lookups only. */
+const allPeople = ref<PipelinePerson[]>([])
 const gates = ref<PipelineGateProgress[]>([])
 const phaseProgress = ref<FtepPhaseProgress[]>([])
 const editorIds = ref<string[]>([])
@@ -242,6 +244,7 @@ function seedDevFixture() {
     }),
   ]
   editorIds.value = ['dev-admin']
+  allPeople.value = people.value
   lastFetchedAt.value = new Date()
 }
 
@@ -271,8 +274,13 @@ async function loadAll() {
     loading.value = false
     return
   }
-  people.value = ((recRes.data ?? []) as unknown as RecordRow[])
-    .filter((r) => r.person && r.person.active && r.person.account_type === 'person')
+  /* Deactivated employees stay in allPeople so their name still
+     renders on past ICR/DOR submissions, phase history, and their
+     clinical file stays reachable — dropping them entirely rendered
+     "Staff" everywhere (Tara Roth, 2026-09-21). Rosters, counts, and
+     pickers keep using the active-only `people`. */
+  const mapped = ((recRes.data ?? []) as unknown as RecordRow[])
+    .filter((r) => r.person && r.person.account_type === 'person')
     .map((r) => ({
       record: rowToRecord(r),
       userId: r.person!.id,
@@ -284,6 +292,8 @@ async function loadAll() {
       active: r.person!.active,
     }))
     .sort((a, b) => a.fullName.localeCompare(b.fullName))
+  allPeople.value = mapped
+  people.value = mapped.filter((p) => p.active)
   gates.value = ((gateRes.data ?? []) as unknown as GateRow[]).map(rowToGate)
   editorIds.value = (edRes.data ?? []).map((e) => e.user_id as string)
   requirements.value = (reqRes.data ?? []).map((r) => ({
@@ -624,6 +634,7 @@ export function usePipeline() {
 
   return {
     people,
+    allPeople,
     gates,
     editorIds,
     requirements,

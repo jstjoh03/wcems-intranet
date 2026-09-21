@@ -461,6 +461,9 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
           class="fs__search"
           placeholder="Search trainee or evaluator…"
         />
+        <span v-if="query.trim()" class="fs__result-n">
+          {{ rows.length }} {{ rows.length === 1 ? 'result' : 'results' }}
+        </span>
       </div>
 
       <div class="fs__table">
@@ -630,6 +633,14 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
   opacity: 0.75;
   margin-left: 2px;
 }
+.fs__result-n {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-muted);
+  white-space: nowrap;
+  align-self: center;
+}
+
 .fs__search {
   flex: 1;
   min-width: 180px;
