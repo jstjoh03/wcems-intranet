@@ -361,29 +361,40 @@ interface PunchPair {
   inMs: number
   outMs: number
   hours: number
+  /** Earning code carried on the punch rows (column F); '' = regular. */
+  earn: string
+  /** Category label for the verify table ('vacation', 'holiday', …). */
+  label: string
 }
 
-/** Punch-eligible coverage merged per member per work date. A segment
- *  whose category (special event, holiday, instructor/meeting, time
- *  off) has an earning code exports as an HOURS ROW instead of
- *  punches. Student rows aren't payroll at all. */
+/** Punch pairs per member per work date, split by earning code —
+ *  Paycom accepts timed punches carrying an earning code in column F
+ *  (verified with a live test import, 2026-09-21), so coded categories
+ *  (paid time off, instructor/meeting, special events, holidays)
+ *  export as CODED punch pairs with their real windows instead of
+ *  bare hours rows. Uncoded time off and uncoded instructor/meeting
+ *  time stay OUT of the file (flagged below); uncoded events/holidays
+ *  still ride as plain regular punches. Students aren't payroll. */
 const punches = computed<PunchPair[]>(() => {
   if (preset.value !== 'period') return []
-  const eligible = segs.value.filter((s) => {
-    if (s.kind === 'timeoff' || s.kind === 'student' || s.timeType !== 'regular') return false
+  const eligible: { s: TimeSegment; earn: string; label: string }[] = []
+  for (const s of segs.value) {
+    if (s.kind === 'student') continue
     const cat = segCategory(s)
-    return !(cat && codes.value[cat.key])
-  })
-  const byKey = new Map<string, TimeSegment[]>()
-  for (const s of eligible) {
-    const k = `${s.userId}|${s.dateIso}`
-    if (!byKey.has(k)) byKey.set(k, [])
-    byKey.get(k)!.push(s)
+    const earn = cat ? (codes.value[cat.key] ?? '') : ''
+    if (!earn && (s.kind === 'timeoff' || s.timeType !== 'regular')) continue
+    eligible.push({ s, earn, label: earn ? (cat?.label ?? '') : '' })
+  }
+  const byKey = new Map<string, { segs: TimeSegment[]; earn: string; label: string }>()
+  for (const e of eligible) {
+    const k = `${e.s.userId}|${e.s.dateIso}|${e.earn}`
+    if (!byKey.has(k)) byKey.set(k, { segs: [], earn: e.earn, label: e.label })
+    byKey.get(k)!.segs.push(e.s)
   }
   const out: PunchPair[] = []
-  for (const [key, list] of byKey) {
+  for (const [key, group] of byKey) {
     const [userId, dateIso] = key.split('|')
-    const sorted = [...list].sort((a, b) => a.startMs - b.startMs)
+    const sorted = [...group.segs].sort((a, b) => a.startMs - b.startMs)
     const merged: { start: number; end: number }[] = []
     for (const s of sorted) {
       const last = merged[merged.length - 1]
@@ -400,6 +411,8 @@ const punches = computed<PunchPair[]>(() => {
         inMs: m.start,
         outMs: m.end,
         hours: round2((m.end - m.start) / 3_600_000),
+        earn: group.earn,
+        label: group.label,
       })
     }
   }
@@ -413,6 +426,11 @@ const noCode = computed(() => {
   for (const p of punches.value) if (!p.code) names.add(p.name)
   return [...names].sort()
 })
+
+/** The coded punch pairs going in the file — surfaced as a green
+ *  checklist so payroll can eyeball the special-pay lines before
+ *  downloading. */
+const codedPairs = computed(() => punches.value.filter((p) => p.earn && p.code))
 
 // Earning-code map from Setup (category key → Paycom code). Coded
 // categories export as hours rows; uncoded ones get flagged.
@@ -447,68 +465,18 @@ function segCategory(s: TimeSegment): { key: string; label: string } | null {
   return null
 }
 
-interface HoursRow {
-  userId: string
-  code: string
-  date: string // MM/DD/YYYY
-  dateIso: string
-  earn: string
-  hours: number
-  name: string
-  timeType: string
-}
-
-/** Hours rows for the import file, one summed row per member + date +
- *  earning code (members with EE codes only): every categorized
- *  segment whose category has a code — instructor/meeting, special
- *  events (double time), holiday work dates (double time), and
- *  approved time off (vacation/sick/…). */
-const hoursRows = computed<HoursRow[]>(() => {
-  if (preset.value !== 'period') return []
-  const byKey = new Map<string, HoursRow>()
-  for (const s of segs.value) {
-    const cat = segCategory(s)
-    if (!cat) continue
-    const earn = codes.value[cat.key]
-    if (!earn) continue
-    const p = sched.personById.value.get(s.userId)
-    if (!p?.paycomCode) continue
-    const [y, m, d] = s.dateIso.split('-')
-    const key = `${p.paycomCode}|${s.dateIso}|${earn}`
-    const cur = byKey.get(key)
-    if (cur) cur.hours = round2(cur.hours + s.hours)
-    else {
-      byKey.set(key, {
-        userId: s.userId,
-        code: p.paycomCode,
-        date: `${m}/${d}/${y}`,
-        dateIso: s.dateIso,
-        earn,
-        hours: round2(s.hours),
-        name: p.fullName,
-        timeType: cat.label,
-      })
-    }
-  }
-  return [...byKey.values()].sort(
-    (a, b) => byLast(a.name, b.name) || a.dateIso.localeCompare(b.dateIso),
-  )
-})
-
-/** Categorized time that CANNOT go in the file: instructor/meeting
- *  with no earning code, or any coded category where the member has
- *  no EE code. (Uncoded events/holidays stay punches; uncoded time
- *  off gets its own banner.) */
+/** Instructor/meeting time with no earning code — it can't ride as a
+ *  regular punch (double time), so it stays out of the file. (Members
+ *  missing an EE code are flagged by the no-EE-code banner instead;
+ *  uncoded events/holidays stay plain punches; uncoded time off gets
+ *  its own banner.) */
 const manualEntries = computed(() => {
   if (preset.value !== 'period') return []
   return segs.value
     .map((s) => ({ s, cat: segCategory(s) }))
-    .filter(({ s, cat }) => {
+    .filter(({ cat }) => {
       if (!cat) return false
-      const earn = codes.value[cat.key]
-      const hasEe = !!sched.personById.value.get(s.userId)?.paycomCode
-      if (cat.key === 'instructor' || cat.key === 'meeting') return !earn || !hasEe
-      return !!earn && !hasEe
+      return (cat.key === 'instructor' || cat.key === 'meeting') && !codes.value[cat.key]
     })
     .map(({ s, cat }) => ({
       name: sched.personById.value.get(s.userId)?.fullName ?? 'Unknown',
@@ -570,8 +538,7 @@ function punchOutMs(ms: number): number {
 }
 
 /** Punch pairs grouped per employee (last-name order) — drives the
- *  verification modal and the export-selected checkboxes. Members with
- *  only hours rows (PTO, events…) appear too so they're selectable. */
+ *  verification modal and the export-selected checkboxes. */
 interface PunchGroup {
   userId: string
   name: string
@@ -587,11 +554,6 @@ const punchGroups = computed<PunchGroup[]>(() => {
     const g = m.get(p.userId)!
     g.pairs.push(p)
     g.hours = round2(g.hours + p.hours)
-  }
-  for (const h of hoursRows.value) {
-    if (!m.has(h.userId)) {
-      m.set(h.userId, { userId: h.userId, name: h.name, code: h.code, pairs: [], hours: 0 })
-    }
   }
   return [...m.values()].sort((a, b) => byLast(a.name, b.name))
 })
@@ -649,10 +611,11 @@ function centralPunch(ms: number): { date: string; time: string } {
   return { date, time }
 }
 
-/** Paycom timecard import: no header, 17 columns. Punch rows carry EE
- *  code, blank, MM/DD/YYYY, HH:MM (24h), ID/OD; hours rows carry the
- *  earning code in column F and hours in column J (instructor/meeting
- *  time, when earning codes are configured in Setup). */
+/** Paycom timecard import: no header, 17 columns. Every row is a
+ *  punch: EE code, blank, MM/DD/YYYY, HH:MM (24h), ID/OD, and the
+ *  earning code in column F for coded categories (blank = regular).
+ *  Coded punch pairs import with real times attached to the pay code —
+ *  verified against a live Paycom timecard 2026-09-21. */
 function downloadPaycom(onlySelected = false): void {
   const keep = (userId: string) => !onlySelected || selectedIds.value.has(userId)
   const rows: string[] = []
@@ -662,13 +625,10 @@ function downloadPaycom(onlySelected = false): void {
   for (const p of withCode) {
     const iin = centralPunch(p.inMs)
     const out = centralPunch(punchOutMs(p.outMs))
-    const blank12 = ',,,,,,,,,,,,'
-    rows.push(`${p.code},,${iin.date},${iin.time},ID${blank12}`)
-    rows.push(`${p.code},,${out.date},${out.time},OD${blank12}`)
-  }
-  for (const h of hoursRows.value.filter((x) => x.code && keep(x.userId))) {
-    // A..Q: code,,date,,,EARN,,,,hours + 7 trailing blanks = 17 fields
-    rows.push(`${h.code},,${h.date},,,${h.earn},,,,${h.hours},,,,,,,`)
+    // A..Q: code,,date,time,ID/OD,earn + 11 trailing blanks = 17 fields
+    const blank11 = ',,,,,,,,,,,'
+    rows.push(`${p.code},,${iin.date},${iin.time},ID,${p.earn}${blank11}`)
+    rows.push(`${p.code},,${out.date},${out.time},OD,${p.earn}${blank11}`)
   }
   if (rows.length === 0) {
     err.value = onlySelected
@@ -754,7 +714,7 @@ function openPunches() {
         <button
           v-if="payrollAccess && preset === 'period'"
           class="tm__btn tm__btn--primary"
-          :disabled="busy || (punches.length === 0 && hoursRows.length === 0)"
+          :disabled="busy || punches.length === 0"
           @click="downloadPaycom()"
         >
           Download Paycom CSV
@@ -846,7 +806,8 @@ function openPunches() {
         Shifts running to the 0600 changeover punch OUT at <strong>05:59</strong> so
         back-to-back 24s pair correctly. Categories with an earning code in Setup —
         special events and holidays (double time), instructor/meeting, and paid time off —
-        export as hours rows instead.
+        export as punch pairs <strong>carrying their earning code</strong>, so the timecard
+        shows the real times attached to the right pay code.
       </p>
 
       <p v-if="noCode.length" class="tm__warn">
@@ -855,7 +816,7 @@ function openPunches() {
       <p v-if="uncodedHolidays.length" class="tm__warn">
         {{ uncodedHolidays.map((h) => `${h.name} (${fmtDay(h.dateIso)})`).join(' · ') }} —
         double time, but no Holiday earning code is set in Setup, so these hours export as
-        ordinary punches. Set the code and they switch to holiday hours rows automatically.
+        ordinary punches. Set the code and the punches carry it automatically.
       </p>
       <p v-if="uncodedEventHours > 0" class="tm__warn">
         {{ uncodedEventHours }} special-event hours this period — double time, but no
@@ -866,17 +827,17 @@ function openPunches() {
         {{ uncodedOffTypes.map((o) => `${o.label} ${o.hours}h`).join(' · ') }}. Add the codes
         in Setup or enter these in Paycom manually.
       </p>
-      <div v-if="hoursRows.length" class="tm__warn tm__warn--ok">
-        <p class="tm__warnhead">In the file as hours rows:</p>
-        <p v-for="(h, i) in hoursRows" :key="i" class="tm__manual">
-          {{ h.name }} · {{ fmtDay(h.dateIso) }} · {{ h.hours }} hrs {{ h.timeType }}
+      <div v-if="codedPairs.length" class="tm__warn tm__warn--ok">
+        <p class="tm__warnhead">In the file as coded punches (real times + earning code):</p>
+        <p v-for="(h, i) in codedPairs" :key="i" class="tm__manual">
+          {{ h.name }} · {{ fmtDay(h.dateIso) }} · {{ h.hours }} hrs {{ h.label }}
           <span class="tm__muted">→ earning code {{ h.earn }}</span>
         </p>
       </div>
       <div v-if="manualEntries.length" class="tm__warn tm__warn--soft">
         <p class="tm__warnhead">
-          Instructor / meeting time NOT in the file — set its earning code in Setup (or add
-          the member's EE code), or enter manually:
+          Instructor / meeting time NOT in the file — set its earning code in Setup, or
+          enter manually:
         </p>
         <p v-for="(m, i) in manualEntries" :key="i" class="tm__manual">
           {{ m.name }} · {{ fmtDay(m.dateIso) }} · {{ m.hours }} hrs {{ m.timeType }} <span class="tm__muted">({{ m.source }})</span>
@@ -936,18 +897,19 @@ function openPunches() {
                 <th>Work date</th>
                 <th>IN</th>
                 <th>OUT</th>
+                <th>Pay code</th>
                 <th class="tm__n">Hrs</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="visibleGroups.length === 0">
-                <td colspan="5" class="tm__muted" style="padding: 0.7rem 0">
+                <td colspan="6" class="tm__muted" style="padding: 0.7rem 0">
                   No members match “{{ punchFilter }}”.
                 </td>
               </tr>
               <template v-for="g in visibleGroups" :key="g.userId">
                 <tr class="tm__emprow">
-                  <td colspan="4">
+                  <td colspan="5">
                     <label class="tm__empcheck">
                       <input
                         v-if="payrollAccess"
@@ -960,7 +922,6 @@ function openPunches() {
                         <span v-if="g.code" class="tm__muted">· {{ g.code }}</span>
                         <span v-else class="tm__nocode">no code</span>
                       </template>
-                      <span v-if="g.pairs.length === 0" class="tm__muted">· hours rows only</span>
                     </label>
                   </td>
                   <td class="tm__n">{{ g.hours || '' }}</td>
@@ -978,6 +939,13 @@ function openPunches() {
                   </td>
                   <td>{{ centralPunch(p.inMs).date }} {{ centralPunch(p.inMs).time }}</td>
                   <td>{{ centralPunch(punchOutMs(p.outMs)).date }} {{ centralPunch(punchOutMs(p.outMs)).time }}</td>
+                  <td>
+                    <template v-if="p.earn">
+                      <span class="tm__earn">{{ p.earn }}</span>
+                      <span v-if="p.label" class="tm__muted"> {{ p.label }}</span>
+                    </template>
+                    <span v-else class="tm__muted">—</span>
+                  </td>
                   <td class="tm__n">{{ p.hours }}</td>
                 </tr>
               </template>
@@ -1006,6 +974,11 @@ function openPunches() {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+.tm__earn {
+  font-weight: 600;
+  color: var(--color-accent-700);
 }
 
 .tm__label {
