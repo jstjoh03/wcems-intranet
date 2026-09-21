@@ -979,6 +979,7 @@ function openPunches() {
 .tm__earn {
   font-weight: 600;
   color: var(--color-accent-700);
+  margin-right: 0.35rem;
 }
 
 .tm__label {
