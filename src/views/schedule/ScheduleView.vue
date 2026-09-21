@@ -151,21 +151,30 @@ async function onPeriodRange(start: string, end: string) {
   await sched.loadRange(start, end)
 }
 
+/* The first paint used to show a chips-only skeleton month for several
+   seconds while core + entries loaded — it read as a broken page. The
+   boards hide behind a spinner until the initial load lands. */
+const booting = ref(true)
+
 onMounted(async () => {
-  await sched.ensureLoaded()
-  if (typeof route.query.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.d)) {
-    dateIso.value = route.query.d
+  try {
+    await sched.ensureLoaded()
+    if (typeof route.query.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.d)) {
+      dateIso.value = route.query.d
+    }
+    // Page-out day links (?v=day) land on that day's full board — on
+    // phones the default is My schedule, which would hide the shift.
+    if (route.query.v === 'day') {
+      tab.value = 'day'
+      void router.replace({ query: { ...route.query, v: undefined } })
+    }
+    // Requests + trade offers load with the shell (not just on their
+    // tabs) so pending rows show on the boards and the tab badges are
+    // right from the first paint; realtime keeps them fresh after that.
+    await Promise.all([loadVisibleRange(), sched.loadRequests(), sched.loadTradeOffers()])
+  } finally {
+    booting.value = false
   }
-  // Page-out day links (?v=day) land on that day's full board — on
-  // phones the default is My schedule, which would hide the shift.
-  if (route.query.v === 'day') {
-    tab.value = 'day'
-    void router.replace({ query: { ...route.query, v: undefined } })
-  }
-  // Requests + trade offers load with the shell (not just on their
-  // tabs) so pending rows show on the boards and the tab badges are
-  // right from the first paint; realtime keeps them fresh after that.
-  await Promise.all([loadVisibleRange(), sched.loadRequests(), sched.loadTradeOffers()])
   sched.startRealtime()
   // Page-out deep link: /schedule?d=<date>&pickup=<entryId> opens the
   // pickup modal for that open entry straight from the email/push.
@@ -337,24 +346,30 @@ watch(dateIso, (v) => {
         <button class="sched__linkdismiss" aria-label="Dismiss" @click="linkMsg = null">×</button>
       </p>
 
-      <ScheduleMonthBoard v-if="tab === 'month'" :month="monthAnchor" @open-day="openDay" />
-      <ScheduleDayBoard v-else-if="tab === 'day'" :date-iso="dateIso" />
-      <ScheduleWeekBoard v-else-if="tab === 'week'" :date-iso="dateIso" @open-day="openDay" />
-      <SchedulePeriodBoard
-        v-else-if="tab === 'period'"
-        @open-day="openDay"
-        @range="onPeriodRange"
-      />
-      <ScheduleMyPanel v-else-if="tab === 'mine'" />
-      <ScheduleRequestsPanel v-else-if="tab === 'requests'" />
-      <ScheduleTradesPanel v-else-if="tab === 'trades'" />
-      <SchedulePagesPanel v-else-if="tab === 'pages'" />
-      <ScheduleTimePanel v-else-if="tab === 'time'" />
-      <ScheduleMembersPanel v-else-if="tab === 'members'" />
-      <ScheduleSetupPanel v-else />
+      <div v-if="booting" class="sched__boot" role="status" aria-live="polite">
+        <span class="sched__spinner" aria-hidden="true" />
+        <p class="sched__boot-text">Loading the schedule…</p>
+      </div>
+      <template v-else>
+        <ScheduleMonthBoard v-if="tab === 'month'" :month="monthAnchor" @open-day="openDay" />
+        <ScheduleDayBoard v-else-if="tab === 'day'" :date-iso="dateIso" />
+        <ScheduleWeekBoard v-else-if="tab === 'week'" :date-iso="dateIso" @open-day="openDay" />
+        <SchedulePeriodBoard
+          v-else-if="tab === 'period'"
+          @open-day="openDay"
+          @range="onPeriodRange"
+        />
+        <ScheduleMyPanel v-else-if="tab === 'mine'" />
+        <ScheduleRequestsPanel v-else-if="tab === 'requests'" />
+        <ScheduleTradesPanel v-else-if="tab === 'trades'" />
+        <SchedulePagesPanel v-else-if="tab === 'pages'" />
+        <ScheduleTimePanel v-else-if="tab === 'time'" />
+        <ScheduleMembersPanel v-else-if="tab === 'members'" />
+        <ScheduleSetupPanel v-else />
 
-      <!-- shared modals: pickups, day editor, students, events, adds -->
-      <ScheduleEditModals />
+        <!-- shared modals: pickups, day editor, students, events, adds -->
+        <ScheduleEditModals />
+      </template>
     </template>
   </div>
 </template>
@@ -365,6 +380,42 @@ watch(dateIso, (v) => {
   max-width: 1720px;
   margin: 0 auto;
   padding: 1.25rem 1.25rem 3rem;
+}
+
+.sched__boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 5rem 0 6rem;
+}
+
+.sched__spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 3px solid oklch(0.9 0.02 260);
+  border-top-color: var(--color-accent-600);
+  animation: sched-spin 0.9s linear infinite;
+}
+
+.sched__boot-text {
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  color: var(--color-muted);
+  margin: 0;
+}
+
+@keyframes sched-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sched__spinner {
+    animation-duration: 2.5s;
+  }
 }
 
 .sched__head {
