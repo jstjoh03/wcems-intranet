@@ -2147,6 +2147,23 @@ async function hoursCheckWindow(
 }
 
 /** Persist one settings key (global admins only, enforced by RLS). */
+/** Re-pull sched_settings fresh. Settings otherwise load once per
+ *  session, so a long-lived tab exports payroll with earning codes
+ *  saved from another device — the Time tab calls this on every range
+ *  load (Justin, 2026-09-21: codes added in Setup missing from the
+ *  Paycom CSV downloaded elsewhere). */
+async function reloadSettings(): Promise<void> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return
+  const res = await supabase.from('sched_settings').select('key, value')
+  if (res.error) return // keep what we have — fail quiet, next load retries
+  const setMap: Record<string, Record<string, unknown>> = {}
+  for (const r of (res.data ?? []) as { key: string; value: Record<string, unknown> }[]) {
+    setMap[r.key] = r.value ?? {}
+  }
+  settings.value = setMap
+}
+
 async function saveSetting(key: string, value: Record<string, unknown>): Promise<string | null> {
   const auth = useAuthStore()
   if (auth.usingDevStub) return 'Not available in the dev preview.'
@@ -4527,6 +4544,7 @@ export function useSchedule() {
     hoursCheck,
     hoursCheckWindow,
     saveSetting,
+    reloadSettings,
     // trades
     tradeOffers,
     loadTradeOffers,

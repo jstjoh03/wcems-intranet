@@ -87,7 +87,12 @@ const err = ref<string | null>(null)
 
 async function load() {
   busy.value = true
-  const res = await sched.fetchTimeSegments(range.value.start, range.value.end)
+  // settings ride along fresh so earning codes saved on another device
+  // reach this session's Paycom export without a reload
+  const [res] = await Promise.all([
+    sched.fetchTimeSegments(range.value.start, range.value.end),
+    sched.reloadSettings(),
+  ])
   busy.value = false
   err.value = res.error
   segs.value = res.segs
