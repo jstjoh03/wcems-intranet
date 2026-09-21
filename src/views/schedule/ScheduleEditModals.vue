@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
 import {
   useSchedule,
   platoonFor,
@@ -1233,8 +1234,8 @@ async function reqCancel() {
           {{ editor.slot.value.start }} – {{ editor.slot.value.end }}
         </p>
         <div class="em__times">
-          <label>From <input v-model="slotFrom" type="time" class="em__input em__input--time" /></label>
-          <label>Until <input v-model="slotUntil" type="time" class="em__input em__input--time" /></label>
+          <label>From <TimeSelect24 v-model="slotFrom" class="em__input em__input--time" /></label>
+          <label>Until <TimeSelect24 v-model="slotUntil" class="em__input em__input--time" /></label>
         </div>
         <input v-model="slotComments" type="text" class="em__input" placeholder="Comments (optional)" />
         <div v-if="pickupWarn && pickupWarn.length" class="em__warnbox">
@@ -1307,8 +1308,8 @@ async function reqCancel() {
           <template v-if="editor.extra.value.sub"> · {{ editor.extra.value.sub }}</template>
         </p>
         <div class="em__times">
-          <label>From <input v-model="exFrom" type="time" class="em__input em__input--time" /></label>
-          <label>Until <input v-model="exUntil" type="time" class="em__input em__input--time" /></label>
+          <label>From <TimeSelect24 v-model="exFrom" class="em__input em__input--time" /></label>
+          <label>Until <TimeSelect24 v-model="exUntil" class="em__input em__input--time" /></label>
         </div>
         <p v-if="err" class="em__error">{{ err }}</p>
         <button class="em__btn em__btn--primary" :disabled="busy" @click="saveExtra">
@@ -1372,8 +1373,8 @@ async function reqCancel() {
             <option value="other">Other</option>
           </select>
           <div class="em__times">
-            <label>From <input v-model="editFrom" type="time" class="em__input em__input--time" /></label>
-            <label>Until <input v-model="editUntil" type="time" class="em__input em__input--time" /></label>
+            <label>From <TimeSelect24 v-model="editFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="editUntil" class="em__input em__input--time" /></label>
           </div>
         </template>
 
@@ -1406,8 +1407,8 @@ async function reqCancel() {
             </option>
           </select>
           <div class="em__times">
-            <label>From <input v-model="editFrom" type="time" class="em__input em__input--time" /></label>
-            <label>Until <input v-model="editUntil" type="time" class="em__input em__input--time" /></label>
+            <label>From <TimeSelect24 v-model="editFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="editUntil" class="em__input em__input--time" /></label>
           </div>
           <div class="em__scope">
             <label><input v-model="editScope" type="radio" value="day" /> This day only</label>
@@ -1441,8 +1442,8 @@ async function reqCancel() {
           <input v-model="stNote" type="text" class="em__input" placeholder="Pertinent info — precepting goals, contact…" />
         </label>
         <div class="em__times">
-          <label>From <input v-model="stFrom" type="time" class="em__input em__input--time" /></label>
-          <label>Until <input v-model="stUntil" type="time" class="em__input em__input--time" /></label>
+          <label>From <TimeSelect24 v-model="stFrom" class="em__input em__input--time" /></label>
+          <label>Until <TimeSelect24 v-model="stUntil" class="em__input em__input--time" /></label>
         </div>
         <p v-if="err" class="em__error">{{ err }}</p>
         <button class="em__btn em__btn--primary" :disabled="busy" @click="saveStudent">
@@ -1564,8 +1565,8 @@ async function reqCancel() {
             <label>End date <input v-model="rsEnd" type="date" class="em__input" /></label>
           </div>
           <div class="em__times">
-            <label>From <input v-model="rsFrom" type="time" class="em__input em__input--time" /></label>
-            <label>Until <input v-model="rsUntil" type="time" class="em__input em__input--time" /></label>
+            <label>From <TimeSelect24 v-model="rsFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="rsUntil" class="em__input em__input--time" /></label>
           </div>
           <p v-if="err" class="em__error">{{ err }}</p>
           <button class="em__btn em__btn--primary" :disabled="busy" @click="submitAddSeat">
@@ -1582,8 +1583,8 @@ async function reqCancel() {
             <input v-model="aeLabel" type="text" class="em__input" placeholder="Royal HS Football" />
           </label>
           <div class="em__times">
-            <label>From <input v-model="aeFrom" type="time" class="em__input em__input--time" /></label>
-            <label>Until <input v-model="aeUntil" type="time" class="em__input em__input--time" /></label>
+            <label>From <TimeSelect24 v-model="aeFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="aeUntil" class="em__input em__input--time" /></label>
           </div>
           <div class="em__times">
             <label>Paramedic seats <input v-model.number="aeMedics" type="number" min="0" max="10" class="em__input em__input--num" /></label>
@@ -1643,8 +1644,8 @@ async function reqCancel() {
             <input v-model="asComment" type="text" class="em__input" />
           </label>
           <div class="em__times">
-            <label>From <input v-model="asFrom" type="time" class="em__input em__input--time" /></label>
-            <label>Until <input v-model="asUntil" type="time" class="em__input em__input--time" /></label>
+            <label>From <TimeSelect24 v-model="asFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="asUntil" class="em__input em__input--time" /></label>
           </div>
           <p v-if="err" class="em__error">{{ err }}</p>
           <button class="em__btn em__btn--primary" :disabled="busy" @click="submitAddStudent">Add student</button>
@@ -1679,8 +1680,8 @@ async function reqCancel() {
             <option value="bereavement">Bereavement</option>
           </select>
           <div class="em__times">
-            <label>From <input v-model="msFrom" type="time" class="em__input em__input--time" /></label>
-            <label>Until <input v-model="msUntil" type="time" class="em__input em__input--time" /></label>
+            <label>From <TimeSelect24 v-model="msFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="msUntil" class="em__input em__input--time" /></label>
           </div>
           <select
             v-if="msMode !== 'off'"

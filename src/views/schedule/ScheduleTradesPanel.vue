@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -439,8 +440,8 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
         <input v-model="postPartial" type="checkbox" /> Part of the shift only
       </label>
       <div v-if="postPartial" class="tr__times">
-        <label>From <input v-model="postFrom" type="time" class="tr__input tr__input--time" /></label>
-        <label>Until <input v-model="postUntil" type="time" class="tr__input tr__input--time" /></label>
+        <label>From <TimeSelect24 v-model="postFrom" class="tr__input tr__input--time" /></label>
+        <label>Until <TimeSelect24 v-model="postUntil" class="tr__input tr__input--time" /></label>
       </div>
       <label class="tr__field">
         <span class="tr__label">Comments</span>
@@ -483,8 +484,8 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
             <input v-model="offerPartial" type="checkbox" /> Part of that shift only
           </label>
           <div v-if="offerPartial" class="tr__times">
-            <label>From <input v-model="offerFrom" type="time" class="tr__input tr__input--time" /></label>
-            <label>Until <input v-model="offerUntil" type="time" class="tr__input tr__input--time" /></label>
+            <label>From <TimeSelect24 v-model="offerFrom" class="tr__input tr__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="offerUntil" class="tr__input tr__input--time" /></label>
           </div>
           <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
           <p v-if="offerCrossesPeriod(r)" class="tr__ppwarn">
@@ -609,8 +610,8 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
               <input v-model="offerPartial" type="checkbox" /> Part of that shift only
             </label>
             <div v-if="offerPartial" class="tr__times">
-              <label>From <input v-model="offerFrom" type="time" class="tr__input tr__input--time" /></label>
-              <label>Until <input v-model="offerUntil" type="time" class="tr__input tr__input--time" /></label>
+              <label>From <TimeSelect24 v-model="offerFrom" class="tr__input tr__input--time" /></label>
+              <label>Until <TimeSelect24 v-model="offerUntil" class="tr__input tr__input--time" /></label>
             </div>
             <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
             <p v-if="offerCrossesPeriod(r)" class="tr__ppwarn">

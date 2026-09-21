@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -614,11 +615,11 @@ async function cancel(r: SchedRequest) {
               </label>
               <label class="rq__field">
                 <span class="rq__label">From</span>
-                <input v-model="customFrom" type="time" class="rq__input" />
+                <TimeSelect24 v-model="customFrom" class="rq__input" />
               </label>
               <label class="rq__field">
                 <span class="rq__label">Until</span>
-                <input v-model="customUntil" type="time" class="rq__input" />
+                <TimeSelect24 v-model="customUntil" class="rq__input" />
               </label>
             </div>
           </template>
@@ -652,8 +653,8 @@ async function cancel(r: SchedRequest) {
               {{ d.editing ? 'Full shift' : 'Edit time' }}
             </button>
             <div v-if="d.checked && d.editing" class="rq__times">
-              <label>From <input v-model="d.from" type="time" class="rq__input rq__input--time" /></label>
-              <label>Until <input v-model="d.until" type="time" class="rq__input rq__input--time" /></label>
+              <label>From <TimeSelect24 v-model="d.from" class="rq__input rq__input--time" /></label>
+              <label>Until <TimeSelect24 v-model="d.until" class="rq__input rq__input--time" /></label>
             </div>
           </div>
           </template>
@@ -667,11 +668,11 @@ async function cancel(r: SchedRequest) {
             </label>
             <label class="rq__field">
               <span class="rq__label">From</span>
-              <input v-model="exFrom" type="time" class="rq__input" />
+              <TimeSelect24 v-model="exFrom" class="rq__input" />
             </label>
             <label class="rq__field">
               <span class="rq__label">Until</span>
-              <input v-model="exUntil" type="time" class="rq__input" />
+              <TimeSelect24 v-model="exUntil" class="rq__input" />
             </label>
             <label class="rq__field">
               <span class="rq__label">Unit</span>
@@ -767,8 +768,8 @@ async function cancel(r: SchedRequest) {
           </div>
           <p v-if="r.comments" class="rq__card-comments">"{{ r.comments }}"</p>
           <div v-if="editTimesFor === r.id" class="rq__edittimes">
-            <label>From <input v-model="editFrom" type="time" class="rq__input rq__input--time" /></label>
-            <label>Until <input v-model="editUntil" type="time" class="rq__input rq__input--time" /></label>
+            <label>From <TimeSelect24 v-model="editFrom" class="rq__input rq__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="editUntil" class="rq__input rq__input--time" /></label>
             <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="saveEditTimes(r)">
               Save times
             </button>

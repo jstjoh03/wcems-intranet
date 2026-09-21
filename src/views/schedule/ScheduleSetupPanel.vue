@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -1089,8 +1090,8 @@ async function saveWarnCfg() {
               </template>
               <div class="setup__rothours">
                 <span class="setup__rothours-label">Daily shift hours</span>
-                <label>From <input v-model="rotFrom" type="time" class="setup__input setup__input--time" /></label>
-                <label>Until <input v-model="rotUntil" type="time" class="setup__input setup__input--time" /></label>
+                <label>From <TimeSelect24 v-model="rotFrom" class="setup__input setup__input--time" /></label>
+                <label>Until <TimeSelect24 v-model="rotUntil" class="setup__input setup__input--time" /></label>
               </div>
               <p class="setup__muted">
                 06:00 – 06:00 = the standard 24-hour shift. A part-time window (e.g. 08:00 –
