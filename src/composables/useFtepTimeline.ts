@@ -47,7 +47,8 @@ export interface FtepPhaseTimeline {
   actual: number
   status: 'complete' | 'current' | 'upcoming'
   days: FtepDayRow[]
-  /** Projected completion dates (current/upcoming phases only). */
+  /** Projected dates (current/upcoming phases only). */
+  estStdStart: string | null
   estStdEnd: string | null
   estMinEnd: string | null
 }
@@ -68,6 +69,11 @@ export interface FtepTimeline {
   notCounting: FtepDayRow[]
   estTestStd: string | null
   estTestMin: string | null
+  /** Every FTO who has trained this person so far (phase rows + day
+   *  log) — the final evaluation must be run by someone NOT here. */
+  ftosUsed: string[]
+  /** The final-evaluation phase key (needs a DIFFERENT FTO). */
+  finalPhaseKey: string
   gates: FtepGateChip[]
   /** True when no phase has a start date — nothing to anchor days to. */
   unanchored: boolean
@@ -82,9 +88,17 @@ function addDaysIso(iso: string, days: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTimeline | null> {
-  const transition = activeTransitionFor(person.record)
+export async function buildFtepTimeline(
+  person: PipelinePerson,
+  opts?: { segs?: TimeSegment[] },
+): Promise<FtepTimeline | null> {
+  /* The Aug-17 cohort rode phases while their working phase still said
+     NEOP - treat NEOP as the P1 track so the timeline never hides on a
+     stale pointer. Legacy/rideup/AEMT tracks have no day tables. */
+  const raw = activeTransitionFor(person.record)
+  const transition = raw === 'NEOP' ? 'P1C_P1' : raw
   if (transition !== 'P1C_P1' && transition !== 'P1_P2') return null
+  if (person.record.legacyTrack) return null
 
   const sched = useSchedule()
   const pipeline = usePipeline()
@@ -97,8 +111,15 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
   const rows = new Map(pipeline.phasesFor(person.record.id).map((r) => [r.phaseKey, r]))
 
   const today = todayCentralIso()
+  /* A phase's window opens at its recorded start OR its first planned
+     day - the stepper often carries scheduled days before anyone sets
+     a start date. */
+  const effStart = (key: string): string | null => {
+    const r = rows.get(key)
+    return r?.startedAt ?? r?.scheduledDays[0] ?? null
+  }
   const starts = programPhases
-    .map((p) => rows.get(p.key)?.startedAt)
+    .map((p) => effStart(p.key))
     .filter((s): s is string => !!s)
   if (person.record.workingStartedAt) starts.push(person.record.workingStartedAt)
   const unanchored = starts.length === 0
@@ -108,8 +129,14 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
   const startIso = rangeStart < addDaysIso(today, -240) ? addDaysIso(today, -240) : rangeStart
   const endIso = addDaysIso(today, 112)
 
-  const { segs, error } = await sched.fetchTimeSegments(startIso, endIso)
-  if (error) throw new Error(error)
+  let segs: TimeSegment[]
+  if (opts?.segs) {
+    segs = opts.segs
+  } else {
+    const res = await sched.fetchTimeSegments(startIso, endIso)
+    if (res.error) throw new Error(res.error)
+    segs = res.segs
+  }
 
   /* Trainee's coverage per work date + everyone sharing the unit. */
   const unitById = new Map(sched.units.value.map((u) => [u.id, u]))
@@ -170,13 +197,13 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
   /* Allocate past days to the phase whose window holds them: latest
      phase started on/before the day and not completed before it. */
   const windows = programPhases
-    .map((p) => ({ key: p.key, row: rows.get(p.key) }))
-    .filter((w) => !!w.row?.startedAt)
+    .map((p) => ({ key: p.key, start: effStart(p.key), row: rows.get(p.key) }))
+    .filter((w) => !!w.start)
   function phaseFor(dateIso: string): string | null {
     let hit: { key: string; started: string } | null = null
     for (const w of windows) {
-      const started = w.row!.startedAt!
-      const ended = w.row!.completedAt
+      const started = w.start!
+      const ended = w.row?.completedAt ?? null
       if (started <= dateIso && (!ended || dateIso <= ended)) {
         if (!hit || started > hit.started) hit = { key: w.key, started }
       }
@@ -206,7 +233,8 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
   function makeWalker() {
     let idx = 0
     let last = futureQual.length ? null : today
-    return (count: number): string | null => {
+    return (count: number): { first: string | null; last: string | null } => {
+      let first: string | null = null
       let d: string | null = null
       for (let i = 0; i < count; i++) {
         if (idx < futureQual.length) {
@@ -217,8 +245,9 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
           last = addDaysIso(last ?? today, cadence)
           d = last
         }
+        if (first === null) first = d
       }
-      return d
+      return { first, last: d }
     }
   }
 
@@ -231,7 +260,7 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
     const actual = days.filter((d) => d.counts).length
     let status: FtepPhaseTimeline['status'] = 'upcoming'
     if (row?.completedAt) status = 'complete'
-    else if (row?.startedAt && !current) {
+    else if (effStart(p.key) && !current) {
       status = 'current'
       current = p.key
     }
@@ -239,13 +268,14 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
       key: p.key,
       no: p.no,
       label: p.label,
-      startedAt: row?.startedAt ?? null,
+      startedAt: effStart(p.key),
       completedAt: row?.completedAt ?? null,
       ftoName: row?.ftoName ?? null,
       standard: std,
       actual,
       status,
       days,
+      estStdStart: null,
       estStdEnd: null,
       estMinEnd: null,
     })
@@ -259,8 +289,11 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
     if (ph.status === 'complete' || !ph.standard) continue
     const remStd = Math.max(0, ph.standard.std - (ph.status === 'current' ? ph.actual : 0))
     const remMin = Math.max(0, ph.standard.min - (ph.status === 'current' ? ph.actual : 0))
-    ph.estStdEnd = remStd === 0 ? today : stdWalk(remStd)
-    ph.estMinEnd = remMin === 0 ? today : minWalk(remMin)
+    const w1 = stdWalk(remStd)
+    const w2 = minWalk(remMin)
+    ph.estStdStart = ph.status === 'current' ? ph.startedAt : w1.first
+    ph.estStdEnd = remStd === 0 ? today : w1.last
+    ph.estMinEnd = remMin === 0 ? today : w2.last
     estTestStd = ph.estStdEnd
     estTestMin = ph.estMinEnd
   }
@@ -277,10 +310,19 @@ export async function buildFtepTimeline(person: PipelinePerson): Promise<FtepTim
     complete: gateRows.some((g) => g.gateKey === key && g.status === 'complete'),
   }))
 
+  const ftosUsed = [
+    ...new Set([
+      ...programPhases.map((p) => rows.get(p.key)?.ftoName).filter((n): n is string => !!n),
+      ...dayRows.filter((d) => !d.future && d.counts).flatMap((d) => d.ftoNames),
+    ]),
+  ]
+
   return {
     transition,
     accelerated,
     phases,
+    ftosUsed,
+    finalPhaseKey: programPhases[programPhases.length - 1]!.key,
     upcoming: dayRows.filter((d) => d.future && d.counts).slice(0, 8),
     notCounting: dayRows.filter((d) => !d.future && !d.counts && d.phaseKey !== null),
     estTestStd,

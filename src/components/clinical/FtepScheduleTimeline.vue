@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useFtep } from '@/composables/useFtep'
 import { buildFtepTimeline, type FtepTimeline } from '@/composables/useFtepTimeline'
 import type { PipelinePerson } from '@/types'
@@ -45,6 +45,16 @@ function fmt(iso: string | null): string {
   })
 }
 
+/* Final evaluation must run under an FTO the trainee has NOT had —
+   cross-station pairing takes advance planning, so surface the
+   projected start early. */
+const finalPlan = computed(() => {
+  if (!tl.value) return null
+  const ph = tl.value.phases.find((p) => p.key === tl.value!.finalPhaseKey)
+  if (!ph || ph.status === 'complete') return null
+  return { start: ph.status === 'current' ? ph.startedAt : ph.estStdStart, current: ph.status === 'current' }
+})
+
 function fmtY(iso: string | null): string {
   if (!iso) return '—'
   return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
@@ -84,6 +94,13 @@ function fmtY(iso: string | null): string {
           </span>
         </div>
       </div>
+
+      <p v-if="finalPlan" class="ftl__final">
+        <b>Final evaluation needs a DIFFERENT FTO</b> —
+        {{ finalPlan.current ? 'started' : 'projected to start' }} ≈ <b>{{ fmtY(finalPlan.start) }}</b>.
+        FTOs used so far: {{ tl.ftosUsed.length ? tl.ftosUsed.join(', ') : 'none yet' }} — plan the
+        pairing (and station move) ahead with scheduling.
+      </p>
 
       <p v-if="tl.unanchored" class="ftl__hint">
         No phase has a start date yet — set the phase start in the stepper above and the
@@ -193,6 +210,17 @@ function fmtY(iso: string | null): string {
   font-size: 0.82rem;
   color: var(--color-danger-500);
   margin: 0.3rem 0;
+}
+
+.ftl__final {
+  font-size: 0.8rem;
+  color: var(--color-ink);
+  background: oklch(0.985 0.012 86.8);
+  border: 1px solid oklch(0.85 0.07 86.8);
+  border-left: 3px solid var(--color-accent-600);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  margin: 0 0 0.6rem;
 }
 
 .ftl__hint {

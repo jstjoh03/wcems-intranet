@@ -13,6 +13,8 @@ import { useAuthStore } from '@/stores/auth'
 import { activeTransitionFor, gateItemsFor, petitionItemsFor } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
+import { buildFtepTimeline } from '@/composables/useFtepTimeline'
+import { useSchedule, todayCentralIso } from '@/composables/useSchedule'
 import { usePipeline } from '@/composables/usePipeline'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import type { FtepReport, PipelinePerson } from '@/types'
@@ -193,6 +195,67 @@ const missingDorRows = computed(() => {
   }
   return out.sort((a, b) => a.day.localeCompare(b.day) || a.p.fullName.localeCompare(b.p.fullName))
 })
+
+/* Plan ahead — final evaluations: the last phase must run under an
+   FTO the trainee has NOT had (usually a station move), so the
+   projected start date surfaces here weeks out for scheduling. */
+interface PlanRow {
+  p: PipelinePerson
+  start: string | null
+  started: boolean
+  ftos: string[]
+  testStd: string | null
+}
+const planRows = ref<PlanRow[]>([])
+
+async function loadPlan() {
+  const elig = clinicalPeople.value.filter((q) => {
+    const t = activeTransitionFor(q.record)
+    return (t === 'NEOP' || t === 'P1C_P1' || t === 'P1_P2') && !q.record.legacyTrack
+  })
+  if (!elig.length) {
+    planRows.value = []
+    return
+  }
+  const sched = useSchedule()
+  await sched.ensureLoaded()
+  const today = todayCentralIso()
+  const addD = (n: number) => {
+    const d = new Date(`${today}T12:00:00Z`)
+    d.setUTCDate(d.getUTCDate() + n)
+    return d.toISOString().slice(0, 10)
+  }
+  const res = await sched.fetchTimeSegments(addD(-240), addD(112))
+  if (res.error) return
+  const out: PlanRow[] = []
+  for (const q of elig) {
+    try {
+      const tl = await buildFtepTimeline(q, { segs: res.segs })
+      if (!tl) continue
+      const fin = tl.phases.find((x) => x.key === tl.finalPhaseKey)
+      if (!fin || fin.status === 'complete') continue
+      out.push({
+        p: q,
+        start: fin.status === 'current' ? fin.startedAt : fin.estStdStart,
+        started: fin.status === 'current',
+        ftos: tl.ftosUsed,
+        testStd: tl.estTestStd,
+      })
+    } catch {
+      /* one bad record shouldn't kill the panel */
+    }
+  }
+  out.sort((a, b) => (a.start ?? '9999').localeCompare(b.start ?? '9999'))
+  planRows.value = out
+}
+
+watch(
+  [ready, canEdit],
+  ([r, e]) => {
+    if (r && e) void loadPlan()
+  },
+  { immediate: true },
+)
 
 function statsFor(p: PipelinePerson) {
   const track = ftepTrackFor(p)
@@ -429,6 +492,22 @@ async function review(r: FtepReport) {
         </div>
       </div>
 
+      <!-- Final evaluations to plan — different FTO required -->
+      <div v-if="canEdit && planRows.length" class="fh__plan-card">
+        <div class="fh__plan-hd">
+          Plan ahead — final evaluations
+          <span class="fh__missing-hint">needs a DIFFERENT FTO (usually a station move) — line the pairing up with scheduling early</span>
+        </div>
+        <div v-for="r in planRows" :key="r.p.userId" class="fh__missing-row">
+          <span class="fh__missing-who">{{ r.p.fullName }}</span>
+          <span class="fh__missing-meta">
+            {{ r.started ? 'final eval STARTED' : 'final eval ≈' }} {{ fmt(r.start) }}
+            · ready to test ≈ {{ fmt(r.testStd) }}
+            · FTOs used: {{ r.ftos.length ? r.ftos.join(', ') : 'none yet' }}
+          </span>
+        </div>
+      </div>
+
       <!-- Trainees, grouped by track -->
       <template v-for="g in groups" :key="g.key">
         <div class="fh__sectitle">
@@ -605,6 +684,26 @@ async function review(r: FtepReport) {
 .fh__queue-who { font-weight: 700; color: var(--color-ink); }
 .fh__queue-meta { color: var(--color-ink-soft); font-size: 12px; }
 .fh__nrt-flag { color: oklch(0.45 0.15 30); }
+.fh__plan-card {
+  border: 1px solid oklch(0.85 0.07 86.8);
+  border-left: 3px solid var(--color-accent-600);
+  background: oklch(0.99 0.008 86.8);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.fh__plan-hd {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-weight: 700;
+  font-size: 13.5px;
+  color: var(--color-ink);
+  margin-bottom: 4px;
+}
+
 .fh__missing-card {
   background: oklch(0.975 0.03 60); border: 1px solid oklch(0.87 0.06 60);
   border-radius: 14px; padding: 4px 0 6px; margin-bottom: 10px;
