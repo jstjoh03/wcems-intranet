@@ -272,6 +272,7 @@ const form = reactive({
   inP3Process: record.value.inP3Process,
   inAemtUpgrade: record.value.inAemtUpgrade,
   legacyTrack: record.value.legacyTrack,
+  p2Accelerated: record.value.p2Accelerated,
   isFto: record.value.isFto,
   txJurisprudenceAt: record.value.txJurisprudenceAt ?? '',
   bloodbornePathogenAt: record.value.bloodbornePathogenAt ?? '',
@@ -299,6 +300,7 @@ async function saveForm() {
       inP3Process: form.inP3Process,
       inAemtUpgrade: form.inAemtUpgrade,
       legacyTrack: form.legacyTrack,
+      p2Accelerated: form.p2Accelerated,
       isFto: form.isFto,
       txJurisprudenceAt: form.txJurisprudenceAt || null,
       bloodbornePathogenAt: form.bloodbornePathogenAt || null,
@@ -456,6 +458,7 @@ async function saveForm() {
             <span v-if="record.clearedPhase" class="pm__recfact">Cleared {{ record.clearedPhase }}</span>
             <span v-if="record.ftoName" class="pm__recfact">FTO {{ record.ftoName }}</span>
             <span v-if="record.legacyTrack" class="pm__recflag">Legacy track</span>
+            <span v-if="record.p2Accelerated" class="pm__recflag">Accelerated P2</span>
             <span v-if="record.inP3Process" class="pm__recflag">P3 / supervisor</span>
             <span v-if="record.inAemtUpgrade" class="pm__recflag">AEMT upgrade</span>
             <span v-if="record.pending" class="pm__recflag">Awaiting clearance</span>
@@ -513,6 +516,7 @@ async function saveForm() {
           <template v-if="recordOpen">
             <div class="pm__flags">
               <label><input v-model="form.legacyTrack" type="checkbox" /> Legacy P1→P2 program</label>
+              <label><input v-model="form.p2Accelerated" type="checkbox" /> Accelerated P2 pathway (10-day standard)</label>
               <label><input v-model="form.pending" type="checkbox" /> Awaiting clearance</label>
               <label><input v-model="form.inP3Process" type="checkbox" /> P3 / supervisor track</label>
               <label><input v-model="form.inAemtUpgrade" type="checkbox" /> AEMT upgrade</label>

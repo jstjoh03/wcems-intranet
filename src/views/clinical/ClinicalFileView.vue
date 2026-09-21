@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Check, ChevronDown, Download, Pencil, Plus, Trash2 } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
+import FtepScheduleTimeline from '@/components/clinical/FtepScheduleTimeline.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
 import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
 import { useExamCertAutoFile } from '@/composables/useExamCertAutoFile'
@@ -735,6 +736,7 @@ function fmtDateTime(iso: string): string {
           </div>
           <div v-if="!isCredentialed" class="cf__stepper">
             <FtepPhaseStepper :person="person" :editable="canEdit" />
+            <FtepScheduleTimeline :person="person" />
           </div>
           <template v-if="isCredentialed"><!-- archive only: history toggle below --></template>
           <template v-else-if="ftepTrackFor(person)?.key === 'rideup'">

@@ -44,6 +44,7 @@ interface RecordRow {
   in_p3_process: boolean
   in_aemt_upgrade: boolean
   legacy_track: boolean
+  p2_accelerated: boolean
   level: string | null
   is_fto: boolean
   fto_name: string | null
@@ -88,7 +89,7 @@ interface GateRow {
 
 const RECORD_SELECT =
   'id, user_id, cleared_phase, working_phase, working_started_at, working_target_at, ' +
-  'pending, pip_active, pip_started_at, pip_reason, in_p3_process, in_aemt_upgrade, legacy_track, ' +
+  'pending, pip_active, pip_started_at, pip_reason, in_p3_process, in_aemt_upgrade, legacy_track, p2_accelerated, ' +
   'level, is_fto, fto_name, cert_level, tx_license_number, tx_license_expires_at, ' +
   'tx_jurisprudence_at, bloodborne_pathogen_at, op_iq_access, narc_safe_access, clinical_excluded, ' +
   'op_iq_granted_at, narc_safe_granted_at, ' +
@@ -114,6 +115,7 @@ function rowToRecord(r: RecordRow): PipelineRecord {
     inP3Process: r.in_p3_process,
     inAemtUpgrade: r.in_aemt_upgrade,
     legacyTrack: r.legacy_track,
+    p2Accelerated: r.p2_accelerated ?? false,
     level: r.level,
     isFto: r.is_fto,
     ftoName: r.fto_name,
@@ -182,6 +184,7 @@ function seedDevFixture() {
     inP3Process: false,
     inAemtUpgrade: false,
     legacyTrack: false,
+    p2Accelerated: false,
     level: null,
     isFto: false,
     ftoName: null,
@@ -364,6 +367,7 @@ function recordPatch(input: SaveRecordInput): Record<string, unknown> {
     inP3Process: 'in_p3_process',
     inAemtUpgrade: 'in_aemt_upgrade',
     legacyTrack: 'legacy_track',
+    p2Accelerated: 'p2_accelerated',
     level: 'level',
     isFto: 'is_fto',
     ftoName: 'fto_name',

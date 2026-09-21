@@ -177,6 +177,39 @@ export const FTEP_PROGRAM_PHASES: Record<'P1C_P1' | 'P1_P2', FtepProgramPhase[]>
   ],
 }
 
+/* ── Published training-day counts (FTEP Program Guide v1.0 §4) ───────
+   One tour = TWO training days; only days scheduled WITH an FTO count
+   toward a phase. Phase 0 (NEOP Academy) is classroom — no FTO, no
+   schedule linkage. Accelerated P2 is the selective 10-day pathway. */
+
+export interface PhaseDayStandard {
+  min: number
+  std: number
+  max: number
+}
+
+export const FTEP_DAY_STANDARDS: Record<
+  'P1C_P1' | 'P1_P2' | 'P1_P2_ACCEL',
+  Record<string, PhaseDayStandard>
+> = {
+  P1C_P1: {
+    phase1: { min: 2, std: 2, max: 4 },
+    phase2: { min: 2, std: 4, max: 6 },
+    phase3: { min: 4, std: 8, max: 12 },
+    phase4: { min: 2, std: 2, max: 4 },
+  },
+  P1_P2: {
+    phase5: { min: 24, std: 28, max: 46 },
+    phase6: { min: 4, std: 6, max: 10 },
+    phase7: { min: 2, std: 2, max: 4 },
+  },
+  P1_P2_ACCEL: {
+    phase5: { min: 6, std: 6, max: 8 },
+    phase6: { min: 2, std: 2, max: 2 },
+    phase7: { min: 2, std: 2, max: 2 },
+  },
+}
+
 /* ── Trainee Evaluation of FTO (paper form v1.0, 1:1) ─────────────────
    Completed at each phase transition · submitted to the CDO — not the
    FTO. Feedback reaches FTOs in aggregate and without attribution

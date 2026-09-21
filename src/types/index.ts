@@ -424,6 +424,8 @@ export interface PipelineRecord {
   /** Pre-FTEP-rebuild P1→P2 requirements (call evals instead of
    *  DORs/ICRs). Set per person; new-program folks stay false. */
   legacyTrack: boolean
+  /** Accelerated P2 pathway (10-day standard vs traditional 36). */
+  p2Accelerated: boolean
   /** Credential badge (P1C, P1, P2, FTO, ADV, EMT…). */
   level: string | null
   isFto: boolean
