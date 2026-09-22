@@ -705,11 +705,13 @@ const weeks = computed<Cell[][]>(() => {
 }
 
 .mb__event {
-  margin-top: 0.25rem;
-  border: 1px solid oklch(0.88 0.05 86.8);
-  background: oklch(0.985 0.012 86.8);
-  border-radius: 7px;
-  padding: 0.2rem 0.35rem 0.25rem;
+  padding: 0.15rem 0 0.2rem;
+  border-top: 1px solid var(--color-line-soft);
+}
+
+.mb__event:first-of-type {
+  border-top: 0;
+  padding-top: 0.05rem;
 }
 
 .mb__eventname {
@@ -798,13 +800,6 @@ const weeks = computed<Cell[][]>(() => {
 .mb__section--event .mb__section-h {
   background: oklch(0.47 0.11 300);
   color: #fff;
-}
-
-/* Each event keeps its own sub-box, quieted inside the section. */
-.mb__section--event .mb__event {
-  margin-top: 0.2rem;
-  border-color: oklch(0.88 0.03 300);
-  background: var(--color-surface);
 }
 
 .mb__section--pend {

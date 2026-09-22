@@ -219,6 +219,8 @@ function notesTitle(notes: { note: string }[]): string {
       </div>
     </div>
 
+    <div v-if="model.events.length" class="dc__section dc__section--event">
+      <p class="dc__section-h">Events</p>
     <div v-for="ev in model.events" :key="ev.label" class="dc__event">
       <p class="dc__event-name">
         <button
@@ -264,6 +266,7 @@ function notesTitle(notes: { note: string }[]): string {
         </span>
         <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
       </div>
+    </div>
     </div>
 
     <div v-if="model.pending.length" class="dc__section dc__section--pend">
@@ -540,9 +543,12 @@ function notesTitle(notes: { note: string }[]): string {
 }
 
 .dc__event {
-  padding: 0.3rem 0.55rem 0.35rem;
-  border-top: 1px solid oklch(0.9 0.04 86.8);
-  background: oklch(0.99 0.008 86.8);
+  padding: 0.15rem 0 0.2rem;
+  border-top: 1px solid var(--color-line-soft);
+}
+
+.dc__event:first-of-type {
+  border-top: 0;
 }
 
 .dc__event-name {
@@ -568,32 +574,57 @@ function notesTitle(notes: { note: string }[]): string {
   border-top: 1px solid var(--color-line-soft);
 }
 
+/* Solid color band headers — same treatment as the month cells'
+   category boxes (consistency pass, Justin 2026-09-22). The band
+   bleeds across the section's padding. */
 .dc__section-h {
   font-size: 0.6rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  margin: 0 0 0.1rem;
+  color: #fff;
+  margin: -0.25rem -0.55rem 0.15rem;
+  padding: 0.18rem 0.55rem;
+}
+
+.dc__section--extra {
+  background: oklch(0.97 0.015 250);
 }
 
 .dc__section--extra .dc__section-h {
-  color: var(--color-brand-700);
+  background: oklch(0.45 0.1 250);
+}
+
+.dc__section--trade {
+  background: oklch(0.97 0.02 150);
 }
 
 .dc__section--trade .dc__section-h {
-  color: var(--color-success-500);
+  background: oklch(0.45 0.13 150);
+}
+
+.dc__section--off {
+  background: oklch(0.98 0.02 65);
 }
 
 .dc__section--off .dc__section-h {
-  color: oklch(0.5 0.13 60);
+  background: oklch(0.55 0.13 65);
 }
 
 .dc__section--pend {
-  background: oklch(0.99 0.006 27);
+  background: oklch(0.98 0.012 27);
 }
 
 .dc__section--pend .dc__section-h {
-  color: var(--color-danger-500);
+  background: oklch(0.52 0.18 27);
+}
+
+.dc__section--event {
+  background: oklch(0.978 0.012 300);
+}
+
+.dc__section--event .dc__section-h {
+  background: oklch(0.47 0.11 300);
 }
 
 .dc__sub {
