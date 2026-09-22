@@ -15,6 +15,7 @@ interface SessionRow {
   remaining_capacity: number
   location: string
   instructor: string
+  source: string
 }
 
 interface ExcludedRow {
@@ -45,7 +46,7 @@ async function loadAll() {
     supabase
       .from('training_sessions')
       .select(
-        'id, service_id, title, local_start, total_capacity, remaining_capacity, location, instructor',
+        'id, service_id, title, local_start, total_capacity, remaining_capacity, location, instructor, source',
       )
       .order('local_start', { ascending: true }),
     supabase
@@ -132,6 +133,26 @@ async function reincludeService(e: ExcludedRow) {
     return
   }
   excluded.value = excluded.value.filter((x) => x.service_id !== e.service_id)
+}
+
+/* Manually-added classes live only in this table — no Wix service, no
+   calendar mirror — so a straight delete is final and the 15-minute
+   sync won't bring them back (its prune only owns wix/calendar rows). */
+async function removeSession(s: SessionDraft) {
+  const title = s.title || 'this class'
+  if (
+    !confirm(
+      `Remove "${title}" from the calendar?\n\nIt was added manually, so it won't come back on the next sync. Re-add it later if it gets rescheduled.`,
+    )
+  ) {
+    return
+  }
+  const { error: delErr } = await supabase.from('training_sessions').delete().eq('id', s.id)
+  if (delErr) {
+    alert(`Failed to remove: ${delErr.message}`)
+    return
+  }
+  sessions.value = sessions.value.filter((x) => x.id !== s.id)
 }
 
 async function syncNow() {
@@ -294,6 +315,15 @@ const sortedSessions = computed(() =>
               @click="excludeService(s)"
             >
               <Trash2 :size="13" :stroke-width="1.85" /> Exclude service
+            </button>
+            <button
+              v-else-if="s.source === 'manual'"
+              type="button"
+              class="mt__exclude-btn"
+              title="Remove this manually-added class — it won't come back on sync"
+              @click="removeSession(s)"
+            >
+              <Trash2 :size="13" :stroke-width="1.85" /> Remove
             </button>
           </div>
         </AppCard>
