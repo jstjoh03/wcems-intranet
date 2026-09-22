@@ -327,7 +327,7 @@ const weeks = computed<Cell[][]>(() => {
               >
                 <svg viewBox="0 0 24 24" fill="oklch(0.88 0.1 86.8)" stroke="oklch(0.6 0.11 86.8)" stroke-width="1.5"><path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z" /></svg>
               </button>
-              <span v-if="ev.start" class="mb__time">{{ ev.start }}-{{ ev.end }}</span>
+              <span v-if="ev.start && !ev.rows.length" class="mb__time">{{ ev.start }}-{{ ev.end }}</span>
             </p>
             <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="mb__row">
               <button
@@ -352,7 +352,7 @@ const weeks = computed<Cell[][]>(() => {
                 class="mb__name"
                 :class="{ 'mb__name--me': !!row.userId && row.userId === sched.myUserId.value }"
               >{{ row.name }}</span>
-              <span v-if="row.start !== ev.start || row.end !== ev.end" class="mb__time">{{ row.start }}-{{ row.end }}</span>
+              <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
             </div>
           </div>
           </div>

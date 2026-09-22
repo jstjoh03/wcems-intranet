@@ -238,7 +238,7 @@ function notesTitle(notes: { note: string }[]): string {
           :title="ev.notes ?? undefined"
           @click="editor.openNote({ title: ev.label, text: ev.notes ?? '', event: { dateIso, label: ev.label, eventId: ev.eventId, startHm: ev.start, endHm: ev.end } })"
         />
-        <span v-if="ev.start" class="dc__time">{{ ev.start }}-{{ ev.end }}</span>
+        <span v-if="ev.start && !ev.rows.length" class="dc__time">{{ ev.start }}-{{ ev.end }}</span>
       </p>
       <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="dc__row">
         <button
@@ -265,7 +265,7 @@ function notesTitle(notes: { note: string }[]): string {
         >
           {{ row.name }}<span v-if="row.credential" class="dc__cred"> - {{ row.credential }}</span>
         </span>
-        <span v-if="row.start !== ev.start || row.end !== ev.end" class="dc__time">{{ row.start }}-{{ row.end }}</span>
+        <span class="dc__time">{{ row.start }}-{{ row.end }}</span>
       </div>
     </div>
     </div>
