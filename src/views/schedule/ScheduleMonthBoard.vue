@@ -419,7 +419,7 @@ const weeks = computed<Cell[][]>(() => {
 
 .mb__cell--today {
   border-color: var(--color-accent-600);
-  box-shadow: 0 0 0 1px var(--color-accent-600);
+  box-shadow: 0 0 0 2px var(--color-accent-600);
 }
 
 .mb__cellhead {
@@ -551,7 +551,7 @@ const weeks = computed<Cell[][]>(() => {
   height: 20px;
   padding: 0 4px;
   border-radius: 999px;
-  background: oklch(0.93 0.07 86.8);
+  background: oklch(0.86 0.13 86.8);
   box-shadow: inset 0 0 0 1px oklch(0.78 0.09 86.8);
 }
 
@@ -579,33 +579,36 @@ const weeks = computed<Cell[][]>(() => {
 /* Whole-chip platoon color (Ng, day-1 feedback: dots alone let B and C
    blend — the tinted chip + colored text reads at a glance). */
 .mb__platoon[data-platoon='A'] {
-  color: oklch(0.45 0.18 27);
-  border-color: oklch(0.82 0.09 27);
-  background: oklch(0.97 0.02 27);
+  color: #fff;
+  border-color: oklch(0.52 0.19 27);
+  background: oklch(0.52 0.19 27);
+  font-weight: 700;
 }
 
 .mb__platoon[data-platoon='A'] .mb__dot {
-  background: oklch(0.5 0.19 27);
+  background: oklch(1 0 0 / 0.9);
 }
 
 .mb__platoon[data-platoon='B'] {
-  color: oklch(0.4 0.15 262);
-  border-color: oklch(0.8 0.08 262);
-  background: oklch(0.96 0.02 262);
+  color: #fff;
+  border-color: oklch(0.44 0.16 262);
+  background: oklch(0.44 0.16 262);
+  font-weight: 700;
 }
 
 .mb__platoon[data-platoon='B'] .mb__dot {
-  background: oklch(0.45 0.17 262);
+  background: oklch(1 0 0 / 0.9);
 }
 
 .mb__platoon[data-platoon='C'] {
-  color: oklch(0.4 0.12 148);
-  border-color: oklch(0.78 0.09 148);
-  background: oklch(0.96 0.03 148);
+  color: #fff;
+  border-color: oklch(0.47 0.14 148);
+  background: oklch(0.47 0.14 148);
+  font-weight: 700;
 }
 
 .mb__platoon[data-platoon='C'] .mb__dot {
-  background: oklch(0.46 0.14 148);
+  background: oklch(1 0 0 / 0.9);
 }
 
 .mb__open {
@@ -676,7 +679,7 @@ const weeks = computed<Cell[][]>(() => {
 
 /* Aladtec-style "that's me" highlight — spot your days at a glance. */
 .mb__name--me {
-  background: oklch(0.93 0.07 86.8);
+  background: oklch(0.86 0.13 86.8);
   font-weight: 700;
   border-radius: 4px;
   padding: 0 3px;
@@ -755,43 +758,43 @@ const weeks = computed<Cell[][]>(() => {
 /* Section boxes darkened a notch (Ng + Justin, day-2): stronger
    borders, deeper header tints, darker label text. */
 .mb__section--extra {
-  border-color: oklch(0.76 0.08 250);
-  background: oklch(0.985 0.008 250);
+  border-color: oklch(0.5 0.1 250);
+  background: oklch(0.97 0.015 250);
 }
 
 .mb__section--extra .mb__section-h {
-  background: oklch(0.93 0.035 250);
-  color: var(--color-brand-700);
+  background: oklch(0.45 0.1 250);
+  color: #fff;
 }
 
 .mb__section--trade {
-  border-color: oklch(0.74 0.1 150);
-  background: oklch(0.985 0.012 150);
+  border-color: oklch(0.48 0.13 150);
+  background: oklch(0.97 0.02 150);
 }
 
 .mb__section--trade .mb__section-h {
-  background: oklch(0.92 0.05 150);
-  color: oklch(0.38 0.12 150);
+  background: oklch(0.45 0.13 150);
+  color: #fff;
 }
 
 .mb__section--off {
-  border-color: oklch(0.76 0.09 60);
-  background: oklch(0.99 0.012 60);
+  border-color: oklch(0.58 0.13 65);
+  background: oklch(0.98 0.02 65);
 }
 
 .mb__section--off .mb__section-h {
-  background: oklch(0.93 0.05 60);
-  color: oklch(0.43 0.13 60);
+  background: oklch(0.55 0.13 65);
+  color: #fff;
 }
 
 .mb__section--pend {
-  border-color: oklch(0.74 0.12 27);
-  background: oklch(0.99 0.008 27);
+  border-color: oklch(0.52 0.18 27);
+  background: oklch(0.98 0.012 27);
 }
 
 .mb__section--pend .mb__section-h {
-  background: oklch(0.94 0.035 27);
-  color: var(--color-danger-500);
+  background: oklch(0.52 0.18 27);
+  color: #fff;
 }
 
 .mb__lrow {
@@ -900,8 +903,8 @@ const weeks = computed<Cell[][]>(() => {
 /* My schedule: the whole day carries the gold, not just the number
    (Ng, day-1 feedback). */
 .mb--mine .mb__cell--me {
-  background: oklch(0.965 0.045 86.8);
-  box-shadow: inset 0 0 0 1px oklch(0.85 0.08 86.8);
+  background: oklch(0.93 0.09 86.8);
+  box-shadow: inset 0 0 0 2px oklch(0.7 0.13 86.8);
 }
 
 /* Phone: the cellhead paints the whole cell, so it must carry the gold
@@ -910,11 +913,11 @@ const weeks = computed<Cell[][]>(() => {
 @media (max-width: 900px) {
   .mb--mine .mb__cell--me,
   .mb--mine .mb__cell--me .mb__cellhead {
-    background: oklch(0.95 0.06 86.8);
+    background: oklch(0.9 0.11 86.8);
   }
 
   .mb--mine .mb__cell--me {
-    box-shadow: inset 0 0 0 1.5px oklch(0.8 0.1 86.8);
+    box-shadow: inset 0 0 0 2px oklch(0.66 0.13 86.8);
   }
 }
 </style>

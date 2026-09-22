@@ -296,7 +296,7 @@ function notesTitle(notes: { note: string }[]): string {
 
 .dc--today {
   border-color: var(--color-accent-600);
-  box-shadow: 0 0 0 1px var(--color-accent-600);
+  box-shadow: 0 0 0 2px var(--color-accent-600);
 }
 
 .dc__head {
@@ -398,33 +398,36 @@ function notesTitle(notes: { note: string }[]): string {
 
 /* whole-chip platoon color — see MonthBoard note (Ng feedback) */
 .dc__platoon[data-platoon='A'] {
-  color: oklch(0.45 0.18 27);
-  border-color: oklch(0.82 0.09 27);
-  background: oklch(0.97 0.02 27);
+  color: #fff;
+  border-color: oklch(0.52 0.19 27);
+  background: oklch(0.52 0.19 27);
+  font-weight: 700;
 }
 
 .dc__platoon[data-platoon='A'] .dc__dot {
-  background: oklch(0.5 0.19 27);
+  background: oklch(1 0 0 / 0.9);
 }
 
 .dc__platoon[data-platoon='B'] {
-  color: oklch(0.4 0.15 262);
-  border-color: oklch(0.8 0.08 262);
-  background: oklch(0.96 0.02 262);
+  color: #fff;
+  border-color: oklch(0.44 0.16 262);
+  background: oklch(0.44 0.16 262);
+  font-weight: 700;
 }
 
 .dc__platoon[data-platoon='B'] .dc__dot {
-  background: oklch(0.45 0.17 262);
+  background: oklch(1 0 0 / 0.9);
 }
 
 .dc__platoon[data-platoon='C'] {
-  color: oklch(0.4 0.12 148);
-  border-color: oklch(0.78 0.09 148);
-  background: oklch(0.96 0.03 148);
+  color: #fff;
+  border-color: oklch(0.47 0.14 148);
+  background: oklch(0.47 0.14 148);
+  font-weight: 700;
 }
 
 .dc__platoon[data-platoon='C'] .dc__dot {
-  background: oklch(0.46 0.14 148);
+  background: oklch(1 0 0 / 0.9);
 }
 
 .dc__unit {
@@ -515,7 +518,7 @@ function notesTitle(notes: { note: string }[]): string {
 
 /* Aladtec-style "that's me" highlight. */
 .dc__name--me {
-  background: oklch(0.93 0.07 86.8);
+  background: oklch(0.86 0.13 86.8);
   font-weight: 700;
   border-radius: 4px;
   padding: 0 3px;

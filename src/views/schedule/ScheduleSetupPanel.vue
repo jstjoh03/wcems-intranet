@@ -1708,18 +1708,18 @@ async function saveWarnCfg() {
 }
 
 .setup__th[data-platoon='A'] .setup__shiftchip {
-  background: oklch(0.93 0.06 27);
-  color: oklch(0.45 0.19 27);
+  background: oklch(0.52 0.19 27);
+  color: #fff;
 }
 
 .setup__th[data-platoon='B'] .setup__shiftchip {
-  background: oklch(0.93 0.05 262);
-  color: oklch(0.42 0.16 262);
+  background: oklch(0.44 0.16 262);
+  color: #fff;
 }
 
 .setup__th[data-platoon='C'] .setup__shiftchip {
-  background: oklch(0.93 0.06 148);
-  color: oklch(0.4 0.14 148);
+  background: oklch(0.47 0.14 148);
+  color: #fff;
 }
 
 /* Every occupant cell carries its shift color — a faint column wash
