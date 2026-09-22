@@ -352,7 +352,7 @@ const weeks = computed<Cell[][]>(() => {
                 class="mb__name"
                 :class="{ 'mb__name--me': !!row.userId && row.userId === sched.myUserId.value }"
               >{{ row.name }}</span>
-              <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
+              <span v-if="row.start !== ev.start || row.end !== ev.end" class="mb__time">{{ row.start }}-{{ row.end }}</span>
             </div>
           </div>
           </div>
@@ -717,12 +717,16 @@ const weeks = computed<Cell[][]>(() => {
 .mb__eventname {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
   gap: 0.3rem;
   font-size: 0.66rem;
   font-weight: 700;
   color: var(--color-accent-700);
   margin: 0 0 0.05rem;
+}
+
+/* Note icon hugs the name; the event's hours sit at the right edge. */
+.mb__eventname .mb__time {
+  margin-left: auto;
 }
 
 .mb__eventlabel {
