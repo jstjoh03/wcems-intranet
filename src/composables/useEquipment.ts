@@ -360,6 +360,28 @@ export function useEquipment() {
     }
   }
 
+  /** Admin-only: erase a check-out entirely — custody log, items, and
+   *  photos. For test runs and mistakes, not real history. */
+  async function deleteCheckout(id: string): Promise<Ok | Fail> {
+    try {
+      await backend().deleteCheckout(id)
+      await refresh()
+      return { ok: true }
+    } catch (e) {
+      return fail(e)
+    }
+  }
+
+  /** Admin-only: sweep photo folders whose check-out no longer exists. */
+  async function cleanOrphanedPhotos(): Promise<{ ok: true; removed: number } | Fail> {
+    try {
+      const removed = await backend().cleanOrphanedPhotos()
+      return { ok: true, removed }
+    } catch (e) {
+      return fail(e)
+    }
+  }
+
   /* ── Registry ──────────────────────────────────────────────────────── */
   async function saveAsset(
     id: string | null,
@@ -588,6 +610,8 @@ export function useEquipment() {
     fetchCheckout,
     fetchAssetHistory,
     updateCheckoutDetails,
+    deleteCheckout,
+    cleanOrphanedPhotos,
     saveAsset,
     importAssets,
     deleteAsset,

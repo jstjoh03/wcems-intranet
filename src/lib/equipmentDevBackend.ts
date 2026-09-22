@@ -543,6 +543,21 @@ export function createDevEquipmentBackend(
       if (c) Object.assign(c, patch)
     },
 
+    async deleteCheckout(id) {
+      const ci = checkouts.findIndex((x) => x.id === id)
+      if (ci >= 0) checkouts.splice(ci, 1)
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].checkout_id === id) events.splice(i, 1)
+      }
+      for (let i = items.length - 1; i >= 0; i--) {
+        if (items[i].checkout_id === id) items.splice(i, 1)
+      }
+    },
+
+    async cleanOrphanedPhotos() {
+      return 0
+    },
+
     async loadPeople() {
       return [{ id: me().id, fullName: me().fullName, title: 'Paramedic' }, ...DEV_PEOPLE]
     },

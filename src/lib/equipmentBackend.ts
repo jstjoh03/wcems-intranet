@@ -193,6 +193,8 @@ export interface EquipmentBackend {
   addHandler(userId: string): Promise<void>
   removeHandler(userId: string): Promise<void>
   updateCheckout(id: string, patch: CheckoutPatch): Promise<void>
+  deleteCheckout(id: string): Promise<void>
+  cleanOrphanedPhotos(): Promise<number>
   loadPeople(): Promise<EquipmentPerson[]>
   loadSuggestions(): Promise<EquipmentSuggestions>
   subscribe(onChange: () => void): void
@@ -520,6 +522,53 @@ export const supabaseEquipmentBackend: EquipmentBackend = {
 
   async updateCheckout(id, patch) {
     must(await supabase.from('equipment_checkouts').update(patch).eq('id', id))
+  },
+
+  async deleteCheckout(id) {
+    /* Photos and signatures first — storage rows can't be deleted from
+       SQL, so the client clears the folder (admin delete policy) and
+       the RPC then erases the custody rows. */
+    const { data: files, error: listErr } = await supabase.storage
+      .from(PHOTO_BUCKET)
+      .list(id, { limit: 500 })
+    if (listErr) throw new Error(`Photo cleanup failed: ${listErr.message}`)
+    const paths = (files ?? []).map((f) => `${id}/${f.name}`)
+    if (paths.length) {
+      const { error } = await supabase.storage.from(PHOTO_BUCKET).remove(paths)
+      if (error) throw new Error(`Photo cleanup failed: ${error.message}`)
+    }
+    must(await supabase.rpc('equipment_delete_checkout', { p_checkout_id: id }))
+  },
+
+  async cleanOrphanedPhotos() {
+    /* Folders in the bucket whose check-out no longer exists — early
+       test purges done in SQL couldn't touch storage, so their photos
+       linger. Admin-only by the storage delete policy. */
+    const { data: folders, error: listErr } = await supabase.storage
+      .from(PHOTO_BUCKET)
+      .list('', { limit: 1000 })
+    if (listErr) throw new Error(listErr.message)
+    const ids = (folders ?? [])
+      .map((f) => f.name)
+      .filter((n) => /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(n))
+    if (!ids.length) return 0
+    const rows = must(
+      await supabase.from('equipment_checkouts').select('id').in('id', ids),
+    ) as { id: string }[]
+    const live = new Set(rows.map((r) => r.id))
+    let removed = 0
+    for (const id of ids.filter((x) => !live.has(x))) {
+      const { data: files, error } = await supabase.storage
+        .from(PHOTO_BUCKET)
+        .list(id, { limit: 500 })
+      if (error) throw new Error(error.message)
+      const paths = (files ?? []).map((f) => `${id}/${f.name}`)
+      if (!paths.length) continue
+      const { error: rmErr } = await supabase.storage.from(PHOTO_BUCKET).remove(paths)
+      if (rmErr) throw new Error(rmErr.message)
+      removed += paths.length
+    }
+    return removed
   },
 
   async loadPeople() {

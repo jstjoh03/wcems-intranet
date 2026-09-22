@@ -17,6 +17,7 @@ import {
   LogIn,
   LogOut,
   HandHelping,
+  Trash2,
 } from 'lucide-vue-next'
 import '@/components/equipment/equipment.css'
 import EquipmentStatusChip from '@/components/equipment/EquipmentStatusChip.vue'
@@ -61,11 +62,13 @@ const {
   version,
   canHandle,
   canRecord,
+  isAdmin,
   assetById,
   typeName,
   activeTrucks,
   fetchCheckout,
   updateCheckoutDetails,
+  deleteCheckout,
 } = useEquipment()
 
 const checkout = ref<EquipmentCheckout | null>(null)
@@ -332,6 +335,27 @@ async function saveEdit() {
   showToast('Details updated')
 }
 
+/* ── Delete (admins — test runs and mistakes, not real history) ────── */
+const deleting = ref(false)
+async function removeCheckout() {
+  if (!checkout.value || deleting.value) return
+  if (
+    !confirm(
+      `Permanently delete this check-out?\n\nThe custody log, item list, photos and signatures are all erased — there is no undo. Only for test runs and mistakes.`,
+    )
+  ) {
+    return
+  }
+  deleting.value = true
+  const res = await deleteCheckout(checkout.value.id)
+  deleting.value = false
+  if (!res.ok) {
+    alert(`Delete failed: ${res.error}`)
+    return
+  }
+  router.push('/equipment')
+}
+
 /* ── Derived display ───────────────────────────────────────────────── */
 const actions = computed(() => groupActions(events.value))
 
@@ -390,6 +414,16 @@ const isOpen = computed(() => !!checkout.value && !checkout.value.closedAt)
           </button>
           <button v-if="isOpen && canHandle" type="button" class="eq-btn eq-btn--quiet" @click="startEdit">
             <Pencil :size="14" :stroke-width="2" /> Edit details
+          </button>
+          <button
+            v-if="isAdmin"
+            type="button"
+            class="eq-btn eq-btn--danger-quiet"
+            :disabled="deleting"
+            title="Erase this check-out — custody log, items, and photos"
+            @click="removeCheckout"
+          >
+            <Trash2 :size="14" :stroke-width="2" /> {{ deleting ? 'Deleting…' : 'Delete' }}
           </button>
         </div>
       </header>

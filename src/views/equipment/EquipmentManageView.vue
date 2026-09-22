@@ -61,6 +61,7 @@ const {
   removeHandler,
   loadPeople,
   personName,
+  cleanOrphanedPhotos,
 } = useEquipment()
 
 type Tab = 'items' | 'types' | 'trucks' | 'access'
@@ -80,6 +81,20 @@ function say(msg: string) {
   flash.value = msg
   if (flashTimer) clearTimeout(flashTimer)
   flashTimer = setTimeout(() => (flash.value = null), 3500)
+}
+
+/* ── Storage housekeeping (admins) ─────────────────────────────────── */
+const sweeping = ref(false)
+async function sweepOrphans() {
+  if (sweeping.value) return
+  sweeping.value = true
+  const res = await cleanOrphanedPhotos()
+  sweeping.value = false
+  if (!res.ok) {
+    say(`Cleanup failed: ${res.error}`)
+    return
+  }
+  say(res.removed ? `Removed ${res.removed} orphaned photo${res.removed === 1 ? '' : 's'}` : 'Nothing to clean up')
 }
 
 const sortedTypes = computed(() => [...types.value].sort((a, b) => a.sort - b.sort))
@@ -830,6 +845,21 @@ async function revoke(userId: string) {
         <EquipmentPersonPicker v-model="grantPick" :people="grantable" placeholder="Search the roster…" />
       </div>
       <p v-if="accessErr" class="eq-error">{{ accessErr }}</p>
+
+      <div class="eqm__housekeeping">
+        <p class="eq-hint">
+          Deleting a check-out from its page erases its photos too. If any photos were orphaned by
+          an old cleanup, this sweeps them out of storage.
+        </p>
+        <button
+          type="button"
+          class="eq-btn eq-btn--secondary"
+          :disabled="sweeping"
+          @click="sweepOrphans"
+        >
+          {{ sweeping ? 'Sweeping…' : 'Clean up orphaned photos' }}
+        </button>
+      </div>
     </template>
 
     <div v-if="flash" class="eq-toast" role="status">
@@ -841,6 +871,14 @@ async function revoke(userId: string) {
 <style scoped>
 .eqm {
   max-width: 860px;
+}
+.eqm__housekeeping {
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-line-soft);
+}
+.eqm__housekeeping .eq-btn {
+  margin-top: 8px;
 }
 .eqm__head {
   margin: 12px 0 18px;
