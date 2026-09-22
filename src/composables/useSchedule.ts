@@ -797,18 +797,18 @@ function seedDevStub(): void {
 /** Default "my shift" gold + the curated highlight palette members
  *  pick from in My settings — light enough for ink text, saturated
  *  enough to pop (Justin, 2026-09-22). */
-export const DEFAULT_HIGHLIGHT = 'oklch(0.85 0.14 86.8)'
+export const DEFAULT_HIGHLIGHT = 'oklch(0.94 0.13 102)'
 export const HIGHLIGHT_SWATCHES: { value: string | null; label: string }[] = [
-  { value: null, label: 'Gold (default)' },
-  { value: 'oklch(0.84 0.13 65)', label: 'Amber' },
-  { value: 'oklch(0.84 0.11 30)', label: 'Coral' },
-  { value: 'oklch(0.85 0.11 350)', label: 'Pink' },
-  { value: 'oklch(0.84 0.09 300)', label: 'Lavender' },
-  { value: 'oklch(0.84 0.09 262)', label: 'Periwinkle' },
-  { value: 'oklch(0.86 0.09 220)', label: 'Sky' },
-  { value: 'oklch(0.85 0.1 180)', label: 'Teal' },
-  { value: 'oklch(0.86 0.11 145)', label: 'Green' },
-  { value: 'oklch(0.88 0.13 110)', label: 'Lime' },
+  { value: null, label: 'Yellow (default)' },
+  { value: 'oklch(0.9 0.12 86.8)', label: 'Gold' },
+  { value: 'oklch(0.9 0.11 65)', label: 'Amber' },
+  { value: 'oklch(0.9 0.08 30)', label: 'Coral' },
+  { value: 'oklch(0.91 0.08 350)', label: 'Pink' },
+  { value: 'oklch(0.9 0.07 300)', label: 'Lavender' },
+  { value: 'oklch(0.9 0.07 262)', label: 'Periwinkle' },
+  { value: 'oklch(0.92 0.07 220)', label: 'Sky' },
+  { value: 'oklch(0.91 0.08 180)', label: 'Teal' },
+  { value: 'oklch(0.92 0.09 145)', label: 'Green' },
 ]
 
 export const INTERNAL_CREDENTIALS = [

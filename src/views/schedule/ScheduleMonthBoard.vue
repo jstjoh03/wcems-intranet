@@ -306,6 +306,8 @@ const weeks = computed<Cell[][]>(() => {
             </div>
           </div>
 
+          <div v-if="c.model.events.length" class="mb__section mb__section--event">
+            <p class="mb__section-h">Events</p>
           <div v-for="ev in c.model.events" :key="ev.label" class="mb__event">
             <p class="mb__eventname">
               <button
@@ -352,6 +354,7 @@ const weeks = computed<Cell[][]>(() => {
               >{{ row.name }}</span>
               <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
             </div>
+          </div>
           </div>
 
           <div v-if="c.model.pending.length" class="mb__section mb__section--pend">
@@ -551,8 +554,8 @@ const weeks = computed<Cell[][]>(() => {
   height: 20px;
   padding: 0 4px;
   border-radius: 999px;
-  background: var(--me-hl, oklch(0.85 0.14 86.8));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--me-hl, oklch(0.85 0.14 86.8)), black 15%);
+  background: var(--me-hl, oklch(0.94 0.13 102));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--me-hl, oklch(0.94 0.13 102)), black 15%);
 }
 
 .mb__platoon {
@@ -679,7 +682,7 @@ const weeks = computed<Cell[][]>(() => {
 
 /* Aladtec-style "that's me" highlight — spot your days at a glance. */
 .mb__name--me {
-  background: var(--me-hl, oklch(0.85 0.14 86.8));
+  background: var(--me-hl, oklch(0.94 0.13 102));
   font-weight: 700;
   border-radius: 4px;
   padding: 0 3px;
@@ -785,6 +788,23 @@ const weeks = computed<Cell[][]>(() => {
 .mb__section--off .mb__section-h {
   background: oklch(0.55 0.13 65);
   color: #fff;
+}
+
+.mb__section--event {
+  border-color: oklch(0.5 0.11 300);
+  background: oklch(0.978 0.012 300);
+}
+
+.mb__section--event .mb__section-h {
+  background: oklch(0.47 0.11 300);
+  color: #fff;
+}
+
+/* Each event keeps its own sub-box, quieted inside the section. */
+.mb__section--event .mb__event {
+  margin-top: 0.2rem;
+  border-color: oklch(0.88 0.03 300);
+  background: var(--color-surface);
 }
 
 .mb__section--pend {
@@ -903,8 +923,8 @@ const weeks = computed<Cell[][]>(() => {
 /* My schedule: the whole day carries the gold, not just the number
    (Ng, day-1 feedback). */
 .mb--mine .mb__cell--me {
-  background: var(--me-hl, oklch(0.85 0.14 86.8));
-  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--me-hl, oklch(0.85 0.14 86.8)), black 20%);
+  background: var(--me-hl, oklch(0.94 0.13 102));
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--me-hl, oklch(0.94 0.13 102)), black 20%);
 }
 
 /* ONE uniform shade per cell — the header strip, day number, and name
@@ -912,7 +932,7 @@ const weeks = computed<Cell[][]>(() => {
    as seams — Justin, 2026-09-22). */
 .mb--mine .mb__cell--me .mb__cellhead {
   background: transparent;
-  border-bottom-color: color-mix(in oklab, var(--me-hl, oklch(0.85 0.14 86.8)), black 12%);
+  border-bottom-color: color-mix(in oklab, var(--me-hl, oklch(0.94 0.13 102)), black 12%);
 }
 
 .mb--mine .mb__cell--me .mb__daynum--me {
@@ -925,17 +945,25 @@ const weeks = computed<Cell[][]>(() => {
   padding: 0;
 }
 
+/* Times/credentials washed out over the fill — force dark ink inside
+   highlighted cells whatever tint the member picked. */
+.mb--mine .mb__cell--me .mb__time,
+.mb--mine .mb__cell--me .mb__cred,
+.mb--mine .mb__cell--me .mb__sub {
+  color: oklch(0.38 0.03 95);
+}
+
 /* Phone: the cellhead paints the whole cell, so it must carry the gold
    too (it was covering the cell fill) — and a touch stronger, since on
    a 60px cell the wash is the only signal. */
 @media (max-width: 900px) {
   .mb--mine .mb__cell--me,
   .mb--mine .mb__cell--me .mb__cellhead {
-    background: var(--me-hl, oklch(0.85 0.14 86.8));
+    background: var(--me-hl, oklch(0.94 0.13 102));
   }
 
   .mb--mine .mb__cell--me {
-    box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--me-hl, oklch(0.85 0.14 86.8)), black 25%);
+    box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--me-hl, oklch(0.94 0.13 102)), black 25%);
   }
 }
 </style>

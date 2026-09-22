@@ -590,7 +590,7 @@ async function removeNote(id: string) {
 
 /* Aladtec-style "that's me" highlight. */
 .db__name--me {
-  background: var(--me-hl, oklch(0.85 0.14 86.8));
+  background: var(--me-hl, oklch(0.94 0.13 102));
   font-weight: 700;
   border-radius: 4px;
   padding: 0 4px;
