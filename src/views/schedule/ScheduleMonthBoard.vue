@@ -551,8 +551,8 @@ const weeks = computed<Cell[][]>(() => {
   height: 20px;
   padding: 0 4px;
   border-radius: 999px;
-  background: oklch(0.86 0.13 86.8);
-  box-shadow: inset 0 0 0 1px oklch(0.78 0.09 86.8);
+  background: var(--me-hl, oklch(0.85 0.14 86.8));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--me-hl, oklch(0.85 0.14 86.8)), black 15%);
 }
 
 .mb__platoon {
@@ -679,7 +679,7 @@ const weeks = computed<Cell[][]>(() => {
 
 /* Aladtec-style "that's me" highlight — spot your days at a glance. */
 .mb__name--me {
-  background: oklch(0.86 0.13 86.8);
+  background: var(--me-hl, oklch(0.85 0.14 86.8));
   font-weight: 700;
   border-radius: 4px;
   padding: 0 3px;
@@ -903,8 +903,26 @@ const weeks = computed<Cell[][]>(() => {
 /* My schedule: the whole day carries the gold, not just the number
    (Ng, day-1 feedback). */
 .mb--mine .mb__cell--me {
-  background: oklch(0.93 0.09 86.8);
-  box-shadow: inset 0 0 0 2px oklch(0.7 0.13 86.8);
+  background: var(--me-hl, oklch(0.85 0.14 86.8));
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--me-hl, oklch(0.85 0.14 86.8)), black 20%);
+}
+
+/* ONE uniform shade per cell — the header strip, day number, and name
+   pill all melt into the same fill (separate component highlights read
+   as seams — Justin, 2026-09-22). */
+.mb--mine .mb__cell--me .mb__cellhead {
+  background: transparent;
+  border-bottom-color: color-mix(in oklab, var(--me-hl, oklch(0.85 0.14 86.8)), black 12%);
+}
+
+.mb--mine .mb__cell--me .mb__daynum--me {
+  background: transparent;
+  box-shadow: none;
+}
+
+.mb--mine .mb__cell--me .mb__name--me {
+  background: transparent;
+  padding: 0;
 }
 
 /* Phone: the cellhead paints the whole cell, so it must carry the gold
@@ -913,11 +931,11 @@ const weeks = computed<Cell[][]>(() => {
 @media (max-width: 900px) {
   .mb--mine .mb__cell--me,
   .mb--mine .mb__cell--me .mb__cellhead {
-    background: oklch(0.9 0.11 86.8);
+    background: var(--me-hl, oklch(0.85 0.14 86.8));
   }
 
   .mb--mine .mb__cell--me {
-    box-shadow: inset 0 0 0 2px oklch(0.66 0.13 86.8);
+    box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--me-hl, oklch(0.85 0.14 86.8)), black 25%);
   }
 }
 </style>

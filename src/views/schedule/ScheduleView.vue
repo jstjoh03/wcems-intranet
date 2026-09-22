@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSchedule'
+import { DEFAULT_HIGHLIGHT, useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 import ScheduleMonthBoard from './ScheduleMonthBoard.vue'
 import ScheduleDayBoard from './ScheduleDayBoard.vue'
@@ -279,7 +279,7 @@ watch(dateIso, (v) => {
 </script>
 
 <template>
-  <div class="sched">
+  <div class="sched" :style="{ '--me-hl': sched.myHighlight.value || DEFAULT_HIGHLIGHT }">
     <template v-if="sched.loaded.value && !sched.canAccessModule.value">
       <div class="sched__locked">
         <p class="sched__locked-title">Scheduling isn't open yet</p>

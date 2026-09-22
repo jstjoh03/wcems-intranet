@@ -5,6 +5,8 @@ import {
   NOTIFY_TYPES,
   NOTIFY_CHANNELS,
   notifyOn,
+  HIGHLIGHT_SWATCHES,
+  DEFAULT_HIGHLIGHT,
   type Availability,
   type MemberSettings,
   type NotifyChannel,
@@ -173,6 +175,24 @@ function fmtUnavail(iso: string): string {
           Push and email alerts are live. Texts start as soon as our texting number
           clears carrier registration.
         </p>
+      </section>
+
+      <section class="msf__sec">
+        <h4 class="msf__h">My shift highlight</h4>
+        <p class="msf__hint">The color your own shifts glow on every calendar.</p>
+        <div class="msf__swatches">
+          <button
+            v-for="sw in HIGHLIGHT_SWATCHES"
+            :key="sw.label"
+            type="button"
+            class="msf__swatch"
+            :class="{ 'msf__swatch--on': (set.highlightColor ?? null) === sw.value }"
+            :style="{ background: sw.value ?? DEFAULT_HIGHLIGHT }"
+            :title="sw.label"
+            :aria-label="sw.label"
+            @click="set.highlightColor = sw.value"
+          />
+        </div>
       </section>
 
       <section class="msf__sec">
@@ -388,5 +408,23 @@ function fmtUnavail(iso: string): string {
 .msf__save:disabled {
   opacity: 0.6;
   cursor: default;
+}
+.msf__swatches {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.msf__swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid oklch(0 0 0 / 0.14);
+  cursor: pointer;
+  padding: 0;
+}
+
+.msf__swatch--on {
+  box-shadow: 0 0 0 3px var(--color-brand-700);
 }
 </style>

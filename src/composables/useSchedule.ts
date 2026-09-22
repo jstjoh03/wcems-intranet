@@ -156,6 +156,8 @@ export interface MemberSettings {
   /** Number texts go to — entered on the same form as the consent
    *  checkbox (A2P requirement); prefilled from the roster phone. */
   smsPhone: string | null
+  /** Personal shift-highlight color (CSS color string); null = default gold. */
+  highlightColor: string | null
 }
 
 /** Message types × channels for the per-member notification matrix
@@ -504,6 +506,8 @@ const people = ref<SchedPerson[]>([])
  *  them so a hide can be undone). Everything else uses `people`. */
 const allPeople = ref<SchedPerson[]>([])
 const settings = ref<Record<string, Record<string, unknown>>>({})
+/** The signed-in member's personal shift-highlight color (null = gold). */
+const myHighlight = ref<string | null>(null)
 
 /** Roster sort key: surname = everything AFTER the first name, so
  *  multi-word surnames file where people look ("Justin St John" under
@@ -631,7 +635,7 @@ async function loadCore(): Promise<void> {
     loaded.value = true
     return
   }
-  const [uRes, sRes, rRes, pRes, lvlRes, cRes, setRes, pipeRes] = await Promise.all([
+  const [uRes, sRes, rRes, pRes, lvlRes, cRes, setRes, pipeRes, hlRes] = await Promise.all([
     supabase.from('sched_units').select('*').order('sort_order'),
     supabase.from('sched_seats').select('*').order('sort_order'),
     supabase.from('sched_rotation_assignments').select('*'),
@@ -648,6 +652,11 @@ async function loadCore(): Promise<void> {
     supabase.from('sched_credentials').select('user_id, credential'),
     supabase.from('sched_settings').select('key, value'),
     supabase.rpc('sched_pipeline_credentials'),
+    supabase
+      .from('sched_member_settings')
+      .select('highlight_color')
+      .eq('user_id', auth.appUser?.id ?? '')
+      .maybeSingle(),
   ])
   const err = uRes.error ?? sRes.error ?? rRes.error ?? pRes.error ?? lvlRes.error
   if (err) {
@@ -725,6 +734,7 @@ async function loadCore(): Promise<void> {
     setMap[r.key] = r.value ?? {}
   }
   settings.value = setMap
+  myHighlight.value = ((hlRes.data as { highlight_color?: string | null } | null)?.highlight_color) ?? null
   /* Roster ordering + visibility: every list in the module goes by last
      name (matching the rest of the portal's rosters), and members on
      the Setup-managed hide list (roster.exclude_user_ids — e.g. the
@@ -783,6 +793,23 @@ function seedDevStub(): void {
   ]
   allPeople.value = people.value
 }
+
+/** Default "my shift" gold + the curated highlight palette members
+ *  pick from in My settings — light enough for ink text, saturated
+ *  enough to pop (Justin, 2026-09-22). */
+export const DEFAULT_HIGHLIGHT = 'oklch(0.85 0.14 86.8)'
+export const HIGHLIGHT_SWATCHES: { value: string | null; label: string }[] = [
+  { value: null, label: 'Gold (default)' },
+  { value: 'oklch(0.84 0.13 65)', label: 'Amber' },
+  { value: 'oklch(0.84 0.11 30)', label: 'Coral' },
+  { value: 'oklch(0.85 0.11 350)', label: 'Pink' },
+  { value: 'oklch(0.84 0.09 300)', label: 'Lavender' },
+  { value: 'oklch(0.84 0.09 262)', label: 'Periwinkle' },
+  { value: 'oklch(0.86 0.09 220)', label: 'Sky' },
+  { value: 'oklch(0.85 0.1 180)', label: 'Teal' },
+  { value: 'oklch(0.86 0.11 145)', label: 'Green' },
+  { value: 'oklch(0.88 0.13 110)', label: 'Lime' },
+]
 
 export const INTERNAL_CREDENTIALS = [
   'Chief', 'Assistant Chief', 'CDO', 'Supervisor',
@@ -4325,7 +4352,7 @@ async function setAccess(
 }
 
 async function fetchMemberSettings(userId: string): Promise<MemberSettings> {
-  const empty: MemberSettings = { userId, qualOverrides: {}, unitExclusions: [], notify: {}, smsOptIn: false, smsPhone: null }
+  const empty: MemberSettings = { userId, qualOverrides: {}, unitExclusions: [], notify: {}, smsOptIn: false, smsPhone: null, highlightColor: null }
   const auth = useAuthStore()
   if (auth.usingDevStub) return empty
   const res = await supabase
@@ -4341,6 +4368,7 @@ async function fetchMemberSettings(userId: string): Promise<MemberSettings> {
     notify: res.data.notify ?? {},
     smsOptIn: !!res.data.sms_opt_in,
     smsPhone: (res.data.sms_phone as string | null) ?? null,
+    highlightColor: (res.data.highlight_color as string | null) ?? null,
   }
 }
 
@@ -4372,11 +4400,13 @@ async function saveMemberSettings(s: MemberSettings): Promise<string | null> {
       notify: s.notify,
       sms_opt_in: s.smsOptIn,
       sms_phone: s.smsPhone?.trim() || null,
+      highlight_color: s.highlightColor || null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id' },
   )
   if (res.error) return res.error.message
+  if (s.userId === auth.appUser?.id) myHighlight.value = s.highlightColor ?? null
   /* Self-saves can come from the profile modal, where the people map
      isn't loaded — fall back to the signed-in name over 'Unknown'. */
   let who = displayName(s.userId).name
@@ -4440,6 +4470,7 @@ export function useSchedule() {
     dayNotes,
     people,
     allPeople,
+    myHighlight,
     applyRosterVisibility,
     personById,
     level,

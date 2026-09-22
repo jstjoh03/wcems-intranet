@@ -518,7 +518,7 @@ function notesTitle(notes: { note: string }[]): string {
 
 /* Aladtec-style "that's me" highlight. */
 .dc__name--me {
-  background: oklch(0.86 0.13 86.8);
+  background: var(--me-hl, oklch(0.85 0.14 86.8));
   font-weight: 700;
   border-radius: 4px;
   padding: 0 3px;
