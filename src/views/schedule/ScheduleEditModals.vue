@@ -255,8 +255,8 @@ watch([editor.person, editOffType], async ([pv, ot]) => {
   editLeaveBal.value = null
   editOffArm.value = false
   if (!pv || (ot !== 'vacation' && ot !== 'sick')) return
-  const rows = await sched.fetchLeaveBalances(pv.userId)
-  editLeaveBal.value = rows.find((b) => b.kind === ot)?.balance ?? 0
+  const proj = await sched.projectedLeaveBalance(pv.userId, ot as 'vacation' | 'sick', pv.dateIso)
+  editLeaveBal.value = proj.projected
 })
 const editOffHours = computed(() => {
   const [fh, fm] = editFrom.value.split(':').map(Number)
@@ -1114,12 +1114,16 @@ async function computeReqHours(r: SchedRequest) {
   /* Paid time off: the requester's balance rides with the hours chips,
      and a shortage arms the same second-click confirm (going negative
      is the approver's deliberate call). */
-  if (r.type === 'time_off' && (r.offType === 'vacation' || r.offType === 'sick') && r.startAt && r.endAt) {
+  if (r.type === 'time_off' && (r.offType === 'vacation' || r.offType === 'sick') && r.startAt && r.endAt && r.workDate) {
     const hrs = (Date.parse(r.endAt) - Date.parse(r.startAt)) / 3600e3
-    const bal = (await sched.fetchLeaveBalances(r.requesterId)).find((b) => b.kind === r.offType)?.balance ?? 0
-    lines.push(`${OFF_LABELS[r.offType] ?? r.offType} balance ${bal.toFixed(1)}h — this request ${hrs.toFixed(1)}h → ${(bal - hrs).toFixed(1)}h after`)
-    if (hrs > bal + 0.01) {
-      warnings.push({ code: 'leave_short', hours: hrs, limit: bal, message: `Only ${bal.toFixed(1)} ${OFF_LABELS[r.offType] ?? r.offType} hrs on the books — approving goes ${(hrs - bal).toFixed(1)}h negative.` })
+    const proj = await sched.projectedLeaveBalance(r.requesterId, r.offType, r.workDate)
+    lines.push(
+      `${OFF_LABELS[r.offType] ?? r.offType} balance ${proj.today.toFixed(1)}h` +
+      (proj.accruing > 0 ? ` → ${proj.projected.toFixed(1)}h by ${fmtShort(r.workDate)} with accruals` : '') +
+      ` — this request ${hrs.toFixed(1)}h → ${(proj.projected - hrs).toFixed(1)}h after`,
+    )
+    if (hrs > proj.projected + 0.01) {
+      warnings.push({ code: 'leave_short', hours: hrs, limit: proj.projected, message: `Only ${proj.projected.toFixed(1)} ${OFF_LABELS[r.offType] ?? r.offType} hrs by ${fmtShort(r.workDate)} (accruals counted) — approving goes ${(hrs - proj.projected).toFixed(1)}h negative.` })
     }
   }
   if (reqObj.value?.id === r.id) reqHours.value = { lines, warnings }
@@ -1437,7 +1441,7 @@ async function reqCancel() {
             <label>Until <TimeSelect24 v-model="editUntil" class="em__input em__input--time" /></label>
           </div>
           <p v-if="editLeaveBal !== null" class="em__leavebal" :class="{ 'em__leavebal--short': editLeaveShort }">
-            {{ editOffType === 'vacation' ? 'Vacation' : 'Sick' }} balance {{ editLeaveBal.toFixed(1) }}h —
+            {{ editOffType === 'vacation' ? 'Vacation' : 'Sick' }} balance by this date (accruals counted): {{ editLeaveBal.toFixed(1) }}h —
             this marks off {{ editOffHours.toFixed(1) }}h → {{ (editLeaveBal - editOffHours).toFixed(1) }}h after.
             <template v-if="editOffArm"> Click Apply again to confirm the negative balance.</template>
           </p>

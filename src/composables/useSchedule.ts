@@ -2294,6 +2294,29 @@ async function adjustLeave(userId: string, kind: 'vacation' | 'sick', hours: num
   return null
 }
 
+/** Balance projected to a future date: today's number plus the accrual
+ *  from every pay period that will close before that date (rate bumps
+ *  at anniversaries included). A request months out is judged against
+ *  what the employee will actually have by then, not just today. */
+async function projectedLeaveBalance(
+  userId: string,
+  kind: 'vacation' | 'sick',
+  byDateIso: string,
+): Promise<{ today: number; accruing: number; projected: number }> {
+  const today = (await fetchLeaveBalances(userId)).find((b) => b.kind === kind)?.balance ?? 0
+  const p = personById.value.get(userId)
+  let accruing = 0
+  if (p?.employmentType === 'full_time' && p.hireDate) {
+    let end = payPeriodFor(todayCentralIso()).end
+    while (end < byDateIso) {
+      accruing += kind === 'sick' ? SICK_RATE : vacationRate(p.hireDate, end)
+      end = addDaysIso(end, 14)
+    }
+  }
+  accruing = Math.round(accruing * 100) / 100
+  return { today, accruing, projected: Math.round((today + accruing) * 100) / 100 }
+}
+
 /** Hours already committed to PENDING paid time-off requests. */
 function pendingLeaveHours(userId: string, kind: string): number {
   return requests.value
@@ -2339,10 +2362,11 @@ async function createTimeOffRequests(
       const w = shiftWindow(d.dateIso, d.from, d.until)
       return k + (tsMs(w.reqEnd) - tsMs(w.reqStart)) / 3600e3
     }, 0)
-    const bal = (await fetchLeaveBalances(me)).find((b) => b.kind === offType)?.balance ?? 0
+    const lastDay = daysReq.reduce((m, d) => (d.dateIso > m ? d.dateIso : m), daysReq[0].dateIso)
+    const proj = await projectedLeaveBalance(me, offType, lastDay)
     const pending = pendingLeaveHours(me, offType)
-    if (reqHrs > bal - pending + 0.01) {
-      return `Not enough ${OFF_LABELS[offType] ?? offType}: your balance is ${bal.toFixed(1)} hrs${pending > 0 ? ` with ${pending.toFixed(1)} already pending` : ''} and this request needs ${reqHrs.toFixed(1)}. Shorten it or request Unpaid Time Off.`
+    if (reqHrs > proj.projected - pending + 0.01) {
+      return `Not enough ${OFF_LABELS[offType] ?? offType}: your balance is ${proj.today.toFixed(1)} hrs${proj.accruing > 0 ? ` (${proj.projected.toFixed(1)} by ${lastDay} counting accruals)` : ''}${pending > 0 ? ` with ${pending.toFixed(1)} already pending` : ''} and this request needs ${reqHrs.toFixed(1)}. Shorten it or request Unpaid Time Off.`
     }
   }
   const res = await supabase.from('sched_requests').insert(rows).select('id')
@@ -4651,6 +4675,7 @@ export function useSchedule() {
     fetchLeaveLedger,
     adjustLeave,
     pendingLeaveHours,
+    projectedLeaveBalance,
     fetchAccessList,
     fetchAuditLog,
     findOpenShifts,
