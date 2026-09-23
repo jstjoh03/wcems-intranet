@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import ScheduleLeaveSection from './ScheduleLeaveSection.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -954,6 +955,8 @@ function openPunches() {
         </div>
       </div>
     </div>
+
+    <ScheduleLeaveSection v-if="payrollAccess" />
   </div>
 </template>
 

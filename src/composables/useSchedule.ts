@@ -129,6 +129,7 @@ export interface SchedPerson {
   phone: string | null
   paycomCode: string | null
   employmentType: string | null
+  hireDate?: string | null
   /** false = deactivated on the roster (quit/terminated). Kept in
    *  allPeople so past schedule days and payroll still show the name;
    *  excluded from `people` (pickers) and the Members tab. */
@@ -637,6 +638,9 @@ async function loadCore(): Promise<void> {
     loaded.value = true
     return
   }
+  // Post any missing pay-period accruals / anniversary write-offs
+  // (idempotent, SECURITY DEFINER) — balances stay current on any load.
+  void supabase.rpc('sched_leave_catchup')
   const [uRes, sRes, rRes, pRes, lvlRes, cRes, setRes, pipeRes, hlRes] = await Promise.all([
     supabase.from('sched_units').select('*').order('sort_order'),
     supabase.from('sched_seats').select('*').order('sort_order'),
@@ -647,7 +651,7 @@ async function loadCore(): Promise<void> {
          and payroll rows must keep showing the name — dropping them
          here rendered "Unknown" (Tara Roth, 2026-09-20). Pickers and
          the Members tab filter on .active instead. */
-      .select('id, full_name, shift, role, title, email, phone, account_type, active, employment_type, paycom_employee_code')
+      .select('id, full_name, shift, role, title, email, phone, account_type, active, employment_type, paycom_employee_code, hire_date')
       .eq('account_type', 'person')
       .order('full_name'),
     supabase.rpc('sched_level'),
@@ -727,6 +731,7 @@ async function loadCore(): Promise<void> {
       email: r.email,
       phone: r.phone,
       paycomCode: r.paycom_employee_code ?? null,
+      hireDate: r.hire_date ?? null,
       employmentType: r.employment_type ?? null,
       active: r.active as boolean,
     }
@@ -1937,7 +1942,7 @@ interface Seg {
 }
 
 export interface HoursWarning {
-  code: 'consecutive' | 'consecutive_confirm' | 'weekly' | 'ot' | 'check_failed'
+  code: 'consecutive' | 'consecutive_confirm' | 'weekly' | 'ot' | 'check_failed' | 'leave_short'
   hours: number
   limit: number
   message: string
@@ -2209,6 +2214,93 @@ async function saveSetting(key: string, value: Record<string, unknown>): Promise
   return null
 }
 
+// ── leave balances ───────────────────────────────────────────────────
+// Vacation + sick live HERE (HR decision 2026-09-23): the ledger holds
+// credits (opening import, accruals, adjustments, write-offs) and paid
+// time-off entries deduct live through the sched_leave_balances view —
+// approvals, cancels, and edits all move balances with no extra writes.
+
+export interface LeaveBalance {
+  userId: string
+  kind: 'vacation' | 'sick'
+  credited: number
+  used: number
+  balance: number
+}
+
+/** Full years of service as of an ISO date. */
+export function serviceYears(hireDateIso: string | null | undefined, onIso: string): number {
+  if (!hireDateIso) return 0
+  const h = new Date(hireDateIso + 'T12:00:00')
+  const o = new Date(onIso + 'T12:00:00')
+  let y = o.getFullYear() - h.getFullYear()
+  if (o.getMonth() < h.getMonth() || (o.getMonth() === h.getMonth() && o.getDate() < h.getDate())) y--
+  return Math.max(0, y)
+}
+
+/** Vacation accrual per pay period — Paycom's field-staff table. */
+export function vacationRate(hireDateIso: string | null | undefined, onIso: string): number {
+  if (!hireDateIso) return 0
+  const y = serviceYears(hireDateIso, onIso)
+  return y >= 6 ? 8.62 : y >= 3 ? 6.47 : 4.31
+}
+export const SICK_RATE = 2.77
+
+async function fetchLeaveBalances(userId?: string): Promise<LeaveBalance[]> {
+  let q = supabase.from('sched_leave_balances').select('*')
+  if (userId) q = q.eq('user_id', userId)
+  const res = await q
+  if (res.error) return []
+  return ((res.data ?? []) as Record<string, unknown>[]).map((r) => ({
+    userId: r.user_id as string,
+    kind: r.kind as 'vacation' | 'sick',
+    credited: Number(r.credited),
+    used: Number(r.used),
+    balance: Number(r.balance),
+  }))
+}
+
+async function fetchLeaveLedger(userId: string): Promise<{ kind: string; hours: number; reason: string; effectiveOn: string; note: string | null }[]> {
+  const res = await supabase
+    .from('sched_leave_ledger')
+    .select('kind, hours, reason, effective_on, note')
+    .eq('user_id', userId)
+    .order('effective_on', { ascending: false })
+    .limit(80)
+  if (res.error) return []
+  return ((res.data ?? []) as Record<string, unknown>[]).map((r) => ({
+    kind: r.kind as string,
+    hours: Number(r.hours),
+    reason: r.reason as string,
+    effectiveOn: r.effective_on as string,
+    note: (r.note as string | null) ?? null,
+  }))
+}
+
+/** HR/editor: manual adjustment — true-ups and corrections. */
+async function adjustLeave(userId: string, kind: 'vacation' | 'sick', hours: number, note: string): Promise<string | null> {
+  const auth = useAuthStore()
+  const ins = await supabase.from('sched_leave_ledger').insert({
+    user_id: userId,
+    kind,
+    hours,
+    reason: 'adjustment',
+    effective_on: todayCentralIso(),
+    note: note.trim() || null,
+    created_by: auth.appUser?.id ?? null,
+  })
+  if (ins.error) return ins.error.message
+  audit('leave.adjust', `Adjusted ${displayName(userId).name} ${kind} by ${hours > 0 ? '+' : ''}${hours} hrs${note ? ` — ${note}` : ''}`, { entity: 'leave', entityId: userId })
+  return null
+}
+
+/** Hours already committed to PENDING paid time-off requests. */
+function pendingLeaveHours(userId: string, kind: string): number {
+  return requests.value
+    .filter((r) => r.requesterId === userId && r.type === 'time_off' && r.status === 'pending' && r.offType === kind && r.startAt && r.endAt)
+    .reduce((k, r) => k + (tsMs(r.endAt as string) - tsMs(r.startAt as string)) / 3600e3, 0)
+}
+
 // ── request mutations ────────────────────────────────────────────────
 
 interface TimeOffDay {
@@ -2239,6 +2331,20 @@ async function createTimeOffRequests(
       comments: comments || null,
     }
   })
+  /* Paid time off is hard-blocked past the balance (HR rule, 9/23) —
+     admins can still assign over the line from the day editors, which
+     warns and goes negative deliberately. */
+  if (offType === 'vacation' || offType === 'sick') {
+    const reqHrs = daysReq.reduce((k, d) => {
+      const w = shiftWindow(d.dateIso, d.from, d.until)
+      return k + (tsMs(w.reqEnd) - tsMs(w.reqStart)) / 3600e3
+    }, 0)
+    const bal = (await fetchLeaveBalances(me)).find((b) => b.kind === offType)?.balance ?? 0
+    const pending = pendingLeaveHours(me, offType)
+    if (reqHrs > bal - pending + 0.01) {
+      return `Not enough ${OFF_LABELS[offType] ?? offType}: your balance is ${bal.toFixed(1)} hrs${pending > 0 ? ` with ${pending.toFixed(1)} already pending` : ''} and this request needs ${reqHrs.toFixed(1)}. Shorten it or request Unpaid Time Off.`
+    }
+  }
   const res = await supabase.from('sched_requests').insert(rows).select('id')
   if (res.error) return res.error.message
   notify('request_submitted', { requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id) })
@@ -4541,6 +4647,10 @@ export function useSchedule() {
     deleteUnit,
     setAccess,
     eventTooltip,
+    fetchLeaveBalances,
+    fetchLeaveLedger,
+    adjustLeave,
+    pendingLeaveHours,
     fetchAccessList,
     fetchAuditLog,
     findOpenShifts,

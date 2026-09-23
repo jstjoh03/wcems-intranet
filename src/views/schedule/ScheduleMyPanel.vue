@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { vacationRate, SICK_RATE, payPeriodFor, type LeaveBalance } from '@/composables/useSchedule'
 import {
   useSchedule,
   todayCentralIso,
@@ -42,6 +43,24 @@ const viewingId = computed(() => viewUserId.value || sched.myUserId.value)
 const viewingSelf = computed(
   () => !viewUserId.value || viewUserId.value === sched.myUserId.value,
 )
+
+// ── vacation / sick balances (full-time; PT and new hires have none) ─
+const leaveBal = ref<LeaveBalance[]>([])
+async function loadLeave() {
+  leaveBal.value = viewingId.value ? await sched.fetchLeaveBalances(viewingId.value) : []
+}
+onMounted(loadLeave)
+watch(viewingId, loadLeave)
+const vacBal = computed(() => leaveBal.value.find((b) => b.kind === 'vacation') ?? null)
+const sickBal = computed(() => leaveBal.value.find((b) => b.kind === 'sick') ?? null)
+const myVacRate = computed(() => {
+  const p = viewingId.value ? sched.personById.value.get(viewingId.value) : undefined
+  return vacationRate(p?.hireDate ?? null, todayCentralIso())
+})
+const nextAccrual = computed(() => {
+  const end = payPeriodFor(todayCentralIso()).end
+  return new Date(end + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+})
 const viewingName = computed(() =>
   viewingSelf.value
     ? null
@@ -246,6 +265,18 @@ function pendingLine(r: SchedRequest): string {
 
 <template>
   <div class="my">
+    <section v-if="vacBal || sickBal" class="my__leave">
+      <div class="my__leavebox">
+        <span class="my__leavelab">Vacation</span>
+        <b class="my__leaveval" :class="{ 'my__leaveval--neg': (vacBal?.balance ?? 0) < 0 }">{{ (vacBal?.balance ?? 0).toFixed(1) }}<i>hrs</i></b>
+        <span class="my__leavesub">+{{ myVacRate.toFixed(2) }}/pay period · next {{ nextAccrual }}</span>
+      </div>
+      <div class="my__leavebox">
+        <span class="my__leavelab">Sick</span>
+        <b class="my__leaveval" :class="{ 'my__leaveval--neg': (sickBal?.balance ?? 0) < 0 }">{{ (sickBal?.balance ?? 0).toFixed(1) }}<i>hrs</i></b>
+        <span class="my__leavesub">+{{ SICK_RATE }}/pay period</span>
+      </div>
+    </section>
     <section v-if="myPending.length > 0" class="my__pending">
       <h3 class="my__h my__h--pend">Your pending requests</h3>
       <div v-for="r in myPending" :key="r.id" class="my__pendrow">
@@ -597,5 +628,56 @@ function pendingLine(r: SchedRequest): string {
 
 .my__openchk input {
   accent-color: var(--color-brand-600);
+}
+.my__leave {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.my__leavebox {
+  flex: 1;
+  min-width: 150px;
+  max-width: 260px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  padding: 10px 14px 11px;
+}
+
+.my__leavelab {
+  display: block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.my__leaveval {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-brand-700);
+  font-variant-numeric: tabular-nums;
+}
+
+.my__leaveval i {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  margin-left: 4px;
+}
+
+.my__leaveval--neg {
+  color: var(--color-danger-500);
+}
+
+.my__leavesub {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--color-muted);
+  margin-top: 1px;
 }
 </style>

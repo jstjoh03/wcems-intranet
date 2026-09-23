@@ -246,6 +246,27 @@ const editScope = ref<'day' | 'permanent'>('day')
 const editReplaceWith = ref('')
 const editMoveTo = ref('')
 const editOpenSeats = ref<OpenSeatInfo[]>([])
+const editLeaveBal = ref<number | null>(null)
+const editOffArm = ref(false)
+
+/* Balance context for the paid mark-off: the admin may go negative,
+   but only past a warning and a second click. */
+watch([editor.person, editOffType], async ([pv, ot]) => {
+  editLeaveBal.value = null
+  editOffArm.value = false
+  if (!pv || (ot !== 'vacation' && ot !== 'sick')) return
+  const rows = await sched.fetchLeaveBalances(pv.userId)
+  editLeaveBal.value = rows.find((b) => b.kind === ot)?.balance ?? 0
+})
+const editOffHours = computed(() => {
+  const [fh, fm] = editFrom.value.split(':').map(Number)
+  const [uh, um] = editUntil.value.split(':').map(Number)
+  const mins = (uh * 60 + um - (fh * 60 + fm) + 1440) % 1440
+  return (mins === 0 ? 1440 : mins) / 60
+})
+const editLeaveShort = computed(
+  () => editLeaveBal.value !== null && editOffHours.value > editLeaveBal.value + 0.01,
+)
 
 watch(editor.person, (p) => {
   if (!p) return
@@ -264,6 +285,15 @@ watch(editor.person, (p) => {
 async function runEdit(): Promise<void> {
   const ctx = editor.person.value
   if (!ctx) return
+  if (
+    editAction.value === 'off' &&
+    (editOffType.value === 'vacation' || editOffType.value === 'sick') &&
+    editLeaveShort.value &&
+    !editOffArm.value
+  ) {
+    editOffArm.value = true
+    return
+  }
   busy.value = true
   err.value = null
   let e: string | null = null
@@ -1081,6 +1111,17 @@ async function computeReqHours(r: SchedRequest) {
     lines.push(`${s.name}: ${info.weekHours}h week · ${info.periodHours}h period · ${info.consecutiveHours}h consecutive`)
     warnings.push(...info.warnings)
   }
+  /* Paid time off: the requester's balance rides with the hours chips,
+     and a shortage arms the same second-click confirm (going negative
+     is the approver's deliberate call). */
+  if (r.type === 'time_off' && (r.offType === 'vacation' || r.offType === 'sick') && r.startAt && r.endAt) {
+    const hrs = (Date.parse(r.endAt) - Date.parse(r.startAt)) / 3600e3
+    const bal = (await sched.fetchLeaveBalances(r.requesterId)).find((b) => b.kind === r.offType)?.balance ?? 0
+    lines.push(`${OFF_LABELS[r.offType] ?? r.offType} balance ${bal.toFixed(1)}h — this request ${hrs.toFixed(1)}h → ${(bal - hrs).toFixed(1)}h after`)
+    if (hrs > bal + 0.01) {
+      warnings.push({ code: 'leave_short', hours: hrs, limit: bal, message: `Only ${bal.toFixed(1)} ${OFF_LABELS[r.offType] ?? r.offType} hrs on the books — approving goes ${(hrs - bal).toFixed(1)}h negative.` })
+    }
+  }
   if (reqObj.value?.id === r.id) reqHours.value = { lines, warnings }
 }
 
@@ -1161,7 +1202,7 @@ async function reqDecide(approve: boolean) {
   if (!r) return
   if (approve) {
     const needsConfirm = reqChips.value.some(
-      (w) => w.code === 'consecutive_confirm' || w.code === 'check_failed',
+      (w) => w.code === 'consecutive_confirm' || w.code === 'check_failed' || w.code === 'leave_short',
     )
     if (needsConfirm && !reqConfirm.value) {
       reqConfirm.value = true
@@ -1395,6 +1436,11 @@ async function reqCancel() {
             <label>From <TimeSelect24 v-model="editFrom" class="em__input em__input--time" /></label>
             <label>Until <TimeSelect24 v-model="editUntil" class="em__input em__input--time" /></label>
           </div>
+          <p v-if="editLeaveBal !== null" class="em__leavebal" :class="{ 'em__leavebal--short': editLeaveShort }">
+            {{ editOffType === 'vacation' ? 'Vacation' : 'Sick' }} balance {{ editLeaveBal.toFixed(1) }}h —
+            this marks off {{ editOffHours.toFixed(1) }}h → {{ (editLeaveBal - editOffHours).toFixed(1) }}h after.
+            <template v-if="editOffArm"> Click Apply again to confirm the negative balance.</template>
+          </p>
         </template>
 
         <template v-else-if="editAction === 'remove'">
@@ -1947,6 +1993,17 @@ async function reqCancel() {
 }
 
 /* Event Details card — labeled rows, Aladtec-dialog style. */
+.em__leavebal {
+  font-size: 0.74rem;
+  color: var(--color-muted);
+  margin: -0.1rem 0 0;
+}
+
+.em__leavebal--short {
+  color: var(--color-danger-500);
+  font-weight: 600;
+}
+
 .em__evinfo {
   display: flex;
   flex-direction: column;
