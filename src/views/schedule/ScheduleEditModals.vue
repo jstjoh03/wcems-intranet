@@ -1946,6 +1946,33 @@ async function reqCancel() {
   color: var(--color-muted);
 }
 
+/* Event Details card — labeled rows, Aladtec-dialog style. */
+.em__evinfo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0.1rem 0 0.3rem;
+}
+
+.em__evinfo p {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.em__evinfo p > span {
+  flex: 0 0 5.2rem;
+  text-align: right;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  padding-top: 0.16rem;
+}
+
 .em__input {
   font: inherit;
   font-size: 0.85rem;
