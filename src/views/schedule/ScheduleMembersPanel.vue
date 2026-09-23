@@ -64,7 +64,7 @@ const filtered = computed(() => {
   return list.filter((p) => p.fullName.toLowerCase().includes(q))
 })
 
-const STORABLE_LEVELS = ['global_admin', 'scheduler', 'hr', 'view_only', 'none'] as const
+const STORABLE_LEVELS = ['global_admin', 'scheduler', 'supervisor', 'hr', 'view_only', 'none'] as const
 type StorableLevel = (typeof STORABLE_LEVELS)[number]
 
 async function changeAccess(userId: string, ev: Event) {
@@ -376,6 +376,7 @@ function credSourceLine(p: SchedPerson): string {
             >
               <option value="">Access: default ({{ LEVEL_LABELS[defaultLevel(p)] }})</option>
               <option value="scheduler">Access: Scheduler</option>
+              <option value="supervisor">Access: Supervisor (can send page-outs)</option>
               <option value="global_admin">Access: Global admin</option>
               <option value="hr">Access: HR (payroll only)</option>
               <option value="view_only">Access: View only</option>

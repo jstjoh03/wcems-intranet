@@ -600,14 +600,31 @@ async function removeStudent(): Promise<void> {
   flash('Student removed.')
 }
 
+/** The details card needs the event date spelled out, Aladtec-style. */
+const evInfoWhen = computed(() => {
+  const i = editor.eventInfo.value
+  if (!i) return ''
+  const d = new Date(i.dateIso + 'T12:00:00')
+  const day = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+  const hm = (t: string | null) => (t && t.length === 4 ? t.slice(0, 2) + ':' + t.slice(2) : '')
+  return i.ev.start ? `${day} at ${hm(i.ev.start)} \u2013 ${hm(i.ev.end)}` : day
+})
+function manageFromInfo(): void {
+  const i = editor.eventInfo.value
+  if (!i) return
+  editor.openEvent(i.dateIso, i.ev)
+}
+
 // ── event modal ──────────────────────────────────────────────────────
 
 const evNotes = ref('')
+const evLocation = ref('')
 const evArm = ref(false)
 
 watch(editor.eventEdit, (ev) => {
   if (!ev) return
   evNotes.value = ev.notes ?? ''
+  evLocation.value = ev.location ?? ''
   evArm.value = false
   err.value = null
 })
@@ -636,13 +653,13 @@ async function saveEventNotes(): Promise<void> {
   if (!args || busy.value) return
   busy.value = true
   err.value = null
-  const e = await sched.updateEventListing(...args, { notes: evNotes.value })
+  const e = await sched.updateEventListing(...args, { notes: evNotes.value, location: evLocation.value })
   busy.value = false
   if (e) {
     err.value = e
     return
   }
-  flash('Event note saved.')
+  flash('Event details saved.')
 }
 
 async function toggleEventDouble(val: boolean): Promise<void> {
@@ -713,6 +730,7 @@ const aeUntil = ref('21:00')
 const aeMedics = ref(1)
 const aeAttendants = ref(1)
 const aeNotes = ref('')
+const aeLocation = ref('')
 const aeDouble = ref(true)
 
 const noteText = ref('')
@@ -810,6 +828,7 @@ async function submitAddEvent(): Promise<void> {
     paramedicSlots: Math.max(0, aeMedics.value),
     attendantSlots: Math.max(0, aeAttendants.value),
     notes: aeNotes.value,
+    location: aeLocation.value,
     doubleTime: aeDouble.value,
   })
   busy.value = false
@@ -1472,10 +1491,14 @@ async function reqCancel() {
         </p>
 
         <label class="em__field">
-          <span>Event note (shows on hover everywhere)</span>
-          <textarea v-model="evNotes" class="em__input em__textarea" rows="3" placeholder="Staging location, contacts, radio channel…" />
+          <span>Location</span>
+          <input v-model="evLocation" type="text" class="em__input" placeholder="Royal High School - Falcon Stadium" />
         </label>
-        <button class="em__btn" :disabled="busy" @click="saveEventNotes">Save note</button>
+        <label class="em__field">
+          <span>Description (shows on hover everywhere)</span>
+          <textarea v-model="evNotes" class="em__input em__textarea" rows="3" placeholder="Non-dedicated event, contacts, radio channel…" />
+        </label>
+        <button class="em__btn" :disabled="busy" @click="saveEventNotes">Save details</button>
         <label class="em__check">
           <input
             type="checkbox"
@@ -1590,6 +1613,10 @@ async function reqCancel() {
             <label>Paramedic seats <input v-model.number="aeMedics" type="number" min="0" max="10" class="em__input em__input--num" /></label>
             <label>Attendant seats <input v-model.number="aeAttendants" type="number" min="0" max="10" class="em__input em__input--num" /></label>
           </div>
+          <label class="em__field">
+            <span>Location</span>
+            <input v-model="aeLocation" type="text" class="em__input" placeholder="Royal High School - Falcon Stadium" />
+          </label>
           <label class="em__field">
             <span>Notes</span>
             <input v-model="aeNotes" type="text" class="em__input" placeholder="Optional" />
@@ -1771,6 +1798,20 @@ async function reqCancel() {
     </div>
 
     <!-- ── note viewer (everyone) / editor (event + day notes, editors) ── -->
+    <div v-if="editor.eventInfo.value" class="em__overlay" @click.self="editor.closeAll()">
+      <div class="em__modal">
+        <h3 class="em__title">{{ editor.eventInfo.value.ev.label }}</h3>
+        <div class="em__evinfo">
+          <p v-if="editor.eventInfo.value.ev.location"><span>Location</span>{{ editor.eventInfo.value.ev.location }}</p>
+          <p><span>Date/Time</span>{{ evInfoWhen }}</p>
+          <p v-if="editor.eventInfo.value.ev.notes"><span>Description</span>{{ editor.eventInfo.value.ev.notes }}</p>
+          <p v-if="editor.eventInfo.value.ev.rows.length"><span>Staffing</span>{{ editor.eventInfo.value.ev.rows.length }} seat{{ editor.eventInfo.value.ev.rows.length === 1 ? '' : 's' }} on the schedule</p>
+        </div>
+        <button v-if="sched.canEdit.value" class="em__btn" @click="manageFromInfo">Manage event — slots, notes, delete</button>
+        <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+      </div>
+    </div>
+
     <div v-if="editor.note.value" class="em__overlay" @click.self="editor.closeAll()">
       <div class="em__modal">
         <h3 class="em__title">{{ editor.note.value.title }}</h3>

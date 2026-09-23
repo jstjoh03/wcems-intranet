@@ -270,7 +270,11 @@ async function removeNote(id: string) {
 
       <div v-for="ev in model.events" :key="ev.label" class="db__event">
         <div class="db__event-head">
-          <span class="db__event-name">{{ ev.label }}</span>
+          <button
+            class="db__event-name db__notebtn"
+            :title="sched.eventTooltip(props.dateIso, ev)"
+            @click="editor.openEventInfo(props.dateIso, ev)"
+          >{{ ev.label }}</button>
           <button
             v-if="ev.notes"
             class="db__noteicon db__notebtn"
@@ -286,6 +290,7 @@ async function removeNote(id: string) {
             </button>
           </span>
         </div>
+        <p v-if="ev.location" class="db__evloc">{{ ev.location }}</p>
         <p v-if="ev.rows.length === 0" class="db__empty">No staff assigned.</p>
         <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="db__row">
           <span class="db__seat">{{ row.open ? row.name : 'Staff' }}</span>
@@ -685,6 +690,16 @@ async function removeNote(id: string) {
   border: 0;
   background: transparent;
   padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.db__evloc {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  margin: 0.05rem 0 0.2rem;
 }
 
 .db__noteicon svg {

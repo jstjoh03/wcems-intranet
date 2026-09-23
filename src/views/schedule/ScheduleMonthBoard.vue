@@ -311,14 +311,12 @@ const weeks = computed<Cell[][]>(() => {
           <div v-for="ev in c.model.events" :key="ev.label" class="mb__event">
             <p class="mb__eventname">
               <button
-                v-if="sched.canEdit.value"
                 class="mb__eventlabel mb__rowbtn mb__rowbtn--ev"
-                title="Manage this event — notes, slots, delete"
-                @click="editor.openEvent(c.iso, ev)"
+                :title="sched.eventTooltip(c.iso, ev)"
+                @click="editor.openEventInfo(c.iso, ev)"
               >
                 {{ ev.label }}
               </button>
-              <span v-else class="mb__eventlabel">{{ ev.label }}</span>
               <button
                 v-if="ev.notes"
                 class="mb__noteicon mb__rowbtn"
@@ -329,6 +327,7 @@ const weeks = computed<Cell[][]>(() => {
               </button>
               <span v-if="ev.start && !ev.rows.length" class="mb__time">{{ ev.start }}-{{ ev.end }}</span>
             </p>
+            <p v-if="ev.location" class="mb__evloc">{{ ev.location }}</p>
             <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="mb__row">
               <button
                 v-if="row.open"
@@ -734,6 +733,13 @@ const weeks = computed<Cell[][]>(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.mb__evloc {
+  font-size: 0.62rem;
+  color: var(--color-muted);
+  margin: -0.02rem 0 0.08rem;
+  overflow-wrap: break-word;
 }
 
 .mb__noteicon {

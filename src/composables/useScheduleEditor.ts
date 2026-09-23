@@ -45,6 +45,7 @@ export interface EventCtx {
   start: string | null
   end: string | null
   notes: string | null
+  location: string | null
 }
 
 export type AddKind = 'menu' | 'event' | 'note' | 'student' | 'seat'
@@ -102,6 +103,7 @@ const slot = ref<SlotCtx | null>(null)
 const person = ref<PersonCtx | null>(null)
 const student = ref<StudentCtx | null>(null)
 const eventEdit = ref<EventCtx | null>(null)
+const eventInfo = ref<{ dateIso: string; ev: DayEventBox } | null>(null)
 const add = ref<AddCtx | null>(null)
 const extra = ref<ExtraCtx | null>(null)
 const myShift = ref<MyShiftCtx | null>(null)
@@ -113,6 +115,7 @@ function closeAll(): void {
   person.value = null
   student.value = null
   eventEdit.value = null
+  eventInfo.value = null
   add.value = null
   extra.value = null
   myShift.value = null
@@ -193,7 +196,14 @@ export function useScheduleEditor() {
       start: ev.start,
       end: ev.end,
       notes: ev.notes,
+      location: ev.location,
     }
+  }
+
+  /** Anyone: the event details card — title, location, time, description. */
+  function openEventInfo(dateIso: string, ev: DayEventBox): void {
+    closeAll()
+    eventInfo.value = { dateIso, ev }
   }
 
   /** Chief: add event / note / student on a date ('menu' shows choices). */
@@ -275,6 +285,7 @@ export function useScheduleEditor() {
     person,
     student,
     eventEdit,
+    eventInfo,
     add,
     extra,
     myShift,
@@ -286,6 +297,7 @@ export function useScheduleEditor() {
     openPerson,
     openStudent,
     openEvent,
+    openEventInfo,
     openAdd,
     openExtra,
     openRiderSlot,

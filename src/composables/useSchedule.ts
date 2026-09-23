@@ -244,6 +244,7 @@ export interface SchedEventRec {
   startTime: string
   endTime: string
   notes: string | null
+  location: string | null
   doubleTime: boolean
 }
 
@@ -254,6 +255,7 @@ export interface DayEventBox {
   start: string | null // 'HHmm' when known
   end: string | null
   notes: string | null // hover detail set when the event was created
+  location: string | null // where the event happens (Aladtec-style detail)
   doubleTime: boolean // staffed events default to double time
   rows: SeatRow[] // assigned staff + open event seats
 }
@@ -926,6 +928,7 @@ async function loadRange(startIso: string, endIso: string): Promise<void> {
     startTime: String(r.start_time).slice(0, 5),
     endTime: String(r.end_time).slice(0, 5),
     notes: r.notes,
+    location: r.location ?? null,
     doubleTime: r.double_time ?? true,
   }))
   entries.value = (eRes.data ?? []).map(mapEntry)
@@ -1337,6 +1340,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
       start: listing ? listing.startTime.replace(':', '') : null,
       end: listing ? listing.endTime.replace(':', '') : null,
       notes: listing?.notes ?? null,
+      location: listing?.location ?? null,
       doubleTime: listing?.doubleTime ?? true,
       rows: boxRows,
     })
@@ -1349,6 +1353,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
         start: ev.startTime.replace(':', ''),
         end: ev.endTime.replace(':', ''),
         notes: ev.notes,
+        location: ev.location,
         doubleTime: ev.doubleTime,
         rows: [],
       })
@@ -3107,6 +3112,18 @@ async function reloadRangeIfLoaded(): Promise<void> {
   if (rangeStart.value) await loadRange(rangeStart.value, rangeEnd.value)
 }
 
+/** Hover snippet for an event, Aladtec-style: name, date and times,
+ *  location, description — used as the native title on event rows. */
+function eventTooltip(dateIso: string, ev: DayEventBox): string {
+  const hm = (t: string | null) => (t && t.length === 4 ? t.slice(0, 2) + ':' + t.slice(2) : (t ?? ''))
+  const d = new Date(dateIso + 'T12:00:00')
+  const day = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+  const lines = [ev.label, ev.start ? `${day} ${hm(ev.start)} \u2013 ${hm(ev.end)}` : day]
+  if (ev.location) lines.push(ev.location)
+  if (ev.notes) lines.push(ev.notes)
+  return lines.join('\n')
+}
+
 async function addEvent(opts: {
   dateIso: string
   label: string
@@ -3115,6 +3132,7 @@ async function addEvent(opts: {
   paramedicSlots: number
   attendantSlots: number
   notes: string
+  location: string
   doubleTime: boolean
 }): Promise<string | null> {
   const auth = useAuthStore()
@@ -3125,6 +3143,7 @@ async function addEvent(opts: {
     end_time: normTime(opts.until),
     seats_total: opts.paramedicSlots + opts.attendantSlots,
     notes: opts.notes || null,
+    location: opts.location.trim() || null,
     double_time: opts.doubleTime,
     created_by: auth.appUser?.id ?? null,
   })
@@ -3297,11 +3316,12 @@ async function updateEventListing(
   eventId: string | null,
   startHHmm: string | null, // box times, 'HHmm' — used only when creating a listing
   endHHmm: string | null,
-  patch: { notes?: string; doubleTime?: boolean },
+  patch: { notes?: string; location?: string; doubleTime?: boolean },
 ): Promise<string | null> {
   const auth = useAuthStore()
   const fields: Record<string, unknown> = {}
   if (patch.notes !== undefined) fields.notes = patch.notes.trim() || null
+  if (patch.location !== undefined) fields.location = patch.location.trim() || null
   if (patch.doubleTime !== undefined) fields.double_time = patch.doubleTime
   if (eventId) {
     const res = await supabase.from('sched_events').update(fields).eq('id', eventId)
@@ -3314,6 +3334,7 @@ async function updateEventListing(
       end_time: endHHmm ? normTime(endHHmm) : '06:00',
       seats_total: 0,
       notes: (patch.notes ?? '').trim() || null,
+      location: (patch.location ?? '').trim() || null,
       double_time: patch.doubleTime ?? true,
       created_by: auth.appUser?.id ?? null,
     })
@@ -4336,7 +4357,7 @@ async function sendPageOut(pageId: string): Promise<{
 
 async function setAccess(
   userId: string,
-  lvl: 'global_admin' | 'scheduler' | 'hr' | 'view_only' | 'none' | null,
+  lvl: 'global_admin' | 'scheduler' | 'supervisor' | 'hr' | 'view_only' | 'none' | null,
 ): Promise<string | null> {
   if (lvl === null) {
     const res = await supabase.from('sched_access').delete().eq('user_id', userId)
@@ -4519,6 +4540,7 @@ export function useSchedule() {
     setUnitActive,
     deleteUnit,
     setAccess,
+    eventTooltip,
     fetchAccessList,
     fetchAuditLog,
     findOpenShifts,

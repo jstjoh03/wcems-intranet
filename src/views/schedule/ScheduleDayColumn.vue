@@ -224,14 +224,12 @@ function notesTitle(notes: { note: string }[]): string {
     <div v-for="ev in model.events" :key="ev.label" class="dc__event">
       <p class="dc__event-name">
         <button
-          v-if="sched.canEdit.value"
           class="dc__rowbtn dc__rowbtn--ev"
-          title="Manage this event — notes, slots, delete"
-          @click="editor.openEvent(dateIso, ev)"
+          :title="sched.eventTooltip(dateIso, ev)"
+          @click="editor.openEventInfo(dateIso, ev)"
         >
           {{ ev.label }}
         </button>
-        <template v-else>{{ ev.label }}</template>
         <button
           v-if="ev.notes"
           class="dc__noteicon dc__rowbtn"
@@ -240,6 +238,7 @@ function notesTitle(notes: { note: string }[]): string {
         />
         <span v-if="ev.start && !ev.rows.length" class="dc__time">{{ ev.start }}-{{ ev.end }}</span>
       </p>
+      <p v-if="ev.location" class="dc__evloc">{{ ev.location }}</p>
       <div v-for="row in ev.rows" :key="row.entryId ?? row.name" class="dc__row">
         <button
           v-if="row.open"
@@ -550,6 +549,13 @@ function notesTitle(notes: { note: string }[]): string {
 
 .dc__event:first-of-type {
   border-top: 0;
+}
+
+.dc__evloc {
+  font-size: 0.66rem;
+  color: var(--color-muted);
+  margin: -0.08rem 0 0.15rem;
+  overflow-wrap: break-word;
 }
 
 .dc__event-name {
