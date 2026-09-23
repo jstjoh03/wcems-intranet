@@ -57,6 +57,9 @@ const ADMIN_CHILDREN: NavChild[] = [
   { label: 'Kudos', to: '/admin/kudos' },
   { label: 'Badge Maker', to: '/admin/badge-maker' },
   { label: 'Usage', to: '/admin/usage' },
+  /* MD-session tool, hosted as a Claude artifact — private to the CDO's
+     account; other admins need it shared before the link opens. */
+  { label: 'Protocol Review Wizard', url: 'https://claude.ai/code/artifact/9b248f36-5169-40b1-a6ee-ae9bb34ab7da' },
 ]
 
 const nav = computed<NavItem[]>(() => [

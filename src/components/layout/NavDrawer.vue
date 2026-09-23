@@ -79,6 +79,7 @@ interface NavItem {
   id?: string
   label: string
   to?: string
+  url?: string
   icon: typeof Activity
   hash?: string
   badge?: string
@@ -136,10 +137,15 @@ const adminPages: NavItem[] = [
   { label: 'Kudos', to: '/admin/kudos', icon: Heart },
   { label: 'Badge Maker', to: '/admin/badge-maker', icon: IdCard },
   { label: 'Usage', to: '/admin/usage', icon: Activity },
+  /* MD-session tool, hosted as a Claude artifact — private to the CDO's
+     account; other admins need it shared before the link opens. */
+  { label: 'Protocol Review Wizard', url: 'https://claude.ai/code/artifact/9b248f36-5169-40b1-a6ee-ae9bb34ab7da', icon: ExternalLink },
 ]
 
 function jumpTo(item: NavItem) {
-  if (item.to) {
+  if (item.url) {
+    window.open(item.url, '_blank', 'noopener')
+  } else if (item.to) {
     router.push(item.to)
   } else if (item.hash) {
     if (router.currentRoute.value.path !== '/') {
