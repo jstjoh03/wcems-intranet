@@ -2346,6 +2346,36 @@ export function accruingBy(
   return Math.round(acc * 100) / 100
 }
 
+/** Matches sched_leave_catchup() in SQL — the last pay period Paycom
+ *  paid out before the module took over. Catch-up accruals post for
+ *  every period closing after this; hire date → this date is what an
+ *  opening balance has to cover. */
+export const LEAVE_PAID_THROUGH = '2026-09-12'
+
+/** What a new full-timer should already have banked when they were
+ *  never in the Paycom opening import: one accrual per pay period
+ *  closing on or after their hire date, through LEAVE_PAID_THROUGH —
+ *  the same period grid and hire-period rule as sched_leave_catchup(),
+ *  which owns every period after that. */
+export function openingAccrual(
+  hireDateIso: string | null | undefined,
+  fullTime: boolean,
+  overrides?: { vac?: number | null; sick?: number | null },
+): { vac: number; sick: number; periods: number } {
+  if (!hireDateIso || !fullTime || hireDateIso > LEAVE_PAID_THROUGH)
+    return { vac: 0, sick: 0, periods: 0 }
+  let vac = 0
+  let periods = 0
+  let end = LEAVE_PAID_THROUGH
+  while (end >= hireDateIso) {
+    vac += overrides?.vac ?? vacationRate(hireDateIso, end)
+    periods++
+    end = addDaysIso(end, -PAY_DAYS)
+  }
+  const sick = periods * (overrides?.sick ?? SICK_RATE)
+  return { vac: Math.round(vac * 100) / 100, sick: Math.round(sick * 100) / 100, periods }
+}
+
 /** A person's effective accrual rate today — override first, formula
  *  otherwise. */
 export function effectiveRates(p: {
@@ -2386,7 +2416,7 @@ async function setLeaveProfile(
 
 /** HR/editor: opening balances for someone with no import — puts them
  *  on the Balances board; accruals start from their hire date. */
-async function openLeaveBalances(userId: string, vacHours: number, sickHours: number): Promise<string | null> {
+async function openLeaveBalances(userId: string, vacHours: number, sickHours: number, note?: string): Promise<string | null> {
   const auth = useAuthStore()
   const rows = [
     { kind: 'vacation', hours: vacHours },
@@ -2397,11 +2427,13 @@ async function openLeaveBalances(userId: string, vacHours: number, sickHours: nu
     hours: r.hours,
     reason: 'opening',
     effective_on: todayCentralIso(),
-    note: 'Opening balance (manual — no Paycom import)',
+    note: note ?? 'Opening balance (manual — no Paycom import)',
     created_by: auth.appUser?.id ?? null,
   }))
   const ins = await supabase.from('sched_leave_ledger').insert(rows)
   if (ins.error) return ins.error.message
+  // any pay periods already closed since the cutover post right away
+  await supabase.rpc('sched_leave_catchup')
   audit('leave.open', `Opened leave balances for ${displayName(userId).name} — vac ${vacHours}, sick ${sickHours}`, { entity: 'leave', entityId: userId })
   return null
 }

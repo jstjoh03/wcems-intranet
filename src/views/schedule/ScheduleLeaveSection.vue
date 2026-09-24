@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
   useSchedule,
   vacationRate,
@@ -8,6 +8,8 @@ import {
   personSortKey,
   accruingBy,
   effectiveRates,
+  openingAccrual,
+  LEAVE_PAID_THROUGH,
   SICK_RATE,
   type LeaveBalance,
   type LeaveTaken,
@@ -176,9 +178,32 @@ function openDrawer(userId: string) {
   adjKind.value = 'vacation'
   adjHours.value = null
   adjNote.value = ''
-  openVac.value = 0
-  openSick.value = 0
+  openTouched.value = false
+  const a = openingAccrual(p?.hireDate ?? null, p?.employmentType === 'full_time', {
+    vac: p?.vacRateOverride,
+    sick: p?.sickRateOverride,
+  })
+  openVac.value = a.vac
+  openSick.value = a.sick
 }
+
+/* auto-calculated opening: what they'd have banked pay period by pay
+   period from hire date through the Paycom cutover (Sep 12, 2026) —
+   sched_leave_catchup() posts every period after that on its own.
+   The fields stay editable; typing in one stops the auto-fill. */
+const openTouched = ref(false)
+const autoOpen = computed(() =>
+  openingAccrual(dHire.value || null, drawerPerson.value?.employmentType === 'full_time', {
+    vac: dVac.value,
+    sick: dSick.value,
+  }),
+)
+watch(autoOpen, (a) => {
+  if (!openTouched.value) {
+    openVac.value = a.vac
+    openSick.value = a.sick
+  }
+})
 
 /* add someone who never had an import — they get a profile + opening */
 const addPick = ref('')
@@ -211,8 +236,13 @@ async function postOpening() {
     return
   }
   busy.value = true
+  const a = autoOpen.value
+  const isAuto = a.periods > 0 && openVac.value === a.vac && openSick.value === a.sick
+  const note = isAuto
+    ? `Opening balance — accrued from hire ${dHire.value} through ${LEAVE_PAID_THROUGH} (${a.periods} pay periods, auto-calculated)`
+    : undefined
   const pe = await sched.setLeaveProfile(drawerFor.value, dHire.value, dVac.value ?? null, dSick.value ?? null)
-  const e = pe ?? (await sched.openLeaveBalances(drawerFor.value, openVac.value ?? 0, openSick.value ?? 0))
+  const e = pe ?? (await sched.openLeaveBalances(drawerFor.value, openVac.value ?? 0, openSick.value ?? 0, note))
   busy.value = false
   if (e) {
     say(e)
@@ -446,15 +476,25 @@ function fmtHire(d: string | null): string {
 
           <template v-if="!drawerHasLedger">
             <p class="lv__dsect">Opening balances</p>
-            <p class="lv__dhint">
+            <p v-if="autoOpen.periods > 0" class="lv__dhint">
+              Auto-calculated from the hire date: {{ autoOpen.periods }} pay
+              period{{ autoOpen.periods === 1 ? '' : 's' }} banked through Sep 12, 2026 — the
+              last period Paycom paid out. Every period after that posts on its own. Edit the
+              numbers before posting if Paycom shows something different.
+            </p>
+            <p v-else-if="dHire && dHire > LEAVE_PAID_THROUGH && drawerPerson?.employmentType === 'full_time'" class="lv__dhint">
+              Hired after the Paycom cutover — accruals post automatically from their first
+              pay-period close. Start at 0 (or a carried balance) to put them on the board.
+            </p>
+            <p v-else class="lv__dhint">
               New hire with nothing to import? Post their starting hours (0 is fine) — that
               puts them on the board and accruals take it from there.
             </p>
             <div class="lv__drow">
               <span class="lv__dk">Vacation</span>
-              <input v-model.number="openVac" type="number" step="0.25" class="lv__input lv__input--num" />
+              <input v-model.number="openVac" type="number" step="0.25" class="lv__input lv__input--num" @input="openTouched = true" />
               <span class="lv__dk">Sick</span>
-              <input v-model.number="openSick" type="number" step="0.25" class="lv__input lv__input--num" />
+              <input v-model.number="openSick" type="number" step="0.25" class="lv__input lv__input--num" @input="openTouched = true" />
               <button type="button" class="lv__btn lv__btn--go" :disabled="busy" @click="postOpening">Start balances</button>
             </div>
           </template>
