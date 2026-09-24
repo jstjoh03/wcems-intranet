@@ -433,21 +433,26 @@ async function removeNote(id: string) {
   text-decoration-color: var(--color-accent-600);
 }
 
+/* "+ Student" reads as a quiet link, not a button (2026-09-24) */
 .db__tool {
   font: inherit;
-  font-size: 0.78rem;
-  font-weight: 600;
-  padding: 0.28rem 0.7rem;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: var(--color-surface);
-  color: var(--color-brand-600);
+  font-size: 0.74rem;
+  font-weight: 650;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-700);
   cursor: pointer;
   white-space: nowrap;
+  margin-left: auto;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
 }
 
 .db__tool:hover {
-  border-color: var(--color-brand-300);
+  text-decoration-color: var(--color-accent-600);
 }
 
 .db__tool--sm {
@@ -512,12 +517,13 @@ async function removeNote(id: string) {
 }
 
 .db__unit {
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
-  background: var(--color-surface);
-  padding: 0.6rem 0.8rem 0.5rem;
-  margin-bottom: 0.6rem;
-  box-shadow: var(--shadow-sm);
+  border: 0;
+  border-bottom: 1px solid var(--color-line-soft);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.55rem 0.1rem 0.5rem;
+  margin-bottom: 0;
+  box-shadow: none;
 }
 
 .db__unit-head {
@@ -554,12 +560,8 @@ async function removeNote(id: string) {
 /* subtle zebra — rows scan at a glance on busy days. Unit/event blocks
    lead with a header child, so their odd children are 2nd/4th rows;
    labeled sections are rows only, so even children are. */
-.db__unit > .db__row:nth-child(odd),
-.db__event > .db__row:nth-child(odd),
-.db__labeled > .db__row:nth-child(even) {
-  background: oklch(0.45 0.02 260 / 0.045);
-  border-radius: 4px;
-}
+/* zebra retired with the card chrome (2026-09-24) — hairlines carry
+   the rows */
 
 .db__row:last-child {
   border-bottom: 0;
@@ -639,12 +641,13 @@ async function removeNote(id: string) {
 }
 
 .db__event {
-  border: 1px solid oklch(0.86 0.06 86.8);
-  background: oklch(0.99 0.008 86.8);
-  border-radius: 12px;
-  padding: 0.6rem 0.8rem 0.5rem;
-  margin-bottom: 0.6rem;
-  box-shadow: var(--shadow-sm);
+  border: 0;
+  border-left: 2px solid var(--color-accent-600);
+  background: color-mix(in oklab, var(--color-accent-600) 5%, transparent);
+  border-radius: 0;
+  padding: 0.55rem 0.8rem 0.5rem;
+  margin: 0.6rem 0;
+  box-shadow: none;
 }
 
 .db__event-head {

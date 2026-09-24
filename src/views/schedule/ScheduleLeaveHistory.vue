@@ -204,19 +204,32 @@ function fmtDelta(n: number): string {
     <template v-else>
       <p v-if="model.summaries.length === 0" class="lh__muted">No leave activity on record.</p>
 
+      <!-- summary as a real table — the wrapped stat lines read as
+           numbers thrown together (Justin, 2026-09-24) -->
       <div v-if="props.summary && model.summaries.length" class="lh__sums">
-        <p v-for="s in model.summaries" :key="s.kind" class="lh__head">
-          <span class="lh__klab" :class="s.kind === 'vacation' ? 'lh__klab--v' : 'lh__klab--s'">{{ s.kind === 'vacation' ? 'VAC' : 'SICK' }}</span>
-          <span class="lh__stat">balance <b :class="{ lh__neg: s.current < 0 }">{{ s.current.toFixed(2) }}</b></span>
-          <template v-if="s.upcoming > 0">
-            <span class="lh__stat">upcoming <b>−{{ s.upcoming.toFixed(2) }}</b></span>
-            <span class="lh__stat">
-              available <b :class="{ lh__neg: s.available < 0 }">{{ s.available.toFixed(2) }}</b>
-              <span class="lh__muted"> after {{ fmtD(s.lastUpcoming!) }}</span>
-            </span>
-          </template>
-          <span class="lh__stat lh__rate">accruing <b>+{{ (s.kind === 'vacation' ? (rateLine?.vac ?? 0) : SICK_RATE).toFixed(2) }}</b> / pay period</span>
-        </p>
+        <table class="lh__sumtable">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="lh__num">Balance</th>
+              <th class="lh__num">Upcoming</th>
+              <th class="lh__num">Available</th>
+              <th class="lh__num">Accruing</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in model.summaries" :key="s.kind">
+              <td><span class="lh__klab" :class="s.kind === 'vacation' ? 'lh__klab--v' : 'lh__klab--s'">{{ s.kind === 'vacation' ? 'VAC' : 'SICK' }}</span></td>
+              <td class="lh__num lh__big" :class="{ lh__neg: s.current < 0 }">{{ s.current.toFixed(2) }}</td>
+              <td class="lh__num lh__mut2">{{ s.upcoming > 0 ? '−' + s.upcoming.toFixed(2) : '—' }}</td>
+              <td class="lh__num lh__big" :class="{ lh__neg: s.available < 0 }">
+                {{ s.available.toFixed(2) }}
+                <span v-if="s.upcoming > 0" class="lh__aftr">after {{ fmtD(s.lastUpcoming!) }}</span>
+              </td>
+              <td class="lh__num lh__mut2">+{{ (s.kind === 'vacation' ? (rateLine?.vac ?? 0) : SICK_RATE).toFixed(2) }}<span class="lh__aftr">per period</span></td>
+            </tr>
+          </tbody>
+        </table>
         <p v-if="rateLine" class="lh__metaline">
           Hired {{ fmtD(rateLine.hired) }} · anniversary {{ fmtD(rateLine.ann) }} — carry-over caps apply on that date
         </p>
@@ -303,24 +316,61 @@ function fmtDelta(n: number): string {
   font-variant-numeric: tabular-nums;
 }
 
-/* the drawer's headline numbers read at a glance (2026-09-24) */
-.lh__sums .lh__stat {
-  font-size: 0.84rem;
+/* summary table — same register as the roster's Balances table */
+.lh__sums {
+  margin: 4px 0 14px;
 }
 
-.lh__sums .lh__stat b {
-  font-size: 1.18rem;
+.lh__sumtable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.lh__sumtable th {
+  text-align: left;
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
   font-weight: 700;
+  padding: 4px 10px 5px;
+  border-bottom: 1px solid var(--color-line);
 }
 
-.lh__sums .lh__rate b {
-  font-size: 0.9rem;
+.lh__sumtable th.lh__num {
+  text-align: right;
+}
+
+.lh__sumtable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-line-soft);
+  vertical-align: top;
+}
+
+.lh__big {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.lh__mut2 {
+  color: var(--color-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.lh__aftr {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 400;
+  color: var(--color-muted);
+  margin-top: 1px;
 }
 
 .lh__metaline {
-  font-size: 0.76rem;
-  color: var(--color-ink-soft);
-  margin: 2px 0 6px;
+  font-size: 0.74rem;
+  color: var(--color-muted);
+  margin: 8px 0 0;
 }
 
 .lh__table {

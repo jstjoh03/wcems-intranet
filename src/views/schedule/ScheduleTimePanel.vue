@@ -634,6 +634,7 @@ watch(
   { immediate: true },
 )
 const showNotes = ref(false)
+const showCoded = ref(false)
 const exportFlagCount = computed(
   () =>
     noCode.value.length +
@@ -964,55 +965,76 @@ function downloadPaycom(onlySelected = false): void {
         <button class="tm__notestoggle" @click="showNotes = !showNotes">{{ showNotes ? 'Hide details' : 'Details' }}</button>
       </p>
 
+      <!-- Details, reorganized (Justin, 2026-09-24): attention items
+           lead as one table — WHO · WHEN · WHAT · THE FIX; the coded
+           list collapses; the how-it-works prose is a footnote. -->
       <div v-show="showNotes" class="tm__notes">
-      <p class="tm__muted">
-        One IN (ID) and OUT (OD) punch per merged shift segment, per member with an EE code —
-        the file imports straight into the Paycom timecard template (no header, 17 columns).
-        Shifts running to the 0600 changeover punch OUT at <strong>05:59</strong> so
-        back-to-back 24s pair correctly. Categories with an earning code in Setup —
-        special events and holidays (double time), instructor/meeting, and paid time off —
-        export as punch pairs <strong>carrying their earning code</strong>, so the timecard
-        shows the real times attached to the right pay code.
-      </p>
+        <div v-if="exportFlagCount > 0" class="tm__attn">
+          <p class="tm__attnhead">Needs attention before this import</p>
+          <table class="tm__atable">
+            <thead>
+              <tr><th>Who</th><th>When</th><th>What</th><th>The fix</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="(n, i) in noCode" :key="'nc' + i">
+                <td class="tm__aname">{{ n }}</td>
+                <td class="tm__amut">whole period</td>
+                <td>No Paycom EE code — none of their punches are in the file</td>
+                <td class="tm__amut">Add their EE code on Manage Employees, or key them in manually</td>
+              </tr>
+              <tr v-for="(o, i) in uncodedOffRows" :key="'off' + i">
+                <td class="tm__aname">{{ o.name }}</td>
+                <td class="tm__amut">{{ fmtDay(o.dateIso) }}</td>
+                <td>{{ o.hours }} hrs {{ o.label }} — NOT in the file (no earning code)</td>
+                <td class="tm__amut">Set the {{ o.label }} code in Setup → Payroll, or key it in manually</td>
+              </tr>
+              <tr v-for="(m, i) in manualEntries" :key="'man' + i">
+                <td class="tm__aname">{{ m.name }}</td>
+                <td class="tm__amut">{{ fmtDay(m.dateIso) }}</td>
+                <td>{{ m.hours }} hrs {{ m.timeType }} — NOT in the file (no earning code)</td>
+                <td class="tm__amut">Set the {{ m.timeType }} code in Setup → Payroll, or key it in manually</td>
+              </tr>
+              <tr v-for="(h, i) in uncodedHolidays" :key="'hol' + i">
+                <td class="tm__aname">Everyone working</td>
+                <td class="tm__amut">{{ fmtDay(h.dateIso) }}</td>
+                <td>{{ h.name }} is double time but exports as ordinary punches</td>
+                <td class="tm__amut">Set the Holiday code in Setup → Payroll</td>
+              </tr>
+              <tr v-if="uncodedEventHours > 0">
+                <td class="tm__aname">Event crews</td>
+                <td class="tm__amut">this period</td>
+                <td>{{ uncodedEventHours }} special-event hrs (double time) export as ordinary punches</td>
+                <td class="tm__amut">Set the Special event code in Setup → Payroll</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="tm__allclear">Nothing needs attention — every coded category rides with its earning code.</p>
 
-      <p v-if="noCode.length" class="tm__warn">
-        No Paycom EE code — enter these manually: {{ noCode.join(', ') }}
-      </p>
-      <p v-if="uncodedHolidays.length" class="tm__warn">
-        {{ uncodedHolidays.map((h) => `${h.name} (${fmtDay(h.dateIso)})`).join(' · ') }} —
-        double time, but no Holiday earning code is set in Setup, so these hours export as
-        ordinary punches. Set the code and the punches carry it automatically.
-      </p>
-      <p v-if="uncodedEventHours > 0" class="tm__warn">
-        {{ uncodedEventHours }} special-event hours this period — double time, but no
-        Special event earning code is set in Setup, so they export as ordinary punches.
-      </p>
-      <div v-if="uncodedOffRows.length" class="tm__warn">
-        <p class="tm__warnhead tm__warnhead--danger">
-          Approved paid time off NOT in the file — its category has no earning code. Set
-          the code in Setup → Payroll (exports automatically next download), or key these
-          into the Paycom timecard by hand:
+        <button v-if="codedPairs.length" class="tm__notestoggle tm__codedtoggle" @click="showCoded = !showCoded">
+          {{ showCoded ? 'Hide' : 'Show' }} the {{ codedPairs.length }} coded punch pairs going in the file
+        </button>
+        <table v-if="showCoded && codedPairs.length" class="tm__atable tm__atable--ok">
+          <thead>
+            <tr><th>Who</th><th>When</th><th>What</th><th>Earning code</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(h, i) in codedPairs" :key="i">
+              <td class="tm__aname">{{ h.name }}</td>
+              <td class="tm__amut">{{ fmtDay(h.dateIso) }}</td>
+              <td>{{ h.hours }} hrs {{ h.label }}</td>
+              <td><span class="tm__earn">{{ h.earn }}</span></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p class="tm__hownote">
+          How the file works: one IN (ID) and OUT (OD) punch per merged shift segment, per
+          member with an EE code — no header, 17 columns, imports straight into the Paycom
+          timecard template. Shifts running to the 0600 changeover punch OUT at 05:59 so
+          back-to-back 24s pair correctly. Coded categories carry their earning code on the
+          punches, so the timecard shows real times on the right pay code.
         </p>
-        <p v-for="(o, i) in uncodedOffRows" :key="i" class="tm__manual">
-          {{ o.name }} · {{ fmtDay(o.dateIso) }} · {{ o.hours }} hrs {{ o.label }}
-        </p>
-      </div>
-      <div v-if="codedPairs.length" class="tm__warn tm__warn--ok">
-        <p class="tm__warnhead">In the file as coded punches (real times + earning code):</p>
-        <p v-for="(h, i) in codedPairs" :key="i" class="tm__manual">
-          {{ h.name }} · {{ fmtDay(h.dateIso) }} · {{ h.hours }} hrs {{ h.label }}
-          <span class="tm__muted">→ earning code {{ h.earn }}</span>
-        </p>
-      </div>
-      <div v-if="manualEntries.length" class="tm__warn tm__warn--soft">
-        <p class="tm__warnhead">
-          Instructor / meeting time NOT in the file — set its earning code in Setup, or
-          enter manually:
-        </p>
-        <p v-for="(m, i) in manualEntries" :key="i" class="tm__manual">
-          {{ m.name }} · {{ fmtDay(m.dateIso) }} · {{ m.hours }} hrs {{ m.timeType }} <span class="tm__muted">({{ m.source }})</span>
-        </p>
-      </div>
       </div>
 
     </section>
@@ -1133,9 +1155,95 @@ function downloadPaycom(onlySelected = false): void {
 }
 
 .tm__notes {
-  border-left: 2px solid var(--color-line-soft);
-  padding-left: 14px;
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+
+/* attention items as one table — who / when / what / the fix */
+.tm__attn {
+  border: 1px solid oklch(0.87 0.07 27);
+  border-left: 3px solid var(--color-danger-500);
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem 0.65rem;
+  background: oklch(0.985 0.008 27);
+  margin: 0 0 0.7rem;
+}
+
+.tm__attnhead {
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-danger-500);
+  margin: 0 0 0.3rem;
+}
+
+.tm__atable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.tm__atable th {
+  text-align: left;
+  font-size: 0.58rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 700;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--color-line);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.tm__atable td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--color-line-soft);
+  vertical-align: top;
+  color: var(--color-ink-soft);
+}
+
+.tm__atable tr:last-child td {
+  border-bottom: 0;
+}
+
+.tm__aname {
+  font-weight: 650;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.tm__amut {
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.tm__atable .tm__amut:last-child {
+  white-space: normal;
+}
+
+.tm__atable--ok {
+  border: 1px solid var(--color-line-soft);
+  border-radius: 8px;
+  margin-top: 0.4rem;
+}
+
+.tm__allclear {
+  font-size: 0.8rem;
+  color: var(--color-success-500);
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.tm__codedtoggle {
+  padding: 0;
+}
+
+.tm__hownote {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  margin: 0.7rem 0 0;
+  max-width: 82ch;
 }
 
 .tm__controls {

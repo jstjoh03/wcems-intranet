@@ -323,6 +323,12 @@ async function send() {
 const log = ref<PageLogRow[]>([])
 const logLoaded = ref(false)
 
+/* the log grew endless — three most recent, expand for the rest
+   (Justin, 2026-09-24) */
+const LOG_PREVIEW = 3
+const showAllLog = ref(false)
+const visibleLog = computed(() => (showAllLog.value ? log.value : log.value.slice(0, LOG_PREVIEW)))
+
 async function refreshLog() {
   log.value = await sched.fetchPageLog()
   logLoaded.value = true
@@ -495,7 +501,7 @@ function deliveryLine(p: PageLogRow): string {
       <section class="pg__card">
         <h2 class="pg__h">Recent page-outs</h2>
         <p v-if="logLoaded && log.length === 0" class="pg__muted">Nothing sent yet.</p>
-        <div v-for="p in log" :key="p.id" class="pg__logrow">
+        <div v-for="p in visibleLog" :key="p.id" class="pg__logrow">
           <div class="pg__loghead">
             <span class="pg__logwhen">{{ fmtSent(p.sentAt) }}</span>
             <span class="pg__logwho">{{ senderName(p.sentBy) }}</span>
@@ -793,6 +799,13 @@ function deliveryLine(p: PageLogRow): string {
   min-width: 0;
 }
 
+@media (min-width: 901px) {
+  .pg__cols > section:first-child {
+    border-right: 1px solid var(--color-line-soft);
+    padding-right: 26px;
+  }
+}
+
 @media (max-width: 900px) {
   .pg__cols {
     grid-template-columns: 1fr;
@@ -800,19 +813,18 @@ function deliveryLine(p: PageLogRow): string {
 }
 
 .pg__card {
-  background:
-    linear-gradient(180deg, oklch(1 0 0 / 0.85), oklch(0.985 0.004 84 / 0.85)),
-    var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-top: 3px solid var(--color-brand-700);
-  border-radius: 14px;
-  box-shadow: 0 10px 30px oklch(0.2 0.04 260 / 0.1), 0 2px 8px oklch(0.2 0.04 260 / 0.07);
-  padding: 1rem 1.1rem 1.1rem;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
 }
 
 .pg__h {
-  font-family: var(--font-display);
-  font-size: 1.2rem;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
   color: var(--color-ink);
   margin: 0 0 0.35rem;
 }
@@ -993,15 +1005,15 @@ function deliveryLine(p: PageLogRow): string {
 
 .pg__btn {
   font: inherit;
-  font-size: 0.84rem;
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--color-ink-soft);
-  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft, var(--color-surface)));
+  background: var(--color-surface);
   border: 1px solid var(--color-line);
-  border-radius: 8px;
-  padding: 0.4rem 0.9rem;
+  border-radius: 4px;
+  padding: 0.38rem 0.85rem;
   cursor: pointer;
-  box-shadow: 0 1px 2px oklch(0.2 0.04 260 / 0.08);
+  white-space: nowrap;
 }
 
 .pg__btn:hover {
@@ -1009,10 +1021,11 @@ function deliveryLine(p: PageLogRow): string {
 }
 
 .pg__btn--primary {
-  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  background: var(--color-brand-800);
   border-color: var(--color-brand-800);
   color: white;
-  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.18), 0 1px 2px oklch(0.2 0.04 260 / 0.2);
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .pg__btn:disabled {
@@ -1070,26 +1083,25 @@ function deliveryLine(p: PageLogRow): string {
 .pg__seg {
   display: inline-flex;
   border: 1px solid var(--color-line);
-  border-radius: 9px;
+  border-radius: 5px;
   background: var(--color-surface);
-  padding: 2px;
-  gap: 2px;
+  overflow: hidden;
 }
 
 .pg__segbtn {
   font: inherit;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 600;
   color: var(--color-muted);
   border: 0;
   background: transparent;
-  border-radius: 7px;
-  padding: 0.24rem 0.65rem;
+  border-radius: 0;
+  padding: 0.3rem 0.7rem;
   cursor: pointer;
 }
 
 .pg__segbtn--on {
-  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  background: var(--color-brand-800);
   color: white;
   box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.18);
 }

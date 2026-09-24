@@ -270,6 +270,51 @@ const boardShown = computed(() => {
   return sorted
 })
 
+/* one table serves every lane */
+const laneRows = computed(() => (lane.value === 'inbox' ? sentToMe.value : boardShown.value))
+
+/* poster's offer review expands inline under the row */
+const reviewFor = ref<string | null>(null)
+
+/** Status cell: what state the posting is in, who it's waiting on, and
+ *  how old it is. `you` lights the gold stripe — it needs YOUR move. */
+function statusParts(r: SchedRequest): { l1: string; l2: string; you: boolean } {
+  const me = sched.myUserId.value
+  const age = `posted ${postedAge(r)}`
+  if (r.counterpartyId === me && r.requesterId !== me) {
+    return { l1: 'Waiting on you', l2: `sent to you · ${age}`, you: true }
+  }
+  if (isDirected(r) && offersFor(r).length === 0) {
+    return { l1: `Waiting on ${directedToName(r)}`, l2: age, you: false }
+  }
+  const mine = myOfferOn(r)
+  if (mine) {
+    return { l1: r.type === 'giveaway' ? 'Your claim is in' : 'Your offer is in', l2: age, you: false }
+  }
+  const n = offersFor(r).length
+  if (n > 0) {
+    return {
+      l1: `${n} offer${n === 1 ? '' : 's'} in${r.requesterId === me ? ' — review' : ''}`,
+      l2: age,
+      you: r.requesterId === me,
+    }
+  }
+  return { l1: 'Open', l2: age, you: false }
+}
+
+/** Awaiting-approval flags: swaps only flag pay-period crossings; a
+ *  giveaway adds hours, so its stored hour warnings still show. */
+function awaitFlags(r: SchedRequest): string[] {
+  if (r.type === 'trade') {
+    if (r.workDate && r.counterWorkDate && payPeriodFor(r.workDate).start !== payPeriodFor(r.counterWorkDate).start)
+      return ['Crosses pay periods']
+    return []
+  }
+  return reqWarnings(r).map((w) =>
+    w.code === 'weekly' ? `${w.hours}h week` : w.code === 'ot' ? 'Overtime' : `${w.hours}h consecutive`,
+  )
+}
+
 function postedAge(r: SchedRequest): string {
   const h = (Date.now() - Date.parse(r.createdAt)) / 3600e3
   if (h < 1) return 'just now'
@@ -528,231 +573,158 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
       </button>
     </form>
 
-    <!-- directed requests waiting on ME -->
-    <section v-show="lane === 'inbox'" class="tr__section">
-      <p v-if="sentToMe.length === 0" class="tr__muted">Nothing waiting on you.</p>
-      <div v-for="r in sentToMe" :key="r.id" class="tr__card tr__card--direct">
-        <div class="tr__card-top">
-          <span class="tr__type" :data-type="r.type">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap wanted' }}</span>
-          <p class="tr__who">{{ posterName(r) }} sent this to you</p>
-          <p class="tr__line">{{ postingLine(r) }}</p>
-        </div>
-        <p v-if="r.comments" class="tr__comments">"{{ r.comments }}"</p>
-        <div v-if="hourWarnFor[r.id]" class="tr__warnbox">
-          <p class="tr__warnhead">Before you take this:</p>
-          <ul class="tr__warnlist">
-            <li v-for="(w, i) in hourWarnFor[r.id]" :key="i">{{ w.message }}</li>
-          </ul>
-        </div>
-        <div v-if="r.type === 'trade' && offeringOn === r.id" class="tr__offerform">
-          <label class="tr__field">
-            <span class="tr__label">Offer one of your shifts back</span>
-            <select v-model="offerShiftKey" class="tr__input">
-              <option v-if="myShifts.length === 0" value="" disabled>No upcoming shifts found</option>
-              <optgroup v-for="g in myShiftGroups" :key="g.label" :label="g.label">
-                <option v-for="s in g.items" :key="shiftKey(s)" :value="shiftKey(s)">
-                  {{ shiftLabel(s) }}
-                </option>
-              </optgroup>
-            </select>
-          </label>
-          <label class="tr__check">
-            <input v-model="offerPartial" type="checkbox" /> Part of that shift only
-          </label>
-          <div v-if="offerPartial" class="tr__times">
-            <label>From <TimeSelect24 v-model="offerFrom" class="tr__input tr__input--time" /></label>
-            <label>Until <TimeSelect24 v-model="offerUntil" class="tr__input tr__input--time" /></label>
-          </div>
-          <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
-          <p v-if="offerCrossesPeriod(r)" class="tr__ppwarn">
-            Heads up: that shift is in a different pay period than {{ posterName(r) }}'s —
-            the Chief prefers same-period swaps but can still approve it.
-          </p>
-          <div class="tr__offer-actions">
-            <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">
-              {{
-                hourWarnFor[r.id]
-                  ? warnConfirm(hourWarnFor[r.id]!)
-                    ? 'I understand — send offer'
-                    : 'Send offer anyway'
-                  : 'Send offer'
-              }}
-            </button>
-            <button class="tr__btn" @click="offeringOn = null">Cancel</button>
-          </div>
-        </div>
-        <div v-else-if="myOfferOn(r)" class="tr__cardfoot">
-          <span class="tr__mine">Your offer is in — waiting on {{ posterName(r) }} to accept.</span>
-          <button class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">
-            {{ withdrawArm === myOfferOn(r)!.id ? 'Really withdraw?' : 'Withdraw' }}
-          </button>
-        </div>
-        <div v-else class="tr__cardfoot">
-          <button
-            v-if="r.type === 'giveaway'"
-            class="tr__btn tr__btn--primary"
-            :disabled="busy"
-            @click="acceptDirect(r)"
-          >
-            {{
-              hourWarnFor[r.id]
-                ? warnConfirm(hourWarnFor[r.id]!)
-                  ? 'I understand — accept the shift'
-                  : 'Accept anyway'
-                : 'Accept the shift'
-            }}
-          </button>
-          <button v-else class="tr__btn tr__btn--primary" @click="startOffer(r)">
-            Offer a shift back
-          </button>
-          <button class="tr__btn" :disabled="busy" @click="declineDirect(r)">Decline</button>
-        </div>
-      </div>
-    </section>
-
-    <section v-show="lane !== 'inbox'" class="tr__section">
-      <p v-if="boardShown.length === 0" class="tr__muted">
-        {{ lane === 'mine' ? 'You have nothing posted.' : 'Nothing on the board right now.' }}
+    <!-- ONE table for every lane (approved mock, 2026-09-24):
+         TYPE / POSTED BY / SHIFT / STATUS / actions — claim, accept,
+         decline, offer and review flows live in the detail row. -->
+    <section class="tr__section">
+      <p v-if="laneRows.length === 0" class="tr__muted">
+        {{ lane === 'inbox' ? 'Nothing waiting on you.' : lane === 'mine' ? 'You have nothing posted or claimed.' : 'Nothing on the board right now.' }}
       </p>
+      <table v-else class="tr__table">
+        <thead>
+          <tr><th>Type</th><th>Posted by</th><th>Shift</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+          <template v-for="r in laneRows" :key="r.id">
+            <tr class="tr__row" :class="{ 'tr__row--att': statusParts(r).you }">
+              <td><span class="tr__typ">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap' }}</span></td>
+              <td class="tr__poster">
+                {{ posterName(r) }}<span v-if="r.requesterId === sched.myUserId.value" class="tr__youtag"> (you)</span>
+                <span v-if="isDirected(r) && r.counterpartyId !== sched.myUserId.value" class="tr__l2">to {{ directedToName(r) }}</span>
+              </td>
+              <td>
+                <span class="tr__l1">{{ postingParts(r).date }}</span>
+                <span v-if="postingParts(r).detail" class="tr__l2">{{ postingParts(r).detail }}</span>
+                <span v-if="r.comments" class="tr__l2 tr__cmt">"{{ r.comments }}"</span>
+              </td>
+              <td>
+                <span class="tr__l1" :class="{ 'tr__st--you': statusParts(r).you }">{{ statusParts(r).l1 }}</span>
+                <span class="tr__l2">{{ statusParts(r).l2 }}</span>
+              </td>
+              <td class="tr__act">
+                <!-- sent to me: answer it -->
+                <template v-if="r.counterpartyId === sched.myUserId.value && r.requesterId !== sched.myUserId.value">
+                  <button v-if="r.type === 'giveaway'" class="tr__btn tr__btn--primary" :disabled="busy" @click="acceptDirect(r)">
+                    {{ hourWarnFor[r.id] ? (warnConfirm(hourWarnFor[r.id]!) ? 'I understand — accept' : 'Accept anyway') : 'Accept' }}
+                  </button>
+                  <button v-else-if="offeringOn !== r.id" class="tr__btn tr__btn--primary" @click="startOffer(r)">Offer a shift back</button>
+                  <button class="tr__btn" :disabled="busy" @click="declineDirect(r)">Decline</button>
+                </template>
+                <!-- my posting (admins can watch offers on any) -->
+                <template v-else-if="r.requesterId === sched.myUserId.value || sched.canEdit.value">
+                  <button v-if="offersFor(r).length" class="tr__btn" @click="reviewFor = reviewFor === r.id ? null : r.id">
+                    {{ reviewFor === r.id ? 'Hide offers' : 'Review offers' }}
+                  </button>
+                  <button v-if="r.requesterId === sched.myUserId.value" class="tr__btn" :disabled="busy" @click="cancelPosting(r)">Withdraw posting</button>
+                </template>
+                <!-- someone else's open posting: claim / offer / withdraw -->
+                <template v-if="!isDirected(r) && r.requesterId !== sched.myUserId.value">
+                  <button v-if="myOfferOn(r)" class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">
+                    {{ withdrawArm === myOfferOn(r)!.id ? 'Really withdraw?' : 'Withdraw' }}
+                  </button>
+                  <template v-else-if="offeringOn !== r.id">
+                    <button v-if="r.type === 'giveaway'" class="tr__btn tr__btn--primary" :disabled="busy" @click="takeShift(r)">
+                      {{ hourWarnFor[r.id] ? (warnConfirm(hourWarnFor[r.id]!) ? 'I understand — take it' : 'Take it anyway') : 'Claim' }}
+                    </button>
+                    <button v-else class="tr__btn tr__btn--primary" @click="startOffer(r)">Offer a shift</button>
+                  </template>
+                </template>
+              </td>
+            </tr>
 
-      <div v-for="r in boardShown" :key="r.id" class="tr__card" :class="{ 'tr__card--direct': !!myOfferOn(r) }">
-        <div class="tr__card-top">
-          <span class="tr__type" :data-type="r.type">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap wanted' }}</span>
-          <p class="tr__who">{{ posterName(r) }}</p>
-          <p class="tr__line">
-            <span class="tr__l1">{{ postingParts(r).date }}</span>
-            <span v-if="postingParts(r).detail" class="tr__l2">{{ postingParts(r).detail }}</span>
-          </p>
-          <span class="tr__age">posted {{ postedAge(r) }}</span>
-          <span v-if="isDirected(r)" class="tr__direct">Sent directly to {{ directedToName(r) }}</span>
-        </div>
-        <p v-if="r.comments" class="tr__comments">"{{ r.comments }}"</p>
+            <tr v-if="hourWarnFor[r.id] || offeringOn === r.id || reviewFor === r.id" class="tr__detailrow">
+              <td colspan="5">
+                <div v-if="hourWarnFor[r.id]" class="tr__warnbox">
+                  <p class="tr__warnhead">Before you take this:</p>
+                  <ul class="tr__warnlist">
+                    <li v-for="(w, i) in hourWarnFor[r.id]" :key="i">{{ w.message }}</li>
+                  </ul>
+                </div>
 
-        <!-- a directed request in the main list = poster (or editor) watching
-             it. Once the target has offered a shift back, fall through to the
-             offers branch below — the poster must SEE the offer to accept it
-             (day-1 bug: Ashtin never saw Kaleb's counter-offer). -->
-        <template v-if="isDirected(r) && offersFor(r).length === 0">
-          <p class="tr__muted tr__muted--sm">
-            Waiting on {{ directedToName(r) }} to
-            {{ r.type === 'giveaway' ? 'accept or decline' : 'offer a shift back or decline' }}.
-          </p>
-          <div v-if="r.requesterId === sched.myUserId.value" class="tr__cardfoot">
-            <button class="tr__btn" :disabled="busy" @click="cancelPosting(r)">Cancel request</button>
-          </div>
-        </template>
+                <div v-if="reviewFor === r.id" class="tr__offers">
+                  <div v-for="o in offersFor(r)" :key="o.id" class="tr__offer">
+                    <div class="tr__offer-main">
+                      <p class="tr__offer-who">{{ offerName(o) }}</p>
+                      <p class="tr__offer-line">{{ offerShiftLine(o) }}</p>
+                      <p v-if="o.note" class="tr__offer-note">"{{ o.note }}"</p>
+                    </div>
+                    <div v-if="r.requesterId === sched.myUserId.value" class="tr__offer-actions">
+                      <button class="tr__btn tr__btn--primary" :disabled="busy" @click="accept(r, o)">Accept</button>
+                      <button class="tr__btn" :disabled="busy" @click="decline(o)">Decline</button>
+                    </div>
+                  </div>
+                  <p v-if="offersFor(r).length === 0" class="tr__muted tr__muted--sm">No offers yet.</p>
+                </div>
 
-        <!-- poster's view: manage offers -->
-        <template v-else-if="r.requesterId === sched.myUserId.value || sched.canEdit.value">
-          <div v-if="offersFor(r).length === 0" class="tr__muted tr__muted--sm">No takers yet.</div>
-          <div v-for="o in offersFor(r)" :key="o.id" class="tr__offer">
-            <div class="tr__offer-main">
-              <p class="tr__offer-who">{{ offerName(o) }}</p>
-              <p class="tr__offer-line">{{ offerShiftLine(o) }}</p>
-              <p v-if="o.note" class="tr__offer-note">"{{ o.note }}"</p>
-            </div>
-            <div v-if="r.requesterId === sched.myUserId.value" class="tr__offer-actions">
-              <button class="tr__btn tr__btn--primary" :disabled="busy" @click="accept(r, o)">Accept</button>
-              <button class="tr__btn" :disabled="busy" @click="decline(o)">Decline</button>
-            </div>
-          </div>
-          <div v-if="r.requesterId === sched.myUserId.value" class="tr__cardfoot">
-            <button class="tr__btn" :disabled="busy" @click="cancelPosting(r)">Cancel posting</button>
-          </div>
-        </template>
-
-        <!-- everyone else: take or offer (directed cards take no outside offers) -->
-        <template v-if="!isDirected(r) && r.requesterId !== sched.myUserId.value">
-          <div v-if="hourWarnFor[r.id]" class="tr__warnbox">
-            <p class="tr__warnhead">Before you take this:</p>
-            <ul class="tr__warnlist">
-              <li v-for="(w, i) in hourWarnFor[r.id]" :key="i">{{ w.message }}</li>
-            </ul>
-          </div>
-          <div v-if="myOfferOn(r)" class="tr__cardfoot">
-            <span class="tr__mine">Your {{ r.type === 'giveaway' ? 'claim' : 'offer' }} is in.</span>
-            <button class="tr__btn" :disabled="busy" @click="withdraw(myOfferOn(r)!)">
-              {{ withdrawArm === myOfferOn(r)!.id ? 'Really withdraw?' : 'Withdraw' }}
-            </button>
-          </div>
-          <div v-else-if="offeringOn === r.id" class="tr__offerform">
-            <label class="tr__field">
-              <span class="tr__label">Offer one of your shifts</span>
-              <select v-model="offerShiftKey" class="tr__input">
-                <option v-if="myShifts.length === 0" value="" disabled>No upcoming shifts found</option>
-                <optgroup v-for="g in myShiftGroups" :key="g.label" :label="g.label">
-                  <option v-for="s in g.items" :key="shiftKey(s)" :value="shiftKey(s)">
-                    {{ shiftLabel(s) }}
-                  </option>
-                </optgroup>
-              </select>
-            </label>
-            <label class="tr__check">
-              <input v-model="offerPartial" type="checkbox" /> Part of that shift only
-            </label>
-            <div v-if="offerPartial" class="tr__times">
-              <label>From <TimeSelect24 v-model="offerFrom" class="tr__input tr__input--time" /></label>
-              <label>Until <TimeSelect24 v-model="offerUntil" class="tr__input tr__input--time" /></label>
-            </div>
-            <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
-            <p v-if="offerCrossesPeriod(r)" class="tr__ppwarn">
-              Heads up: that shift is in a different pay period than {{ posterName(r) }}'s —
-              the Chief prefers same-period swaps but can still approve it.
-            </p>
-            <div class="tr__offer-actions">
-              <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">
-                {{
-                  hourWarnFor[r.id]
-                    ? warnConfirm(hourWarnFor[r.id]!)
-                      ? 'I understand — send offer'
-                      : 'Send offer anyway'
-                    : 'Send offer'
-                }}
-              </button>
-              <button class="tr__btn" @click="offeringOn = null">Cancel</button>
-            </div>
-          </div>
-          <div v-else class="tr__cardfoot">
-            <button
-              v-if="r.type === 'giveaway'"
-              class="tr__btn tr__btn--primary"
-              :disabled="busy"
-              @click="takeShift(r)"
-            >
-              {{
-                hourWarnFor[r.id]
-                  ? warnConfirm(hourWarnFor[r.id]!)
-                    ? 'I understand — take this shift'
-                    : 'Take it anyway'
-                  : 'Take this shift'
-              }}
-            </button>
-            <button v-else class="tr__btn tr__btn--primary" @click="startOffer(r)">Offer a swap</button>
-          </div>
-        </template>
-      </div>
+                <div v-if="offeringOn === r.id" class="tr__offerform">
+                  <label class="tr__field">
+                    <span class="tr__label">{{ r.counterpartyId === sched.myUserId.value ? 'Offer one of your shifts back' : 'Offer one of your shifts' }}</span>
+                    <select v-model="offerShiftKey" class="tr__input">
+                      <option v-if="myShifts.length === 0" value="" disabled>No upcoming shifts found</option>
+                      <optgroup v-for="g in myShiftGroups" :key="g.label" :label="g.label">
+                        <option v-for="sh in g.items" :key="shiftKey(sh)" :value="shiftKey(sh)">
+                          {{ shiftLabel(sh) }}
+                        </option>
+                      </optgroup>
+                    </select>
+                  </label>
+                  <label class="tr__check">
+                    <input v-model="offerPartial" type="checkbox" /> Part of that shift only
+                  </label>
+                  <div v-if="offerPartial" class="tr__times">
+                    <label>From <TimeSelect24 v-model="offerFrom" class="tr__input tr__input--time" /></label>
+                    <label>Until <TimeSelect24 v-model="offerUntil" class="tr__input tr__input--time" /></label>
+                  </div>
+                  <input v-model="offerNote" type="text" class="tr__input" placeholder="Note (optional)" />
+                  <p v-if="offerCrossesPeriod(r)" class="tr__ppwarn">
+                    Heads up: that shift is in a different pay period than {{ posterName(r) }}'s —
+                    the Chief prefers same-period swaps but can still approve it.
+                  </p>
+                  <div class="tr__offer-actions">
+                    <button class="tr__btn tr__btn--primary" :disabled="busy" @click="submitOffer(r)">
+                      {{
+                        hourWarnFor[r.id]
+                          ? warnConfirm(hourWarnFor[r.id]!)
+                            ? 'I understand — send offer'
+                            : 'Send offer anyway'
+                          : 'Send offer'
+                      }}
+                    </button>
+                    <button class="tr__btn" @click="offeringOn = null">Cancel</button>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
     </section>
 
     <section v-if="awaitingApproval.length > 0" class="tr__section">
-      <h2 class="tr__h">Awaiting Chief approval</h2>
-      <div v-for="r in awaitingApproval" :key="r.id" class="tr__card tr__card--waiting">
-        <span class="tr__type" :data-type="r.type">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap' }}</span>
-        <p class="tr__line">
-          {{ posterName(r) }} → {{ r.counterpartyId ? (sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown') : '' }}
-          · {{ postingLine(r) }}
-          <template v-if="r.counterWorkDate"> ↔ {{ fmtDate(r.counterWorkDate) }}</template>
-        </p>
-        <span
-          v-for="(w, i) in reqWarnings(r)"
-          :key="i"
-          class="tr__chip tr__chip--warn"
-          :title="w.message"
-        >
-          {{ w.code === 'weekly' ? `${w.hours}h week` : w.code === 'ot' ? 'Overtime' : `${w.hours}h consecutive` }}
-        </span>
-        <span class="tr__chip">Pending approval</span>
-      </div>
-      <p v-if="sched.canEdit.value" class="tr__muted tr__muted--sm">
+      <h3 class="tr__sect">Awaiting Chief approval</h3>
+      <table class="tr__table">
+        <thead>
+          <tr><th>Type</th><th>Deal</th><th>Shift</th><th>Flags</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in awaitingApproval" :key="r.id" class="tr__row">
+            <td><span class="tr__typ">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap' }}</span></td>
+            <td class="tr__poster">
+              {{ posterName(r) }} ⇄ {{ r.counterpartyId ? (sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown') : '—' }}
+            </td>
+            <td>
+              <span class="tr__l1">{{ r.workDate ? fmtDate(r.workDate) : '' }}<template v-if="r.counterWorkDate"> ⇄ {{ fmtDate(r.counterWorkDate) }}</template></span>
+              <span v-if="postingParts(r).detail" class="tr__l2">{{ postingParts(r).detail }}</span>
+            </td>
+            <td>
+              <span v-for="(f, i) in awaitFlags(r)" :key="i" class="tr__flag">{{ f }}</span>
+              <span v-if="awaitFlags(r).length === 0" class="tr__l2">—</span>
+            </td>
+            <td><span class="tr__l1 tr__pending">Pending approval</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-if="sched.canEdit.value" class="tr__muted tr__muted--sm" style="margin-top: 6px">
         Approve or deny these on the Requests tab.
       </p>
     </section>
@@ -945,7 +917,102 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
   font-size: 0.78rem;
 }
 
-/* flat hairline rows — the card chrome dissolved (2026-09-24) */
+/* ── the board TABLE (approved mock) — real header row, roomier rows,
+   names carry the weight so nothing blends (2026-09-24) ── */
+.tr__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.tr__table th {
+  text-align: left;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 700;
+  padding: 4px 10px 6px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.tr__table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--color-line-soft);
+  font-size: 0.84rem;
+  vertical-align: top;
+}
+
+.tr__row:hover td {
+  background: var(--color-surface);
+}
+
+.tr__row--att td:first-child {
+  box-shadow: inset 2.5px 0 0 var(--color-accent-600);
+}
+
+.tr__detailrow > td {
+  background: var(--color-surface);
+  padding-top: 4px;
+}
+
+.tr__typ {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.tr__poster {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.tr__youtag {
+  font-weight: 400;
+  color: var(--color-muted);
+}
+
+.tr__st--you {
+  color: oklch(0.5 0.12 60);
+}
+
+.tr__cmt {
+  font-style: italic;
+}
+
+.tr__act {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tr__pending {
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+.tr__flag {
+  display: inline-block;
+  font-size: 0.66rem;
+  font-weight: 600;
+  border-radius: 5px;
+  padding: 1.5px 7px;
+  margin: 0 4px 3px 0;
+  background: var(--color-warning-50, oklch(0.97 0.03 86.8));
+  color: oklch(0.45 0.12 60);
+}
+
+.tr__sect {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-ink);
+  margin: 20px 0 6px;
+}
+
+/* legacy card shell (posting form container etc.) stays flat */
 .tr__card {
   border: 0;
   border-bottom: 1px solid var(--color-line-soft);
