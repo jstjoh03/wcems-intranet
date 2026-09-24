@@ -110,21 +110,9 @@ const VIEWS: { key: MyView; label: string }[] = [
 
 const monthAnchor = computed(() => dateIso.value.slice(0, 7))
 
-/* The phone month is a personal calendar (gold day markers only); the
-   other views — and desktop month — still list open seats too. */
-const isPhone = window.matchMedia('(max-width: 900px)').matches
-const showingLabel = computed(() => {
-  const opens = showOpen.value ? ' + open seats' : ''
-  if (!viewingSelf.value) {
-    const first = viewingName.value?.split(' ')[0] ?? 'Their'
-    return isPhone && view.value === 'month'
-      ? `${first}'s days are marked in gold`
-      : `Showing ${viewingName.value ?? 'them'}${opens}`
-  }
-  return isPhone && view.value === 'month'
-    ? 'Your days are marked in gold'
-    : `Showing you${opens}`
-})
+/* "Showing you" chatter retired (2026-09-24) — the Viewing picker in
+   the toolbar says whose calendar this is; the not-self hint line
+   below the toolbar covers the swap case. */
 
 const navLabel = computed(() => {
   if (view.value === 'month') {
@@ -300,23 +288,9 @@ function pendingLine(r: SchedRequest): string {
       </div>
     </section>
 
-    <div class="my__whorow">
-      <label v-if="canPickPerson" class="my__who">
-        <span class="my__wholabel">Schedule for</span>
-        <select v-model="viewUserId" class="my__whoselect" aria-label="Whose schedule to show">
-          <option value="">{{ myOptionLabel }}</option>
-          <option v-for="p in peopleOptions" :key="p.id" :value="p.id">{{ p.fullName }}</option>
-        </select>
-      </label>
-      <label class="my__openchk">
-        <input v-model="showOpen" type="checkbox" />
-        Show open seats
-      </label>
-      <span v-if="!viewingSelf" class="my__whohint">
-        Viewing {{ viewingName }}'s calendar — requests and settings below stay yours.
-      </span>
-    </div>
-
+    <!-- ONE toolbar (2026-09-24): views · nav · title on the left,
+         viewing picker · open seats · settings on the right — the
+         stacked rows read as thrown together. -->
     <div class="my__nav">
       <div class="my__views" role="tablist">
         <button
@@ -345,18 +319,31 @@ function pendingLine(r: SchedRequest): string {
         <h2 class="my__navlabel">{{ navLabel }}</h2>
       </template>
 
-      <span class="my__count">
-        {{ showingLabel }}
-        <template v-if="view === 'month' && monthShiftCount > 0">
-          · {{ monthShiftCount }} shift {{ monthShiftCount === 1 ? 'day' : 'days' }} this month
-        </template>
+      <span class="my__spacer" aria-hidden="true" />
+
+      <span v-if="view === 'month' && monthShiftCount > 0" class="my__count">
+        {{ monthShiftCount }} shift {{ monthShiftCount === 1 ? 'day' : 'days' }} this month
       </span>
 
-      <button class="my__navbtn my__setbtn" @click="openSettings">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></svg>
-        My settings
-      </button>
+      <label v-if="canPickPerson" class="my__who">
+        <span class="my__wholabel">Viewing</span>
+        <select v-model="viewUserId" class="my__whoselect" aria-label="Whose schedule to show">
+          <option value="">{{ myOptionLabel }}</option>
+          <option v-for="p in peopleOptions" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+        </select>
+      </label>
+
+      <label class="my__openchk">
+        <input v-model="showOpen" type="checkbox" />
+        Open seats
+      </label>
+
+      <button class="my__setlink" @click="openSettings">My settings</button>
     </div>
+
+    <p v-if="!viewingSelf" class="my__whohint">
+      Viewing {{ viewingName }}'s calendar — requests and settings stay yours.
+    </p>
 
     <div v-if="setOpen" class="my__overlay" @click.self="setOpen = false">
       <div class="my__modal" role="dialog" aria-label="My settings">
@@ -472,6 +459,8 @@ function pendingLine(r: SchedRequest): string {
   gap: 0.9rem;
   flex-wrap: wrap;
   margin-bottom: 0.9rem;
+  border-bottom: 1px solid var(--color-line-soft);
+  padding-bottom: 0.55rem;
 }
 
 /* underline tabs + text nav, matching the module (2026-09-24 — the
@@ -554,14 +543,35 @@ function pendingLine(r: SchedRequest): string {
   margin: 0;
 }
 
-.my__count {
-  margin-left: auto;
-  font-size: 0.78rem;
-  color: var(--color-muted);
+.my__spacer {
+  flex: 1;
 }
 
-.my__setbtn {
-  gap: 6px;
+.my__count {
+  font-size: 0.74rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.my__setlink {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  border: 0;
+  background: none;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+  padding: 2px;
+}
+
+.my__setlink:hover {
+  text-decoration-color: var(--color-accent-600);
 }
 
 /* ── My settings modal (module elevation recipe) ── */
@@ -600,24 +610,16 @@ function pendingLine(r: SchedRequest): string {
 
 /* ── "Schedule for" picker ── */
 
-.my__whorow {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.7rem;
-}
-
 .my__who {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
 }
 
 .my__wholabel {
-  font-size: 11px;
+  font-size: 0.62rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--color-muted);
   white-space: nowrap;
@@ -625,14 +627,14 @@ function pendingLine(r: SchedRequest): string {
 
 .my__whoselect {
   font: inherit;
-  font-size: 0.84rem;
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--color-ink);
   background: var(--color-surface);
   border: 1px solid var(--color-line);
-  border-radius: 8px;
-  padding: 0.32rem 0.5rem;
-  max-width: min(260px, 70vw);
+  border-radius: 7px;
+  padding: 0.26rem 0.45rem;
+  max-width: min(220px, 60vw);
 }
 
 .my__whoselect:focus-visible {
@@ -641,15 +643,17 @@ function pendingLine(r: SchedRequest): string {
 }
 
 .my__whohint {
-  font-size: 0.76rem;
-  color: var(--color-muted);
+  font-size: 0.74rem;
+  color: oklch(0.5 0.12 60);
+  font-weight: 600;
+  margin: -0.4rem 0 0.7rem;
 }
 
 .my__openchk {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   font-weight: 600;
   color: var(--color-ink-soft);
   cursor: pointer;
