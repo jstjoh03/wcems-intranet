@@ -64,8 +64,8 @@ async function removeNote(id: string) {
 <template>
   <div class="db">
     <div class="db__meta">
-      <span class="db__platoon" :data-platoon="model.platoon">
-        <span class="db__dot" />{{ model.platoon }} Shift on duty
+      <span class="db__platoon">
+        <b class="db__shl" :data-platoon="model.platoon">{{ model.platoon }}</b>&nbsp;Shift on duty
       </span>
       <span v-if="model.openCount > 0" class="db__opencount">
         {{ model.openCount }} open {{ model.openCount === 1 ? 'seat' : 'seats' }}
@@ -377,57 +377,30 @@ async function removeNote(id: string) {
   flex-wrap: wrap;
 }
 
+/* shift LETTER in shift color (2026-09-24) — chip chrome retired */
 .db__platoon {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
   font-size: 12px;
   font-weight: 600;
   color: var(--color-ink-soft);
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  padding: 3px 10px;
-  background: var(--color-surface);
 }
 
-.db__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
+.db__shl {
+  font-weight: 800;
+  font-size: 13px;
 }
 
-/* whole-chip platoon color — see MonthBoard note (Ng feedback) */
-.db__platoon[data-platoon='A'] {
-  color: #fff;
-  border-color: oklch(0.52 0.19 27);
-  background: oklch(0.52 0.19 27);
-  font-weight: 700;
+.db__shl[data-platoon='A'] {
+  color: oklch(0.52 0.19 27);
 }
 
-.db__platoon[data-platoon='A'] .db__dot {
-  background: oklch(1 0 0 / 0.9);
+.db__shl[data-platoon='B'] {
+  color: oklch(0.44 0.16 262);
 }
 
-.db__platoon[data-platoon='B'] {
-  color: #fff;
-  border-color: oklch(0.44 0.16 262);
-  background: oklch(0.44 0.16 262);
-  font-weight: 700;
-}
-
-.db__platoon[data-platoon='B'] .db__dot {
-  background: oklch(1 0 0 / 0.9);
-}
-
-.db__platoon[data-platoon='C'] {
-  color: #fff;
-  border-color: oklch(0.47 0.14 148);
-  background: oklch(0.47 0.14 148);
-  font-weight: 700;
-}
-
-.db__platoon[data-platoon='C'] .db__dot {
-  background: oklch(1 0 0 / 0.9);
+.db__shl[data-platoon='C'] {
+  color: oklch(0.47 0.14 148);
 }
 
 .db__opencount {

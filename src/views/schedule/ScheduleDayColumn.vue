@@ -61,7 +61,7 @@ function notesTitle(notes: { note: string }[]): string {
         <span class="dc__date">{{ header }}</span>
       </button>
       <span class="dc__platoon" :data-platoon="model.platoon">
-        <span class="dc__dot" />{{ model.platoon }}
+        {{ model.platoon }}
       </span>
       <button
         v-if="sched.canEdit.value"
@@ -380,57 +380,23 @@ function notesTitle(notes: { note: string }[]): string {
   white-space: nowrap;
 }
 
+/* shift LETTER in shift color (2026-09-24) — chip chrome retired */
 .dc__platoon {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--color-ink-soft);
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  padding: 1px 7px;
-  background: var(--color-surface);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
 
-.dc__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-}
-
-/* whole-chip platoon color — see MonthBoard note (Ng feedback) */
 .dc__platoon[data-platoon='A'] {
-  color: #fff;
-  border-color: oklch(0.52 0.19 27);
-  background: oklch(0.52 0.19 27);
-  font-weight: 700;
-}
-
-.dc__platoon[data-platoon='A'] .dc__dot {
-  background: oklch(1 0 0 / 0.9);
+  color: oklch(0.52 0.19 27);
 }
 
 .dc__platoon[data-platoon='B'] {
-  color: #fff;
-  border-color: oklch(0.44 0.16 262);
-  background: oklch(0.44 0.16 262);
-  font-weight: 700;
-}
-
-.dc__platoon[data-platoon='B'] .dc__dot {
-  background: oklch(1 0 0 / 0.9);
+  color: oklch(0.44 0.16 262);
 }
 
 .dc__platoon[data-platoon='C'] {
-  color: #fff;
-  border-color: oklch(0.47 0.14 148);
-  background: oklch(0.47 0.14 148);
-  font-weight: 700;
-}
-
-.dc__platoon[data-platoon='C'] .dc__dot {
-  background: oklch(1 0 0 / 0.9);
+  color: oklch(0.47 0.14 148);
 }
 
 .dc__unit {

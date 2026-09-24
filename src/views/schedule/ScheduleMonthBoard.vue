@@ -104,10 +104,12 @@ const weeks = computed<Cell[][]>(() => {
 
 <template>
   <div class="mb" :class="{ 'mb--mine': props.mine }">
+    <!-- Shift letters in shift colors — nothing to memorize, the color
+         is reinforcement, not the code (Justin, 2026-09-24). -->
     <div class="mb__legend">
-      <span class="mb__platoon" data-platoon="A"><span class="mb__dot" />A Shift</span>
-      <span class="mb__platoon" data-platoon="B"><span class="mb__dot" />B Shift</span>
-      <span class="mb__platoon" data-platoon="C"><span class="mb__dot" />C Shift</span>
+      <span class="mb__lg"><b class="mb__shl" data-platoon="A">A</b> Shift</span>
+      <span class="mb__lg"><b class="mb__shl" data-platoon="B">B</b> Shift</span>
+      <span class="mb__lg"><b class="mb__shl" data-platoon="C">C</b> Shift</span>
       <span class="mb__legend-note">48/96 rotation · 0600 changeover</span>
     </div>
 
@@ -123,21 +125,20 @@ const weeks = computed<Cell[][]>(() => {
         :class="{ 'mb__cell--out': !c.inMonth, 'mb__cell--today': c.isToday, 'mb__cell--me': props.mine && c.worksMe }"
       >
         <div class="mb__cellhead">
-          <button class="mb__cellbtn" @click="emit('open-day', c.iso)">
+          <!-- The day NUMBER is the editor's add target (the per-day "+"
+               cluttered every cell — Justin, 2026-09-24); everyone else
+               gets open-day. The rest of the header still opens the day. -->
+          <button
+            class="mb__daybtn"
+            :title="sched.canEdit.value ? 'Add to this day — event, note, student, seat' : 'Open this day'"
+            @click="sched.canEdit.value ? editor.openAdd(c.iso) : emit('open-day', c.iso)"
+          >
             <span class="mb__daynum" :class="{ 'mb__daynum--me': c.worksMe }" :title="c.worksMe ? 'You work this day' : undefined">{{ c.dayNum }}</span>
-            <span class="mb__platoon" :data-platoon="c.model.platoon">
-              <span class="mb__dot" /><span class="mb__platoonword">{{ c.model.platoon }} Shift</span>
-            </span>
+          </button>
+          <button class="mb__cellbtn" @click="emit('open-day', c.iso)">
+            <b class="mb__shl" :data-platoon="c.model.platoon">{{ c.model.platoon }}</b><span class="mb__platoonword">&nbsp;Shift</span>
           </button>
           <span v-if="c.model.openCount > 0" class="mb__open">{{ c.model.openCount }}<span class="mb__openword"> open</span></span>
-          <button
-            v-if="sched.canEdit.value"
-            class="mb__plus"
-            title="Add event, note, or student"
-            @click="editor.openAdd(c.iso)"
-          >
-            +
-          </button>
         </div>
 
         <div class="mb__roster">
@@ -380,17 +381,20 @@ const weeks = computed<Cell[][]>(() => {
 </template>
 
 <style scoped>
+/* Desktop grid goes hairline-joined (Sortren): no gaps, no per-cell
+   radius or fill — one calm surface. Phones keep their compact cells
+   (the mobile block below overrides all of this). */
 .mb__weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 0;
+  margin-bottom: 5px;
 }
 
 .mb__weekday {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--color-muted);
   text-align: center;
@@ -399,14 +403,21 @@ const weeks = computed<Cell[][]>(() => {
 .mb__week {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 0;
+  margin-bottom: 0;
   align-items: stretch;
+  border-left: 1px solid var(--color-line-soft);
+}
+
+.mb__weekdays + .mb__week {
+  border-top: 1px solid var(--color-line-soft);
 }
 
 .mb__cell {
-  border: 1px solid var(--color-line);
-  border-radius: 10px;
+  border: 0;
+  border-right: 1px solid var(--color-line-soft);
+  border-bottom: 1px solid var(--color-line-soft);
+  border-radius: 0;
   background: var(--color-surface);
   display: flex;
   flex-direction: column;
@@ -416,12 +427,11 @@ const weeks = computed<Cell[][]>(() => {
 
 .mb__cell--out {
   opacity: 0.45;
-  background: var(--color-surface-soft);
+  background: transparent;
 }
 
 .mb__cell--today {
-  border-color: var(--color-accent-600);
-  box-shadow: 0 0 0 2px var(--color-accent-600);
+  box-shadow: inset 0 0 0 2px var(--color-accent-600);
 }
 
 .mb__cellhead {
@@ -431,8 +441,8 @@ const weeks = computed<Cell[][]>(() => {
   flex-wrap: wrap;
   width: 100%;
   border-bottom: 1px solid var(--color-line-soft);
-  background: var(--color-surface-soft);
-  padding: 0.3rem 0.4rem;
+  background: transparent;
+  padding: 0.3rem 0.45rem;
 }
 
 .mb__cellbtn {
@@ -452,26 +462,26 @@ const weeks = computed<Cell[][]>(() => {
   color: var(--color-brand-600);
 }
 
-.mb__plus {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  flex: none;
-  border: 1px solid var(--color-line);
+/* the day number is a button now: editors get the add menu, everyone
+   else opens the day — warm hover says "I do something" */
+.mb__daybtn {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  padding: 1px 5px;
+  margin-left: -5px;
   border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-brand-600);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
   cursor: pointer;
-  padding: 0;
+  position: relative;
+  z-index: 1;
 }
 
-.mb__plus:hover {
-  border-color: var(--color-brand-300);
+.mb__daybtn:hover {
+  background: var(--color-warning-50, oklch(0.97 0.03 86.8));
+}
+
+.mb__daybtn:hover .mb__daynum {
+  color: var(--color-accent-700);
 }
 
 .mb__rowbtn {
@@ -557,60 +567,42 @@ const weeks = computed<Cell[][]>(() => {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--me-hl, oklch(0.94 0.13 102)), black 15%);
 }
 
-.mb__platoon {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-ink-soft);
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  padding: 1px 7px;
-  background: var(--color-surface);
-  white-space: nowrap;
-}
-
-.mb__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
+/* Shift LETTER in the shift color (2026-09-24, replaces the chip+dot:
+   a letter needs no legend and the color still reads at a glance). */
+.mb__shl {
+  font-weight: 800;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   flex: none;
 }
 
-/* Whole-chip platoon color (Ng, day-1 feedback: dots alone let B and C
-   blend — the tinted chip + colored text reads at a glance). */
-.mb__platoon[data-platoon='A'] {
-  color: #fff;
-  border-color: oklch(0.52 0.19 27);
-  background: oklch(0.52 0.19 27);
-  font-weight: 700;
+.mb__shl[data-platoon='A'] {
+  color: oklch(0.52 0.19 27);
 }
 
-.mb__platoon[data-platoon='A'] .mb__dot {
-  background: oklch(1 0 0 / 0.9);
+.mb__shl[data-platoon='B'] {
+  color: oklch(0.44 0.16 262);
 }
 
-.mb__platoon[data-platoon='B'] {
-  color: #fff;
-  border-color: oklch(0.44 0.16 262);
-  background: oklch(0.44 0.16 262);
-  font-weight: 700;
+.mb__shl[data-platoon='C'] {
+  color: oklch(0.47 0.14 148);
 }
 
-.mb__platoon[data-platoon='B'] .mb__dot {
-  background: oklch(1 0 0 / 0.9);
+.mb__lg {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
 }
 
-.mb__platoon[data-platoon='C'] {
-  color: #fff;
-  border-color: oklch(0.47 0.14 148);
-  background: oklch(0.47 0.14 148);
-  font-weight: 700;
-}
-
-.mb__platoon[data-platoon='C'] .mb__dot {
-  background: oklch(1 0 0 / 0.9);
+.mb__platoonword {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-muted);
+  white-space: nowrap;
 }
 
 .mb__open {
@@ -851,7 +843,6 @@ const weeks = computed<Cell[][]>(() => {
    Day view; rosters and editor tools live there. */
 @media (max-width: 900px) {
   .mb__roster,
-  .mb__plus,
   .mb__platoonword,
   .mb__openword {
     display: none;
@@ -897,31 +888,15 @@ const weeks = computed<Cell[][]>(() => {
     inset: 0;
   }
 
-  /* Day cells strip the chip chrome — but then the DOT must carry the
-     platoon color itself, full strength. (The desktop white-on-chip dot
-     over a transparent chip left pale ghosts nobody could tell apart —
-     Justin, 2026-09-24.) The legend keeps its solid chips. */
-  .mb__cellhead .mb__platoon {
-    border: 0;
-    padding: 0;
-    background: transparent;
+  /* Phones show the colored LETTER under the date — same rule as
+     desktop, a size up for the small cell (Justin, 2026-09-24). */
+  .mb__shl {
+    font-size: 13px;
   }
 
-  .mb__dot {
-    width: 10px;
-    height: 10px;
-  }
-
-  .mb__cellhead .mb__platoon[data-platoon='A'] .mb__dot {
-    background: oklch(0.52 0.19 27);
-  }
-
-  .mb__cellhead .mb__platoon[data-platoon='B'] .mb__dot {
-    background: oklch(0.44 0.16 262);
-  }
-
-  .mb__cellhead .mb__platoon[data-platoon='C'] .mb__dot {
-    background: oklch(0.47 0.14 148);
+  .mb__daybtn {
+    margin-left: 0;
+    padding: 1px 4px;
   }
 
   .mb__open {
@@ -934,8 +909,8 @@ const weeks = computed<Cell[][]>(() => {
   }
 
   /* My schedule on a phone: a personal calendar — only YOUR days are
-     marked (gold circle); no platoon dots or open pills as noise. */
-  .mb--mine .mb__platoon,
+     marked (gold circle); no shift letters or open pills as noise. */
+  .mb--mine .mb__cellbtn,
   .mb--mine .mb__open {
     display: none;
   }
