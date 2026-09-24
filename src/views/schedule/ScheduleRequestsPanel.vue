@@ -1566,4 +1566,81 @@ async function cancel(r: SchedRequest) {
     align-items: flex-start;
   }
 }
+
+/* Phone: the six-column queue stacks — each request reads as one block
+   (chevron pinned left, actions last) instead of scrolling sideways. */
+@media (max-width: 700px) {
+  .rq__filterrow {
+    flex-wrap: wrap;
+  }
+
+  .rq__search {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+
+  .rq__table thead {
+    display: none;
+  }
+
+  .rq__table,
+  .rq__table tbody,
+  .rq__table tr,
+  .rq__table td {
+    display: block;
+  }
+
+  .rq__row {
+    position: relative;
+    padding: 9px 0 11px 26px;
+    border-bottom: 1px solid var(--color-line-soft);
+  }
+
+  .rq__row td {
+    border-bottom: 0;
+    padding: 1px 0;
+  }
+
+  .rq__chevcell {
+    position: absolute;
+    left: 0;
+    top: 7px;
+    width: auto;
+    padding: 0;
+  }
+
+  .rq__agecell {
+    text-align: left;
+  }
+
+  .rq__agecell::before {
+    content: 'Waiting ';
+  }
+
+  .rq__actcell {
+    text-align: left;
+    padding-top: 7px;
+  }
+
+  /* the attention stripe moves from the first cell to the whole row */
+  .rq__row--att {
+    box-shadow: inset 2.5px 0 0 var(--color-danger-500);
+  }
+
+  .rq__row--att td:first-child {
+    box-shadow: none;
+  }
+
+  .rq__row--open {
+    border-bottom: 0;
+  }
+
+  .rq__detailrow td:first-child {
+    display: none;
+  }
+
+  .rq__detailrow td[colspan] {
+    padding: 2px 0 12px 26px;
+  }
+}
 </style>

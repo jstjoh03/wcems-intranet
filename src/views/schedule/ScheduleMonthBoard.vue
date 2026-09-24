@@ -897,15 +897,31 @@ const weeks = computed<Cell[][]>(() => {
     inset: 0;
   }
 
-  .mb__platoon {
+  /* Day cells strip the chip chrome — but then the DOT must carry the
+     platoon color itself, full strength. (The desktop white-on-chip dot
+     over a transparent chip left pale ghosts nobody could tell apart —
+     Justin, 2026-09-24.) The legend keeps its solid chips. */
+  .mb__cellhead .mb__platoon {
     border: 0;
     padding: 0;
     background: transparent;
   }
 
   .mb__dot {
-    width: 9px;
-    height: 9px;
+    width: 10px;
+    height: 10px;
+  }
+
+  .mb__cellhead .mb__platoon[data-platoon='A'] .mb__dot {
+    background: oklch(0.52 0.19 27);
+  }
+
+  .mb__cellhead .mb__platoon[data-platoon='B'] .mb__dot {
+    background: oklch(0.44 0.16 262);
+  }
+
+  .mb__cellhead .mb__platoon[data-platoon='C'] .mb__dot {
+    background: oklch(0.47 0.14 148);
   }
 
   .mb__open {

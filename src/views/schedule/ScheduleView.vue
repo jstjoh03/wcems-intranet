@@ -661,27 +661,6 @@ watch(dateIso, (v) => {
   max-width: 68ch;
 }
 
-/* Phone: one swipeable row instead of a three-row stack — content
-   starts a full nav-bar sooner. */
-@media (max-width: 700px) {
-  .sched__tabs {
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    max-width: 100%;
-  }
-
-  .sched__tabs::-webkit-scrollbar {
-    display: none;
-  }
-
-  .sched__tabs > * {
-    flex: none;
-  }
-}
-
 .sched__tabdiv {
   width: 1px;
   align-self: stretch;
@@ -747,6 +726,76 @@ watch(dateIso, (v) => {
   font-weight: 700;
   line-height: 1;
   vertical-align: 1px;
+}
+
+/* Phone (the rail is desktop-only): the navy pill bar read as a relic
+   next to the redesigned panels — same underline-tab language as the
+   panel tabs instead, one swipeable row (Justin, 2026-09-24). Kept
+   AFTER the desktop tab rules: equal specificity, source order wins. */
+@media (max-width: 900px) {
+  .sched__tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    max-width: 100%;
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    gap: 16px;
+    border-bottom: 1px solid var(--color-line);
+  }
+
+  .sched__tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sched__tabs > * {
+    flex: none;
+  }
+
+  .sched__tabdiv {
+    display: none;
+  }
+
+  .sched__tab {
+    padding: 7px 2px 9px;
+    border-radius: 0;
+    background: none;
+    color: var(--color-muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.12s ease;
+  }
+
+  .sched__tab:hover {
+    background: none;
+    color: var(--color-ink);
+  }
+
+  .sched__tab--on,
+  .sched__tab--on:hover {
+    background: none;
+    color: var(--color-ink);
+    box-shadow: none;
+    border-bottom-color: var(--color-accent-600);
+  }
+
+  .sched__tab--on::after {
+    display: none;
+  }
+
+  /* the masthead already says Operations · Scheduling on a phone */
+  .sched__crumb {
+    display: none;
+  }
+
+  .sched__pagehead {
+    margin-top: 8px;
+  }
 }
 
 .sched__nav {

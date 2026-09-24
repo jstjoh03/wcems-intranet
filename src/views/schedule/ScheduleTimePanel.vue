@@ -516,19 +516,24 @@ const uncodedEventHours = computed(() => {
 })
 
 /** Approved paid time off with no earning code — NOT exported at all
- *  (unpaid time off is expected to stay uncoded and isn't flagged). */
-const uncodedOffTypes = computed(() => {
+ *  (unpaid time off is expected to stay uncoded and isn't flagged).
+ *  Itemized per member per date: a bare "Time Off 48h" total sent
+ *  payroll hunting for who and when (Justin, 2026-09-24). */
+const uncodedOffRows = computed(() => {
   if (preset.value !== 'period') return []
-  const byType = new Map<string, number>()
-  for (const s of segs.value) {
-    if (s.kind !== 'timeoff') continue
-    const key = s.offType ?? 'other'
-    if (key === 'unpaid' || codes.value[key]) continue
-    byType.set(key, (byType.get(key) ?? 0) + s.hours)
-  }
-  return [...byType.entries()]
-    .map(([key, hours]) => ({ label: OFF_LABELS[key] ?? key, hours: round2(hours) }))
-    .sort((a, b) => a.label.localeCompare(b.label))
+  return segs.value
+    .filter((s) => {
+      if (s.kind !== 'timeoff') return false
+      const key = s.offType ?? 'other'
+      return key !== 'unpaid' && !codes.value[key]
+    })
+    .map((s) => ({
+      name: sched.personById.value.get(s.userId)?.fullName ?? 'Unknown',
+      dateIso: s.dateIso,
+      hours: round2(s.hours),
+      label: OFF_LABELS[s.offType ?? 'other'] ?? 'Time Off',
+    }))
+    .sort((a, b) => byLast(a.name, b.name) || a.dateIso.localeCompare(b.dateIso))
 })
 
 /** Paycom convention: a shift running to the 0600 changeover punches
@@ -628,9 +633,14 @@ const exportFlagCount = computed(
     noCode.value.length +
     uncodedHolidays.value.length +
     (uncodedEventHours.value > 0 ? 1 : 0) +
-    uncodedOffTypes.value.length +
+    uncodedOffRows.value.length +
     manualEntries.value.length,
 )
+/* Anything needing attention opens the detail on its own — the count
+   alone doesn't say who or what to fix. */
+watch(exportFlagCount, (n) => {
+  if (n > 0) showNotes.value = true
+})
 
 /** Paycom timecard import: no header, 17 columns. Every row is a
  *  punch: EE code, blank, MM/DD/YYYY, HH:MM (24h), ID/OD, and the
@@ -968,11 +978,16 @@ function downloadPaycom(onlySelected = false): void {
         {{ uncodedEventHours }} special-event hours this period — double time, but no
         Special event earning code is set in Setup, so they export as ordinary punches.
       </p>
-      <p v-if="uncodedOffTypes.length" class="tm__warn">
-        Approved time off with no earning code — NOT in the file:
-        {{ uncodedOffTypes.map((o) => `${o.label} ${o.hours}h`).join(' · ') }}. Add the codes
-        in Setup or enter these in Paycom manually.
-      </p>
+      <div v-if="uncodedOffRows.length" class="tm__warn">
+        <p class="tm__warnhead tm__warnhead--danger">
+          Approved paid time off NOT in the file — its category has no earning code. Set
+          the code in Setup → Payroll (exports automatically next download), or key these
+          into the Paycom timecard by hand:
+        </p>
+        <p v-for="(o, i) in uncodedOffRows" :key="i" class="tm__manual">
+          {{ o.name }} · {{ fmtDay(o.dateIso) }} · {{ o.hours }} hrs {{ o.label }}
+        </p>
+      </div>
       <div v-if="codedPairs.length" class="tm__warn tm__warn--ok">
         <p class="tm__warnhead">In the file as coded punches (real times + earning code):</p>
         <p v-for="(h, i) in codedPairs" :key="i" class="tm__manual">
@@ -1425,6 +1440,10 @@ function downloadPaycom(onlySelected = false): void {
   margin: 0 0 0.25rem;
 }
 
+.tm__warnhead--danger {
+  color: var(--color-danger-500);
+}
+
 .tm__manual {
   font-size: 0.82rem;
   margin: 0.1rem 0;
@@ -1519,6 +1538,23 @@ function downloadPaycom(onlySelected = false): void {
 @media (max-width: 700px) {
   .tm__actions {
     margin-left: 0;
+  }
+
+  /* one swipeable underline row — four tabs don't fit a phone */
+  .tm__tabs {
+    gap: 14px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .tm__tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tm__tab {
+    white-space: nowrap;
+    flex: none;
   }
 }
 </style>

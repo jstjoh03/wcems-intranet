@@ -5,6 +5,7 @@ import {
   vacationRate,
   serviceYears,
   todayCentralIso,
+  personSortKey,
   type LeaveBalance,
 } from '@/composables/useSchedule'
 
@@ -67,7 +68,8 @@ const table = computed<Row[]>(() => {
       sick: bals.sick ?? null,
     })
   }
-  return out.sort((a, b) => a.name.localeCompare(b.name))
+  // last-name order, same as every other payroll table
+  return out.sort((a, b) => personSortKey(a.name).localeCompare(personSortKey(b.name)))
 })
 
 /* ── manual adjustment ─────────────────────────────────────────────── */
