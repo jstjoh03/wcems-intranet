@@ -682,7 +682,6 @@ Deno.serve(async (req: Request) => {
       // Same-day / next-day requests are the ones crews were told to
       // call in — flag them loudly so the Chief sees them in time.
       const todayC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date())
-      const soonest = rows.map((r) => r.work_date).filter((x): x is string => !!x).sort()[0] ?? null
       const tomorrow = (() => {
         const dt = new Date(`${todayC}T12:00:00Z`)
         dt.setUTCDate(dt.getUTCDate() + 1)
@@ -692,7 +691,14 @@ Deno.serve(async (req: Request) => {
       // extra-hours logs) are not urgent — one texted Justin as URGENT
       // on day 1. And texts are reserved for the truly urgent: routine
       // approver notifications ride push + email only.
-      const sameDay = soonest !== null && soonest >= todayC && soonest <= tomorrow
+      // Extra-hours requests are NEVER urgent, whatever the date — the
+      // member is volunteering MORE coverage, and logging today's
+      // instructor hours kept texting URGENT (Justin, 2026-09-24).
+      // Urgency means a same-day hole: time off / pickups only.
+      const urgentTypes = rows.filter((r) => r.type !== 'extra_hours')
+      const soonestUrgent =
+        urgentTypes.map((r) => r.work_date).filter((x): x is string => !!x).sort()[0] ?? null
+      const sameDay = soonestUrgent !== null && soonestUrgent >= todayC && soonestUrgent <= tomorrow
       const d = await deliver(
         await editorIds(),
         'approvals',
