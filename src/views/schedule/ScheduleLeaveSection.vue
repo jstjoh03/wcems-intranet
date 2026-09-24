@@ -233,11 +233,7 @@ function fmtHire(d: string | null): string {
 
 <style scoped>
 .lv {
-  margin-top: 30px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-radius: 14px;
-  padding: 16px 18px 18px;
+  margin-top: 4px;
 }
 .lv__head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .lv__title { font-family: var(--font-display, inherit); font-size: 1.15rem; margin: 0; color: var(--color-brand-800); }

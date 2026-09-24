@@ -331,11 +331,54 @@ function periodPair(r: SchedRequest): string {
 
 /* A 26-deep queue shouldn't bury the page — show the first few, expand
    on demand. */
-const PENDING_PREVIEW = 4
-const showAllPending = ref(false)
-const visibleQueue = computed(() =>
-  showAllPending.value ? pendingQueue.value : pendingQueue.value.slice(0, PENDING_PREVIEW),
-)
+/* Workbench toolbar (redesign 2026-09-23): search, type filter with
+   counts, and sort — warnings float first by default. */
+const qFilter = ref('')
+const qType = ref<'all' | 'time_off' | 'pickup' | 'extra_hours' | 'swap'>('all')
+const qSort = ref<'attention' | 'oldest' | 'shift'>('attention')
+
+const typeCounts = computed(() => {
+  const c = { all: pendingQueue.value.length, time_off: 0, pickup: 0, extra_hours: 0, swap: 0 }
+  for (const r of pendingQueue.value) {
+    if (r.type === 'time_off') c.time_off++
+    else if (r.type === 'pickup') c.pickup++
+    else if (r.type === 'extra_hours') c.extra_hours++
+    else c.swap++
+  }
+  return c
+})
+
+function needsAttention(r: SchedRequest): boolean {
+  return cardChips(r).length > 0 || crossesPayPeriods(r)
+}
+
+const visibleQueue = computed(() => {
+  const q = qFilter.value.trim().toLowerCase()
+  const list = pendingQueue.value.filter((r) => {
+    if (qType.value === 'time_off' && r.type !== 'time_off') return false
+    if (qType.value === 'pickup' && r.type !== 'pickup') return false
+    if (qType.value === 'extra_hours' && r.type !== 'extra_hours') return false
+    if (qType.value === 'swap' && r.type !== 'trade' && r.type !== 'giveaway') return false
+    if (q && !requesterName(r).toLowerCase().includes(q)) return false
+    return true
+  })
+  const sorted = [...list]
+  if (qSort.value === 'attention') {
+    sorted.sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)) || a.createdAt.localeCompare(b.createdAt))
+  } else if (qSort.value === 'oldest') {
+    sorted.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  } else {
+    sorted.sort((a, b) => (a.workDate ?? '9999').localeCompare(b.workDate ?? '9999'))
+  }
+  return sorted
+})
+
+function waitingAge(r: SchedRequest): string {
+  const h = (Date.now() - Date.parse(r.createdAt)) / 3600e3
+  if (h < 1) return 'now'
+  if (h < 24) return `${Math.round(h)}h`
+  return `${Math.round(h / 24)}d`
+}
 
 // ── inline time edit on a pending card (editors) ─────────────────────
 
@@ -734,7 +777,21 @@ async function cancel(r: SchedRequest) {
       <h2 class="rq__h">Pending approval</h2>
       <p v-if="decideError" class="rq__error">{{ decideError }}</p>
       <p v-if="pendingQueue.length === 0" class="rq__muted">Nothing waiting.</p>
-      <div v-for="r in visibleQueue" :key="r.id" class="rq__card">
+      <div v-if="pendingQueue.length > 0" class="rq__toolbar">
+        <input v-model="qFilter" type="search" class="rq__search" placeholder="Search people…" aria-label="Search requests by person" />
+        <button class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'all' }" @click="qType = 'all'">All <i>{{ typeCounts.all }}</i></button>
+        <button v-if="typeCounts.time_off" class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'time_off' }" @click="qType = 'time_off'">Time off <i>{{ typeCounts.time_off }}</i></button>
+        <button v-if="typeCounts.pickup" class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'pickup' }" @click="qType = 'pickup'">Pickups <i>{{ typeCounts.pickup }}</i></button>
+        <button v-if="typeCounts.extra_hours" class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'extra_hours' }" @click="qType = 'extra_hours'">Extra <i>{{ typeCounts.extra_hours }}</i></button>
+        <button v-if="typeCounts.swap" class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'swap' }" @click="qType = 'swap'">Trades <i>{{ typeCounts.swap }}</i></button>
+        <select v-model="qSort" class="rq__sort" aria-label="Sort pending requests">
+          <option value="attention">Sort: needs attention</option>
+          <option value="oldest">Sort: oldest first</option>
+          <option value="shift">Sort: shift date</option>
+        </select>
+      </div>
+      <p v-if="pendingQueue.length > 0 && visibleQueue.length === 0" class="rq__muted">No pending requests match.</p>
+      <div v-for="r in visibleQueue" :key="r.id" class="rq__card" :class="{ 'rq__card--att': needsAttention(r) }">
         <div class="rq__card-main">
           <p class="rq__card-title">
             {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}<template v-if="r.counterpartyId">
@@ -780,6 +837,7 @@ async function cancel(r: SchedRequest) {
           </p>
         </div>
         <div class="rq__card-actions">
+          <span class="rq__age" :title="'Submitted ' + new Date(r.createdAt).toLocaleString()">{{ waitingAge(r) }}</span>
           <button
             class="rq__btn rq__btn--approve"
             :disabled="busyId === r.id"
@@ -811,13 +869,7 @@ async function cancel(r: SchedRequest) {
           </button>
         </div>
       </div>
-      <button
-        v-if="pendingQueue.length > PENDING_PREVIEW"
-        class="rq__btn rq__expander"
-        @click="showAllPending = !showAllPending"
-      >
-        {{ showAllPending ? 'Show fewer' : `Show all ${pendingQueue.length} pending` }}
-      </button>
+
 
       <template v-if="negotiating.length > 0">
         <h3 class="rq__subh">
@@ -916,7 +968,70 @@ async function cancel(r: SchedRequest) {
 
 <style scoped>
 .rq {
-  max-width: 720px;
+  max-width: 980px;
+}
+
+/* ── workbench toolbar ─────────────────────────────────────────────── */
+.rq__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+
+.rq__search {
+  flex: 0 1 220px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.65rem;
+}
+
+.rq__fchip {
+  border: 1px solid var(--color-line);
+  background: none;
+  color: var(--color-muted);
+  border-radius: 999px;
+  padding: 0.28rem 0.7rem;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.rq__fchip i {
+  font-style: normal;
+  opacity: 0.65;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rq__fchip--on {
+  background: var(--color-brand-700);
+  border-color: var(--color-brand-700);
+  color: #fff;
+}
+
+.rq__sort {
+  margin-left: auto;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 0.35rem 0.55rem;
+}
+
+.rq__age {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+  margin-right: 2px;
 }
 
 .rq__section {
@@ -1123,11 +1238,21 @@ async function cancel(r: SchedRequest) {
   align-items: center;
   justify-content: space-between;
   gap: 0.8rem;
-  border: 1px solid var(--color-line);
-  border-radius: 10px;
+  border: 0;
+  border-bottom: 1px solid var(--color-line-soft);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.55rem 0.35rem;
+  margin-bottom: 0;
+}
+
+.rq__card:hover {
   background: var(--color-surface);
-  padding: 0.6rem 0.85rem;
-  margin-bottom: 0.5rem;
+}
+
+.rq__card--att {
+  box-shadow: inset 2.5px 0 0 var(--color-danger-500);
+  padding-left: 0.6rem;
 }
 
 .rq__card-main {

@@ -265,18 +265,11 @@ function pendingLine(r: SchedRequest): string {
 
 <template>
   <div class="my">
-    <section v-if="vacBal || sickBal" class="my__leave">
-      <div class="my__leavebox">
-        <span class="my__leavelab">Vacation</span>
-        <b class="my__leaveval" :class="{ 'my__leaveval--neg': (vacBal?.balance ?? 0) < 0 }">{{ (vacBal?.balance ?? 0).toFixed(1) }}<i>hrs</i></b>
-        <span class="my__leavesub">+{{ myVacRate.toFixed(2) }}/pay period · next {{ nextAccrual }}</span>
-      </div>
-      <div class="my__leavebox">
-        <span class="my__leavelab">Sick</span>
-        <b class="my__leaveval" :class="{ 'my__leaveval--neg': (sickBal?.balance ?? 0) < 0 }">{{ (sickBal?.balance ?? 0).toFixed(1) }}<i>hrs</i></b>
-        <span class="my__leavesub">+{{ SICK_RATE }}/pay period</span>
-      </div>
-    </section>
+    <p v-if="vacBal || sickBal" class="my__balline">
+      <span class="my__bal"><span class="my__balk">Vacation</span><b :class="{ 'my__balneg': (vacBal?.balance ?? 0) < 0 }">{{ (vacBal?.balance ?? 0).toFixed(1) }}</b> hrs · +{{ myVacRate.toFixed(2) }}/period</span>
+      <span class="my__bal"><span class="my__balk">Sick</span><b :class="{ 'my__balneg': (sickBal?.balance ?? 0) < 0 }">{{ (sickBal?.balance ?? 0).toFixed(1) }}</b> hrs · +{{ SICK_RATE }}/period</span>
+      <span class="my__bal">next accrual {{ nextAccrual }}</span>
+    </p>
     <section v-if="myPending.length > 0" class="my__pending">
       <h3 class="my__h my__h--pend">Your pending requests</h3>
       <div v-for="r in myPending" :key="r.id" class="my__pendrow">
@@ -629,55 +622,38 @@ function pendingLine(r: SchedRequest): string {
 .my__openchk input {
   accent-color: var(--color-brand-600);
 }
-.my__leave {
+/* Balances read as one line of header metadata (redesign 2026-09-23) —
+   same register as the rotation note; the calendar is the page. */
+.my__balline {
   display: flex;
-  gap: 10px;
+  align-items: baseline;
+  gap: 6px 22px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
-}
-
-.my__leavebox {
-  flex: 1;
-  min-width: 150px;
-  max-width: 260px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
-  padding: 10px 14px 11px;
-}
-
-.my__leavelab {
-  display: block;
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 0.76rem;
   color: var(--color-muted);
+  margin: 0 0 10px;
 }
 
-.my__leaveval {
-  font-size: 1.5rem;
+.my__bal {
+  white-space: nowrap;
+}
+
+.my__balk {
+  font-size: 0.6rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
   font-weight: 700;
-  color: var(--color-brand-700);
+  margin-right: 5px;
+}
+
+.my__bal b {
+  font-size: 0.95rem;
+  color: var(--color-ink);
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
 
-.my__leaveval i {
-  font-style: normal;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--color-muted);
-  margin-left: 4px;
-}
-
-.my__leaveval--neg {
-  color: var(--color-danger-500);
-}
-
-.my__leavesub {
-  display: block;
-  font-size: 0.68rem;
-  color: var(--color-muted);
-  margin-top: 1px;
+.my__balneg {
+  color: var(--color-danger-500) !important;
 }
 </style>

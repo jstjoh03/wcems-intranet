@@ -82,6 +82,49 @@ const TABS = computed<{ key: Tab; label: string; group?: boolean }[]>(() => {
 
 const showsDateNav = computed(() => tab.value === 'month' || tab.value === 'day' || tab.value === 'week')
 
+/* Desktop rail (Sortren system, 2026-09-23): the same permission logic
+   as TABS, grouped BOARDS / REQUESTS / MANAGE. Phones keep the strip. */
+const RAIL = computed<{ h: string; items: { key: Tab; label: string }[] }[]>(() => {
+  const groups: { h: string; items: { key: Tab; label: string }[] }[] = [
+    {
+      h: 'Boards',
+      items: [
+        { key: 'month', label: 'Month' },
+        { key: 'day', label: 'Day' },
+        { key: 'week', label: 'Week' },
+        { key: 'period', label: 'Pay period' },
+        { key: 'mine', label: 'My schedule' },
+      ],
+    },
+  ]
+  const req: { key: Tab; label: string }[] = []
+  if (sched.canRequest.value) req.push({ key: 'requests', label: 'Requests' }, { key: 'trades', label: 'Trades' })
+  if (sched.canPageOut.value) req.push({ key: 'pages', label: 'Page-outs' })
+  if (req.length) groups.push({ h: 'Requests', items: req })
+  const man: { key: Tab; label: string }[] = []
+  if (sched.canEdit.value || sched.level.value === 'supervisor' || sched.isHr.value) man.push({ key: 'time', label: 'Time Reports' })
+  if (sched.canEdit.value) man.push({ key: 'members', label: 'Members' })
+  if (sched.canEdit.value || sched.isHr.value) man.push({ key: 'setup', label: 'Setup' })
+  if (man.length) groups.push({ h: 'Manage', items: man })
+  return groups
+})
+
+function badgeText(n: number): string {
+  return n > 20 ? '20+' : String(n)
+}
+
+/* Breadcrumb + serif title for the non-board screens (boards carry the
+   date navigator instead). */
+const PANEL_META: Partial<Record<Tab, { crumb: string; title: string; sub: string }>> = {
+  mine: { crumb: 'Operations · Scheduling', title: 'My schedule', sub: '' },
+  requests: { crumb: 'Operations · Scheduling', title: 'Requests', sub: '' },
+  trades: { crumb: 'Operations · Scheduling', title: 'Trades', sub: '' },
+  pages: { crumb: 'Operations · Scheduling', title: 'Page-outs', sub: '' },
+  time: { crumb: 'Operations · Scheduling · Manage', title: 'Time Reports', sub: '' },
+  members: { crumb: 'Operations · Scheduling · Manage', title: 'Members', sub: 'Scheduling access only — names, roles and HR fields live in Manage Employees.' },
+  setup: { crumb: 'Operations · Scheduling · Manage', title: 'Setup', sub: '' },
+}
+
 const monthAnchor = computed(() => dateIso.value.slice(0, 7)) // YYYY-MM
 
 const monthLabel = computed(() =>
@@ -308,12 +351,34 @@ watch(dateIso, (v) => {
             >
               {{ t.label
               }}<span v-if="badgeFor(t.key) > 0" class="sched__tab-badge">{{
-                badgeFor(t.key)
+                badgeText(badgeFor(t.key))
               }}</span>
             </button>
           </template>
         </div>
       </header>
+
+      <div class="sched__layout">
+        <nav class="sched__rail" aria-label="Scheduling sections">
+          <div class="sched__rail-brand">
+            <p class="sched__rail-t">Scheduling</p>
+            <p class="sched__rail-s">Waller County EMS</p>
+          </div>
+          <template v-for="g in RAIL" :key="g.h">
+            <p class="sched__rail-h">{{ g.h }}</p>
+            <button
+              v-for="it in g.items"
+              :key="it.key"
+              class="sched__rail-item"
+              :class="{ 'sched__rail-item--on': tab === it.key }"
+              @click="tab = it.key"
+            >
+              {{ it.label }}
+              <span v-if="badgeFor(it.key) > 0" class="sched__rail-badge">{{ badgeText(badgeFor(it.key)) }}</span>
+            </button>
+          </template>
+        </nav>
+        <div class="sched__body">
 
       <div v-if="showsDateNav" class="sched__nav">
         <div class="sched__nav-arrows">
@@ -351,6 +416,11 @@ watch(dateIso, (v) => {
         <p class="sched__boot-text">Loading the schedule…</p>
       </div>
       <template v-else>
+        <div v-if="PANEL_META[tab]" class="sched__pagehead">
+          <p class="sched__crumb">{{ PANEL_META[tab]!.crumb }}</p>
+          <h2 class="sched__pagetitle">{{ PANEL_META[tab]!.title }}</h2>
+          <p v-if="PANEL_META[tab]!.sub" class="sched__pagesub">{{ PANEL_META[tab]!.sub }}</p>
+        </div>
         <ScheduleMonthBoard v-if="tab === 'month'" :month="monthAnchor" @open-day="openDay" />
         <ScheduleDayBoard v-else-if="tab === 'day'" :date-iso="dateIso" />
         <ScheduleWeekBoard v-else-if="tab === 'week'" :date-iso="dateIso" @open-day="openDay" />
@@ -370,6 +440,9 @@ watch(dateIso, (v) => {
         <!-- shared modals: pickups, day editor, students, events, adds -->
         <ScheduleEditModals />
       </template>
+
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -450,16 +523,142 @@ watch(dateIso, (v) => {
 .sched__tabs {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--color-line);
-  border-bottom-color: oklch(0.82 0.02 260);
+  border: 1px solid var(--color-line-soft);
   border-radius: 12px;
-  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-surface-soft) 100%);
-  box-shadow:
-    0 1px 2px oklch(0.3 0.03 260 / 0.08),
-    0 3px 10px oklch(0.3 0.03 260 / 0.09);
+  background: var(--color-surface);
   padding: 4px;
   gap: 2px;
   flex-wrap: wrap;
+}
+
+/* ── desktop rail (Sortren system) ─────────────────────────────────── */
+.sched__layout {
+  display: flex;
+  align-items: flex-start;
+}
+
+.sched__rail {
+  display: none;
+}
+
+.sched__body {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (min-width: 901px) {
+  .sched__head {
+    display: none;
+  }
+
+  .sched__rail {
+    display: block;
+    width: 196px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 14px;
+    padding: 4px 0 20px;
+    border-right: 1px solid var(--color-line-soft);
+    margin-right: 26px;
+  }
+
+  .sched__body {
+    padding-top: 4px;
+  }
+}
+
+.sched__rail-brand {
+  padding: 0 14px 10px 2px;
+}
+
+.sched__rail-t {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  color: var(--color-brand-800);
+  margin: 0;
+}
+
+.sched__rail-s {
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-accent-700);
+  margin: 1px 0 0;
+}
+
+.sched__rail-h {
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-muted);
+  margin: 16px 0 3px 2px;
+}
+
+.sched__rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: 0.84rem;
+  color: var(--color-ink);
+  padding: 5px 10px 5px 8px;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+
+.sched__rail-item:hover {
+  background: var(--color-surface);
+}
+
+.sched__rail-item--on {
+  border-left-color: var(--color-accent-600);
+  background: var(--color-surface);
+  font-weight: 600;
+}
+
+.sched__rail-badge {
+  margin-left: auto;
+  font-size: 0.62rem;
+  font-weight: 700;
+  background: var(--color-danger-500);
+  color: #fff;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sched__pagehead {
+  margin: 2px 0 14px;
+}
+
+.sched__crumb {
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-accent-700);
+  margin: 0;
+}
+
+.sched__pagetitle {
+  font-family: var(--font-display);
+  font-size: 1.65rem;
+  font-weight: 400;
+  color: var(--color-brand-800);
+  margin: 2px 0 0;
+}
+
+.sched__pagesub {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  margin: 3px 0 0;
+  max-width: 68ch;
 }
 
 /* Phone: one swipeable row instead of a three-row stack — content

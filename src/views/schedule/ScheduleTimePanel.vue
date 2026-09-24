@@ -612,6 +612,22 @@ function centralPunch(ms: number): { date: string; time: string } {
   return { date, time }
 }
 
+/* Sub-tabs (redesign 2026-09-23): Hours report · Paycom export ·
+   Balances — one surface per job instead of one long scroll. */
+const ttab = ref<'hours' | 'export' | 'balances'>('hours')
+watch(ttab, (t) => {
+  if (t === 'export') preset.value = 'period'
+})
+const showNotes = ref(false)
+const exportFlagCount = computed(
+  () =>
+    noCode.value.length +
+    uncodedHolidays.value.length +
+    (uncodedEventHours.value > 0 ? 1 : 0) +
+    uncodedOffTypes.value.length +
+    manualEntries.value.length,
+)
+
 /** Paycom timecard import: no header, 17 columns. Every row is a
  *  punch: EE code, blank, MM/DD/YYYY, HH:MM (24h), ID/OD, and the
  *  earning code in column F for coded categories (blank = regular).
@@ -651,6 +667,15 @@ function openPunches() {
 
 <template>
   <div class="tm">
+    <div class="tm__tabs" role="tablist">
+      <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'hours' }" @click="ttab = 'hours'">Hours</button>
+      <template v-if="payrollAccess">
+        <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'export' }" @click="ttab = 'export'">Paycom export</button>
+        <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'balances' }" @click="ttab = 'balances'">Balances</button>
+      </template>
+    </div>
+
+    <div v-show="ttab === 'hours'">
     <div class="tm__controls">
       <label class="tm__field">
         <span class="tm__label">Range</span>
@@ -709,16 +734,8 @@ function openPunches() {
       <span class="tm__actions">
         <button v-if="payrollAccess" class="tm__btn" :disabled="busy || summary.length === 0" @click="csvReport">CSV</button>
         <button class="tm__btn" :disabled="busy || summary.length === 0" @click="printReport">Print</button>
-        <button v-if="preset === 'period'" class="tm__btn" @click="openPunches">
-          {{ payrollAccess ? 'Verify / select punches' : 'Review punches' }}
-        </button>
-        <button
-          v-if="payrollAccess && preset === 'period'"
-          class="tm__btn tm__btn--primary"
-          :disabled="busy || punches.length === 0"
-          @click="downloadPaycom()"
-        >
-          Download Paycom CSV
+        <button v-if="!payrollAccess && preset === 'period'" class="tm__btn" @click="openPunches">
+          Review punches
         </button>
       </span>
     </div>
@@ -795,12 +812,37 @@ function openPunches() {
       </table>
       <p v-if="!busy && summary.length === 0" class="tm__muted tm__empty">No scheduled hours in this range.</p>
     </div>
+    </div>
 
-    <!-- Paycom export: editors, pay-period ranges only -->
-    <section v-if="payrollAccess && preset === 'period'" class="tm__paycom">
-      <div class="tm__paycom-head">
-        <h2 class="tm__h">Paycom timecard import</h2>
+    <!-- Paycom export tab: one status line; the detail on demand -->
+    <section v-if="payrollAccess" v-show="ttab === 'export'" class="tm__paycom">
+      <div class="tm__exptop">
+        <label class="tm__field">
+          <span class="tm__label">Pay period</span>
+          <select v-model="periodStart" class="tm__input">
+            <option v-for="pp in periods" :key="pp.start" :value="pp.start">{{ pp.label }}</option>
+          </select>
+        </label>
+        <span class="tm__actions">
+          <button class="tm__btn" @click="openPunches">Verify / select punches</button>
+          <button
+            class="tm__btn tm__btn--primary"
+            :disabled="busy || punches.length === 0"
+            @click="downloadPaycom()"
+          >
+            Download Paycom CSV
+          </button>
+        </span>
       </div>
+
+      <p class="tm__statusline">
+        <span class="tm__dot" :class="{ 'tm__dot--warn': exportFlagCount > 0 }" aria-hidden="true" />
+        Export ready — {{ codedPairs.length }} coded punch {{ codedPairs.length === 1 ? 'pair' : 'pairs' }}
+        <b v-if="exportFlagCount > 0" class="tm__flagcount">· {{ exportFlagCount }} {{ exportFlagCount === 1 ? 'item needs' : 'items need' }} attention</b>
+        <button class="tm__notestoggle" @click="showNotes = !showNotes">{{ showNotes ? 'Hide details' : 'Details' }}</button>
+      </p>
+
+      <div v-show="showNotes" class="tm__notes">
       <p class="tm__muted">
         One IN (ID) and OUT (OD) punch per merged shift segment, per member with an EE code —
         the file imports straight into the Paycom timecard template (no header, 17 columns).
@@ -843,6 +885,7 @@ function openPunches() {
         <p v-for="(m, i) in manualEntries" :key="i" class="tm__manual">
           {{ m.name }} · {{ fmtDay(m.dateIso) }} · {{ m.hours }} hrs {{ m.timeType }} <span class="tm__muted">({{ m.source }})</span>
         </p>
+      </div>
       </div>
 
     </section>
@@ -956,13 +999,91 @@ function openPunches() {
       </div>
     </div>
 
-    <ScheduleLeaveSection v-if="payrollAccess" />
+    <div v-if="payrollAccess" v-show="ttab === 'balances'">
+      <ScheduleLeaveSection />
+    </div>
   </div>
 </template>
 
 <style scoped>
 .tm {
   max-width: 1100px;
+}
+
+.tm__tabs {
+  display: flex;
+  gap: 18px;
+  border-bottom: 1px solid var(--color-line);
+  margin: 0 0 14px;
+}
+
+.tm__tab {
+  border: 0;
+  background: none;
+  padding: 7px 2px 9px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+
+.tm__tab--on {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-accent-600);
+}
+
+.tm__exptop {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
+}
+
+.tm__exptop .tm__actions {
+  margin-left: auto;
+}
+
+.tm__statusline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  margin: 0.4rem 0 0.6rem;
+}
+
+.tm__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-success-500);
+  flex-shrink: 0;
+}
+
+.tm__dot--warn {
+  background: var(--color-danger-500);
+}
+
+.tm__flagcount {
+  color: var(--color-danger-500);
+}
+
+.tm__notestoggle {
+  border: 0;
+  background: none;
+  color: var(--color-accent-700);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tm__notes {
+  border-left: 2px solid var(--color-line-soft);
+  padding-left: 14px;
+  margin-bottom: 0.6rem;
 }
 
 .tm__controls {

@@ -253,13 +253,16 @@ function credSourceLine(p: SchedPerson): string {
           </div>
           <span v-if="hiddenIds.has(p.id)" class="mem__chip mem__chip--hidden">Hidden from scheduling</span>
           <span
-            class="mem__chip"
-            :class="{ 'mem__chip--none': effectiveLevel(p) === 'none' }"
+            class="mem__lvl"
+            :class="{ 'mem__lvl--none': effectiveLevel(p) === 'none', 'mem__lvl--el': !['member', 'none'].includes(effectiveLevel(p)) }"
           >{{ LEVEL_LABELS[effectiveLevel(p)] }}</span>
           <svg class="mem__chev" :class="{ 'mem__chev--open': openId === p.id }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
         </button>
 
         <div v-if="openId === p.id" class="mem__detail">
+          <p class="mem__extrow">
+            <RouterLink to="/admin/employees" class="mem__extlink">Employee record — name, role, shift, hire date ↗</RouterLink>
+          </p>
           <div class="mem__detail-grid">
             <section class="mem__block">
               <h3 class="mem__block-h">Information</h3>
@@ -440,6 +443,37 @@ function credSourceLine(p: SchedPerson): string {
   border-radius: 12px;
   background: var(--color-surface);
   overflow: hidden;
+}
+
+.mem__lvl {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.mem__lvl--el {
+  color: var(--color-ink);
+  font-weight: 650;
+}
+
+.mem__lvl--none {
+  color: var(--color-danger-500);
+  font-weight: 650;
+}
+
+.mem__extrow {
+  margin: 0 0 0.6rem;
+}
+
+.mem__extlink {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--color-accent-700);
+  text-decoration: none;
+}
+
+.mem__extlink:hover {
+  text-decoration: underline;
 }
 
 .mem__row {
