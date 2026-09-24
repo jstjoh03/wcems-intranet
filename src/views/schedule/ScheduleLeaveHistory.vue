@@ -4,22 +4,24 @@ import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   todayCentralIso,
+  addDaysIso,
   accruingBy,
   type LeaveBalance,
   type LeaveTaken,
 } from '@/composables/useSchedule'
 
 /**
- * Leave ledger for one member — both kinds, every transaction with a
- * running balance, newest first. Credits come from sched_leave_ledger
- * (opening / accruals / adjustments / write-offs); deductions are the
- * paid time-off entries on the schedule. Upcoming (future-dated) time
- * off is flagged: it already deducts from the working balance the
- * moment it's approved, but it hasn't been TAKEN yet.
+ * Leave ledger for one member — ONE merged stream (locked 2026-09-24):
+ * every credit and every time-off day, tagged VAC / SICK, newest first,
+ * each line carrying that kind's running balance. Upcoming (future-
+ * dated) time off is flagged: it already deducts from the working
+ * balance the moment it's approved, but it hasn't been TAKEN yet.
  *
- * Used two ways: expanded rows on the HR Balances table (summary off —
- * the numbers are table columns there) and the member-facing "View
- * details" modal on My schedule (summary on).
+ * The planner at the bottom answers "how much will I have on <date>?" —
+ * accruals through that date, minus only the time off before it.
+ *
+ * Used two ways: expanded rows on the HR Balances table (summary off)
+ * and the member-facing "View details" modal on My schedule.
  */
 
 const props = withDefaults(defineProps<{ userId: string; summary?: boolean }>(), {
@@ -57,6 +59,7 @@ const REASON_LABELS: Record<string, string> = {
 
 interface LedgerRow {
   dateIso: string
+  kind: 'vacation' | 'sick'
   label: string
   note: string | null
   delta: number
@@ -64,24 +67,21 @@ interface LedgerRow {
   future: boolean
 }
 
-interface KindBlock {
+interface KindSummary {
   kind: 'vacation' | 'sick'
   title: string
-  /** balance before upcoming approved time off — "what you have today" */
   current: number
-  /** approved paid time off that hasn't happened yet */
   upcoming: number
   lastUpcoming: string | null
-  /** once the upcoming days are taken, counting accruals through then */
   available: number
-  rows: LedgerRow[]
 }
 
 const today = todayCentralIso()
 
-const blocks = computed<KindBlock[]>(() => {
+const model = computed<{ summaries: KindSummary[]; rows: LedgerRow[] }>(() => {
   const p = sched.personById.value.get(props.userId)
-  const out: KindBlock[] = []
+  const summaries: KindSummary[] = []
+  const rows: LedgerRow[] = []
   for (const kind of ['vacation', 'sick'] as const) {
     const bal = bals.value.find((b) => b.kind === kind)?.balance ?? null
     const events: Omit<LedgerRow, 'after'>[] = []
@@ -89,6 +89,7 @@ const blocks = computed<KindBlock[]>(() => {
       if (c.kind !== kind) continue
       events.push({
         dateIso: c.effectiveOn,
+        kind,
         label: REASON_LABELS[c.reason] ?? c.reason,
         note: c.note,
         delta: c.hours,
@@ -100,6 +101,7 @@ const blocks = computed<KindBlock[]>(() => {
       const future = t.dateIso > today
       events.push({
         dateIso: t.dateIso,
+        kind,
         label: future ? 'Time off — upcoming' : 'Time off taken',
         note: null,
         delta: -t.hours,
@@ -107,42 +109,64 @@ const blocks = computed<KindBlock[]>(() => {
       })
     }
     if (events.length === 0 && bal === null) continue
-    // ledger order: date, credits before deductions on the same day
+    // per-kind running balance: date order, credits before deductions
     events.sort(
       (a, b) => a.dateIso.localeCompare(b.dateIso) || (a.delta > 0 ? 0 : 1) - (b.delta > 0 ? 0 : 1),
     )
     let run = 0
-    const rows: LedgerRow[] = events.map((e) => {
+    for (const e of events) {
       run = Math.round((run + e.delta) * 100) / 100
-      return { ...e, after: run }
-    })
-    rows.reverse() // newest first — the running balance reads downward into history
+      rows.push({ ...e, after: run })
+    }
     const upcoming =
       Math.round(mine.filter((t) => t.dateIso > today).reduce((k, t) => k + t.hours, 0) * 100) / 100
     const lastUpcoming = mine.reduce<string | null>(
       (m, t) => (t.dateIso > today && (!m || t.dateIso > m) ? t.dateIso : m),
       null,
     )
-    const current = Math.round(((bal ?? 0) + upcoming) * 100) / 100
-    const available = lastUpcoming
-      ? Math.round(
-          ((bal ?? 0) +
-            accruingBy(p?.hireDate, p?.employmentType === 'full_time', kind, lastUpcoming)) *
-            100,
-        ) / 100
-      : (bal ?? 0)
-    out.push({
+    summaries.push({
       kind,
       title: kind === 'vacation' ? 'Vacation' : 'Sick',
-      current,
+      current: Math.round(((bal ?? 0) + upcoming) * 100) / 100,
       upcoming,
       lastUpcoming,
-      available,
-      rows,
+      available: lastUpcoming
+        ? Math.round(
+            ((bal ?? 0) +
+              accruingBy(p?.hireDate, p?.employmentType === 'full_time', kind, lastUpcoming)) *
+              100,
+          ) / 100
+        : (bal ?? 0),
     })
   }
-  return out
+  // one merged stream, newest first (per-kind balances stay coherent
+  // because each row carries ITS kind's running number)
+  rows.sort((a, b) => b.dateIso.localeCompare(a.dateIso) || a.kind.localeCompare(b.kind))
+  return { summaries, rows }
 })
+
+/* ── planner: "how much will I have on <date>?" ────────────────────── */
+const planDate = ref(addDaysIso(todayCentralIso(), 60))
+
+/** Balance on a future date: credits to date + accruals through it,
+ *  counting only the approved time off that happens BEFORE it. */
+function availableOn(kind: 'vacation' | 'sick', dateIso: string): number | null {
+  const bal = bals.value.find((b) => b.kind === kind)?.balance
+  if (bal === undefined) return null
+  const p = sched.personById.value.get(props.userId)
+  const addBack = taken.value
+    .filter((t) => t.kind === kind && t.dateIso > dateIso)
+    .reduce((k, t) => k + t.hours, 0)
+  return (
+    Math.round(
+      (bal + addBack + accruingBy(p?.hireDate, p?.employmentType === 'full_time', kind, dateIso)) *
+        100,
+    ) / 100
+  )
+}
+
+const planVac = computed(() => availableOn('vacation', planDate.value))
+const planSick = computed(() => availableOn('sick', planDate.value))
 
 function fmtD(iso: string): string {
   return new Date(iso + 'T12:00:00').toLocaleDateString('en-US', {
@@ -161,48 +185,63 @@ function fmtDelta(n: number): string {
   <div class="lh">
     <ScheduleSpinner v-if="loading" label="Loading history…" />
     <template v-else>
-      <p v-if="blocks.length === 0" class="lh__muted">No leave activity on record.</p>
-      <div v-for="b in blocks" :key="b.kind" class="lh__kind">
-        <p class="lh__head">
-          <span class="lh__k">{{ b.title }}</span>
-          <template v-if="props.summary">
-            <span class="lh__stat">balance <b :class="{ lh__neg: b.current < 0 }">{{ b.current.toFixed(2) }}</b></span>
-            <template v-if="b.upcoming > 0">
-              <span class="lh__stat">upcoming <b>−{{ b.upcoming.toFixed(2) }}</b></span>
-              <span class="lh__stat">
-                available <b :class="{ lh__neg: b.available < 0 }">{{ b.available.toFixed(2) }}</b>
-                <span class="lh__muted"> after {{ fmtD(b.lastUpcoming!) }}</span>
-              </span>
-            </template>
+      <p v-if="model.summaries.length === 0" class="lh__muted">No leave activity on record.</p>
+
+      <div v-if="props.summary && model.summaries.length" class="lh__sums">
+        <p v-for="s in model.summaries" :key="s.kind" class="lh__head">
+          <span class="lh__klab" :class="s.kind === 'vacation' ? 'lh__klab--v' : 'lh__klab--s'">{{ s.kind === 'vacation' ? 'VAC' : 'SICK' }}</span>
+          <span class="lh__stat">balance <b :class="{ lh__neg: s.current < 0 }">{{ s.current.toFixed(2) }}</b></span>
+          <template v-if="s.upcoming > 0">
+            <span class="lh__stat">upcoming <b>−{{ s.upcoming.toFixed(2) }}</b></span>
+            <span class="lh__stat">
+              available <b :class="{ lh__neg: s.available < 0 }">{{ s.available.toFixed(2) }}</b>
+              <span class="lh__muted"> after {{ fmtD(s.lastUpcoming!) }}</span>
+            </span>
           </template>
         </p>
-        <table v-if="b.rows.length" class="lh__table">
-          <thead>
-            <tr><th>Date</th><th>Event</th><th class="lh__num">Hours</th><th class="lh__num">Balance</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="(r, i) in b.rows" :key="i" :class="{ 'lh__row--future': r.future }">
-              <td class="lh__date">{{ fmtD(r.dateIso) }}</td>
-              <td>{{ r.label }}<span v-if="r.note" class="lh__muted"> — {{ r.note }}</span></td>
-              <td class="lh__num" :class="r.delta < 0 ? 'lh__out' : 'lh__in'">{{ fmtDelta(r.delta) }}</td>
-              <td class="lh__num" :class="{ lh__neg: r.after < 0 }">{{ r.after.toFixed(2) }}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p v-else class="lh__muted">No activity yet.</p>
       </div>
-      <p v-if="props.summary && blocks.some((b) => b.upcoming > 0)" class="lh__note">
+
+      <table v-if="model.rows.length" class="lh__table">
+        <thead>
+          <tr><th>Date</th><th>Kind</th><th>Event</th><th class="lh__num">Hours</th><th class="lh__num">Balance</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(r, i) in model.rows" :key="i" :class="{ 'lh__row--future': r.future }">
+            <td class="lh__date">{{ fmtD(r.dateIso) }}</td>
+            <td><span class="lh__klab" :class="r.kind === 'vacation' ? 'lh__klab--v' : 'lh__klab--s'">{{ r.kind === 'vacation' ? 'VAC' : 'SICK' }}</span></td>
+            <td>{{ r.label }}<span v-if="r.note" class="lh__muted"> — {{ r.note }}</span></td>
+            <td class="lh__num" :class="r.delta < 0 ? 'lh__out' : 'lh__in'">{{ fmtDelta(r.delta) }}</td>
+            <td class="lh__num" :class="{ lh__neg: r.after < 0 }">{{ r.after.toFixed(2) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="lh__muted">No activity yet.</p>
+
+      <div v-if="model.summaries.length" class="lh__plan">
+        <span class="lh__planq">How much will I have on</span>
+        <input v-model="planDate" type="date" class="lh__planinput" :min="today" />
+        <span class="lh__planr">
+          →
+          <span class="lh__klab lh__klab--v">VAC</span>
+          <b :class="{ lh__neg: (planVac ?? 0) < 0 }">{{ planVac === null ? '—' : planVac.toFixed(1) }}</b>
+          <span class="lh__klab lh__klab--s" style="margin-left: 10px">SICK</span>
+          <b :class="{ lh__neg: (planSick ?? 0) < 0 }">{{ planSick === null ? '—' : planSick.toFixed(1) }}</b>
+        </span>
+        <span class="lh__muted lh__plannote">counts every accrual through that date, minus time off approved before it</span>
+      </div>
+
+      <p v-if="props.summary && model.rows.some((r) => r.future)" class="lh__note">
         Upcoming time off deducts from the working balance as soon as it's approved. The
-        Balance column shows where the balance lands after each line; accruals keep posting
-        every pay-period close.
+        Balance column shows where that kind's balance lands after each line; accruals keep
+        posting every pay-period close.
       </p>
     </template>
   </div>
 </template>
 
 <style scoped>
-.lh__kind {
-  margin: 4px 0 14px;
+.lh__sums {
+  margin: 2px 0 10px;
 }
 
 .lh__head {
@@ -213,12 +252,24 @@ function fmtDelta(n: number): string {
   margin: 0 0 4px;
 }
 
-.lh__k {
-  font-size: 0.64rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+.lh__klab {
+  display: inline-block;
+  font-size: 0.58rem;
   font-weight: 700;
-  color: var(--color-accent-700);
+  letter-spacing: 0.1em;
+  border-radius: 4px;
+  padding: 2px 6px;
+  vertical-align: 1px;
+}
+
+.lh__klab--v {
+  background: oklch(0.965 0.025 86.8);
+  color: oklch(0.45 0.11 86.8);
+}
+
+.lh__klab--s {
+  background: oklch(0.95 0.015 262);
+  color: oklch(0.42 0.1 262);
 }
 
 .lh__stat {
@@ -282,6 +333,10 @@ function fmtDelta(n: number): string {
   font-style: italic;
 }
 
+.lh__row--future .lh__klab {
+  font-style: normal;
+}
+
 .lh__neg {
   color: var(--color-danger-500);
   font-weight: 700;
@@ -299,5 +354,48 @@ function fmtDelta(n: number): string {
   color: var(--color-muted);
   margin: 6px 0 0;
   max-width: 62ch;
+}
+
+/* ── planner ── */
+.lh__plan {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border: 1px solid var(--color-line-soft);
+  border-radius: 9px;
+  background: var(--color-surface-soft, transparent);
+  padding: 8px 12px;
+  margin-top: 10px;
+  font-size: 0.78rem;
+}
+
+.lh__planq {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.lh__planinput {
+  font: inherit;
+  font-size: 0.76rem;
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  padding: 3px 7px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.lh__planr {
+  color: var(--color-ink);
+}
+
+.lh__planr b {
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+
+.lh__plannote {
+  flex-basis: 100%;
+  margin: 0;
 }
 </style>

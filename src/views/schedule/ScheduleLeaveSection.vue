@@ -288,14 +288,14 @@ function fmtHire(d: string | null): string {
         <thead>
           <tr class="lv__grp">
             <th colspan="4"></th>
-            <th colspan="3" class="lv__grph">Vacation</th>
-            <th colspan="3" class="lv__grph">Sick</th>
+            <th colspan="3" class="lv__gv">Vacation</th>
+            <th colspan="3" class="lv__gs">Sick</th>
             <th></th>
           </tr>
           <tr>
             <th>Employee</th><th>Hired</th><th class="lv__num">Yrs</th><th class="lv__num">Rate</th>
-            <th class="lv__num lv__grpstart">Balance</th><th class="lv__num">Upcoming</th><th class="lv__num">Available</th>
-            <th class="lv__num lv__grpstart">Balance</th><th class="lv__num">Upcoming</th><th class="lv__num">Available</th>
+            <th class="lv__num lv__tv">Balance</th><th class="lv__num lv__tv">Upcoming</th><th class="lv__num lv__tv">Available</th>
+            <th class="lv__num lv__ts">Balance</th><th class="lv__num lv__ts">Upcoming</th><th class="lv__num lv__ts">Available</th>
             <th></th>
           </tr>
         </thead>
@@ -309,12 +309,12 @@ function fmtHire(d: string | null): string {
               <td>{{ fmtHire(r.hireDate) }}</td>
               <td class="lv__num">{{ r.years }}</td>
               <td class="lv__num">{{ r.rate.toFixed(2) }}</td>
-              <td class="lv__num lv__grpstart" :class="{ 'lv__neg': (r.vacation.balance ?? 0) < 0 }">{{ r.vacation.balance?.toFixed(2) ?? '—' }}</td>
-              <td class="lv__num lv__up">{{ r.vacation.upcoming ? '−' + r.vacation.upcoming.toFixed(2) : '—' }}</td>
-              <td class="lv__num lv__avail" :class="{ 'lv__neg': (r.vacation.available ?? 0) < 0 }">{{ r.vacation.available?.toFixed(2) ?? '—' }}</td>
-              <td class="lv__num lv__grpstart" :class="{ 'lv__neg': (r.sick.balance ?? 0) < 0 }">{{ r.sick.balance?.toFixed(2) ?? '—' }}</td>
-              <td class="lv__num lv__up">{{ r.sick.upcoming ? '−' + r.sick.upcoming.toFixed(2) : '—' }}</td>
-              <td class="lv__num lv__avail" :class="{ 'lv__neg': (r.sick.available ?? 0) < 0 }">{{ r.sick.available?.toFixed(2) ?? '—' }}</td>
+              <td class="lv__num lv__tv" :class="{ 'lv__neg': (r.vacation.balance ?? 0) < 0 }">{{ r.vacation.balance?.toFixed(2) ?? '—' }}</td>
+              <td class="lv__num lv__tv lv__up">{{ r.vacation.upcoming ? '−' + r.vacation.upcoming.toFixed(2) : '—' }}</td>
+              <td class="lv__num lv__tv lv__avail" :class="{ 'lv__neg': (r.vacation.available ?? 0) < 0 }">{{ r.vacation.available?.toFixed(2) ?? '—' }}</td>
+              <td class="lv__num lv__ts" :class="{ 'lv__neg': (r.sick.balance ?? 0) < 0 }">{{ r.sick.balance?.toFixed(2) ?? '—' }}</td>
+              <td class="lv__num lv__ts lv__up">{{ r.sick.upcoming ? '−' + r.sick.upcoming.toFixed(2) : '—' }}</td>
+              <td class="lv__num lv__ts lv__avail" :class="{ 'lv__neg': (r.sick.available ?? 0) < 0 }">{{ r.sick.available?.toFixed(2) ?? '—' }}</td>
               <td><button type="button" class="lv__adjbtn" @click.stop="openAdjust(r.userId)">Adjust</button></td>
             </tr>
             <tr v-if="adjustFor === r.userId">
@@ -372,9 +372,21 @@ function fmtHire(d: string | null): string {
 .lv__num { text-align: right; font-variant-numeric: tabular-nums; }
 .lv__table th.lv__num { text-align: right; }
 .lv__neg { color: var(--color-danger-500); font-weight: 700; }
-.lv__grp th { border-bottom: 0; padding-bottom: 0; }
-.lv__grph { text-align: center !important; color: var(--color-accent-700) !important; letter-spacing: 0.12em !important; }
-.lv__grpstart { border-left: 1px solid var(--color-line-soft); }
+/* Kind zoning (Justin, 2026-09-24): warm band = vacation, cool band =
+   sick, heavy underlined group headers — the small gold text got lost. */
+.lv__grp th { border-bottom: 0; padding-bottom: 2px; }
+.lv__gv, .lv__gs {
+  text-align: center !important;
+  color: var(--color-ink) !important;
+  font-size: 0.66rem !important;
+  letter-spacing: 0.14em !important;
+}
+.lv__gv { border-bottom: 2px solid var(--color-accent-600) !important; }
+.lv__gs { border-bottom: 2px solid oklch(0.55 0.1 262) !important; }
+.lv__tv { background: oklch(0.975 0.018 86.8); }
+.lv__ts { background: oklch(0.968 0.008 262); }
+tr:hover .lv__tv { background: oklch(0.955 0.025 86.8); }
+tr:hover .lv__ts { background: oklch(0.945 0.012 262); }
 .lv__row { cursor: pointer; }
 .lv__row:hover .lv__name { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
 .lv__name { font-weight: 600; color: var(--color-ink); }
