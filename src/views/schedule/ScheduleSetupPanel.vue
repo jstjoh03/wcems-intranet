@@ -827,7 +827,7 @@ async function saveWarnCfg() {
                 <tr>
                   <th class="setup__th-seat">Seat</th>
                   <th v-for="p in PLATOONS" :key="p" class="setup__th" :data-platoon="p">
-                    <span class="setup__shiftchip" :data-platoon="p"><span class="setup__shiftdot" />{{ p }} Shift</span>
+                    <b class="setup__shl" :data-platoon="p">{{ p }}</b><span class="setup__thword"> Shift</span>
                   </th>
                 </tr>
               </thead>
@@ -836,7 +836,7 @@ async function saveWarnCfg() {
                 <tr class="setup__unitband">
                   <td colspan="4">
                     <span class="setup__unitband-code">{{ g.unit.code }}</span>
-                    <span class="setup__unitband-label">{{ g.unit.label }}</span>
+                    <hr class="setup__fgold" />
                   </td>
                 </tr>
                 <tr v-for="seat in g.seats" :key="seat.id">
@@ -1357,19 +1357,17 @@ async function saveWarnCfg() {
 
 /* elevation recipe shared with the nav bar and modals */
 .setup__btn {
-  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft)) !important;
-  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.08);
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  background: var(--color-surface) !important;
+  transition: border-color 0.12s ease;
 }
 
 .setup__btn:hover:not(:disabled) {
-  border-color: var(--color-brand-300);
-  box-shadow: 0 2px 6px oklch(0.3 0.03 260 / 0.14);
+  border-color: var(--color-ink);
 }
 
 .setup__btn--primary,
 .setup__btn--primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800)) !important;
+  background: var(--color-brand-800) !important;
   border-color: var(--color-brand-800) !important;
   color: white !important;
   box-shadow:
@@ -1626,13 +1624,15 @@ async function saveWarnCfg() {
   }
 }
 
+/* Flat sections on the canvas (Sortren) — the cards dissolved; the ink
+   headers + feathered unit rules do the separating now. */
 .setup__card {
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
-  background: var(--color-surface);
-  padding: 0.8rem 0.95rem;
-  box-shadow: var(--shadow-sm);
-  margin-bottom: 1rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.2rem 0 0.5rem;
+  box-shadow: none;
+  margin-bottom: 1.1rem;
 }
 
 .setup__card-head {
@@ -1643,12 +1643,14 @@ async function saveWarnCfg() {
   margin-bottom: 0.5rem;
 }
 
+/* Ink, not decoration — admins read these as controls (Justin,
+   2026-09-24: the gold/grey eyebrows were too light here). */
 .setup__h {
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--color-muted);
+  color: var(--color-ink);
   margin: 0;
 }
 
@@ -1676,81 +1678,65 @@ async function saveWarnCfg() {
   color: var(--color-muted);
   padding: 0.35rem 0.5rem;
   border-bottom: 1px solid var(--color-line);
-  background: var(--color-surface);
+  /* opaque for the sticky header, matched to the flat canvas */
+  background: var(--color-canvas, var(--color-surface));
 }
 
-/* Shift headers wear the full platoon colors — they were quiet grey
-   text before and got lost while scrolling the table. */
-.setup__shiftchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.18rem 0.6rem;
-  border-radius: 999px;
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+/* Shift LETTERS in shift colors (2026-09-24) — chips retired; the
+   colored left rule on every cell carries the column the rest of the
+   way down. */
+.setup__shl {
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.02em;
 }
 
-.setup__shiftdot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
+.setup__shl[data-platoon='A'] {
+  color: oklch(0.52 0.19 27);
 }
 
-.setup__th[data-platoon='A'] {
-  border-top: 3px solid oklch(0.55 0.2 27);
+.setup__shl[data-platoon='B'] {
+  color: oklch(0.44 0.16 262);
 }
 
-.setup__th[data-platoon='B'] {
-  border-top: 3px solid oklch(0.5 0.16 255);
+.setup__shl[data-platoon='C'] {
+  color: oklch(0.47 0.14 148);
 }
 
-.setup__th[data-platoon='C'] {
-  border-top: 3px solid oklch(0.55 0.15 150);
+.setup__thword {
+  font-size: 10px;
+  color: var(--color-muted);
 }
 
-.setup__th[data-platoon='A'] .setup__shiftchip {
-  background: oklch(0.52 0.19 27);
-  color: #fff;
+/* feathered gold unit divider — the ESD 200 co-brand rule */
+.setup__fgold {
+  height: 1px;
+  border: 0;
+  margin: 3px 0 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--color-accent-600) 75%, transparent),
+    color-mix(in oklab, var(--color-accent-600) 45%, transparent) 55%,
+    transparent
+  );
 }
 
-.setup__th[data-platoon='B'] .setup__shiftchip {
-  background: oklch(0.44 0.16 262);
-  color: #fff;
-}
-
-.setup__th[data-platoon='C'] .setup__shiftchip {
-  background: oklch(0.47 0.14 148);
-  color: #fff;
-}
 
 /* Every occupant cell carries its shift color — a faint column wash
    plus a solid left edge on the button — so you always know which
    shift you are editing, however far down the table you are. */
+/* No column wash (spreadsheet-ish) — the CELL's left rule carries the
+   shift color instead, hairline verticals between columns. */
 .setup__cell[data-platoon='A'] {
-  background: oklch(0.55 0.2 27 / 0.04);
+  border-left: 2px solid oklch(0.52 0.19 27 / 0.45);
 }
 
 .setup__cell[data-platoon='B'] {
-  background: oklch(0.5 0.16 262 / 0.04);
+  border-left: 2px solid oklch(0.44 0.16 262 / 0.45);
 }
 
 .setup__cell[data-platoon='C'] {
-  background: oklch(0.55 0.15 148 / 0.045);
-}
-
-.setup__cell[data-platoon='A'] .setup__cellbtn {
-  border-left: 3px solid oklch(0.6 0.19 27);
-}
-
-.setup__cell[data-platoon='B'] .setup__cellbtn {
-  border-left: 3px solid oklch(0.55 0.15 262);
-}
-
-.setup__cell[data-platoon='C'] .setup__cellbtn {
-  border-left: 3px solid oklch(0.58 0.14 148);
+  border-left: 2px solid oklch(0.47 0.14 148 / 0.45);
 }
 
 /* Desktop: the header row (Seat / A / B / C chips) pins to the top of
@@ -1778,23 +1764,21 @@ async function saveWarnCfg() {
 
 /* Unit band rows: the same navy identity as the boards, so a truck is
    findable at a glance while shuffling assignments. */
+/* Unit divider: the code on its own line over a feathered gold rule
+   (ESD 200 co-brand accent) — the navy band read as heavy chrome. */
 tr.setup__unitband td {
-  background: linear-gradient(180deg, var(--color-brand-700), var(--color-brand-800)) !important;
-  color: white;
-  padding: 0.32rem 0.6rem;
+  background: transparent !important;
+  padding: 0.9rem 0.1rem 0.15rem;
   border-top: 0;
+  border-bottom: 0 !important;
+  border-left: 0 !important;
 }
 
 .setup__unitband-code {
   font-weight: 700;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   letter-spacing: 0.03em;
-}
-
-.setup__unitband-label {
-  font-size: 0.72rem;
-  color: oklch(0.85 0.04 86.8);
-  margin-left: 0.5rem;
+  color: var(--color-ink);
 }
 
 .setup__seatcell {
@@ -1815,35 +1799,33 @@ tr.setup__unitband td {
 
 /* Occupant cells LOOK like buttons now — border, surface, hover lift,
    and a pencil glyph (names alone didn't read as clickable). */
+/* Flat cells (the button-look read as spreadsheet chrome): the name
+   carries a dotted underline for the click affordance; hover warms it
+   and surfaces the pencil. Open seats stay red. */
 .setup__cellbtn {
   position: relative;
-  border: 1px solid var(--color-line);
-  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft));
-  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.07);
+  border: 0;
+  background: transparent;
   font: inherit;
   color: var(--color-ink);
-  padding: 0.3rem 1.6rem 0.3rem 0.5rem;
-  border-radius: 8px;
+  padding: 0.3rem 1.6rem 0.3rem 0.2rem;
   cursor: pointer;
   text-align: left;
   display: block;
   width: 100%;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
-}
-
-.setup__cellbtn:hover {
-  border-color: var(--color-brand-300);
-  box-shadow: 0 2px 6px oklch(0.3 0.03 260 / 0.14);
-}
-
-.setup__cellbtn--open {
-  border-style: dashed;
-  border-color: oklch(0.82 0.08 27);
-  background: oklch(0.995 0.004 27);
 }
 
 .setup__cellname {
   font-weight: 500;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+}
+
+.setup__cellbtn:hover .setup__cellname {
+  text-decoration-color: var(--color-accent-600);
+  color: var(--color-accent-700);
 }
 
 .setup__editglyph {
@@ -1853,7 +1835,7 @@ tr.setup__unitband td {
   width: 11px;
   height: 11px;
   color: var(--color-muted);
-  opacity: 0.7;
+  opacity: 0;
 }
 
 .setup__cellbtn:hover .setup__editglyph {
