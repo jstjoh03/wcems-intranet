@@ -787,6 +787,12 @@ function deliveryLine(p: PageLogRow): string {
   align-items: start;
 }
 
+/* grid items may not exceed the viewport — the roster table scrolls
+   inside its own box instead of blowing the card out (phones) */
+.pg__cols > * {
+  min-width: 0;
+}
+
 @media (max-width: 900px) {
   .pg__cols {
     grid-template-columns: 1fr;

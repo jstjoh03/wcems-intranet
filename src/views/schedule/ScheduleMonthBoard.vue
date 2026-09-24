@@ -468,7 +468,9 @@ const weeks = computed<Cell[][]>(() => {
 }
 
 .mb__cell--out > * {
-  display: none;
+  /* !important: the children's own display rules come later in the
+     sheet and would resurrect them */
+  display: none !important;
 }
 
 .mb__cell--today {
