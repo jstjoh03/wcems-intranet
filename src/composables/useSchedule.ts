@@ -2352,22 +2352,29 @@ export function accruingBy(
  *  opening balance has to cover. */
 export const LEAVE_PAID_THROUGH = '2026-09-12'
 
+/** Paydays land 6 days after the period closes (Aug 2–15 paid Aug 21).
+ *  Paycom awards an accrual on every payday on/after the hire date, so
+ *  a hire at the start of a period banks the period that closed just
+ *  before them (Justin, 2026-09-24: the 8/17 class was awarded the
+ *  8/21 payday's accrual without receiving a check). */
+export const PAYDAY_LAG_DAYS = 6
+
 /** What a new full-timer should already have banked when they were
  *  never in the Paycom opening import: one accrual per pay period
- *  closing on or after their hire date, through LEAVE_PAID_THROUGH —
- *  the same period grid and hire-period rule as sched_leave_catchup(),
- *  which owns every period after that. */
+ *  whose PAYDAY falls on or after their hire date, through
+ *  LEAVE_PAID_THROUGH — the same period grid and payday rule as
+ *  sched_leave_catchup(), which owns every period after that. */
 export function openingAccrual(
   hireDateIso: string | null | undefined,
   fullTime: boolean,
   overrides?: { vac?: number | null; sick?: number | null },
 ): { vac: number; sick: number; periods: number } {
-  if (!hireDateIso || !fullTime || hireDateIso > LEAVE_PAID_THROUGH)
-    return { vac: 0, sick: 0, periods: 0 }
+  if (!hireDateIso || !fullTime) return { vac: 0, sick: 0, periods: 0 }
+  const cutoff = addDaysIso(hireDateIso, -PAYDAY_LAG_DAYS)
   let vac = 0
   let periods = 0
   let end = LEAVE_PAID_THROUGH
-  while (end >= hireDateIso) {
+  while (end >= cutoff) {
     vac += overrides?.vac ?? vacationRate(hireDateIso, end)
     periods++
     end = addDaysIso(end, -PAY_DAYS)
