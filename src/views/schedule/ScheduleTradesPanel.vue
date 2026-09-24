@@ -228,6 +228,43 @@ const boardRest = computed(() =>
   ),
 )
 
+/* Lanes + a status filter (redesign 2026-09-24): the one long scroll
+   split into Open board / Sent to you / Your postings. */
+const lane = ref<'board' | 'inbox' | 'mine'>('board')
+const statusFilter = ref<'all' | 'open' | 'offers' | 'waiting_target'>('all')
+
+const myPostings = computed(() =>
+  boardRest.value.filter((r) => r.requesterId === sched.myUserId.value),
+)
+const openBoard = computed(() =>
+  boardRest.value.filter((r) => r.requesterId !== sched.myUserId.value),
+)
+
+function postingStatusKey(r: SchedRequest): string {
+  if (isDirected(r) && offersFor(r).length === 0) return 'waiting_target'
+  return offersFor(r).length > 0 ? 'offers' : 'open'
+}
+
+const boardShown = computed(() => {
+  const base = lane.value === 'mine' ? myPostings.value : openBoard.value
+  if (lane.value !== 'board' || statusFilter.value === 'all') return base
+  return base.filter((r) => postingStatusKey(r) === statusFilter.value)
+})
+
+function postedAge(r: SchedRequest): string {
+  const h = (Date.now() - Date.parse(r.createdAt)) / 3600e3
+  if (h < 1) return 'just now'
+  if (h < 24) return `${Math.round(h)}h ago`
+  return `${Math.round(h / 24)}d ago`
+}
+
+/** Date-first with detail underneath — the single line wrapped badly. */
+function postingParts(r: SchedRequest): { date: string; detail: string } {
+  const s = postingLine(r)
+  const i = s.indexOf(' · ')
+  return i === -1 ? { date: s, detail: '' } : { date: s.slice(0, i), detail: s.slice(i + 3) }
+}
+
 function offersFor(r: SchedRequest): TradeOffer[] {
   return sched.tradeOffers.value.filter(
     (o) => o.requestId === r.id && (o.status === 'queued' || o.status === 'accepted'),
@@ -393,14 +430,24 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
   <div class="tr">
     <ScheduleSpinner v-if="!ready" label="Loading trades…" />
     <template v-else>
+    <div class="tr__tabs" role="tablist">
+      <button class="tr__tab" :class="{ 'tr__tab--on': lane === 'board' }" @click="lane = 'board'">Open board <i>{{ openBoard.length }}</i></button>
+      <button class="tr__tab" :class="{ 'tr__tab--on': lane === 'inbox' }" @click="lane = 'inbox'">Sent to you <i>{{ sentToMe.length }}</i></button>
+      <button class="tr__tab" :class="{ 'tr__tab--on': lane === 'mine' }" @click="lane = 'mine'">Your postings <i>{{ myPostings.length }}</i></button>
+    </div>
     <div class="tr__topbar">
+      <select v-if="lane === 'board'" v-model="statusFilter" class="tr__filter" aria-label="Filter postings by status">
+        <option value="all">Status: All</option>
+        <option value="open">Open — claimable</option>
+        <option value="offers">Offers in</option>
+        <option value="waiting_target">Waiting on someone</option>
+      </select>
+      <p class="tr__hint">
+        Deals you accept still go to the Chief for final approval before the calendar changes.
+      </p>
       <button class="tr__post" @click="openPost">
         {{ posting ? 'Close' : 'Post a shift' }}
       </button>
-      <p class="tr__hint">
-        Give a shift away for anyone qualified to claim, or ask for a swap. Deals you accept
-        still go to the Chief for final approval before the calendar changes.
-      </p>
     </div>
 
     <p v-if="done" class="tr__done">{{ done }}</p>
@@ -458,8 +505,8 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
     </form>
 
     <!-- directed requests waiting on ME -->
-    <section v-if="sentToMe.length > 0" class="tr__section">
-      <h2 class="tr__h">Sent to you</h2>
+    <section v-show="lane === 'inbox'" class="tr__section">
+      <p v-if="sentToMe.length === 0" class="tr__muted">Nothing waiting on you.</p>
       <div v-for="r in sentToMe" :key="r.id" class="tr__card tr__card--direct">
         <div class="tr__card-top">
           <span class="tr__type" :data-type="r.type">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap wanted' }}</span>
@@ -539,15 +586,20 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
       </div>
     </section>
 
-    <section class="tr__section">
-      <h2 class="tr__h">Available trades</h2>
-      <p v-if="boardRest.length === 0" class="tr__muted">Nothing on the board right now.</p>
+    <section v-show="lane !== 'inbox'" class="tr__section">
+      <p v-if="boardShown.length === 0" class="tr__muted">
+        {{ lane === 'mine' ? 'You have nothing posted.' : 'Nothing on the board right now.' }}
+      </p>
 
-      <div v-for="r in boardRest" :key="r.id" class="tr__card">
+      <div v-for="r in boardShown" :key="r.id" class="tr__card">
         <div class="tr__card-top">
           <span class="tr__type" :data-type="r.type">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap wanted' }}</span>
           <p class="tr__who">{{ posterName(r) }}</p>
-          <p class="tr__line">{{ postingLine(r) }}</p>
+          <p class="tr__line">
+            <span class="tr__l1">{{ postingParts(r).date }}</span>
+            <span v-if="postingParts(r).detail" class="tr__l2">{{ postingParts(r).detail }}</span>
+          </p>
+          <span class="tr__age">posted {{ postedAge(r) }}</span>
           <span v-if="isDirected(r)" class="tr__direct">Sent directly to {{ directedToName(r) }}</span>
         </div>
         <p v-if="r.comments" class="tr__comments">"{{ r.comments }}"</p>
@@ -689,6 +741,42 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
   max-width: 760px;
 }
 
+/* underline lane tabs, same language as Time Reports (2026-09-24) */
+.tr__tabs {
+  display: flex;
+  gap: 18px;
+  border-bottom: 1px solid var(--color-line);
+  margin: 0 0 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tr__tab {
+  border: 0;
+  background: none;
+  padding: 6px 2px 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tr__tab i {
+  font-style: normal;
+  opacity: 0.6;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tr__tab--on {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-accent-600);
+}
+
 .tr__topbar {
   display: flex;
   align-items: center;
@@ -697,16 +785,28 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
   flex-wrap: wrap;
 }
 
+.tr__filter {
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  border-radius: 7px;
+  padding: 0.35rem 0.55rem;
+}
+
 .tr__post {
   font: inherit;
-  font-size: 0.88rem;
-  font-weight: 600;
-  padding: 0.45rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0.4rem 0.9rem;
   border: 0;
-  border-radius: 8px;
-  background: var(--color-brand-700);
+  border-radius: 4px;
+  background: var(--color-brand-800);
   color: white;
   cursor: pointer;
+  margin-left: auto;
 }
 
 .tr__hint {
@@ -821,13 +921,38 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
   font-size: 0.78rem;
 }
 
+/* flat hairline rows — the card chrome dissolved (2026-09-24) */
 .tr__card {
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
-  background: var(--color-surface);
-  padding: 0.7rem 0.9rem;
-  margin-bottom: 0.6rem;
-  box-shadow: var(--shadow-sm);
+  border: 0;
+  border-bottom: 1px solid var(--color-line-soft);
+  border-radius: 0;
+  background: transparent;
+  padding: 0.65rem 0.2rem 0.7rem;
+  margin-bottom: 0;
+  box-shadow: none;
+}
+
+.tr__l1 {
+  display: block;
+  font-weight: 600;
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.tr__l2 {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--color-muted);
+  margin-top: 1px;
+  white-space: nowrap;
+}
+
+.tr__age {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .tr__card-top {
@@ -907,22 +1032,42 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
   flex: none;
 }
 
+/* row actions = underlined text links (locked 2026-09-24) */
 .tr__btn {
   font: inherit;
-  font-size: 0.8rem;
-  font-weight: 600;
-  padding: 0.3rem 0.75rem;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: var(--color-surface);
+  font-size: 0.82rem;
+  font-weight: 650;
+  padding: 2px;
+  border: 0;
+  background: none;
   color: var(--color-ink-soft);
   cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--color-line);
+}
+
+.tr__btn:hover:not(:disabled) {
+  text-decoration-color: var(--color-accent-600);
+}
+
+.tr__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tr__btn + .tr__btn {
+  margin-left: 12px;
 }
 
 .tr__btn--primary {
-  background: var(--color-brand-700);
-  border-color: var(--color-brand-700);
-  color: white;
+  color: var(--color-success-500);
+  text-decoration-color: color-mix(in oklab, var(--color-success-500) 55%, transparent);
+}
+
+.tr__btn--primary:hover:not(:disabled) {
+  text-decoration-color: var(--color-success-500);
 }
 
 .tr__cardfoot {
@@ -954,9 +1099,10 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
   flex-wrap: wrap;
 }
 
+/* gold stripe = waiting on YOU (chip chrome retired) */
 .tr__card--direct {
-  border-color: oklch(0.8 0.07 86.8);
-  background: oklch(0.985 0.015 86.8);
+  box-shadow: inset 2.5px 0 0 var(--color-accent-600);
+  padding-left: 0.7rem;
 }
 
 .tr__direct {

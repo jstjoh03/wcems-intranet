@@ -54,14 +54,6 @@ const GROUPS = [
   { key: 'part_time', label: 'Part-time' },
 ]
 
-const pickedGroups = ref<Set<string>>(new Set())
-function toggleGroup(key: string) {
-  const s = new Set(pickedGroups.value)
-  if (s.has(key)) s.delete(key)
-  else s.add(key)
-  pickedGroups.value = s
-}
-
 /** Optional: only people NOT working this date. */
 const offDutyDate = ref('')
 
@@ -92,10 +84,45 @@ function inGroup(p: SchedPerson, key: string): boolean {
   }
 }
 
-const groupPool = computed(() => {
-  if (pickedGroups.value.size === 0) return []
-  return sched.people.value.filter((p) => [...pickedGroups.value].some((g) => inGroup(p, g)))
+/* Aladtec-style recipient roster (Justin, 2026-09-24): the audience IS
+   the roster — filter by position/employment, tick people, select-all
+   on what's shown. Groups became the filter, not chips. */
+const rosterFilter = ref('everyone')
+const rosterQ = ref('')
+const pickedIds = ref<Set<string>>(new Set())
+
+const rosterShown = computed(() => {
+  const q = rosterQ.value.trim().toLowerCase()
+  return sched.people.value.filter(
+    (p) => inGroup(p, rosterFilter.value) && (!q || p.fullName.toLowerCase().includes(q)),
+  )
 })
+
+const allShownPicked = computed(
+  () => rosterShown.value.length > 0 && rosterShown.value.every((p) => pickedIds.value.has(p.id)),
+)
+
+function togglePicked(id: string) {
+  const s = new Set(pickedIds.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  pickedIds.value = s
+}
+
+function toggleAllShown() {
+  const s = new Set(pickedIds.value)
+  if (allShownPicked.value) for (const p of rosterShown.value) s.delete(p.id)
+  else for (const p of rosterShown.value) s.add(p.id)
+  pickedIds.value = s
+}
+
+function employmentShort(p: SchedPerson): string {
+  return p.employmentType === 'part_time' ? 'Part-time' : p.employmentType === 'full_time' ? 'Full-time' : '—'
+}
+
+const groupPool = computed(() =>
+  sched.people.value.filter((p) => pickedIds.value.has(p.id)),
+)
 
 // ── open shifts to attach ────────────────────────────────────────────
 
@@ -162,6 +189,25 @@ const alwaysIncludeIds = computed(() => {
   const v = (sched.settings.value['pageout'] ?? {}) as { always_include?: unknown }
   const ids = Array.isArray(v.always_include) ? (v.always_include as unknown[]) : []
   return ids.filter((x): x is string => typeof x === 'string')
+})
+
+/* Rendered previews mirror sched-notify's composition exactly — what
+   crews will actually receive, shown BEFORE send (Justin, 2026-09-24). */
+const urgentNote = computed(() => {
+  const v = (sched.settings.value['pageout'] ?? {}) as { urgent_note?: string }
+  return (v.urgent_note ?? '').trim() || 'Immediate opening — call S201 or S202 to pick up.'
+})
+
+const smsPreview = computed(() => {
+  const lead = previewLead.value
+  const smsLead = lead.length > 120 ? `${lead.slice(0, 119)}…` : lead
+  let sms = `${urgent.value ? 'URGENT — ' : ''}WCEMS: ${smsLead}`
+  for (const s of selectedShifts.value.slice(0, 2)) sms += `\n${s.text}`
+  if (selectedShifts.value.length > 2) sms += `\n+${selectedShifts.value.length - 2} more on the portal`
+  if (urgent.value) sms += `\n${urgentNote.value}`
+  sms += '\nemployee.wallercountyems.com/schedule'
+  sms += '\nReply STOP to opt out, HELP for help.'
+  return sms
 })
 
 async function toPreview() {
@@ -236,7 +282,7 @@ async function send() {
     shifts: selectedShifts.value,
     channels: { push: chPush.value, email: chEmail.value, sms: chSms.value },
     audience: {
-      groups: [...pickedGroups.value],
+      groups: [rosterFilter.value],
       offDutyDate: offDutyDate.value || null,
       removed: recip.value.filter((r) => !r.on).map((r) => r.p.id),
       added: recip.value.filter((r) => r.on && r.source !== 'group').map((r) => r.p.id),
@@ -263,7 +309,7 @@ async function send() {
   urgent.value = false
   msgType.value = 'scheduling'
   pickedShifts.value = new Set()
-  pickedGroups.value = new Set()
+  pickedIds.value = new Set()
   offDutyDate.value = ''
   openLoaded.value = false
   openItems.value = []
@@ -376,25 +422,6 @@ function deliveryLine(p: PageLogRow): string {
             <label class="pg__check"><input v-model="chSms" type="checkbox" /> Text</label>
           </div>
 
-          <span class="pg__label">Audience</span>
-          <div class="pg__groups">
-            <button
-              v-for="g in GROUPS"
-              :key="g.key"
-              class="pg__chip"
-              :class="{ 'pg__chip--on': pickedGroups.has(g.key) }"
-              type="button"
-              @click="toggleGroup(g.key)"
-            >
-              {{ g.label }}
-            </button>
-          </div>
-          <div class="pg__row">
-            <label class="pg__label" for="pg-offduty">Only people off duty on</label>
-            <input id="pg-offduty" v-model="offDutyDate" type="date" class="pg__input" />
-            <button v-if="offDutyDate" class="pg__mini" type="button" @click="offDutyDate = ''">Clear</button>
-          </div>
-
           <div v-if="msgType === 'scheduling'" class="pg__row pg__row--shifts">
             <span class="pg__label">Attach open shifts</span>
             <select v-model.number="shiftDays" class="pg__input" aria-label="Days ahead">
@@ -413,11 +440,52 @@ function deliveryLine(p: PageLogRow): string {
             </label>
           </div>
 
+          <!-- Aladtec-style recipients: the roster itself, filtered and
+               ticked person by person (Justin, 2026-09-24) -->
+          <span class="pg__label">Recipients</span>
+          <div class="pg__rosterbar">
+            <select v-model="rosterFilter" class="pg__input" aria-label="Filter roster">
+              <option v-for="g in GROUPS" :key="g.key" :value="g.key">{{ g.label }}</option>
+            </select>
+            <input v-model="rosterQ" type="search" class="pg__input pg__rosterq" placeholder="Search…" aria-label="Search roster" />
+            <span class="pg__selcount">{{ pickedIds.size }} selected</span>
+          </div>
+          <div class="pg__row">
+            <label class="pg__label pg__label--inline" for="pg-offduty">Only people off duty on</label>
+            <input id="pg-offduty" v-model="offDutyDate" type="date" class="pg__input" />
+            <button v-if="offDutyDate" class="pg__mini" type="button" @click="offDutyDate = ''">Clear</button>
+          </div>
+          <div class="pg__roster">
+            <table class="pg__rtable">
+              <thead>
+                <tr>
+                  <th class="pg__rcheck"><input type="checkbox" :checked="allShownPicked" title="Select everyone shown" aria-label="Select everyone shown" @change="toggleAllShown" /></th>
+                  <th>Name</th>
+                  <th>Position</th>
+                  <th>Phone</th>
+                  <th>Employment</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="p in rosterShown" :key="p.id" class="pg__rrow" @click="togglePicked(p.id)">
+                  <td class="pg__rcheck"><input type="checkbox" :checked="pickedIds.has(p.id)" :aria-label="`Include ${p.fullName}`" @click.stop @change="togglePicked(p.id)" /></td>
+                  <td class="pg__rname">{{ p.fullName }}</td>
+                  <td class="pg__rmut">{{ p.credential ?? '—' }}</td>
+                  <td class="pg__rmut pg__rnum">{{ p.phone ?? '—' }}</td>
+                  <td class="pg__rmut">{{ employmentShort(p) }}</td>
+                </tr>
+                <tr v-if="rosterShown.length === 0">
+                  <td colspan="5" class="pg__recempty">Nobody matches that filter.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
           <div class="pg__foot">
-            <span class="pg__muted" v-if="pickedGroups.size > 0">{{ groupPool.length }} in the selected groups</span>
-            <span class="pg__muted" v-else>No groups picked — you can add individual people on the next step.</span>
+            <span class="pg__muted" v-if="pickedIds.size > 0">Preview shows the exact email and text before anything sends.</span>
+            <span class="pg__muted" v-else>Tick who this goes to — you can still add or remove people on the preview.</span>
             <button class="pg__btn pg__btn--primary" :disabled="busy" @click="toPreview">
-              {{ busy ? 'Working…' : 'Review recipients & send' }}
+              {{ busy ? 'Working…' : `Preview & send${pickedIds.size ? ` (${pickedIds.size} selected)` : ''}` }}
             </button>
           </div>
         </template>
@@ -453,20 +521,34 @@ function deliveryLine(p: PageLogRow): string {
     <!-- review & send modal: the exact message up top, recipient table
          with per-person checkboxes below -->
     <div v-if="previewOpen" class="pg__overlay" @click.self="previewOpen = false">
-      <div class="pg__modal" role="dialog" aria-label="Review and send">
-        <h3 class="pg__mtitle">Review &amp; send</h3>
+      <div class="pg__modal" role="dialog" aria-label="Preview and send">
+        <h3 class="pg__mtitle">Preview &amp; send</h3>
 
-        <div class="pg__msgbox">
-          <p class="pg__msghead">
-            {{ msgType === 'announcement' ? 'Announcement' : 'Message' }}
-            <span v-if="urgent" class="pg__urgentchip">URGENT</span>
-          </p>
-          <p v-if="previewLead" class="pg__msgtext">{{ previewLead }}</p>
-          <p v-for="(sh, i) in selectedShifts" :key="i" class="pg__msgshift">{{ sh.text }}</p>
-          <p v-if="!message.trim() && msgType === 'scheduling' && selectedShifts.length > 0" class="pg__msgnote">
-            No custom text — the line above is the automatic lead recipients get.
-          </p>
+        <!-- the EXACT messages, rendered — nothing sends blind
+             (Justin, 2026-09-24) -->
+        <div class="pg__prevrow">
+          <div v-if="chEmail || chPush" class="pg__prevcol">
+            <p class="pg__prevlabel">{{ chEmail ? 'Email' : 'Push' }} <span v-if="urgent" class="pg__urgentchip">URGENT</span></p>
+            <div class="pg__mailcard">
+              <p class="pg__mailbrand">WALLER COUNTY EMS<span>SCHEDULING</span></p>
+              <p class="pg__mailline">Hi &lt;first name&gt;,</p>
+              <p v-if="previewLead" class="pg__mailline">{{ previewLead }}</p>
+              <template v-if="selectedShifts.length">
+                <p class="pg__mailline"><b>Open shift{{ selectedShifts.length === 1 ? '' : 's' }} — tap one to request it:</b></p>
+                <p v-for="(sh, i) in selectedShifts" :key="i" class="pg__maillink">{{ sh.text }}</p>
+              </template>
+              <p v-if="urgent" class="pg__mailurgent">{{ urgentNote }}</p>
+              <span class="pg__mailbtn">Open the schedule</span>
+            </div>
+          </div>
+          <div v-if="chSms" class="pg__prevcol">
+            <p class="pg__prevlabel">Text message</p>
+            <pre class="pg__smscard">{{ smsPreview }}</pre>
+          </div>
         </div>
+        <p v-if="!message.trim() && msgType === 'scheduling' && selectedShifts.length > 0" class="pg__msgnote">
+          No custom text — the lead line is the automatic one recipients get.
+        </p>
 
         <div class="pg__recbar">
           <span class="pg__label">
@@ -523,6 +605,181 @@ function deliveryLine(p: PageLogRow): string {
 </template>
 
 <style scoped>
+/* ── recipient roster (Aladtec-style, 2026-09-24) ── */
+.pg__rosterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0 6px;
+}
+
+.pg__rosterq {
+  flex: 0 1 170px;
+}
+
+.pg__selcount {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.pg__label--inline {
+  margin: 0;
+}
+
+.pg__roster {
+  border: 1px solid var(--color-line-soft);
+  border-radius: 8px;
+  max-height: 300px;
+  overflow: auto;
+  margin: 6px 0 4px;
+}
+
+.pg__rtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.pg__rtable th {
+  text-align: left;
+  font-size: 0.6rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 700;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-line);
+  position: sticky;
+  top: 0;
+  background: var(--color-surface);
+}
+
+.pg__rtable td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.pg__rrow {
+  cursor: pointer;
+}
+
+.pg__rrow:hover td {
+  background: var(--color-surface-soft);
+}
+
+.pg__rcheck {
+  width: 28px;
+}
+
+.pg__rname {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.pg__rmut {
+  color: var(--color-muted);
+}
+
+.pg__rnum {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── rendered previews in the send modal ── */
+.pg__prevrow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.pg__prevcol {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.pg__prevlabel {
+  font-size: 0.62rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-muted);
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pg__mailcard {
+  border: 1px solid var(--color-line);
+  border-top: 3px solid var(--color-brand-800);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.78rem;
+  background: var(--color-surface);
+}
+
+.pg__mailbrand {
+  font-weight: 700;
+  color: var(--color-brand-800);
+  letter-spacing: 0.04em;
+  font-size: 0.74rem;
+  margin: 0 0 6px;
+}
+
+.pg__mailbrand span {
+  display: block;
+  font-size: 0.56rem;
+  letter-spacing: 0.16em;
+  color: var(--color-accent-700);
+}
+
+.pg__mailline {
+  margin: 0 0 5px;
+  color: var(--color-ink-soft);
+}
+
+.pg__maillink {
+  margin: 0 0 3px 12px;
+  color: var(--color-brand-800);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pg__mailurgent {
+  color: var(--color-danger-500);
+  font-weight: 700;
+  margin: 4px 0 6px;
+}
+
+.pg__mailbtn {
+  display: inline-block;
+  background: var(--color-brand-800);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 4px 10px;
+  margin-top: 2px;
+}
+
+.pg__smscard {
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  background: var(--color-surface-soft);
+  padding: 10px 12px;
+  font: 0.74rem/1.5 ui-monospace, Consolas, monospace;
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
 .pg__cols {
   display: grid;
   grid-template-columns: minmax(380px, 560px) minmax(320px, 1fr);
