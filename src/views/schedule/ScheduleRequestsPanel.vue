@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -21,9 +22,11 @@ import {
 
 const sched = useSchedule()
 
+const ready = ref(false)
 onMounted(async () => {
   await sched.ensureLoaded()
   await sched.loadRequests()
+  ready.value = true
 })
 
 // ── new request form ─────────────────────────────────────────────────
@@ -599,6 +602,8 @@ async function cancel(r: SchedRequest) {
 
 <template>
   <div class="rq">
+    <ScheduleSpinner v-if="!ready" label="Loading requests…" />
+    <template v-else>
     <!-- Editors see a work queue; the request form is for the crew
          (and supervisors), who file their own. -->
     <section v-if="!sched.canEdit.value" class="rq__section">
@@ -963,6 +968,7 @@ async function cancel(r: SchedRequest) {
         </div>
       </div>
     </section>
+    </template>
   </div>
 </template>
 

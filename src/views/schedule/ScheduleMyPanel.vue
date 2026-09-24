@@ -14,6 +14,7 @@ import ScheduleWeekBoard from './ScheduleWeekBoard.vue'
 import SchedulePeriodBoard from './SchedulePeriodBoard.vue'
 import ScheduleMemberSettingsForm from './ScheduleMemberSettingsForm.vue'
 import ScheduleLeaveHistory from './ScheduleLeaveHistory.vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 
 /**
  * My schedule — the same calendar views as the main boards (month
@@ -183,9 +184,11 @@ async function loadVisibleRange() {
   await sched.loadRange(start, end)
 }
 
+const ready = ref(false)
 onMounted(async () => {
   await sched.ensureLoaded()
   await loadVisibleRange()
+  ready.value = true
 })
 
 watch(monthAnchor, () => {
@@ -268,6 +271,8 @@ function pendingLine(r: SchedRequest): string {
 
 <template>
   <div class="my">
+    <ScheduleSpinner v-if="!ready" label="Loading your schedule…" />
+    <template v-else>
     <p v-if="vacBal || sickBal" class="my__balline">
       <span class="my__bal"><span class="my__balk">Vacation</span><b :class="{ 'my__balneg': (vacBal?.balance ?? 0) < 0 }">{{ (vacBal?.balance ?? 0).toFixed(1) }}</b> hrs · +{{ myVacRate.toFixed(2) }}/period</span>
       <span class="my__bal"><span class="my__balk">Sick</span><b :class="{ 'my__balneg': (sickBal?.balance ?? 0) < 0 }">{{ (sickBal?.balance ?? 0).toFixed(1) }}</b> hrs · +{{ SICK_RATE }}/period</span>
@@ -395,6 +400,7 @@ function pendingLine(r: SchedRequest): string {
       @open-day="openDay"
       @range="(s: string, e: string) => sched.loadRange(s, e)"
     />
+    </template>
   </div>
 </template>
 

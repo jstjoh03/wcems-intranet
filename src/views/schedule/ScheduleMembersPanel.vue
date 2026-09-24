@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   INTERNAL_CREDENTIALS,
@@ -242,6 +243,7 @@ function credSourceLine(p: SchedPerson): string {
 
     <p v-if="err" class="mem__error">{{ err }}</p>
 
+    <ScheduleSpinner v-if="!accessLoaded" label="Loading members…" />
     <div v-if="accessLoaded" class="mem__list">
       <template v-for="p in filtered" :key="p.id">
         <button class="mem__row" @click="toggleMember(p)">

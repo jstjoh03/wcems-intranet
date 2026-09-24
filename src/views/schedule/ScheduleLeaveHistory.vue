@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -158,7 +159,7 @@ function fmtDelta(n: number): string {
 
 <template>
   <div class="lh">
-    <p v-if="loading" class="lh__muted">Loading history…</p>
+    <ScheduleSpinner v-if="loading" label="Loading history…" />
     <template v-else>
       <p v-if="blocks.length === 0" class="lh__muted">No leave activity on record.</p>
       <div v-for="b in blocks" :key="b.kind" class="lh__kind">

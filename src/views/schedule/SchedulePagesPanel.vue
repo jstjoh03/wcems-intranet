@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -20,9 +21,11 @@ import {
 
 const sched = useSchedule()
 
+const ready = ref(false)
 onMounted(async () => {
   await sched.ensureLoaded()
   await refreshLog()
+  ready.value = true
 })
 
 // ── compose ──────────────────────────────────────────────────────────
@@ -306,7 +309,8 @@ function deliveryLine(p: PageLogRow): string {
 
 <template>
   <div class="pg">
-    <div class="pg__cols">
+    <ScheduleSpinner v-if="!ready" label="Loading page-outs…" />
+    <div v-else class="pg__cols">
       <!-- ── composer ── -->
       <section class="pg__card">
         <h2 class="pg__h">Send a page-out</h2>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -21,8 +22,10 @@ import {
 const sched = useSchedule()
 const PLATOONS: Platoon[] = ['A', 'B', 'C']
 
+const ready = ref(false)
 onMounted(async () => {
   await sched.ensureLoaded()
+  ready.value = true
   // HR opens Setup for the earning-codes card only — the audit log
   // is editor territory (and its RLS would refuse anyway).
   if (sched.canEdit.value) void loadLog()
@@ -810,7 +813,8 @@ async function saveWarnCfg() {
   <div class="setup">
     <p v-if="err" class="setup__error">{{ err }}</p>
 
-    <div class="setup__cols">
+    <ScheduleSpinner v-if="!ready" label="Loading setup…" />
+    <div v-else class="setup__cols">
       <div class="setup__main">
         <section v-if="sched.canEdit.value" class="setup__card">
           <div class="setup__card-head">

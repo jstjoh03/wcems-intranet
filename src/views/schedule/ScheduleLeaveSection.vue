@@ -11,6 +11,7 @@ import {
   type LeaveTaken,
 } from '@/composables/useSchedule'
 import ScheduleLeaveHistory from './ScheduleLeaveHistory.vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 
 /**
  * Leave balances — the HR surface on Time Reports. Vacation + sick live
@@ -281,7 +282,7 @@ function fmtHire(d: string | null): string {
       </div>
     </div>
 
-    <p v-if="loading" class="lv__hint">Loading balances…</p>
+    <ScheduleSpinner v-if="loading" label="Loading balances…" />
     <div v-else class="lv__scroll">
       <table class="lv__table">
         <thead>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -22,9 +23,11 @@ import {
 
 const sched = useSchedule()
 
+const ready = ref(false)
 onMounted(async () => {
   await sched.ensureLoaded()
   await Promise.all([sched.loadRequests(), sched.loadTradeOffers()])
+  ready.value = true
 })
 
 // ── post a shift ─────────────────────────────────────────────────────
@@ -388,6 +391,8 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
 
 <template>
   <div class="tr">
+    <ScheduleSpinner v-if="!ready" label="Loading trades…" />
+    <template v-else>
     <div class="tr__topbar">
       <button class="tr__post" @click="openPost">
         {{ posting ? 'Close' : 'Post a shift' }}
@@ -675,6 +680,7 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
         Approve or deny these on the Requests tab.
       </p>
     </section>
+    </template>
   </div>
 </template>
 

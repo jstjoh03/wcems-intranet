@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import ScheduleLeaveSection from './ScheduleLeaveSection.vue'
+import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   todayCentralIso,
@@ -99,9 +100,14 @@ async function load() {
   segs.value = res.segs
 }
 
+/* No empty-table flash: the panel paints a spinner until the first
+   load lands (Justin, 2026-09-24). */
+const ready = ref(false)
+
 onMounted(async () => {
   await sched.ensureLoaded()
   await load()
+  ready.value = true
 })
 
 watch(range, () => void load())
@@ -685,6 +691,9 @@ function downloadPaycom(onlySelected = false): void {
       </template>
     </div>
 
+    <ScheduleSpinner v-if="!ready" label="Loading time reports…" />
+    <template v-else>
+
     <!-- Verify punches — the default surface: the pay period's IN/OUT
          pairs per member, checked against what actually happened. -->
     <div v-show="ttab === 'verify'" class="tm__verify">
@@ -1011,6 +1020,8 @@ function downloadPaycom(onlySelected = false): void {
     <div v-if="payrollAccess" v-show="ttab === 'balances'">
       <ScheduleLeaveSection />
     </div>
+
+    </template>
   </div>
 </template>
 
