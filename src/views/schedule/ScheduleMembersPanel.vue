@@ -24,10 +24,23 @@ import {
 
 const sched = useSchedule()
 
+/* Supervisors get this page read-only (Justin, 2026-09-24): the roster
+   columns only — Access and all editing stay editor territory. */
+const canManage = computed(() => sched.canEdit.value)
+
 const search = ref('')
 const access = ref<Map<string, string>>(new Map())
 const accessLoaded = ref(false)
 const err = ref<string | null>(null)
+
+/* dropdown filter, same pattern as the other screens (pills retired) */
+const filterSel = ref<'all' | 'elevated' | 'part_time' | 'hidden'>('all')
+
+function employmentLabel(p: SchedPerson): string {
+  if (p.employmentType === 'full_time') return 'Full-time'
+  if (p.employmentType === 'part_time') return 'Part-time'
+  return p.employmentType ? p.employmentType.replace('_', '-') : '—'
+}
 
 onMounted(async () => {
   await sched.ensureLoaded()
@@ -60,9 +73,23 @@ function effectiveLevel(p: { id: string; role: string }): string {
    Last-name order comes from the store. */
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  const list = sched.allPeople.value.filter((p) => p.active)
+  let list = sched.allPeople.value.filter((p) => p.active)
+  if (filterSel.value === 'elevated')
+    list = list.filter((p) => !['member', 'none'].includes(effectiveLevel(p)))
+  else if (filterSel.value === 'part_time') list = list.filter((p) => p.employmentType === 'part_time')
+  else if (filterSel.value === 'hidden') list = list.filter((p) => hiddenIds.value.has(p.id))
   if (!q) return list
   return list.filter((p) => p.fullName.toLowerCase().includes(q))
+})
+
+const filterCounts = computed(() => {
+  const list = sched.allPeople.value.filter((p) => p.active)
+  return {
+    all: list.length,
+    elevated: list.filter((p) => !['member', 'none'].includes(effectiveLevel(p))).length,
+    part_time: list.filter((p) => p.employmentType === 'part_time').length,
+    hidden: list.filter((p) => hiddenIds.value.has(p.id)).length,
+  }
 })
 
 const STORABLE_LEVELS = ['global_admin', 'scheduler', 'supervisor', 'hr', 'view_only', 'none'] as const
@@ -231,6 +258,12 @@ function credSourceLine(p: SchedPerson): string {
 <template>
   <div class="mem">
     <div class="mem__toolbar">
+      <select v-model="filterSel" class="mem__filter" aria-label="Filter members">
+        <option value="all">Everyone ({{ filterCounts.all }})</option>
+        <option value="elevated">Elevated access ({{ filterCounts.elevated }})</option>
+        <option value="part_time">Part-time ({{ filterCounts.part_time }})</option>
+        <option v-if="canManage" value="hidden">Hidden from scheduling ({{ filterCounts.hidden }})</option>
+      </select>
       <input
         v-model="search"
         type="search"
@@ -238,30 +271,49 @@ function credSourceLine(p: SchedPerson): string {
         placeholder="Search members"
         aria-label="Search members"
       />
-      <p class="mem__count">{{ filtered.length }} of {{ sched.people.value.length }}</p>
+      <p class="mem__count">{{ filtered.length }} shown</p>
     </div>
 
     <p v-if="err" class="mem__error">{{ err }}</p>
 
     <ScheduleSpinner v-if="!accessLoaded" label="Loading members…" />
-    <div v-if="accessLoaded" class="mem__list">
+    <div v-if="accessLoaded" class="mem__scroll">
+    <table class="mem__table">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Member</th>
+          <th>Credential</th>
+          <th>Phone</th>
+          <th>Employment</th>
+          <th v-if="canManage">Access</th>
+        </tr>
+      </thead>
+      <tbody>
       <template v-for="p in filtered" :key="p.id">
-        <button class="mem__row" @click="toggleMember(p)">
-          <div class="mem__who">
-            <p class="mem__name">
-              {{ p.fullName }}<span v-if="p.credential" class="mem__cred"> - {{ p.credential }}</span>
-            </p>
-            <p class="mem__hint">{{ p.title ?? '' }}</p>
-          </div>
-          <span v-if="hiddenIds.has(p.id)" class="mem__chip mem__chip--hidden">Hidden from scheduling</span>
-          <span
-            class="mem__lvl"
-            :class="{ 'mem__lvl--none': effectiveLevel(p) === 'none', 'mem__lvl--el': !['member', 'none'].includes(effectiveLevel(p)) }"
-          >{{ LEVEL_LABELS[effectiveLevel(p)] }}</span>
-          <svg class="mem__chev" :class="{ 'mem__chev--open': openId === p.id }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-        </button>
+        <tr class="mem__row" @click="toggleMember(p)">
+          <td class="mem__chevcell">
+            <span class="mem__rowchev" :class="{ 'mem__rowchev--open': openId === p.id }" aria-hidden="true">▸</span>
+          </td>
+          <td>
+            <span class="mem__name mem__name--link">{{ p.fullName }}</span>
+            <span v-if="p.title" class="mem__hint"> · {{ p.title }}</span>
+            <span v-if="hiddenIds.has(p.id)" class="mem__hiddentag">hidden</span>
+          </td>
+          <td class="mem__mut">{{ p.credential ?? '—' }}</td>
+          <td class="mem__mut mem__num">{{ p.phone ?? '—' }}</td>
+          <td class="mem__mut">{{ employmentLabel(p) }}</td>
+          <td v-if="canManage">
+            <span
+              class="mem__lvl"
+              :class="{ 'mem__lvl--none': effectiveLevel(p) === 'none', 'mem__lvl--el': !['member', 'none'].includes(effectiveLevel(p)) }"
+            >{{ LEVEL_LABELS[effectiveLevel(p)] }}</span>
+          </td>
+        </tr>
 
-        <div v-if="openId === p.id" class="mem__detail">
+        <tr v-if="openId === p.id" class="mem__detailtr">
+          <td :colspan="canManage ? 6 : 5">
+        <div class="mem__detail">
           <p class="mem__extrow">
             <RouterLink to="/admin/employees" class="mem__extlink">Employee record — name, role, shift, hire date ↗</RouterLink>
           </p>
@@ -405,7 +457,11 @@ function credSourceLine(p: SchedPerson): string {
             </button>
           </div>
         </div>
+          </td>
+        </tr>
       </template>
+      </tbody>
+    </table>
     </div>
 
   </div>
@@ -440,11 +496,99 @@ function credSourceLine(p: SchedPerson): string {
   font-size: 0.85rem;
 }
 
-.mem__list {
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
+.mem__scroll {
+  overflow-x: auto;
+}
+
+.mem__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.mem__table th {
+  text-align: left;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 700;
+  padding: 4px 10px 6px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.mem__table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--color-line-soft);
+  vertical-align: middle;
+}
+
+.mem__row {
+  cursor: pointer;
+}
+
+.mem__row:hover td {
   background: var(--color-surface);
-  overflow: hidden;
+}
+
+.mem__row:hover .mem__name--link {
+  text-decoration-color: var(--color-accent-600);
+}
+
+.mem__name--link {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+}
+
+.mem__chevcell {
+  width: 24px;
+  padding-right: 0;
+}
+
+.mem__rowchev {
+  display: inline-block;
+  font-size: 0.6rem;
+  color: var(--color-muted);
+  transition: transform 0.12s;
+}
+
+.mem__rowchev--open {
+  transform: rotate(90deg);
+}
+
+.mem__mut {
+  color: var(--color-muted);
+}
+
+.mem__num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mem__hiddentag {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: oklch(0.5 0.13 60);
+  margin-left: 8px;
+}
+
+.mem__filter {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.38rem 0.5rem;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.mem__detailtr > td {
+  background: var(--color-surface-sunk, var(--color-surface-soft));
+  padding: 0;
 }
 
 .mem__lvl {
@@ -478,47 +622,14 @@ function credSourceLine(p: SchedPerson): string {
   text-decoration: underline;
 }
 
-.mem__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  width: 100%;
-  padding: 0.55rem 0.9rem;
-  border: 0;
-  border-bottom: 1px solid var(--color-line-soft);
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.mem__row:hover {
-  background: var(--color-surface-soft);
-}
-
-.mem__who {
-  min-width: 0;
-  flex: 1;
-}
-
 .mem__name {
-  font-size: 0.92rem;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--color-ink);
-  margin: 0;
-}
-
-.mem__cred {
-  color: var(--color-muted);
-  font-weight: 400;
-  font-size: 0.85rem;
 }
 
 .mem__hint {
   font-size: 0.74rem;
   color: var(--color-muted);
-  margin: 0.05rem 0 0;
 }
 
 .mem__chip {

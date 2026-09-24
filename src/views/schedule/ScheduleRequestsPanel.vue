@@ -389,6 +389,14 @@ function requestSummary(r: SchedRequest): string {
   return requestLine(r)
 }
 
+/** Date-first with the detail underneath — one long line wrapped to
+ *  three on narrow columns (Justin, 2026-09-24). */
+function summaryParts(r: SchedRequest): { date: string; detail: string } {
+  const s = requestSummary(r)
+  const i = s.indexOf(' · ')
+  return i === -1 ? { date: s, detail: '' } : { date: s.slice(0, i), detail: s.slice(i + 3) }
+}
+
 function waitingAge(r: SchedRequest): string {
   const h = (Date.now() - Date.parse(r.createdAt)) / 3600e3
   if (h < 1) return 'now'
@@ -836,7 +844,10 @@ async function cancel(r: SchedRequest) {
                 <b>{{ TYPE_LABELS[r.type] }}</b> — {{ requesterName(r) }}<template v-if="r.counterpartyId">
                   ⇄ {{ sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown' }}</template>
               </td>
-              <td class="rq__shiftcell" @click="toggleReq(r.id)">{{ requestSummary(r) }}</td>
+              <td class="rq__shiftcell" @click="toggleReq(r.id)">
+                <span class="rq__l1">{{ summaryParts(r).date }}</span>
+                <span v-if="summaryParts(r).detail" class="rq__l2">{{ summaryParts(r).detail }}</span>
+              </td>
               <td class="rq__flagcell">
                 <span v-if="crossesPayPeriods(r)" class="rq__chip" data-code="period" :title="`Swap crosses pay periods: ${periodPair(r)} — your call.`">Crosses pay periods</span>
                 <span v-for="(w, i) in cardChips(r)" :key="i" class="rq__chip" :data-code="w.code" :title="w.message">{{ chipText(w) }}</span>
@@ -1092,6 +1103,19 @@ async function cancel(r: SchedRequest) {
 .rq__shiftcell {
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.rq__l1 {
+  display: block;
+  white-space: nowrap;
+  color: var(--color-ink-soft);
+}
+
+.rq__l2 {
+  display: block;
+  font-size: 0.74rem;
+  white-space: nowrap;
+  margin-top: 1px;
 }
 
 .rq__agecell {
@@ -1430,26 +1454,53 @@ async function cancel(r: SchedRequest) {
   flex: none;
 }
 
+/* Row actions are underlined text links (locked 2026-09-24) — green
+   approve, quiet deny that turns red on hover; buttons stopped looking
+   like buttons everywhere BUT the one primary per screen. */
 .rq__btn {
   font: inherit;
-  font-size: 0.8rem;
-  font-weight: 600;
-  padding: 0.3rem 0.75rem;
-  border: 1px solid var(--color-line);
-  border-radius: 7px;
-  background: var(--color-surface);
+  font-size: 0.82rem;
+  font-weight: 650;
+  padding: 2px;
+  border: 0;
+  background: none;
   color: var(--color-ink-soft);
   cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--color-line);
+}
+
+.rq__btn:hover:not(:disabled) {
+  text-decoration-color: var(--color-accent-600);
+}
+
+.rq__btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.rq__btn + .rq__btn {
+  margin-left: 12px;
 }
 
 .rq__btn--approve {
-  background: var(--color-brand-700);
-  border-color: var(--color-brand-700);
-  color: white;
+  color: var(--color-success-500);
+  text-decoration-color: color-mix(in oklab, var(--color-success-500) 55%, transparent);
+}
+
+.rq__btn--approve:hover:not(:disabled) {
+  text-decoration-color: var(--color-success-500);
 }
 
 .rq__btn--deny {
+  color: var(--color-muted);
+}
+
+.rq__btn--deny:hover:not(:disabled) {
   color: var(--color-danger-500);
+  text-decoration-color: var(--color-danger-500);
 }
 
 .rq__status {

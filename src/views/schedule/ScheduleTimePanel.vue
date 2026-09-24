@@ -1182,37 +1182,32 @@ function downloadPaycom(onlySelected = false): void {
   gap: 0.4rem;
 }
 
+/* flat + sharp (locked 2026-09-24) — gradients and shadows read as
+   chrome; one navy primary per screen, quiet outlines for the rest */
 .tm__btn {
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  padding: 0.36rem 0.9rem;
+  padding: 0.34rem 0.8rem;
   border: 1px solid var(--color-line);
-  border-radius: 8px;
-  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft));
-  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.08);
+  border-radius: 4px;
+  background: var(--color-surface);
   color: var(--color-ink-soft);
   cursor: pointer;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
+  transition: border-color 0.12s ease;
 }
 
 .tm__btn:hover:not(:disabled) {
-  border-color: var(--color-brand-300);
-  box-shadow: 0 2px 6px oklch(0.3 0.03 260 / 0.14);
-}
-
-.tm__btn:active:not(:disabled) {
-  transform: translateY(1px);
+  border-color: var(--color-ink);
 }
 
 .tm__btn--primary,
 .tm__btn--primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  background: var(--color-brand-800);
   border-color: var(--color-brand-800);
   color: white;
-  box-shadow:
-    inset 0 1px 0 oklch(1 0 0 / 0.18),
-    0 2px 6px oklch(0.3 0.06 260 / 0.35);
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .tm__btn:disabled {

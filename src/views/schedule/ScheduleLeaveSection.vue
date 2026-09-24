@@ -351,8 +351,8 @@ function fmtHire(d: string | null): string {
 .lv__title { font-family: var(--font-display, inherit); font-size: 1.15rem; margin: 0; color: var(--color-brand-800); }
 .lv__sub { font-size: 0.72rem; color: var(--color-muted); flex: 1; min-width: 220px; }
 .lv__btn {
-  border: 1px solid var(--color-brand-700); background: var(--color-brand-700); color: #fff;
-  border-radius: 8px; padding: 6px 12px; font-size: 0.74rem; font-weight: 600; cursor: pointer;
+  border: 1px solid var(--color-brand-800); background: var(--color-brand-800); color: #fff;
+  border-radius: 4px; padding: 6px 12px; font-size: 0.74rem; font-weight: 700; cursor: pointer;
 }
 .lv__btn:disabled { opacity: 0.5; cursor: default; }
 .lv__btn--ghost { background: none; color: var(--color-ink); border-color: var(--color-line); }

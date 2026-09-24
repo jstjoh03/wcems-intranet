@@ -70,7 +70,9 @@ const TABS = computed<{ key: Tab; label: string; group?: boolean }[]>(() => {
   if (sched.canEdit.value || sched.level.value === 'supervisor' || sched.isHr.value) {
     t.push({ key: 'time', label: 'Time Reports', group: true })
   }
-  if (sched.canEdit.value) {
+  /* Supervisors get Members read-only — roster columns, no access
+     editing (Justin, 2026-09-24). */
+  if (sched.canEdit.value || sched.level.value === 'supervisor') {
     t.push({ key: 'members', label: 'Members' })
   }
   /* HR sees Setup too, trimmed to the payroll cards inside the panel. */
@@ -103,7 +105,7 @@ const RAIL = computed<{ h: string; items: { key: Tab; label: string }[] }[]>(() 
   if (req.length) groups.push({ h: 'Requests', items: req })
   const man: { key: Tab; label: string }[] = []
   if (sched.canEdit.value || sched.level.value === 'supervisor' || sched.isHr.value) man.push({ key: 'time', label: 'Time Reports' })
-  if (sched.canEdit.value) man.push({ key: 'members', label: 'Members' })
+  if (sched.canEdit.value || sched.level.value === 'supervisor') man.push({ key: 'members', label: 'Members' })
   if (sched.canEdit.value || sched.isHr.value) man.push({ key: 'setup', label: 'Setup' })
   if (man.length) groups.push({ h: 'Manage', items: man })
   return groups
