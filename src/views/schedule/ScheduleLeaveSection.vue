@@ -6,8 +6,11 @@ import {
   serviceYears,
   todayCentralIso,
   personSortKey,
+  accruingBy,
   type LeaveBalance,
+  type LeaveTaken,
 } from '@/composables/useSchedule'
+import ScheduleLeaveHistory from './ScheduleLeaveHistory.vue'
 
 /**
  * Leave balances — the HR surface on Time Reports. Vacation + sick live
@@ -21,6 +24,7 @@ import {
 const sched = useSchedule()
 
 const rows = ref<LeaveBalance[]>([])
+const taken = ref<LeaveTaken[]>([])
 const loading = ref(true)
 const flash = ref<string | null>(null)
 let flashT: ReturnType<typeof setTimeout> | null = null
@@ -32,10 +36,24 @@ function say(msg: string) {
 
 async function load() {
   loading.value = true
-  rows.value = await sched.fetchLeaveBalances()
+  const [b, t] = await Promise.all([sched.fetchLeaveBalances(), sched.fetchLeaveTaken()])
+  rows.value = b
+  taken.value = t
   loading.value = false
 }
 onMounted(load)
+
+/** One row per employee, three numbers per kind (Justin, 2026-09-24):
+ *  balance = today, before upcoming approved time off (what Paycom
+ *  would roughly say); upcoming = approved days that haven't happened
+ *  yet; available = once they're taken, counting the accruals that
+ *  post between now and the last one. The module's working balance
+ *  (what the request gate uses) is the Available number. */
+interface KindCols {
+  balance: number | null
+  upcoming: number
+  available: number | null
+}
 
 interface Row {
   userId: string
@@ -43,9 +61,26 @@ interface Row {
   hireDate: string | null
   years: number
   rate: number
-  vacation: number | null
-  sick: number | null
+  vacation: KindCols
+  sick: KindCols
 }
+
+/** Approved-but-future paid time off per user|kind — the wedge between
+ *  the module's working balance and what Paycom shows today. */
+const upcomingMap = computed(() => {
+  const today = todayCentralIso()
+  const up = new Map<string, { hours: number; last: string }>()
+  for (const t of taken.value) {
+    if (t.dateIso <= today) continue
+    const k = `${t.userId}|${t.kind}`
+    const e = up.get(k) ?? { hours: 0, last: t.dateIso }
+    e.hours = Math.round((e.hours + t.hours) * 100) / 100
+    if (t.dateIso > e.last) e.last = t.dateIso
+    up.set(k, e)
+  }
+  return up
+})
+
 const table = computed<Row[]>(() => {
   const by = new Map<string, { vacation?: number; sick?: number }>()
   for (const b of rows.value) {
@@ -54,6 +89,26 @@ const table = computed<Row[]>(() => {
     by.set(b.userId, e)
   }
   const today = todayCentralIso()
+  const up = upcomingMap.value
+  const cols = (
+    userId: string,
+    kind: 'vacation' | 'sick',
+    bal: number | undefined,
+    p: { hireDate?: string | null; employmentType?: string | null },
+  ): KindCols => {
+    const u = up.get(`${userId}|${kind}`)
+    const view = bal ?? null
+    if (view === null) return { balance: null, upcoming: u?.hours ?? 0, available: null }
+    if (!u) return { balance: view, upcoming: 0, available: view }
+    return {
+      balance: Math.round((view + u.hours) * 100) / 100,
+      upcoming: u.hours,
+      available:
+        Math.round(
+          (view + accruingBy(p.hireDate, p.employmentType === 'full_time', kind, u.last)) * 100,
+        ) / 100,
+    }
+  }
   const out: Row[] = []
   for (const [userId, bals] of by) {
     const p = sched.personById.value.get(userId)
@@ -64,13 +119,19 @@ const table = computed<Row[]>(() => {
       hireDate: p.hireDate ?? null,
       years: serviceYears(p.hireDate ?? null, today),
       rate: vacationRate(p.hireDate ?? null, today),
-      vacation: bals.vacation ?? null,
-      sick: bals.sick ?? null,
+      vacation: cols(userId, 'vacation', bals.vacation, p),
+      sick: cols(userId, 'sick', bals.sick, p),
     })
   }
   // last-name order, same as every other payroll table
   return out.sort((a, b) => personSortKey(a.name).localeCompare(personSortKey(b.name)))
 })
+
+/* ── per-row ledger expansion ──────────────────────────────────────── */
+const histFor = ref<string | null>(null)
+function toggleHist(userId: string) {
+  histFor.value = histFor.value === userId ? null : userId
+}
 
 /* ── manual adjustment ─────────────────────────────────────────────── */
 const adjustFor = ref<string | null>(null)
@@ -127,7 +188,11 @@ function parseTrueUp() {
     if (!p) continue
     const kind = m[2].toUpperCase() === 'FSV' ? 'vacation' : 'sick'
     const target = Number(m[3])
-    const current = cur.get(`${p.id}|${kind}`) ?? 0
+    /* Compare against the PRE-upcoming balance: approved future time
+       off already deducts here but hasn't hit Paycom yet — without
+       adding it back, every future vacation reads as drift. */
+    const current =
+      (cur.get(`${p.id}|${kind}`) ?? 0) + (upcomingMap.value.get(`${p.id}|${kind}`)?.hours ?? 0)
     const diff = Math.round((target - current) * 100) / 100
     if (Math.abs(diff) >= 0.05) out.push({ userId: p.id, name: p.fullName, kind, target, current, diff })
   }
@@ -152,9 +217,25 @@ async function applyTrueUp() {
 /* ── export ────────────────────────────────────────────────────────── */
 function exportCsv() {
   const q = (v: string) => '"' + v.replace(/"/g, '""') + '"'
-  const lines = ['name,hire_date,years,vacation_rate,vacation_hours,sick_hours']
+  const n = (v: number | null) => (v === null ? '' : v.toFixed(2))
+  const lines = [
+    'name,hire_date,years,vacation_rate,vacation_balance,vacation_upcoming,vacation_available,sick_balance,sick_upcoming,sick_available',
+  ]
   for (const r of table.value) {
-    lines.push([q(r.name), r.hireDate ?? '', r.years, r.rate.toFixed(2), r.vacation?.toFixed(2) ?? '', r.sick?.toFixed(2) ?? ''].join(','))
+    lines.push(
+      [
+        q(r.name),
+        r.hireDate ?? '',
+        r.years,
+        r.rate.toFixed(2),
+        n(r.vacation.balance),
+        r.vacation.upcoming ? r.vacation.upcoming.toFixed(2) : '',
+        n(r.vacation.available),
+        n(r.sick.balance),
+        r.sick.upcoming ? r.sick.upcoming.toFixed(2) : '',
+        n(r.sick.available),
+      ].join(','),
+    )
   }
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' })
   const a = document.createElement('a')
@@ -204,31 +285,59 @@ function fmtHire(d: string | null): string {
     <div v-else class="lv__scroll">
       <table class="lv__table">
         <thead>
-          <tr><th>Employee</th><th>Hired</th><th class="lv__num">Yrs</th><th class="lv__num">Vac rate</th><th class="lv__num">Vacation</th><th class="lv__num">Sick</th><th></th></tr>
+          <tr class="lv__grp">
+            <th colspan="4"></th>
+            <th colspan="3" class="lv__grph">Vacation</th>
+            <th colspan="3" class="lv__grph">Sick</th>
+            <th></th>
+          </tr>
+          <tr>
+            <th>Employee</th><th>Hired</th><th class="lv__num">Yrs</th><th class="lv__num">Rate</th>
+            <th class="lv__num lv__grpstart">Balance</th><th class="lv__num">Upcoming</th><th class="lv__num">Available</th>
+            <th class="lv__num lv__grpstart">Balance</th><th class="lv__num">Upcoming</th><th class="lv__num">Available</th>
+            <th></th>
+          </tr>
         </thead>
         <tbody>
           <template v-for="r in table" :key="r.userId">
-            <tr>
-              <td>{{ r.name }}</td>
+            <tr class="lv__row" @click="toggleHist(r.userId)">
+              <td>
+                <span class="lv__chev" :class="{ 'lv__chev--open': histFor === r.userId }" aria-hidden="true">▸</span>
+                <span class="lv__name">{{ r.name }}</span>
+              </td>
               <td>{{ fmtHire(r.hireDate) }}</td>
               <td class="lv__num">{{ r.years }}</td>
               <td class="lv__num">{{ r.rate.toFixed(2) }}</td>
-              <td class="lv__num" :class="{ 'lv__neg': (r.vacation ?? 0) < 0 }">{{ r.vacation?.toFixed(2) ?? '—' }}</td>
-              <td class="lv__num" :class="{ 'lv__neg': (r.sick ?? 0) < 0 }">{{ r.sick?.toFixed(2) ?? '—' }}</td>
-              <td><button type="button" class="lv__adjbtn" @click="openAdjust(r.userId)">Adjust</button></td>
+              <td class="lv__num lv__grpstart" :class="{ 'lv__neg': (r.vacation.balance ?? 0) < 0 }">{{ r.vacation.balance?.toFixed(2) ?? '—' }}</td>
+              <td class="lv__num lv__up">{{ r.vacation.upcoming ? '−' + r.vacation.upcoming.toFixed(2) : '—' }}</td>
+              <td class="lv__num lv__avail" :class="{ 'lv__neg': (r.vacation.available ?? 0) < 0 }">{{ r.vacation.available?.toFixed(2) ?? '—' }}</td>
+              <td class="lv__num lv__grpstart" :class="{ 'lv__neg': (r.sick.balance ?? 0) < 0 }">{{ r.sick.balance?.toFixed(2) ?? '—' }}</td>
+              <td class="lv__num lv__up">{{ r.sick.upcoming ? '−' + r.sick.upcoming.toFixed(2) : '—' }}</td>
+              <td class="lv__num lv__avail" :class="{ 'lv__neg': (r.sick.available ?? 0) < 0 }">{{ r.sick.available?.toFixed(2) ?? '—' }}</td>
+              <td><button type="button" class="lv__adjbtn" @click.stop="openAdjust(r.userId)">Adjust</button></td>
             </tr>
             <tr v-if="adjustFor === r.userId">
-              <td colspan="7" class="lv__adjrow">
+              <td colspan="11" class="lv__adjrow">
                 <select v-model="adjKind" class="lv__input"><option value="vacation">Vacation</option><option value="sick">Sick</option></select>
                 <input v-model.number="adjHours" type="number" step="0.25" class="lv__input lv__input--num" placeholder="± hours" />
                 <input v-model="adjNote" type="text" class="lv__input lv__input--note" placeholder="Why (required — goes in the ledger)" />
                 <button type="button" class="lv__btn lv__btn--go" :disabled="busy || !adjHours" @click="saveAdjust">Post</button>
               </td>
             </tr>
+            <tr v-if="histFor === r.userId">
+              <td colspan="11" class="lv__histrow">
+                <ScheduleLeaveHistory :user-id="r.userId" :summary="false" />
+              </td>
+            </tr>
           </template>
         </tbody>
       </table>
     </div>
+    <p v-if="!loading" class="lv__legend">
+      Balance = today, before upcoming time off · Upcoming = approved days not yet taken ·
+      Available = once they're taken, counting accruals through the last one. Click a row for
+      the full ledger.
+    </p>
     <p v-if="flash" class="lv__flash">{{ flash }}</p>
   </div>
 </template>
@@ -262,6 +371,18 @@ function fmtHire(d: string | null): string {
 .lv__num { text-align: right; font-variant-numeric: tabular-nums; }
 .lv__table th.lv__num { text-align: right; }
 .lv__neg { color: var(--color-danger-500); font-weight: 700; }
+.lv__grp th { border-bottom: 0; padding-bottom: 0; }
+.lv__grph { text-align: center !important; color: var(--color-accent-700) !important; letter-spacing: 0.12em !important; }
+.lv__grpstart { border-left: 1px solid var(--color-line-soft); }
+.lv__row { cursor: pointer; }
+.lv__row:hover .lv__name { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.lv__name { font-weight: 600; color: var(--color-ink); }
+.lv__chev { display: inline-block; font-size: 0.6rem; color: var(--color-muted); margin-right: 6px; transition: transform 0.12s; }
+.lv__chev--open { transform: rotate(90deg); }
+.lv__up { color: var(--color-muted); }
+.lv__avail { font-weight: 700; color: var(--color-ink); }
+.lv__histrow { background: var(--color-surface-sunk, transparent); padding: 8px 12px 10px 28px; }
+.lv__legend { font-size: 0.7rem; color: var(--color-muted); margin: 8px 0 0; }
 .lv__adjbtn { border: 1px solid var(--color-line); background: none; color: var(--color-muted); border-radius: 6px; padding: 2px 9px; font-size: 0.68rem; font-weight: 600; cursor: pointer; }
 .lv__adjbtn:hover { border-color: var(--color-brand-700); color: var(--color-brand-700); }
 .lv__adjrow { background: var(--color-surface-sunk, transparent); }

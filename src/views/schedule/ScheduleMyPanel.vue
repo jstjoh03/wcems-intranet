@@ -13,6 +13,7 @@ import ScheduleDayBoard from './ScheduleDayBoard.vue'
 import ScheduleWeekBoard from './ScheduleWeekBoard.vue'
 import SchedulePeriodBoard from './SchedulePeriodBoard.vue'
 import ScheduleMemberSettingsForm from './ScheduleMemberSettingsForm.vue'
+import ScheduleLeaveHistory from './ScheduleLeaveHistory.vue'
 
 /**
  * My schedule — the same calendar views as the main boards (month
@@ -61,6 +62,8 @@ const nextAccrual = computed(() => {
   const end = payPeriodFor(todayCentralIso()).end
   return new Date(end + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 })
+/* full ledger modal — same component HR sees, RLS-scoped to self */
+const balDetail = ref(false)
 const viewingName = computed(() =>
   viewingSelf.value
     ? null
@@ -269,7 +272,20 @@ function pendingLine(r: SchedRequest): string {
       <span class="my__bal"><span class="my__balk">Vacation</span><b :class="{ 'my__balneg': (vacBal?.balance ?? 0) < 0 }">{{ (vacBal?.balance ?? 0).toFixed(1) }}</b> hrs · +{{ myVacRate.toFixed(2) }}/period</span>
       <span class="my__bal"><span class="my__balk">Sick</span><b :class="{ 'my__balneg': (sickBal?.balance ?? 0) < 0 }">{{ (sickBal?.balance ?? 0).toFixed(1) }}</b> hrs · +{{ SICK_RATE }}/period</span>
       <span class="my__bal">next accrual {{ nextAccrual }}</span>
+      <button type="button" class="my__ballink" @click="balDetail = true">View details</button>
     </p>
+
+    <div v-if="balDetail" class="my__balovl" @click.self="balDetail = false">
+      <div class="my__balmodal" role="dialog" aria-label="Leave balance details">
+        <div class="my__balmhead">
+          <h3 class="my__balmtitle">Leave balances{{ viewingName ? ' — ' + viewingName : '' }}</h3>
+          <button type="button" class="my__balmclose" aria-label="Close" @click="balDetail = false">×</button>
+        </div>
+        <div class="my__balmscroll">
+          <ScheduleLeaveHistory v-if="viewingId" :user-id="viewingId" />
+        </div>
+      </div>
+    </div>
     <section v-if="myPending.length > 0" class="my__pending">
       <h3 class="my__h my__h--pend">Your pending requests</h3>
       <div v-for="r in myPending" :key="r.id" class="my__pendrow">
@@ -655,5 +671,75 @@ function pendingLine(r: SchedRequest): string {
 
 .my__balneg {
   color: var(--color-danger-500) !important;
+}
+
+.my__ballink {
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--color-accent-700);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.my__balovl {
+  position: fixed;
+  inset: 0;
+  background: oklch(0.18 0.015 260 / 0.45);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+  padding: 1.2rem;
+}
+
+.my__balmodal {
+  background: linear-gradient(180deg, var(--color-surface) 0%, oklch(0.985 0.004 90) 100%);
+  border: 1px solid var(--color-line);
+  border-top: 3px solid var(--color-brand-700);
+  border-radius: 14px;
+  box-shadow:
+    0 24px 60px oklch(0.2 0.03 260 / 0.28),
+    0 4px 14px oklch(0.2 0.03 260 / 0.14);
+  width: min(680px, 100%);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.1rem;
+  gap: 0.5rem;
+}
+
+.my__balmhead {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.my__balmtitle {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  color: var(--color-brand-800);
+  margin: 0;
+  flex: 1;
+}
+
+.my__balmclose {
+  border: 0;
+  background: none;
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--color-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.my__balmscroll {
+  overflow: auto;
 }
 </style>

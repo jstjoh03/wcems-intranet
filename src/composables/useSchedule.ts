@@ -2228,6 +2228,17 @@ export interface LeaveBalance {
   balance: number
 }
 
+/** Matches sched_leave_opening_asof() in SQL — time off before this
+ *  date lives in Paycom's history and never deducts here. */
+export const LEAVE_OPENING_ASOF = '2026-09-23'
+
+export interface LeaveTaken {
+  userId: string
+  kind: 'vacation' | 'sick'
+  dateIso: string
+  hours: number
+}
+
 /** Full years of service as of an ISO date. */
 export function serviceYears(hireDateIso: string | null | undefined, onIso: string): number {
   if (!hireDateIso) return 0
@@ -2277,6 +2288,50 @@ async function fetchLeaveLedger(userId: string): Promise<{ kind: string; hours: 
   }))
 }
 
+/** The deduction side of the ledger, itemized: every paid time-off
+ *  entry on the schedule after the opening as-of — exactly what the
+ *  sched_leave_used view sums. One member's history, or the whole
+ *  roster when userId is omitted (the HR Balances table). */
+async function fetchLeaveTaken(userId?: string): Promise<LeaveTaken[]> {
+  let q = supabase
+    .from('sched_entries')
+    .select('user_id, off_type, work_date, start_at, end_at')
+    .eq('kind', 'timeoff')
+    .in('off_type', ['vacation', 'sick'])
+    .not('user_id', 'is', null)
+    .gt('work_date', LEAVE_OPENING_ASOF)
+    .order('work_date', { ascending: true })
+  if (userId) q = q.eq('user_id', userId)
+  const res = await q
+  if (res.error) return []
+  return ((res.data ?? []) as Record<string, unknown>[]).map((r) => ({
+    userId: r.user_id as string,
+    kind: r.off_type as 'vacation' | 'sick',
+    dateIso: r.work_date as string,
+    hours:
+      Math.round(((tsMs(r.end_at as string) - tsMs(r.start_at as string)) / 3600e3) * 100) / 100,
+  }))
+}
+
+/** Accrual that will post from pay periods closing after today and
+ *  strictly before byDateIso — anniversary rate bumps included. Pure
+ *  math, so roster-wide projections don't need a query per person. */
+export function accruingBy(
+  hireDateIso: string | null | undefined,
+  fullTime: boolean,
+  kind: 'vacation' | 'sick',
+  byDateIso: string,
+): number {
+  if (!fullTime || !hireDateIso) return 0
+  let acc = 0
+  let end = payPeriodFor(todayCentralIso()).end
+  while (end < byDateIso) {
+    acc += kind === 'sick' ? SICK_RATE : vacationRate(hireDateIso, end)
+    end = addDaysIso(end, 14)
+  }
+  return Math.round(acc * 100) / 100
+}
+
 /** HR/editor: manual adjustment — true-ups and corrections. */
 async function adjustLeave(userId: string, kind: 'vacation' | 'sick', hours: number, note: string): Promise<string | null> {
   const auth = useAuthStore()
@@ -2305,15 +2360,7 @@ async function projectedLeaveBalance(
 ): Promise<{ today: number; accruing: number; projected: number }> {
   const today = (await fetchLeaveBalances(userId)).find((b) => b.kind === kind)?.balance ?? 0
   const p = personById.value.get(userId)
-  let accruing = 0
-  if (p?.employmentType === 'full_time' && p.hireDate) {
-    let end = payPeriodFor(todayCentralIso()).end
-    while (end < byDateIso) {
-      accruing += kind === 'sick' ? SICK_RATE : vacationRate(p.hireDate, end)
-      end = addDaysIso(end, 14)
-    }
-  }
-  accruing = Math.round(accruing * 100) / 100
+  const accruing = accruingBy(p?.hireDate, p?.employmentType === 'full_time', kind, byDateIso)
   return { today, accruing, projected: Math.round((today + accruing) * 100) / 100 }
 }
 
@@ -4673,6 +4720,7 @@ export function useSchedule() {
     eventTooltip,
     fetchLeaveBalances,
     fetchLeaveLedger,
+    fetchLeaveTaken,
     adjustLeave,
     pendingLeaveHours,
     projectedLeaveBalance,
