@@ -1945,33 +1945,84 @@ async function reqCancel() {
   transform: translateX(-50%) translateY(6px);
 }
 
+/* SIDE DRAWERS (locked 2026-09-24): every editor surface slides in
+   from the right so the board stays visible behind it — desktop gets a
+   full-height panel, phones get a bottom sheet. Same markup, only the
+   frame changed. */
 .em__overlay {
   position: fixed;
   inset: 0;
-  background: oklch(0.18 0.015 260 / 0.45);
-  backdrop-filter: blur(3px);
+  background: oklch(0.18 0.015 260 / 0.4);
+  backdrop-filter: blur(1.5px);
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-end;
   z-index: 60;
-  padding: 1rem;
+  padding: 0;
 }
 
 .em__modal {
-  background: linear-gradient(180deg, var(--color-surface) 0%, oklch(0.985 0.004 90) 100%);
-  border: 1px solid var(--color-line);
-  border-top: 3px solid var(--color-brand-700);
-  border-radius: 14px;
-  box-shadow:
-    0 24px 60px oklch(0.2 0.03 260 / 0.28),
-    0 4px 14px oklch(0.2 0.03 260 / 0.14);
-  padding: 1.1rem 1.2rem;
-  width: min(400px, 100%);
-  max-height: min(85vh, 700px);
+  background: var(--color-surface);
+  border: 0;
+  border-left: 1px solid var(--color-line);
+  border-radius: 0;
+  box-shadow: -18px 0 44px oklch(0.2 0.03 260 / 0.24);
+  padding: 1.15rem 1.25rem 1.2rem;
+  width: min(430px, 94vw);
+  max-height: none;
+  height: 100%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.55rem;
+  animation: em-slidein 0.16s ease-out;
+}
+
+@keyframes em-slidein {
+  from {
+    transform: translateX(26px);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .em__modal {
+    animation: none;
+  }
+}
+
+/* phones: bottom sheet — same content, thumb-reachable */
+@media (max-width: 700px) {
+  .em__overlay {
+    align-items: flex-end;
+    justify-content: stretch;
+  }
+
+  .em__modal {
+    width: 100%;
+    height: auto;
+    max-height: 88dvh;
+    border-left: 0;
+    border-top: 1px solid var(--color-line);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -14px 40px oklch(0.2 0.03 260 / 0.24);
+    animation: em-slideup 0.16s ease-out;
+  }
+
+  @keyframes em-slideup {
+    from {
+      transform: translateY(30px);
+      opacity: 0.6;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
 }
 
 .em__title {

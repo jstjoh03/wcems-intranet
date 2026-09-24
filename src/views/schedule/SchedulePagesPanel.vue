@@ -1199,29 +1199,45 @@ function deliveryLine(p: PageLogRow): string {
 
 /* ── review & send modal ── */
 
+/* preview & send = side drawer, matching the editor drawers (2026-09-24) */
 .pg__overlay {
   position: fixed;
   inset: 0;
   z-index: 70;
-  background: oklch(0.25 0.03 260 / 0.42);
-  backdrop-filter: blur(3px);
+  background: oklch(0.25 0.03 260 / 0.4);
+  backdrop-filter: blur(1.5px);
   display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 6vh 1rem 2rem;
-  overflow-y: auto;
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
 }
 
 .pg__modal {
-  width: min(620px, 100%);
-  background:
-    linear-gradient(180deg, oklch(1 0 0 / 0.9), oklch(0.985 0.004 84 / 0.9)),
-    var(--color-surface);
-  border: 1px solid var(--color-line);
-  border-top: 3px solid var(--color-brand-700);
-  border-radius: 14px;
-  box-shadow: 0 24px 60px oklch(0.2 0.04 260 / 0.28), 0 4px 14px oklch(0.2 0.04 260 / 0.12);
-  padding: 1rem 1.2rem 1.1rem;
+  width: min(560px, 94vw);
+  height: 100%;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 0;
+  border-left: 1px solid var(--color-line);
+  box-shadow: -18px 0 44px oklch(0.2 0.04 260 / 0.24);
+  padding: 1.1rem 1.2rem;
+}
+
+@media (max-width: 700px) {
+  .pg__overlay {
+    align-items: flex-end;
+    justify-content: stretch;
+  }
+
+  .pg__modal {
+    width: 100%;
+    height: auto;
+    max-height: 88dvh;
+    border-left: 0;
+    border-top: 1px solid var(--color-line);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -14px 40px oklch(0.2 0.04 260 / 0.24);
+  }
 }
 
 .pg__mtitle {

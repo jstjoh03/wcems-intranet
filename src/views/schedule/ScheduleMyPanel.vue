@@ -693,32 +693,47 @@ function pendingLine(r: SchedRequest): string {
   text-underline-offset: 3px;
 }
 
+/* side drawer, matching the shared editor drawers (2026-09-24) */
 .my__balovl {
   position: fixed;
   inset: 0;
-  background: oklch(0.18 0.015 260 / 0.45);
-  backdrop-filter: blur(3px);
+  background: oklch(0.18 0.015 260 / 0.4);
+  backdrop-filter: blur(1.5px);
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-end;
   z-index: 70;
-  padding: 1.2rem;
+  padding: 0;
 }
 
 .my__balmodal {
-  background: linear-gradient(180deg, var(--color-surface) 0%, oklch(0.985 0.004 90) 100%);
-  border: 1px solid var(--color-line);
-  border-top: 3px solid var(--color-brand-700);
-  border-radius: 14px;
-  box-shadow:
-    0 24px 60px oklch(0.2 0.03 260 / 0.28),
-    0 4px 14px oklch(0.2 0.03 260 / 0.14);
-  width: min(680px, 100%);
-  max-height: 86vh;
+  background: var(--color-surface);
+  border: 0;
+  border-left: 1px solid var(--color-line);
+  box-shadow: -18px 0 44px oklch(0.2 0.03 260 / 0.24);
+  width: min(560px, 94vw);
+  height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 1rem 1.1rem;
+  padding: 1.1rem 1.2rem;
   gap: 0.5rem;
+}
+
+@media (max-width: 700px) {
+  .my__balovl {
+    align-items: flex-end;
+    justify-content: stretch;
+  }
+
+  .my__balmodal {
+    width: 100%;
+    height: auto;
+    max-height: 88dvh;
+    border-left: 0;
+    border-top: 1px solid var(--color-line);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -14px 40px oklch(0.2 0.03 260 / 0.24);
+  }
 }
 
 .my__balmhead {
