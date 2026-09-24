@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useSchedule, todayCentralIso } from '@/composables/useSchedule'
+import {
+  useSchedule,
+  todayCentralIso,
+  type LabeledRow,
+  type SeatRow,
+} from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 /**
@@ -51,6 +56,26 @@ function noteCtx(label: string, notes: { id: string; note: string }[]) {
 
 function notesTitle(notes: { note: string }[]): string {
   return notes.map((n) => n.note).join('\n')
+}
+
+/** Time Off rows open the person editor for edit/delete (2026-09-24) —
+ *  mirrors the month board; entries with no seat fall back to the day. */
+function openTimeOff(r: LabeledRow): void {
+  if (sched.canEdit.value && r.userId && r.seatId) {
+    const seat = sched.seats.value.find((s) => s.id === r.seatId)
+    const unit = seat ? sched.units.value.find((u) => u.id === seat.unitId) : undefined
+    if (seat && unit) {
+      editor.openPerson(props.dateIso, unit.code, seat.id, seat.label, {
+        userId: r.userId,
+        name: r.name,
+        credential: r.credential,
+        start: r.start,
+        end: r.end,
+      } as SeatRow)
+      return
+    }
+  }
+  emit('open-day', props.dateIso)
 }
 </script>
 
@@ -202,13 +227,19 @@ function notesTitle(notes: { note: string }[]): string {
 
     <div v-if="model.timeOff.length" class="dc__section dc__section--off">
       <p class="dc__section-h">Time Off</p>
-      <div v-for="r in model.timeOff" :key="r.entryId">
-        <div class="dc__row">
+      <button
+        v-for="r in model.timeOff"
+        :key="r.entryId"
+        class="dc__rowbtn dc__offbtn"
+        :title="sched.canEdit.value ? 'Edit or remove this time off' : 'Open this day'"
+        @click="openTimeOff(r)"
+      >
+        <span class="dc__row">
           <span class="dc__name" :class="{ 'dc__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="dc__cred"> - {{ r.credential }}</span></span>
           <span class="dc__time">{{ r.start }}-{{ r.end }}</span>
-        </div>
-        <p v-if="r.sub" class="dc__sub">{{ r.sub }}</p>
-      </div>
+        </span>
+        <span v-if="r.sub" class="dc__sub">{{ r.sub }}</span>
+      </button>
     </div>
 
     <div v-if="model.events.length" class="dc__section dc__section--event">
@@ -326,6 +357,14 @@ function notesTitle(notes: { note: string }[]): string {
   padding: 0;
   text-align: left;
   cursor: pointer;
+  display: block;
+}
+
+.dc__offbtn {
+  width: 100%;
+}
+
+.dc__offbtn .dc__sub {
   display: block;
 }
 
