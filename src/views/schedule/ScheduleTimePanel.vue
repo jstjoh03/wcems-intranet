@@ -614,10 +614,14 @@ function centralPunch(ms: number): { date: string; time: string } {
 
 /* Sub-tabs (redesign 2026-09-23): Hours report · Paycom export ·
    Balances — one surface per job instead of one long scroll. */
-const ttab = ref<'hours' | 'export' | 'balances'>('hours')
-watch(ttab, (t) => {
-  if (t === 'export') preset.value = 'period'
-})
+const ttab = ref<'verify' | 'hours' | 'export' | 'balances'>('verify')
+watch(
+  ttab,
+  (t) => {
+    if (t === 'export' || t === 'verify') preset.value = 'period'
+  },
+  { immediate: true },
+)
 const showNotes = ref(false)
 const exportFlagCount = computed(
   () =>
@@ -657,22 +661,123 @@ function downloadPaycom(onlySelected = false): void {
   downloadFile(`paycom-import_${range.value.start}_${range.value.end}${suffix}.csv`, rows.join('\r\n'))
 }
 
-const showPunches = ref(false)
 
-function openPunches() {
-  punchFilter.value = ''
-  showPunches.value = true
-}
 </script>
 
 <template>
   <div class="tm">
     <div class="tm__tabs" role="tablist">
+      <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'verify' }" @click="ttab = 'verify'">Verify punches</button>
       <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'hours' }" @click="ttab = 'hours'">Hours</button>
       <template v-if="payrollAccess">
         <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'export' }" @click="ttab = 'export'">Paycom export</button>
         <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'balances' }" @click="ttab = 'balances'">Balances</button>
       </template>
+    </div>
+
+    <!-- Verify punches — the default surface: the pay period's IN/OUT
+         pairs per member, checked against what actually happened. -->
+    <div v-show="ttab === 'verify'" class="tm__verify">
+      <div class="tm__exptop">
+        <label class="tm__field">
+          <span class="tm__label">Pay period</span>
+          <select v-model="periodStart" class="tm__input">
+            <option v-for="pp in periods" :key="pp.start" :value="pp.start">{{ pp.label }}</option>
+          </select>
+        </label>
+        <input
+          v-model="punchFilter"
+          type="search"
+          class="tm__input tm__pfinput"
+          placeholder="Filter by name or EE code…"
+          aria-label="Filter punch list by employee"
+        />
+        <span class="tm__actions">
+          <template v-if="payrollAccess">
+            <button class="tm__btn" @click="selectAll(true)">All</button>
+            <button class="tm__btn" @click="selectAll(false)">None</button>
+            <button
+              class="tm__btn tm__btn--primary"
+              :disabled="selectedIds.size === 0"
+              @click="downloadPaycom(true)"
+            >
+              Download selected ({{ selectedIds.size }} of {{ punchGroups.length }})
+            </button>
+          </template>
+        </span>
+      </div>
+      <p v-if="payrollAccess" class="tm__muted tm__modal-hint">
+        Untick anyone whose timecard shouldn't be touched. OUT punches at the 0600 changeover
+        show as 05:59 (Paycom convention).
+      </p>
+      <p v-else class="tm__muted tm__modal-hint">
+        Check each member's IN/OUT punches against what actually happened on shift — if a
+        time is wrong, the schedule is wrong: fix the day on the calendar or tell the
+        scheduler. OUT punches at the 0600 changeover show as 05:59 (Paycom convention).
+      </p>
+      <div class="tm__scroll">
+        <table class="tm__table tm__table--punch">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Work date</th>
+              <th>IN</th>
+              <th>OUT</th>
+              <th>Pay code</th>
+              <th class="tm__n">Hrs</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="visibleGroups.length === 0">
+              <td colspan="6" class="tm__muted" style="padding: 0.7rem 0">
+                {{ punchFilter ? `No members match “${punchFilter}”.` : 'No punches in this pay period yet.' }}
+              </td>
+            </tr>
+            <template v-for="g in visibleGroups" :key="g.userId">
+              <tr class="tm__emprow">
+                <td colspan="5">
+                  <label class="tm__empcheck">
+                    <input
+                      v-if="payrollAccess"
+                      type="checkbox"
+                      :checked="selectedIds.has(g.userId)"
+                      @change="toggleSelected(g.userId)"
+                    />
+                    <span class="tm__name">{{ g.name }}</span>
+                    <template v-if="payrollAccess">
+                      <span v-if="g.code" class="tm__muted">· {{ g.code }}</span>
+                      <span v-else class="tm__nocode">no code</span>
+                    </template>
+                  </label>
+                </td>
+                <td class="tm__n">{{ g.hours || '' }}</td>
+              </tr>
+              <tr
+                v-for="(pp, i) in g.pairs"
+                :key="i"
+                class="tm__punchrow"
+                :class="{ 'tm__row--alt': i % 2 === 1, 'tm__row--off': !selectedIds.has(g.userId) }"
+              >
+                <td></td>
+                <td>
+                  {{ fmtDay(pp.dateIso) }}
+                  <span v-if="holidayName(pp.dateIso)" class="tm__holtag">{{ holidayName(pp.dateIso) }}</span>
+                </td>
+                <td>{{ centralPunch(pp.inMs).date }} {{ centralPunch(pp.inMs).time }}</td>
+                <td>{{ centralPunch(punchOutMs(pp.outMs)).date }} {{ centralPunch(punchOutMs(pp.outMs)).time }}</td>
+                <td>
+                  <template v-if="pp.earn">
+                    <span class="tm__earn">{{ pp.earn }}</span>
+                    <span v-if="pp.label" class="tm__muted"> {{ pp.label }}</span>
+                  </template>
+                  <span v-else class="tm__muted">—</span>
+                </td>
+                <td class="tm__n">{{ pp.hours }}</td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div v-show="ttab === 'hours'">
@@ -734,9 +839,6 @@ function openPunches() {
       <span class="tm__actions">
         <button v-if="payrollAccess" class="tm__btn" :disabled="busy || summary.length === 0" @click="csvReport">CSV</button>
         <button class="tm__btn" :disabled="busy || summary.length === 0" @click="printReport">Print</button>
-        <button v-if="!payrollAccess && preset === 'period'" class="tm__btn" @click="openPunches">
-          Review punches
-        </button>
       </span>
     </div>
 
@@ -769,7 +871,8 @@ function openPunches() {
               @click="expanded = expanded === r.userId ? null : r.userId"
             >
               <td>
-                <span class="tm__name">{{ r.name }}</span>
+                <span class="tm__rowchev" :class="{ 'tm__rowchev--open': expanded === r.userId }" aria-hidden="true">▸</span>
+                <span class="tm__name tm__name--link">{{ r.name }}</span>
                 <span v-if="r.credential" class="tm__muted"> - {{ r.credential }}</span>
               </td>
               <td v-if="payrollAccess">
@@ -824,7 +927,7 @@ function openPunches() {
           </select>
         </label>
         <span class="tm__actions">
-          <button class="tm__btn" @click="openPunches">Verify / select punches</button>
+          <button class="tm__btn" @click="ttab = 'verify'">Verify punches</button>
           <button
             class="tm__btn tm__btn--primary"
             :disabled="busy || punches.length === 0"
@@ -890,115 +993,6 @@ function openPunches() {
 
     </section>
 
-    <!-- punch verification + export-selected modal -->
-    <div v-if="showPunches" class="tm__overlay" @click.self="showPunches = false">
-      <div class="tm__modal">
-        <div class="tm__modal-head">
-          <h2 class="tm__h">{{ payrollAccess ? 'Punch verification' : 'Punch review' }} — {{ rangeLabel }}</h2>
-          <span class="tm__actions">
-            <template v-if="payrollAccess">
-              <button class="tm__btn" @click="selectAll(true)">All</button>
-              <button class="tm__btn" @click="selectAll(false)">None</button>
-              <button
-                class="tm__btn tm__btn--primary"
-                :disabled="selectedIds.size === 0"
-                @click="downloadPaycom(true)"
-              >
-                Download selected ({{ selectedIds.size }} of {{ punchGroups.length }})
-              </button>
-            </template>
-            <button class="tm__btn" @click="showPunches = false">Close</button>
-          </span>
-        </div>
-        <p v-if="payrollAccess" class="tm__muted tm__modal-hint">
-          Untick anyone whose timecard shouldn't be touched — handy when only a few need a
-          re-import. OUT punches at the 0600 changeover show as 05:59 (Paycom convention).
-        </p>
-        <p v-else class="tm__muted tm__modal-hint">
-          Check each member's IN/OUT punches against what actually happened on shift — if a
-          time is wrong, the schedule is wrong: fix the day on the calendar or tell the
-          scheduler. OUT punches at the 0600 changeover show as 05:59 (Paycom convention).
-        </p>
-
-        <div class="tm__punchfilter">
-          <input
-            v-model="punchFilter"
-            type="search"
-            class="tm__pfinput"
-            placeholder="Filter by name or EE code…"
-            aria-label="Filter punch list by employee"
-          />
-          <span v-if="punchFilter" class="tm__muted">
-            {{ visibleGroups.length }} of {{ punchGroups.length }} members
-          </span>
-        </div>
-
-        <div class="tm__modal-scroll">
-          <table class="tm__table tm__table--punch">
-            <thead>
-              <tr>
-                <th></th>
-                <th>Work date</th>
-                <th>IN</th>
-                <th>OUT</th>
-                <th>Pay code</th>
-                <th class="tm__n">Hrs</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="visibleGroups.length === 0">
-                <td colspan="6" class="tm__muted" style="padding: 0.7rem 0">
-                  No members match “{{ punchFilter }}”.
-                </td>
-              </tr>
-              <template v-for="g in visibleGroups" :key="g.userId">
-                <tr class="tm__emprow">
-                  <td colspan="5">
-                    <label class="tm__empcheck">
-                      <input
-                        v-if="payrollAccess"
-                        type="checkbox"
-                        :checked="selectedIds.has(g.userId)"
-                        @change="toggleSelected(g.userId)"
-                      />
-                      <span class="tm__name">{{ g.name }}</span>
-                      <template v-if="payrollAccess">
-                        <span v-if="g.code" class="tm__muted">· {{ g.code }}</span>
-                        <span v-else class="tm__nocode">no code</span>
-                      </template>
-                    </label>
-                  </td>
-                  <td class="tm__n">{{ g.hours || '' }}</td>
-                </tr>
-                <tr
-                  v-for="(p, i) in g.pairs"
-                  :key="i"
-                  class="tm__punchrow"
-                  :class="{ 'tm__row--alt': i % 2 === 1, 'tm__row--off': !selectedIds.has(g.userId) }"
-                >
-                  <td></td>
-                  <td>
-                    {{ fmtDay(p.dateIso) }}
-                    <span v-if="holidayName(p.dateIso)" class="tm__holtag">{{ holidayName(p.dateIso) }}</span>
-                  </td>
-                  <td>{{ centralPunch(p.inMs).date }} {{ centralPunch(p.inMs).time }}</td>
-                  <td>{{ centralPunch(punchOutMs(p.outMs)).date }} {{ centralPunch(punchOutMs(p.outMs)).time }}</td>
-                  <td>
-                    <template v-if="p.earn">
-                      <span class="tm__earn">{{ p.earn }}</span>
-                      <span v-if="p.label" class="tm__muted"> {{ p.label }}</span>
-                    </template>
-                    <span v-else class="tm__muted">—</span>
-                  </td>
-                  <td class="tm__n">{{ p.hours }}</td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
     <div v-if="payrollAccess" v-show="ttab === 'balances'">
       <ScheduleLeaveSection />
     </div>
@@ -1008,6 +1002,38 @@ function openPunches() {
 <style scoped>
 .tm {
   max-width: 1100px;
+}
+
+/* headers align with their columns — numeric columns right, always */
+.tm__table th.tm__n {
+  text-align: right;
+}
+
+.tm__rowchev {
+  display: inline-block;
+  font-size: 0.6rem;
+  color: var(--color-muted);
+  margin-right: 6px;
+  transition: transform 0.12s;
+}
+
+.tm__rowchev--open {
+  transform: rotate(90deg);
+}
+
+.tm__name--link {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+}
+
+.tm__row:hover .tm__name--link {
+  text-decoration-color: var(--color-accent-600);
+}
+
+.tm__verify .tm__pfinput {
+  min-width: 220px;
 }
 
 .tm__tabs {

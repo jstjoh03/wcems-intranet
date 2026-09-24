@@ -373,6 +373,19 @@ const visibleQueue = computed(() => {
   return sorted
 })
 
+/** Collapsed rows show one line; the chevron opens the rest. */
+const openReq = ref<string | null>(null)
+function toggleReq(id: string) {
+  openReq.value = openReq.value === id ? null : id
+}
+function rowOpen(r: SchedRequest): boolean {
+  return openReq.value === r.id || confirmApprove.value === r.id || editTimesFor.value === r.id
+}
+function requestSummary(r: SchedRequest): string {
+  if (r.type === 'trade' && r.counterWorkDate) return `${requestLine(r)} ⇄ ${fmtD(r.counterWorkDate)}`
+  return requestLine(r)
+}
+
 function waitingAge(r: SchedRequest): string {
   const h = (Date.now() - Date.parse(r.createdAt)) / 3600e3
   if (h < 1) return 'now'
@@ -554,6 +567,8 @@ const decideError = ref<string | null>(null)
 const confirmApprove = ref<string | null>(null)
 
 function approveClicked(r: SchedRequest) {
+  openReq.value = r.id
+
   const chips = cardChips(r)
   const needsConfirm = chips.some(
     (w) => w.code === 'consecutive_confirm' || w.code === 'check_failed',
@@ -584,7 +599,9 @@ async function cancel(r: SchedRequest) {
 
 <template>
   <div class="rq">
-    <section class="rq__section">
+    <!-- Editors see a work queue; the request form is for the crew
+         (and supervisors), who file their own. -->
+    <section v-if="!sched.canEdit.value" class="rq__section">
       <h2 class="rq__h">New request</h2>
       <div class="rq__kinds">
         <button
@@ -777,13 +794,15 @@ async function cancel(r: SchedRequest) {
       <h2 class="rq__h">Pending approval</h2>
       <p v-if="decideError" class="rq__error">{{ decideError }}</p>
       <p v-if="pendingQueue.length === 0" class="rq__muted">Nothing waiting.</p>
-      <div v-if="pendingQueue.length > 0" class="rq__toolbar">
+      <div v-if="pendingQueue.length > 0" class="rq__tabs" role="tablist">
+        <button class="rq__tab" :class="{ 'rq__tab--on': qType === 'all' }" @click="qType = 'all'">All <i>{{ typeCounts.all }}</i></button>
+        <button v-if="typeCounts.time_off" class="rq__tab" :class="{ 'rq__tab--on': qType === 'time_off' }" @click="qType = 'time_off'">Time off <i>{{ typeCounts.time_off }}</i></button>
+        <button v-if="typeCounts.pickup" class="rq__tab" :class="{ 'rq__tab--on': qType === 'pickup' }" @click="qType = 'pickup'">Pickups <i>{{ typeCounts.pickup }}</i></button>
+        <button v-if="typeCounts.extra_hours" class="rq__tab" :class="{ 'rq__tab--on': qType === 'extra_hours' }" @click="qType = 'extra_hours'">Extra hours <i>{{ typeCounts.extra_hours }}</i></button>
+        <button v-if="typeCounts.swap" class="rq__tab" :class="{ 'rq__tab--on': qType === 'swap' }" @click="qType = 'swap'">Trades <i>{{ typeCounts.swap }}</i></button>
+      </div>
+      <div v-if="pendingQueue.length > 0" class="rq__filterrow">
         <input v-model="qFilter" type="search" class="rq__search" placeholder="Search people…" aria-label="Search requests by person" />
-        <button class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'all' }" @click="qType = 'all'">All <i>{{ typeCounts.all }}</i></button>
-        <button v-if="typeCounts.time_off" class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'time_off' }" @click="qType = 'time_off'">Time off <i>{{ typeCounts.time_off }}</i></button>
-        <button v-if="typeCounts.pickup" class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'pickup' }" @click="qType = 'pickup'">Pickups <i>{{ typeCounts.pickup }}</i></button>
-        <button v-if="typeCounts.extra_hours" class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'extra_hours' }" @click="qType = 'extra_hours'">Extra <i>{{ typeCounts.extra_hours }}</i></button>
-        <button v-if="typeCounts.swap" class="rq__fchip" :class="{ 'rq__fchip--on': qType === 'swap' }" @click="qType = 'swap'">Trades <i>{{ typeCounts.swap }}</i></button>
         <select v-model="qSort" class="rq__sort" aria-label="Sort pending requests">
           <option value="attention">Sort: needs attention</option>
           <option value="oldest">Sort: oldest first</option>
@@ -791,84 +810,65 @@ async function cancel(r: SchedRequest) {
         </select>
       </div>
       <p v-if="pendingQueue.length > 0 && visibleQueue.length === 0" class="rq__muted">No pending requests match.</p>
-      <div v-for="r in visibleQueue" :key="r.id" class="rq__card" :class="{ 'rq__card--att': needsAttention(r) }">
-        <div class="rq__card-main">
-          <p class="rq__card-title">
-            {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}<template v-if="r.counterpartyId">
-              ⇄ {{ sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown' }}</template>
-          </p>
-          <template v-if="swapLines(r).length">
-            <p v-for="(line, i) in swapLines(r)" :key="'sw' + i" class="rq__card-line">{{ line }}</p>
+      <table v-if="visibleQueue.length > 0" class="rq__table">
+        <thead>
+          <tr>
+            <th class="rq__thchev"></th>
+            <th>Request</th>
+            <th>Shift</th>
+            <th>Flags</th>
+            <th class="rq__thage">Waiting</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="r in visibleQueue" :key="r.id">
+            <tr class="rq__row" :class="{ 'rq__row--att': needsAttention(r), 'rq__row--open': rowOpen(r) }">
+              <td class="rq__chevcell">
+                <button class="rq__chev" :class="{ 'rq__chev--open': rowOpen(r) }" :aria-expanded="rowOpen(r)" aria-label="Show detail" @click="toggleReq(r.id)">▸</button>
+              </td>
+              <td class="rq__reqcell" @click="toggleReq(r.id)">
+                <b>{{ TYPE_LABELS[r.type] }}</b> — {{ requesterName(r) }}<template v-if="r.counterpartyId">
+                  ⇄ {{ sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Unknown' }}</template>
+              </td>
+              <td class="rq__shiftcell" @click="toggleReq(r.id)">{{ requestSummary(r) }}</td>
+              <td class="rq__flagcell">
+                <span v-if="crossesPayPeriods(r)" class="rq__chip" data-code="period" :title="`Swap crosses pay periods: ${periodPair(r)} — your call.`">Crosses pay periods</span>
+                <span v-for="(w, i) in cardChips(r)" :key="i" class="rq__chip" :data-code="w.code" :title="w.message">{{ chipText(w) }}</span>
+              </td>
+              <td class="rq__agecell" :title="'Submitted ' + new Date(r.createdAt).toLocaleString()">{{ waitingAge(r) }}</td>
+              <td class="rq__actcell">
+                <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="approveClicked(r)">
+                  {{ confirmApprove === r.id ? 'Approve anyway' : 'Approve' }}
+                </button>
+                <button v-if="confirmApprove === r.id" class="rq__btn" @click="confirmApprove = null">Back</button>
+                <button v-else class="rq__btn rq__btn--deny" :disabled="busyId === r.id" @click="decide(r, false)">Deny</button>
+              </td>
+            </tr>
+            <tr v-if="rowOpen(r)" class="rq__detailrow">
+              <td></td>
+              <td colspan="5">
+                <template v-if="swapLines(r).length">
+                  <p v-for="(line, i) in swapLines(r)" :key="'sw' + i" class="rq__card-line">{{ line }}</p>
+                </template>
+                <p v-else class="rq__card-line">{{ requestLine(r) }}</p>
+                <p v-for="(line, i) in cardHours[r.id]?.lines ?? []" :key="i" class="rq__hoursline">{{ line }}</p>
+                <p v-if="r.comments" class="rq__card-comments">"{{ r.comments }}"</p>
+                <p v-if="confirmApprove === r.id" class="rq__confirmnote">
+                  This crosses an hour threshold that needs admin sign-off — approve anyway?
+                </p>
+                <div v-if="editTimesFor === r.id" class="rq__edittimes">
+                  <label>From <TimeSelect24 v-model="editFrom" class="rq__input rq__input--time" /></label>
+                  <label>Until <TimeSelect24 v-model="editUntil" class="rq__input rq__input--time" /></label>
+                  <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="saveEditTimes(r)">Save times</button>
+                  <button class="rq__btn" @click="editTimesFor = null">Cancel</button>
+                </div>
+                <button v-else-if="canRetime(r)" class="rq__btn rq__btn--ghostline" @click="startEditTimes(r)">Edit times</button>
+              </td>
+            </tr>
           </template>
-          <p v-else class="rq__card-line">{{ requestLine(r) }}</p>
-          <p v-for="(line, i) in cardHours[r.id]?.lines ?? []" :key="i" class="rq__hoursline">
-            {{ line }}
-          </p>
-          <div v-if="cardChips(r).length || crossesPayPeriods(r)" class="rq__chips">
-            <span
-              v-if="crossesPayPeriods(r)"
-              class="rq__chip"
-              data-code="period"
-              :title="`Swap crosses pay periods: ${periodPair(r)} — your call.`"
-            >
-              Crosses pay periods
-            </span>
-            <span
-              v-for="(w, i) in cardChips(r)"
-              :key="i"
-              class="rq__chip"
-              :data-code="w.code"
-              :title="w.message"
-            >
-              {{ chipText(w) }}
-            </span>
-          </div>
-          <p v-if="r.comments" class="rq__card-comments">"{{ r.comments }}"</p>
-          <div v-if="editTimesFor === r.id" class="rq__edittimes">
-            <label>From <TimeSelect24 v-model="editFrom" class="rq__input rq__input--time" /></label>
-            <label>Until <TimeSelect24 v-model="editUntil" class="rq__input rq__input--time" /></label>
-            <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="saveEditTimes(r)">
-              Save times
-            </button>
-            <button class="rq__btn" @click="editTimesFor = null">Cancel</button>
-          </div>
-          <p v-if="confirmApprove === r.id" class="rq__confirmnote">
-            This crosses an hour threshold that needs admin sign-off — approve anyway?
-          </p>
-        </div>
-        <div class="rq__card-actions">
-          <span class="rq__age" :title="'Submitted ' + new Date(r.createdAt).toLocaleString()">{{ waitingAge(r) }}</span>
-          <button
-            class="rq__btn rq__btn--approve"
-            :disabled="busyId === r.id"
-            @click="approveClicked(r)"
-          >
-            {{ confirmApprove === r.id ? 'Approve anyway' : 'Approve' }}
-          </button>
-          <button
-            v-if="confirmApprove === r.id"
-            class="rq__btn"
-            @click="confirmApprove = null"
-          >
-            Back
-          </button>
-          <button
-            v-else
-            class="rq__btn rq__btn--deny"
-            :disabled="busyId === r.id"
-            @click="decide(r, false)"
-          >
-            Deny
-          </button>
-          <button
-            v-if="canRetime(r) && editTimesFor !== r.id && confirmApprove !== r.id"
-            class="rq__btn"
-            @click="startEditTimes(r)"
-          >
-            Edit times
-          </button>
-        </div>
-      </div>
+        </tbody>
+      </table>
 
 
       <template v-if="negotiating.length > 0">
@@ -972,6 +972,144 @@ async function cancel(r: SchedRequest) {
 }
 
 /* ── workbench toolbar ─────────────────────────────────────────────── */
+.rq__tabs {
+  display: flex;
+  gap: 18px;
+  border-bottom: 1px solid var(--color-line);
+  margin: 0 0 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.rq__tab {
+  border: 0;
+  background: none;
+  padding: 6px 2px 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rq__tab i {
+  font-style: normal;
+  font-weight: 600;
+  opacity: 0.6;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rq__tab--on {
+  color: var(--color-ink);
+  border-bottom-color: var(--color-accent-600);
+}
+
+.rq__filterrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 0.6rem;
+}
+
+.rq__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.rq__table th {
+  text-align: left;
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 700;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.rq__table th.rq__thage {
+  text-align: right;
+}
+
+.rq__table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--color-line-soft);
+  font-size: 0.82rem;
+  vertical-align: middle;
+}
+
+.rq__row:hover td {
+  background: var(--color-surface);
+}
+
+.rq__row--att td:first-child {
+  box-shadow: inset 2.5px 0 0 var(--color-danger-500);
+}
+
+.rq__row--open td {
+  border-bottom-color: transparent;
+}
+
+.rq__chevcell {
+  width: 26px;
+  padding-right: 0;
+}
+
+.rq__chev {
+  border: 0;
+  background: none;
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  transition: transform 0.12s;
+  display: inline-block;
+}
+
+.rq__chev--open {
+  transform: rotate(90deg);
+}
+
+.rq__reqcell,
+.rq__shiftcell {
+  cursor: pointer;
+}
+
+.rq__reqcell b {
+  font-weight: 650;
+}
+
+.rq__shiftcell {
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rq__agecell {
+  text-align: right;
+  color: var(--color-muted);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rq__actcell {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.rq__detailrow td {
+  padding-top: 0;
+  background: var(--color-surface);
+}
+
+.rq__btn--ghostline {
+  margin-top: 0.35rem;
+}
+
 .rq__toolbar {
   display: flex;
   align-items: center;

@@ -202,15 +202,15 @@ function fmtHire(d: string | null): string {
     <div v-else class="lv__scroll">
       <table class="lv__table">
         <thead>
-          <tr><th>Employee</th><th>Hired</th><th>Yrs</th><th>Vac rate</th><th class="lv__num">Vacation</th><th class="lv__num">Sick</th><th></th></tr>
+          <tr><th>Employee</th><th>Hired</th><th class="lv__num">Yrs</th><th class="lv__num">Vac rate</th><th class="lv__num">Vacation</th><th class="lv__num">Sick</th><th></th></tr>
         </thead>
         <tbody>
           <template v-for="r in table" :key="r.userId">
             <tr>
               <td>{{ r.name }}</td>
               <td>{{ fmtHire(r.hireDate) }}</td>
-              <td>{{ r.years }}</td>
-              <td>{{ r.rate.toFixed(2) }}</td>
+              <td class="lv__num">{{ r.years }}</td>
+              <td class="lv__num">{{ r.rate.toFixed(2) }}</td>
               <td class="lv__num" :class="{ 'lv__neg': (r.vacation ?? 0) < 0 }">{{ r.vacation?.toFixed(2) ?? '—' }}</td>
               <td class="lv__num" :class="{ 'lv__neg': (r.sick ?? 0) < 0 }">{{ r.sick?.toFixed(2) ?? '—' }}</td>
               <td><button type="button" class="lv__adjbtn" @click="openAdjust(r.userId)">Adjust</button></td>
@@ -258,6 +258,7 @@ function fmtHire(d: string | null): string {
 .lv__table th { text-align: left; font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-muted); padding: 4px 8px; border-bottom: 1px solid var(--color-line); }
 .lv__table td { padding: 5px 8px; border-bottom: 1px solid var(--color-line-soft); }
 .lv__num { text-align: right; font-variant-numeric: tabular-nums; }
+.lv__table th.lv__num { text-align: right; }
 .lv__neg { color: var(--color-danger-500); font-weight: 700; }
 .lv__adjbtn { border: 1px solid var(--color-line); background: none; color: var(--color-muted); border-radius: 6px; padding: 2px 9px; font-size: 0.68rem; font-weight: 600; cursor: pointer; }
 .lv__adjbtn:hover { border-color: var(--color-brand-700); color: var(--color-brand-700); }
