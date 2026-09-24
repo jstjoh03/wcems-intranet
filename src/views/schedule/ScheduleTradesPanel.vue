@@ -233,8 +233,15 @@ const boardRest = computed(() =>
 const lane = ref<'board' | 'inbox' | 'mine'>('board')
 const statusFilter = ref<'all' | 'open' | 'offers' | 'waiting_target'>('all')
 
+/* "Yours" = your postings PLUS postings you've claimed or offered on —
+   a claim was invisible once the board scrolled, so the claimer never
+   found their Withdraw (Justin, 2026-09-24). */
 const myPostings = computed(() =>
-  boardRest.value.filter((r) => r.requesterId === sched.myUserId.value),
+  boardRest.value.filter(
+    (r) =>
+      r.requesterId === sched.myUserId.value ||
+      (r.requesterId !== sched.myUserId.value && !!myOfferOn(r)),
+  ),
 )
 const openBoard = computed(() =>
   boardRest.value.filter((r) => r.requesterId !== sched.myUserId.value),
@@ -245,10 +252,22 @@ function postingStatusKey(r: SchedRequest): string {
   return offersFor(r).length > 0 ? 'offers' : 'open'
 }
 
+/* soonest shift first by default — that's the one that needs covering
+   (Justin, 2026-09-24) */
+const sortSel = ref<'soonest' | 'newest' | 'oldest'>('soonest')
+
 const boardShown = computed(() => {
   const base = lane.value === 'mine' ? myPostings.value : openBoard.value
-  if (lane.value !== 'board' || statusFilter.value === 'all') return base
-  return base.filter((r) => postingStatusKey(r) === statusFilter.value)
+  const filtered =
+    lane.value === 'board' && statusFilter.value !== 'all'
+      ? base.filter((r) => postingStatusKey(r) === statusFilter.value)
+      : base
+  const sorted = [...filtered]
+  if (sortSel.value === 'soonest')
+    sorted.sort((a, b) => (a.workDate ?? '9999').localeCompare(b.workDate ?? '9999'))
+  else if (sortSel.value === 'newest') sorted.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  else sorted.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  return sorted
 })
 
 function postedAge(r: SchedRequest): string {
@@ -433,7 +452,7 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
     <div class="tr__tabs" role="tablist">
       <button class="tr__tab" :class="{ 'tr__tab--on': lane === 'board' }" @click="lane = 'board'">Open board <i>{{ openBoard.length }}</i></button>
       <button class="tr__tab" :class="{ 'tr__tab--on': lane === 'inbox' }" @click="lane = 'inbox'">Sent to you <i>{{ sentToMe.length }}</i></button>
-      <button class="tr__tab" :class="{ 'tr__tab--on': lane === 'mine' }" @click="lane = 'mine'">Your postings <i>{{ myPostings.length }}</i></button>
+      <button class="tr__tab" :class="{ 'tr__tab--on': lane === 'mine' }" @click="lane = 'mine'">Yours <i>{{ myPostings.length }}</i></button>
     </div>
     <div class="tr__topbar">
       <select v-if="lane === 'board'" v-model="statusFilter" class="tr__filter" aria-label="Filter postings by status">
@@ -441,6 +460,11 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
         <option value="open">Open — claimable</option>
         <option value="offers">Offers in</option>
         <option value="waiting_target">Waiting on someone</option>
+      </select>
+      <select v-if="lane !== 'inbox'" v-model="sortSel" class="tr__filter" aria-label="Sort postings">
+        <option value="soonest">Sort: soonest shift</option>
+        <option value="newest">Newest posted</option>
+        <option value="oldest">Oldest posted</option>
       </select>
       <p class="tr__hint">
         Deals you accept still go to the Chief for final approval before the calendar changes.
@@ -591,7 +615,7 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
         {{ lane === 'mine' ? 'You have nothing posted.' : 'Nothing on the board right now.' }}
       </p>
 
-      <div v-for="r in boardShown" :key="r.id" class="tr__card">
+      <div v-for="r in boardShown" :key="r.id" class="tr__card" :class="{ 'tr__card--direct': !!myOfferOn(r) }">
         <div class="tr__card-top">
           <span class="tr__type" :data-type="r.type">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap wanted' }}</span>
           <p class="tr__who">{{ posterName(r) }}</p>

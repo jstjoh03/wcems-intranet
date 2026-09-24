@@ -390,8 +390,15 @@ function requestSummary(r: SchedRequest): string {
 }
 
 /** Date-first with the detail underneath — one long line wrapped to
- *  three on narrow columns (Justin, 2026-09-24). */
+ *  three on narrow columns (Justin, 2026-09-24). Trades lead with the
+ *  two dates around the swap symbol, mirroring the names column. */
 function summaryParts(r: SchedRequest): { date: string; detail: string } {
+  if (r.type === 'trade' && r.workDate && r.counterWorkDate) {
+    const bits: string[] = []
+    if (r.startAt && r.endAt) bits.push(`${hhmm(r.startAt)} – ${hhmm(r.endAt)}`)
+    if (r.unitCode) bits.push(`${r.unitCode} ${r.positionLabel ?? ''}`.trim())
+    return { date: `${fmtD(r.workDate)} ⇄ ${fmtD(r.counterWorkDate)}`, detail: bits.join(' · ') }
+  }
   const s = requestSummary(r)
   const i = s.indexOf(' · ')
   return i === -1 ? { date: s, detail: '' } : { date: s.slice(0, i), detail: s.slice(i + 3) }
@@ -567,6 +574,10 @@ watch(pendingQueue, () => void computeCardHours(), { immediate: true })
 
 /** Chips shown on a Chief card: live warnings win over stored ones. */
 function cardChips(r: SchedRequest): HoursWarning[] {
+  /* Trades swap hours, they don't add them — hour-threshold chips on a
+     swap are noise; the only flag a trade earns is crossing pay periods
+     (Justin, 2026-09-24). The hour detail still shows in the expansion. */
+  if (r.type === 'trade') return []
   const live = cardHours.value[r.id]?.warnings ?? []
   const stored = reqWarnings(r)
   const seen = new Set(live.map((w) => w.code))

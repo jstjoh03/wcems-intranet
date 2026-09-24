@@ -130,7 +130,69 @@ watch(editor.slot, (s) => {
   slotAssignee.value = ''
   pickupWarn.value = null
   err.value = null
+  void loadSlotPickups(s)
 })
+
+/* Admins opening an open seat see who has already asked for it — name,
+   when they asked, and their hours picture, so the drawer answers "who
+   should get this?" without a trip to the queue (Justin, 2026-09-24). */
+interface SlotPickup {
+  id: string
+  name: string
+  submitted: string
+  line: string
+  warnings: HoursWarning[]
+}
+const slotPickups = ref<SlotPickup[]>([])
+
+async function loadSlotPickups(s: { dateIso: string; seatId: string | null; entryId?: string | null }) {
+  slotPickups.value = []
+  if (!sched.canEdit.value) return
+  const matches = sched.requests.value
+    .filter(
+      (r) =>
+        r.type === 'pickup' &&
+        r.status === 'pending' &&
+        (s.entryId ? r.entryId === s.entryId : r.workDate === s.dateIso && r.seatId === s.seatId),
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const out: SlotPickup[] = []
+  for (const r of matches) {
+    const who = sched.personById.value.get(r.requesterId)
+    let line = ''
+    let warnings: HoursWarning[] = []
+    if (r.workDate && r.startAt && r.endAt) {
+      const info = await sched.hoursCheck(
+        r.requesterId,
+        [{ dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt }],
+        who?.fullName ?? 'They',
+      )
+      line = `${info.weekHours}h week · ${info.periodHours}h period · ${info.consecutiveHours}h consecutive`
+      warnings = info.warnings
+    }
+    out.push({
+      id: r.id,
+      name: who?.fullName ?? 'Unknown',
+      submitted: new Date(r.createdAt).toLocaleString('en-US', {
+        timeZone: 'America/Chicago',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      }),
+      line,
+      warnings,
+    })
+  }
+  slotPickups.value = out
+}
+
+function slotWarnShort(w: HoursWarning): string {
+  if (w.code === 'weekly') return `${w.hours}h week`
+  if (w.code === 'ot') return 'Overtime'
+  if (w.code === 'consecutive' || w.code === 'consecutive_confirm') return `${w.hours}h consecutive`
+  return w.code
+}
 
 watch([slotFrom, slotUntil], () => {
   pickupWarn.value = null
@@ -1310,6 +1372,22 @@ async function reqCancel() {
         </div>
         <p v-if="err" class="em__error">{{ err }}</p>
 
+        <!-- who has already asked for this shift, in arrival order -->
+        <div v-if="sched.canEdit.value && slotPickups.length" class="em__pickups">
+          <p class="em__pickhead">Pickup requests — first come, first listed</p>
+          <div v-for="pk in slotPickups" :key="pk.id" class="em__pickrow">
+            <p class="em__pickmain">
+              <span class="em__pickname">{{ pk.name }}</span>
+              <span class="em__picksub">asked {{ pk.submitted }}</span>
+            </p>
+            <p class="em__pickhours">
+              {{ pk.line }}
+              <span v-for="(w, i) in pk.warnings" :key="i" class="em__pickwarn" :title="w.message">{{ slotWarnShort(w) }}</span>
+            </p>
+          </div>
+          <p class="em__picknote">Approve or deny on the Requests tab — approving fills this seat.</p>
+        </div>
+
         <!-- Editors lead with assignment (their actual job); the crew's
              request-a-shift flow is the secondary path for them. -->
         <template v-if="sched.canEdit.value">
@@ -2030,6 +2108,74 @@ async function reqCancel() {
   font-size: 1.15rem;
   color: var(--color-brand-800);
   margin: 0;
+}
+
+/* pickup requests inside the open-seat drawer */
+.em__pickups {
+  border: 1px solid var(--color-line-soft);
+  border-radius: 9px;
+  padding: 0.5rem 0.7rem 0.55rem;
+}
+
+.em__pickhead {
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--color-ink);
+  margin: 0 0 0.3rem;
+}
+
+.em__pickrow {
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.em__pickrow:last-of-type {
+  border-bottom: 0;
+}
+
+.em__pickmain {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.em__pickname {
+  font-weight: 650;
+  color: var(--color-ink);
+}
+
+.em__picksub {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.em__pickhours {
+  font-size: 0.74rem;
+  color: var(--color-muted);
+  margin: 1px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.em__pickwarn {
+  display: inline-block;
+  font-size: 0.66rem;
+  font-weight: 600;
+  border-radius: 5px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  background: var(--color-warning-50, oklch(0.97 0.03 86.8));
+  color: oklch(0.45 0.12 60);
+}
+
+.em__picknote {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+  margin: 0.35rem 0 0;
 }
 
 .em__sub {

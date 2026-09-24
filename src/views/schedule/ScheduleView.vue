@@ -814,17 +814,19 @@ watch(dateIso, (v) => {
   gap: 4px;
 }
 
+/* text-only navigation — the boxed buttons read as chrome
+   (Justin, 2026-09-24) */
 .sched__nav-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 32px;
-  min-width: 32px;
-  padding: 0 0.5rem;
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-ink-soft);
+  height: 30px;
+  min-width: 24px;
+  padding: 0 0.3rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--color-muted);
   font: inherit;
   font-size: 0.8rem;
   font-weight: 600;
@@ -832,12 +834,24 @@ watch(dateIso, (v) => {
 }
 
 .sched__nav-btn svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .sched__nav-btn:hover {
-  border-color: var(--color-brand-300);
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+
+.sched__nav-btn--today {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+}
+
+.sched__nav-btn--today:hover {
+  text-decoration-color: var(--color-accent-600);
 }
 
 .sched__period {

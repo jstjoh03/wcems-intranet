@@ -7,6 +7,8 @@ import {
   todayCentralIso,
   personSortKey,
   accruingBy,
+  effectiveRates,
+  SICK_RATE,
   type LeaveBalance,
   type LeaveTaken,
 } from '@/composables/useSchedule'
@@ -95,7 +97,12 @@ const table = computed<Row[]>(() => {
     userId: string,
     kind: 'vacation' | 'sick',
     bal: number | undefined,
-    p: { hireDate?: string | null; employmentType?: string | null },
+    p: {
+      hireDate?: string | null
+      employmentType?: string | null
+      vacRateOverride?: number | null
+      sickRateOverride?: number | null
+    },
   ): KindCols => {
     const u = up.get(`${userId}|${kind}`)
     const view = bal ?? null
@@ -106,7 +113,12 @@ const table = computed<Row[]>(() => {
       upcoming: u.hours,
       available:
         Math.round(
-          (view + accruingBy(p.hireDate, p.employmentType === 'full_time', kind, u.last)) * 100,
+          (view +
+            accruingBy(p.hireDate, p.employmentType === 'full_time', kind, u.last, {
+              vac: p.vacRateOverride,
+              sick: p.sickRateOverride,
+            })) *
+            100,
         ) / 100,
     }
   }
@@ -119,7 +131,7 @@ const table = computed<Row[]>(() => {
       name: p.fullName,
       hireDate: p.hireDate ?? null,
       years: serviceYears(p.hireDate ?? null, today),
-      rate: vacationRate(p.hireDate ?? null, today),
+      rate: effectiveRates(p).vac,
       vacation: cols(userId, 'vacation', bals.vacation, p),
       sick: cols(userId, 'sick', bals.sick, p),
     })
@@ -134,33 +146,98 @@ function toggleHist(userId: string) {
   histFor.value = histFor.value === userId ? null : userId
 }
 
-/* ── manual adjustment ─────────────────────────────────────────────── */
-const adjustFor = ref<string | null>(null)
+/* ── leave profile drawer (2026-09-24) ─────────────────────────────
+   Hire date, manual accrual-rate overrides, opening balances for new
+   full-timers with nothing to import, adjustments, and the ledger —
+   one drawer per person, replacing the inline adjust row. */
+const drawerFor = ref<string | null>(null)
+const dHire = ref('')
+const dVac = ref<number | null>(null)
+const dSick = ref<number | null>(null)
 const adjKind = ref<'vacation' | 'sick'>('vacation')
 const adjHours = ref<number | null>(null)
 const adjNote = ref('')
+const openVac = ref<number | null>(0)
+const openSick = ref<number | null>(0)
 const busy = ref(false)
-function openAdjust(userId: string) {
-  adjustFor.value = adjustFor.value === userId ? null : userId
+
+const ledgerIds = computed(() => new Set(rows.value.map((b) => b.userId)))
+const drawerPerson = computed(() =>
+  drawerFor.value ? sched.personById.value.get(drawerFor.value) : undefined,
+)
+const drawerHasLedger = computed(() => !!drawerFor.value && ledgerIds.value.has(drawerFor.value))
+
+function openDrawer(userId: string) {
+  drawerFor.value = userId
+  const p = sched.personById.value.get(userId)
+  dHire.value = p?.hireDate ?? ''
+  dVac.value = p?.vacRateOverride ?? null
+  dSick.value = p?.sickRateOverride ?? null
   adjKind.value = 'vacation'
   adjHours.value = null
   adjNote.value = ''
+  openVac.value = 0
+  openSick.value = 0
 }
+
+/* add someone who never had an import — they get a profile + opening */
+const addPick = ref('')
+const addable = computed(() =>
+  sched.allPeople.value.filter((p) => p.active && !ledgerIds.value.has(p.id)),
+)
+function onAddPick() {
+  if (!addPick.value) return
+  openDrawer(addPick.value)
+  addPick.value = ''
+}
+
+async function saveProfile() {
+  if (!drawerFor.value || busy.value) return
+  busy.value = true
+  const e = await sched.setLeaveProfile(
+    drawerFor.value,
+    dHire.value || null,
+    dVac.value ?? null,
+    dSick.value ?? null,
+  )
+  busy.value = false
+  say(e ?? 'Profile saved — accruals follow it from the next pay-period close.')
+}
+
+async function postOpening() {
+  if (!drawerFor.value || busy.value) return
+  if (!dHire.value) {
+    say('Set the hire date first — accruals need it.')
+    return
+  }
+  busy.value = true
+  const pe = await sched.setLeaveProfile(drawerFor.value, dHire.value, dVac.value ?? null, dSick.value ?? null)
+  const e = pe ?? (await sched.openLeaveBalances(drawerFor.value, openVac.value ?? 0, openSick.value ?? 0))
+  busy.value = false
+  if (e) {
+    say(e)
+    return
+  }
+  say('Balances started — they are on the board now.')
+  await load()
+}
+
 async function saveAdjust() {
-  if (!adjustFor.value || !adjHours.value || busy.value) return
+  if (!drawerFor.value || !adjHours.value || busy.value) return
   if (!adjNote.value.trim()) {
     say('Adjustments need a note — what is this correcting?')
     return
   }
   busy.value = true
-  const e = await sched.adjustLeave(adjustFor.value, adjKind.value, adjHours.value, adjNote.value)
+  const e = await sched.adjustLeave(drawerFor.value, adjKind.value, adjHours.value, adjNote.value)
   busy.value = false
   if (e) {
     say(e)
     return
   }
   say('Adjustment posted.')
-  adjustFor.value = null
+  adjHours.value = null
+  adjNote.value = ''
   await load()
 }
 
@@ -256,6 +333,10 @@ function fmtHire(d: string | null): string {
     <div class="lv__head">
       <h3 class="lv__title">Leave balances</h3>
       <span class="lv__sub">Vacation + sick — accruals post at each pay-period close; approved paid time off deducts automatically.</span>
+      <select v-model="addPick" class="lv__addsel" aria-label="Add an employee to balances" @change="onAddPick">
+        <option value="">Add employee…</option>
+        <option v-for="p in addable" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+      </select>
       <button type="button" class="lv__btn" @click="trueOpen = !trueOpen">True-up vs Paycom</button>
       <button type="button" class="lv__btn lv__btn--ghost" @click="exportCsv">Export CSV</button>
     </div>
@@ -315,15 +396,7 @@ function fmtHire(d: string | null): string {
               <td class="lv__num lv__ts" :class="{ 'lv__neg': (r.sick.balance ?? 0) < 0 }">{{ r.sick.balance?.toFixed(2) ?? '—' }}</td>
               <td class="lv__num lv__ts lv__up">{{ r.sick.upcoming ? '−' + r.sick.upcoming.toFixed(2) : '—' }}</td>
               <td class="lv__num lv__ts lv__avail" :class="{ 'lv__neg': (r.sick.available ?? 0) < 0 }">{{ r.sick.available?.toFixed(2) ?? '—' }}</td>
-              <td><button type="button" class="lv__adjbtn" @click.stop="openAdjust(r.userId)">Adjust</button></td>
-            </tr>
-            <tr v-if="adjustFor === r.userId">
-              <td colspan="11" class="lv__adjrow">
-                <select v-model="adjKind" class="lv__input"><option value="vacation">Vacation</option><option value="sick">Sick</option></select>
-                <input v-model.number="adjHours" type="number" step="0.25" class="lv__input lv__input--num" placeholder="± hours" />
-                <input v-model="adjNote" type="text" class="lv__input lv__input--note" placeholder="Why (required — goes in the ledger)" />
-                <button type="button" class="lv__btn lv__btn--go" :disabled="busy || !adjHours" @click="saveAdjust">Post</button>
-              </td>
+              <td><button type="button" class="lv__adjbtn" @click.stop="openDrawer(r.userId)">Manage</button></td>
             </tr>
             <tr v-if="histFor === r.userId">
               <td colspan="11" class="lv__histrow">
@@ -340,6 +413,69 @@ function fmtHire(d: string | null): string {
       the full ledger.
     </p>
     <p v-if="flash" class="lv__flash">{{ flash }}</p>
+
+    <!-- leave profile drawer -->
+    <div v-if="drawerFor" class="lv__ovl" @click.self="drawerFor = null">
+      <aside class="lv__drawer" role="dialog" aria-label="Leave profile">
+        <div class="lv__dh">
+          <h3 class="lv__dtitle">{{ drawerPerson?.fullName ?? 'Member' }}</h3>
+          <button type="button" class="lv__dclose" aria-label="Close" @click="drawerFor = null">×</button>
+        </div>
+        <div class="lv__dbody">
+          <p class="lv__dsect">Profile</p>
+          <div class="lv__drow">
+            <span class="lv__dk">Hired</span>
+            <input v-model="dHire" type="date" class="lv__input" />
+          </div>
+          <div class="lv__drow">
+            <span class="lv__dk">Vac rate</span>
+            <input v-model.number="dVac" type="number" step="0.01" class="lv__input lv__input--num" :placeholder="`auto (${vacationRate(dHire || null, todayCentralIso()).toFixed(2)})`" />
+            <span class="lv__dhint">per pay period — blank = automatic band</span>
+          </div>
+          <div class="lv__drow">
+            <span class="lv__dk">Sick rate</span>
+            <input v-model.number="dSick" type="number" step="0.01" class="lv__input lv__input--num" :placeholder="`auto (${SICK_RATE})`" />
+            <span class="lv__dhint">blank = {{ SICK_RATE }} flat</span>
+          </div>
+          <div class="lv__drow">
+            <button type="button" class="lv__btn" :disabled="busy" @click="saveProfile">Save profile</button>
+            <span v-if="drawerPerson && drawerPerson.employmentType !== 'full_time'" class="lv__dhint lv__dwarn">
+              Not marked full-time — accruals only run for full-time members.
+            </span>
+          </div>
+
+          <template v-if="!drawerHasLedger">
+            <p class="lv__dsect">Opening balances</p>
+            <p class="lv__dhint">
+              New hire with nothing to import? Post their starting hours (0 is fine) — that
+              puts them on the board and accruals take it from there.
+            </p>
+            <div class="lv__drow">
+              <span class="lv__dk">Vacation</span>
+              <input v-model.number="openVac" type="number" step="0.25" class="lv__input lv__input--num" />
+              <span class="lv__dk">Sick</span>
+              <input v-model.number="openSick" type="number" step="0.25" class="lv__input lv__input--num" />
+              <button type="button" class="lv__btn lv__btn--go" :disabled="busy" @click="postOpening">Start balances</button>
+            </div>
+          </template>
+
+          <template v-else>
+            <p class="lv__dsect">Adjustment</p>
+            <div class="lv__drow">
+              <select v-model="adjKind" class="lv__input"><option value="vacation">Vacation</option><option value="sick">Sick</option></select>
+              <input v-model.number="adjHours" type="number" step="0.25" class="lv__input lv__input--num" placeholder="± hours" />
+            </div>
+            <div class="lv__drow">
+              <input v-model="adjNote" type="text" class="lv__input lv__input--note" placeholder="Why (required — goes in the ledger)" />
+              <button type="button" class="lv__btn lv__btn--go" :disabled="busy || !adjHours" @click="saveAdjust">Post</button>
+            </div>
+
+            <p class="lv__dsect">Ledger</p>
+            <ScheduleLeaveHistory :user-id="drawerFor" :summary="true" />
+          </template>
+        </div>
+      </aside>
+    </div>
   </div>
 </template>
 
@@ -398,9 +534,26 @@ tr:hover .lv__ts { background: oklch(0.945 0.012 262); }
 .lv__legend { font-size: 0.7rem; color: var(--color-muted); margin: 8px 0 0; }
 .lv__adjbtn { border: 1px solid var(--color-line); background: none; color: var(--color-muted); border-radius: 6px; padding: 2px 9px; font-size: 0.68rem; font-weight: 600; cursor: pointer; }
 .lv__adjbtn:hover { border-color: var(--color-brand-700); color: var(--color-brand-700); }
-.lv__adjrow { background: var(--color-surface-sunk, transparent); }
-.lv__adjrow .lv__input { border: 1px solid var(--color-line); border-radius: 7px; padding: 5px 8px; font-size: 0.74rem; background: var(--color-canvas, transparent); color: inherit; margin-right: 6px; }
-.lv__input--num { width: 90px; }
-.lv__input--note { width: 46%; min-width: 200px; }
+.lv__input { border: 1px solid var(--color-line); border-radius: 7px; padding: 5px 8px; font-size: 0.76rem; background: var(--color-surface); color: inherit; font: inherit; }
+.lv__input--num { width: 110px; }
+.lv__input--note { flex: 1; min-width: 180px; }
+.lv__addsel { font: inherit; font-size: 0.74rem; border: 1px solid var(--color-line); border-radius: 7px; padding: 5px 8px; background: var(--color-surface); color: var(--color-ink); }
+
+/* ── leave profile drawer ── */
+.lv__ovl { position: fixed; inset: 0; z-index: 70; background: oklch(0.18 0.015 260 / 0.4); backdrop-filter: blur(1.5px); display: flex; align-items: stretch; justify-content: flex-end; }
+.lv__drawer { width: min(520px, 94vw); height: 100%; background: var(--color-surface); border-left: 1px solid var(--color-line); box-shadow: -18px 0 44px oklch(0.2 0.03 260 / 0.24); display: flex; flex-direction: column; }
+.lv__dh { display: flex; align-items: baseline; gap: 10px; padding: 16px 18px 10px; border-bottom: 1px solid var(--color-line-soft); }
+.lv__dtitle { font-family: var(--font-display, inherit); font-size: 1.2rem; color: var(--color-brand-800); margin: 0; flex: 1; }
+.lv__dclose { border: 0; background: none; font-size: 1.25rem; color: var(--color-muted); cursor: pointer; padding: 2px 6px; }
+.lv__dbody { flex: 1; overflow-y: auto; padding: 10px 18px 18px; }
+.lv__dsect { font-size: 0.64rem; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; color: var(--color-ink); margin: 16px 0 6px; }
+.lv__drow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 7px; }
+.lv__dk { font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; color: var(--color-muted); width: 68px; flex: none; }
+.lv__dhint { font-size: 0.7rem; color: var(--color-muted); }
+.lv__dwarn { color: oklch(0.5 0.13 60); font-weight: 600; }
+@media (max-width: 700px) {
+  .lv__ovl { align-items: flex-end; justify-content: stretch; }
+  .lv__drawer { width: 100%; height: auto; max-height: 88dvh; border-left: 0; border-top: 1px solid var(--color-line); border-radius: 16px 16px 0 0; }
+}
 .lv__flash { margin: 10px 0 0; font-size: 0.76rem; font-weight: 600; color: var(--color-brand-700); }
 </style>

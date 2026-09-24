@@ -130,6 +130,9 @@ export interface SchedPerson {
   paycomCode: string | null
   employmentType: string | null
   hireDate?: string | null
+  /** manual accrual-rate overrides (HR) — null = automatic */
+  vacRateOverride?: number | null
+  sickRateOverride?: number | null
   /** false = deactivated on the roster (quit/terminated). Kept in
    *  allPeople so past schedule days and payroll still show the name;
    *  excluded from `people` (pickers) and the Members tab. */
@@ -270,6 +273,9 @@ export interface LabeledRow {
   start: string
   end: string
   sub: string // second line: 'M272 / Paramedic', 'Vacation Time', 'For X'
+  /** the seat a time-off entry vacated — lets boards open the person
+   *  editor straight from the Time Off box (Justin, 2026-09-24) */
+  seatId?: string | null
 }
 
 /** A request awaiting decision, surfaced on its work date. */
@@ -651,7 +657,7 @@ async function loadCore(): Promise<void> {
          and payroll rows must keep showing the name — dropping them
          here rendered "Unknown" (Tara Roth, 2026-09-20). Pickers and
          the Members tab filter on .active instead. */
-      .select('id, full_name, shift, role, title, email, phone, account_type, active, employment_type, paycom_employee_code, hire_date')
+      .select('id, full_name, shift, role, title, email, phone, account_type, active, employment_type, paycom_employee_code, hire_date, vac_rate_override, sick_rate_override')
       .eq('account_type', 'person')
       .order('full_name'),
     supabase.rpc('sched_level'),
@@ -732,6 +738,8 @@ async function loadCore(): Promise<void> {
       phone: r.phone,
       paycomCode: r.paycom_employee_code ?? null,
       hireDate: r.hire_date ?? null,
+      vacRateOverride: r.vac_rate_override == null ? null : Number(r.vac_rate_override),
+      sickRateOverride: r.sick_rate_override == null ? null : Number(r.sick_rate_override),
       employmentType: r.employment_type ?? null,
       active: r.active as boolean,
     }
@@ -1400,6 +1408,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
         start: hhmm(e.startAt),
         end: hhmm(e.endAt),
         sub: e.note || OFF_LABELS[e.offType ?? 'other'] || 'Time Off',
+        seatId: e.seatId ?? null,
       }
     })
 
@@ -2321,15 +2330,80 @@ export function accruingBy(
   fullTime: boolean,
   kind: 'vacation' | 'sick',
   byDateIso: string,
+  /** HR rate overrides — null/undefined falls back to the formula */
+  overrides?: { vac?: number | null; sick?: number | null },
 ): number {
   if (!fullTime || !hireDateIso) return 0
   let acc = 0
   let end = payPeriodFor(todayCentralIso()).end
   while (end < byDateIso) {
-    acc += kind === 'sick' ? SICK_RATE : vacationRate(hireDateIso, end)
+    acc +=
+      kind === 'sick'
+        ? (overrides?.sick ?? SICK_RATE)
+        : (overrides?.vac ?? vacationRate(hireDateIso, end))
     end = addDaysIso(end, 14)
   }
   return Math.round(acc * 100) / 100
+}
+
+/** A person's effective accrual rate today — override first, formula
+ *  otherwise. */
+export function effectiveRates(p: {
+  hireDate?: string | null
+  vacRateOverride?: number | null
+  sickRateOverride?: number | null
+}): { vac: number; sick: number } {
+  return {
+    vac: p.vacRateOverride ?? vacationRate(p.hireDate ?? null, todayCentralIso()),
+    sick: p.sickRateOverride ?? SICK_RATE,
+  }
+}
+
+/** HR/editor: hire date + manual accrual-rate overrides — the leave
+ *  profile drawer (Justin, 2026-09-24). Null override = automatic. */
+async function setLeaveProfile(
+  userId: string,
+  hireDate: string | null,
+  vacOverride: number | null,
+  sickOverride: number | null,
+): Promise<string | null> {
+  const res = await supabase.rpc('sched_set_leave_profile', {
+    p_user: userId,
+    p_hire: hireDate,
+    p_vac: vacOverride,
+    p_sick: sickOverride,
+  })
+  if (res.error) return res.error.message
+  const p = personById.value.get(userId)
+  if (p) {
+    p.hireDate = hireDate
+    p.vacRateOverride = vacOverride
+    p.sickRateOverride = sickOverride
+  }
+  audit('leave.profile', `Updated ${displayName(userId).name} leave profile — hired ${hireDate ?? '—'}${vacOverride != null ? `, vac rate ${vacOverride}` : ''}${sickOverride != null ? `, sick rate ${sickOverride}` : ''}`, { entity: 'leave', entityId: userId })
+  return null
+}
+
+/** HR/editor: opening balances for someone with no import — puts them
+ *  on the Balances board; accruals start from their hire date. */
+async function openLeaveBalances(userId: string, vacHours: number, sickHours: number): Promise<string | null> {
+  const auth = useAuthStore()
+  const rows = [
+    { kind: 'vacation', hours: vacHours },
+    { kind: 'sick', hours: sickHours },
+  ].map((r) => ({
+    user_id: userId,
+    kind: r.kind,
+    hours: r.hours,
+    reason: 'opening',
+    effective_on: todayCentralIso(),
+    note: 'Opening balance (manual — no Paycom import)',
+    created_by: auth.appUser?.id ?? null,
+  }))
+  const ins = await supabase.from('sched_leave_ledger').insert(rows)
+  if (ins.error) return ins.error.message
+  audit('leave.open', `Opened leave balances for ${displayName(userId).name} — vac ${vacHours}, sick ${sickHours}`, { entity: 'leave', entityId: userId })
+  return null
 }
 
 /** HR/editor: manual adjustment — true-ups and corrections. */
@@ -2360,7 +2434,10 @@ async function projectedLeaveBalance(
 ): Promise<{ today: number; accruing: number; projected: number }> {
   const today = (await fetchLeaveBalances(userId)).find((b) => b.kind === kind)?.balance ?? 0
   const p = personById.value.get(userId)
-  const accruing = accruingBy(p?.hireDate, p?.employmentType === 'full_time', kind, byDateIso)
+  const accruing = accruingBy(p?.hireDate, p?.employmentType === 'full_time', kind, byDateIso, {
+    vac: p?.vacRateOverride,
+    sick: p?.sickRateOverride,
+  })
   return { today, accruing, projected: Math.round((today + accruing) * 100) / 100 }
 }
 
@@ -4722,6 +4799,8 @@ export function useSchedule() {
     fetchLeaveLedger,
     fetchLeaveTaken,
     adjustLeave,
+    setLeaveProfile,
+    openLeaveBalances,
     pendingLeaveHours,
     projectedLeaveBalance,
     fetchAccessList,

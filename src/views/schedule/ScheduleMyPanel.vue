@@ -474,30 +474,37 @@ function pendingLine(r: SchedRequest): string {
   margin-bottom: 0.9rem;
 }
 
+/* underline tabs + text nav, matching the module (2026-09-24 — the
+   pill container and boxed buttons were the last of the old chrome) */
 .my__views {
   display: inline-flex;
-  border: 1px solid var(--color-line);
-  border-radius: 10px;
-  background: var(--color-surface);
-  padding: 3px;
-  gap: 2px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  gap: 16px;
 }
 
 .my__viewbtn {
   border: 0;
   background: transparent;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.84rem;
   font-weight: 600;
   color: var(--color-muted);
-  padding: 0.28rem 0.7rem;
-  border-radius: 7px;
+  padding: 4px 2px 6px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   cursor: pointer;
 }
 
+.my__viewbtn:hover {
+  color: var(--color-ink);
+}
+
 .my__viewbtn--on {
-  background: var(--color-brand-700);
-  color: white;
+  background: none;
+  color: var(--color-ink);
+  border-bottom-color: var(--color-accent-600);
 }
 
 .my__arrows {
@@ -511,12 +518,12 @@ function pendingLine(r: SchedRequest): string {
   align-items: center;
   justify-content: center;
   height: 30px;
-  min-width: 30px;
-  padding: 0 0.5rem;
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-ink-soft);
+  min-width: 24px;
+  padding: 0 0.35rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--color-muted);
   font: inherit;
   font-size: 0.78rem;
   font-weight: 600;
@@ -524,12 +531,20 @@ function pendingLine(r: SchedRequest): string {
 }
 
 .my__navbtn svg {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
 .my__navbtn:hover {
-  border-color: var(--color-brand-300);
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+
+.my__navbtn--today {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
 }
 
 .my__navlabel {

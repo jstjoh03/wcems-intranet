@@ -6,6 +6,8 @@ import {
   todayCentralIso,
   addDaysIso,
   accruingBy,
+  vacationRate,
+  SICK_RATE,
   type LeaveBalance,
   type LeaveTaken,
 } from '@/composables/useSchedule'
@@ -145,6 +147,21 @@ const model = computed<{ summaries: KindSummary[]; rows: LedgerRow[] }>(() => {
   return { summaries, rows }
 })
 
+/* Accrual context for the summary header: rates + the anniversary the
+ *  carry-over caps land on (Justin, 2026-09-24). */
+const rateLine = computed(() => {
+  const p = sched.personById.value.get(props.userId)
+  if (!p?.hireDate) return null
+  const [, m, d] = p.hireDate.split('-')
+  let ann = `${today.slice(0, 4)}-${m}-${d}`
+  if (ann <= today) ann = `${Number(today.slice(0, 4)) + 1}-${m}-${d}`
+  return {
+    hired: p.hireDate,
+    ann,
+    vac: vacationRate(p.hireDate, today),
+  }
+})
+
 /* ── planner: "how much will I have on <date>?" ────────────────────── */
 const planDate = ref(addDaysIso(todayCentralIso(), 60))
 
@@ -198,6 +215,10 @@ function fmtDelta(n: number): string {
               <span class="lh__muted"> after {{ fmtD(s.lastUpcoming!) }}</span>
             </span>
           </template>
+          <span class="lh__stat lh__rate">accruing <b>+{{ (s.kind === 'vacation' ? (rateLine?.vac ?? 0) : SICK_RATE).toFixed(2) }}</b> / pay period</span>
+        </p>
+        <p v-if="rateLine" class="lh__metaline">
+          Hired {{ fmtD(rateLine.hired) }} · anniversary {{ fmtD(rateLine.ann) }} — carry-over caps apply on that date
         </p>
       </div>
 
@@ -280,6 +301,26 @@ function fmtDelta(n: number): string {
 .lh__stat b {
   color: var(--color-ink);
   font-variant-numeric: tabular-nums;
+}
+
+/* the drawer's headline numbers read at a glance (2026-09-24) */
+.lh__sums .lh__stat {
+  font-size: 0.84rem;
+}
+
+.lh__sums .lh__stat b {
+  font-size: 1.18rem;
+  font-weight: 700;
+}
+
+.lh__sums .lh__rate b {
+  font-size: 0.9rem;
+}
+
+.lh__metaline {
+  font-size: 0.76rem;
+  color: var(--color-ink-soft);
+  margin: 2px 0 6px;
 }
 
 .lh__table {

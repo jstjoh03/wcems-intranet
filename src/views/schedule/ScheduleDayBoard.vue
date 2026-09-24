@@ -70,11 +70,10 @@ async function removeNote(id: string) {
       <span v-if="model.openCount > 0" class="db__opencount">
         {{ model.openCount }} open {{ model.openCount === 1 ? 'seat' : 'seats' }}
       </span>
+      <!-- one quiet link instead of four buttons (Justin, 2026-09-24) —
+           it opens the same add menu the month day-numbers use -->
       <span v-if="sched.canEdit.value" class="db__tools">
-        <button class="db__tool" @click="editor.openAdd(props.dateIso, 'event')">Add event</button>
-        <button class="db__tool" @click="editor.openAdd(props.dateIso, 'note')">Add note</button>
-        <button class="db__tool" @click="editor.openAdd(props.dateIso, 'student')">Add student</button>
-        <button class="db__tool" @click="editor.openAdd(props.dateIso, 'seat')">Add seat</button>
+        <button class="db__addlink" @click="editor.openAdd(props.dateIso)">+ Add to this day</button>
       </span>
     </div>
 
@@ -415,6 +414,25 @@ async function removeNote(id: string) {
   gap: 0.4rem;
 }
 
+.db__addlink {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 650;
+  border: 0;
+  background: none;
+  color: var(--color-accent-700);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+}
+
+.db__addlink:hover {
+  text-decoration-color: var(--color-accent-600);
+}
+
 .db__tool {
   font: inherit;
   font-size: 0.78rem;
@@ -422,17 +440,14 @@ async function removeNote(id: string) {
   padding: 0.28rem 0.7rem;
   border: 1px solid var(--color-line);
   border-radius: 7px;
-  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft));
-  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.08);
+  background: var(--color-surface);
   color: var(--color-brand-600);
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .db__tool:hover {
   border-color: var(--color-brand-300);
-  box-shadow: 0 2px 5px oklch(0.3 0.03 260 / 0.14);
 }
 
 .db__tool--sm {

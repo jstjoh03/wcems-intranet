@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useSchedule, addDaysIso, todayCentralIso, type DayModel } from '@/composables/useSchedule'
+import {
+  useSchedule,
+  addDaysIso,
+  todayCentralIso,
+  type DayModel,
+  type LabeledRow,
+  type SeatRow,
+} from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 /**
@@ -37,6 +44,27 @@ interface Cell {
   isToday: boolean
   worksMe: boolean
   model: DayModel
+}
+
+/** Time Off rows open the person editor so an admin can adjust or
+ *  restore the day right from the month (Justin, 2026-09-24). Entries
+ *  with no seat context fall back to opening the day. */
+function openTimeOff(iso: string, r: LabeledRow): void {
+  if (sched.canEdit.value && r.userId && r.seatId) {
+    const seat = sched.seats.value.find((s) => s.id === r.seatId)
+    const unit = seat ? sched.units.value.find((u) => u.id === seat.unitId) : undefined
+    if (seat && unit) {
+      editor.openPerson(iso, unit.code, seat.id, seat.label, {
+        userId: r.userId,
+        name: r.name,
+        credential: r.credential,
+        start: r.start,
+        end: r.end,
+      } as SeatRow)
+      return
+    }
+  }
+  emit('open-day', iso)
 }
 
 /** Am I working (seat, rider, event, or extra hours) on this day?
@@ -135,8 +163,10 @@ const weeks = computed<Cell[][]>(() => {
           >
             <span class="mb__daynum" :class="{ 'mb__daynum--me': c.worksMe }" :title="c.worksMe ? 'You work this day' : undefined">{{ c.dayNum }}</span>
           </button>
-          <button class="mb__cellbtn" @click="emit('open-day', c.iso)">
-            <b class="mb__shl" :data-platoon="c.model.platoon">{{ c.model.platoon }}</b><span class="mb__platoonword">&nbsp;Shift</span>
+          <!-- standalone letter, matching the week/period columns
+               (the letter+"Shift" pair read misaligned — 2026-09-24) -->
+          <button class="mb__cellbtn" :title="c.model.platoon + ' Shift — open this day'" @click="emit('open-day', c.iso)">
+            <b class="mb__shl" :data-platoon="c.model.platoon">{{ c.model.platoon }}</b>
           </button>
           <span v-if="c.model.openCount > 0" class="mb__open">{{ c.model.openCount }}<span class="mb__openword"> open</span></span>
         </div>
@@ -298,13 +328,19 @@ const weeks = computed<Cell[][]>(() => {
 
           <div v-if="c.model.timeOff.length" class="mb__section mb__section--off">
             <p class="mb__section-h">Time Off</p>
-            <div v-for="r in c.model.timeOff" :key="r.entryId" class="mb__lrow">
-              <div class="mb__row">
+            <button
+              v-for="r in c.model.timeOff"
+              :key="r.entryId"
+              class="mb__lrow mb__pendbtn"
+              :title="sched.canEdit.value ? 'Edit or remove this time off' : 'Open this day'"
+              @click="openTimeOff(c.iso, r)"
+            >
+              <span class="mb__row">
                 <span class="mb__name" :class="{ 'mb__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="mb__cred"> - {{ r.credential }}</span></span>
                 <span class="mb__time">{{ r.start }}-{{ r.end }}</span>
-              </div>
-              <p v-if="r.sub" class="mb__sub">{{ r.sub }}</p>
-            </div>
+              </span>
+              <span v-if="r.sub" class="mb__sub">{{ r.sub }}</span>
+            </button>
           </div>
 
           <div v-if="c.model.events.length" class="mb__section mb__section--event">
@@ -425,9 +461,14 @@ const weeks = computed<Cell[][]>(() => {
   overflow: hidden;
 }
 
+/* Out-of-month days show NOTHING (Justin, 2026-09-24) — the muted
+   spillover read as clutter; the cell stays for the grid lines only. */
 .mb__cell--out {
-  opacity: 0.45;
   background: transparent;
+}
+
+.mb__cell--out > * {
+  display: none;
 }
 
 .mb__cell--today {
@@ -598,12 +639,6 @@ const weeks = computed<Cell[][]>(() => {
   white-space: nowrap;
 }
 
-.mb__platoonword {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-muted);
-  white-space: nowrap;
-}
 
 .mb__open {
   font-size: 10px;
@@ -843,7 +878,6 @@ const weeks = computed<Cell[][]>(() => {
    Day view; rosters and editor tools live there. */
 @media (max-width: 900px) {
   .mb__roster,
-  .mb__platoonword,
   .mb__openword {
     display: none;
   }

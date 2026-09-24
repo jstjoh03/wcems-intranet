@@ -63,14 +63,6 @@ function notesTitle(notes: { note: string }[]): string {
       <span class="dc__platoon" :data-platoon="model.platoon">
         {{ model.platoon }}
       </span>
-      <button
-        v-if="sched.canEdit.value"
-        class="dc__plus"
-        title="Add event, note, or student"
-        @click="editor.openAdd(dateIso)"
-      >
-        +
-      </button>
     </div>
 
     <div v-if="model.notes.length" class="dc__row">
@@ -324,28 +316,6 @@ function notesTitle(notes: { note: string }[]): string {
 
 .dc__headbtn:hover .dc__date {
   color: var(--color-brand-600);
-}
-
-.dc__plus {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  flex: none;
-  border: 1px solid var(--color-line);
-  border-radius: 6px;
-  background: var(--color-surface);
-  color: var(--color-brand-600);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-}
-
-.dc__plus:hover {
-  border-color: var(--color-brand-300);
 }
 
 .dc__rowbtn {
