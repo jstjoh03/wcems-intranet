@@ -115,6 +115,14 @@ function badgeText(n: number): string {
   return n > 20 ? '20+' : String(n)
 }
 
+/* Standalone app bar (Justin, 2026-09-25): on desktop the portal
+   chrome hides and scheduling carries its own navy nav in the same
+   style — Home is the month board, then every section the viewer's
+   role admits, with an "Employee Portal" exit on the left. */
+const APPBAR = computed(() =>
+  RAIL.value.flatMap((g) => g.items).map((it) => (it.key === 'month' ? { ...it, label: 'Home' } : it)),
+)
+
 /* Breadcrumb + serif title for the non-board screens (boards carry the
    date navigator instead). */
 const PANEL_META: Partial<Record<Tab, { crumb: string; title: string; sub: string }>> = {
@@ -336,6 +344,24 @@ watch(dateIso, (v) => {
     </template>
 
     <template v-else>
+      <nav class="sched__appbar" aria-label="Scheduling">
+        <RouterLink to="/" class="sched__appbar-exit" title="Back to the employee portal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></svg>
+          Employee Portal
+        </RouterLink>
+        <button
+          v-for="it in APPBAR"
+          :key="it.key"
+          class="sched__appbar-link"
+          :class="{ 'sched__appbar-link--on': tab === it.key }"
+          @click="tab = it.key"
+        >
+          {{ it.label }}<span v-if="badgeFor(it.key) > 0" class="sched__appbar-badge">{{ badgeText(badgeFor(it.key)) }}</span>
+        </button>
+        <span class="sched__appbar-flex" aria-hidden="true"></span>
+        <span class="sched__appbar-brand display">Waller County EMS</span>
+      </nav>
+
       <header class="sched__head">
         <div>
           <p class="sched__eyebrow">Operations</p>
@@ -361,25 +387,6 @@ watch(dateIso, (v) => {
       </header>
 
       <div class="sched__layout">
-        <nav class="sched__rail" aria-label="Scheduling sections">
-          <div class="sched__rail-brand">
-            <p class="sched__rail-t">Scheduling</p>
-            <p class="sched__rail-s">Waller County EMS</p>
-          </div>
-          <template v-for="g in RAIL" :key="g.h">
-            <p class="sched__rail-h">{{ g.h }}</p>
-            <button
-              v-for="it in g.items"
-              :key="it.key"
-              class="sched__rail-item"
-              :class="{ 'sched__rail-item--on': tab === it.key }"
-              @click="tab = it.key"
-            >
-              {{ it.label }}
-              <span v-if="badgeFor(it.key) > 0" class="sched__rail-badge">{{ badgeText(badgeFor(it.key)) }}</span>
-            </button>
-          </template>
-        </nav>
         <div class="sched__body">
 
       <div v-if="showsDateNav" class="sched__nav">
@@ -533,14 +540,14 @@ watch(dateIso, (v) => {
   flex-wrap: wrap;
 }
 
-/* ── desktop rail (Sortren system) ─────────────────────────────────── */
+/* ── standalone app bar (2026-09-25) ────────────────────────────────
+   Desktop: the portal chrome hides on /schedule and this navy bar is
+   the module's whole nav, styled exactly like the intranet's primary
+   nav — exit link left, sections, gold active underline, wordmark
+   right. Phones never see it (the tab strip carries the module). */
 .sched__layout {
   display: flex;
   align-items: flex-start;
-}
-
-.sched__rail {
-  display: none;
 }
 
 .sched__body {
@@ -548,91 +555,115 @@ watch(dateIso, (v) => {
   min-width: 0;
 }
 
+.sched__appbar {
+  display: none;
+}
+
 @media (min-width: 901px) {
   .sched__head {
     display: none;
   }
 
-  .sched__rail {
-    display: block;
-    width: 196px;
-    flex-shrink: 0;
-    position: sticky;
-    top: 14px;
-    padding: 4px 0 20px;
-    border-right: 1px solid var(--color-line-soft);
-    margin-right: 26px;
-  }
-
   .sched__body {
     padding-top: 4px;
   }
+
+  .sched__appbar {
+    position: sticky;
+    top: 0;
+    z-index: 45;
+    display: flex;
+    align-items: stretch;
+    margin: -1.25rem -1.25rem 1.15rem;
+    padding: 0 0.75rem;
+    background: var(--color-brand-900);
+    border-bottom: 2px solid var(--color-accent-600);
+    overflow-x: auto;
+  }
 }
 
-.sched__rail-brand {
-  padding: 0 14px 10px 2px;
-}
-
-.sched__rail-t {
-  font-family: var(--font-display);
-  font-size: 1.25rem;
-  color: var(--color-brand-800);
-  margin: 0;
-}
-
-.sched__rail-s {
-  font-size: 0.6rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  font-weight: 700;
-  color: var(--color-accent-700);
-  margin: 1px 0 0;
-}
-
-.sched__rail-h {
-  font-size: 0.6rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 700;
-  color: var(--color-muted);
-  margin: 16px 0 3px 2px;
-}
-
-.sched__rail-item {
+.sched__appbar-exit {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
+  gap: 7px;
+  padding: 11px 16px 11px 10px;
+  margin-right: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  text-decoration: none;
+  white-space: nowrap;
+  border-right: 1px solid oklch(1 0 0 / 0.14);
+  transition: color 120ms var(--ease-out), background 120ms var(--ease-out);
+}
+
+.sched__appbar-exit svg {
+  width: 15px;
+  height: 15px;
+}
+
+.sched__appbar-exit:hover {
+  background: var(--color-brand-800);
+  color: var(--color-accent-on-dark);
+}
+
+.sched__appbar-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 14px;
   border: 0;
   background: none;
-  text-align: left;
-  font: inherit;
-  font-size: 0.84rem;
-  color: var(--color-ink);
-  padding: 5px 10px 5px 8px;
-  border-left: 2px solid transparent;
   cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.015em;
+  color: oklch(0.82 0.025 250);
+  white-space: nowrap;
+  transition: color 120ms var(--ease-out), background 120ms var(--ease-out);
 }
 
-.sched__rail-item:hover {
-  background: var(--color-surface);
+.sched__appbar-link:hover {
+  color: white;
+  background: var(--color-brand-800);
 }
 
-.sched__rail-item--on {
-  border-left-color: var(--color-accent-600);
-  background: var(--color-surface);
-  font-weight: 600;
+.sched__appbar-link--on {
+  color: var(--color-accent-on-dark);
 }
 
-.sched__rail-badge {
-  margin-left: auto;
-  font-size: 0.62rem;
+.sched__appbar-link--on::after {
+  content: '';
+  position: absolute;
+  left: 11px;
+  right: 11px;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-accent-on-dark);
+}
+
+.sched__appbar-badge {
+  font-size: 0.6rem;
   font-weight: 700;
   background: var(--color-danger-500);
   color: #fff;
   border-radius: 999px;
-  padding: 1px 7px;
+  padding: 1px 6px;
   font-variant-numeric: tabular-nums;
+}
+
+.sched__appbar-flex {
+  flex: 1;
+}
+
+.sched__appbar-brand {
+  align-self: center;
+  font-size: 15px;
+  color: oklch(0.92 0.02 250);
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
 .sched__pagehead {

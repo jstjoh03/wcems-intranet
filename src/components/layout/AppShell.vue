@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import AppTopBar from './AppTopBar.vue'
 import NavDrawer from './NavDrawer.vue'
 import AppFooter from './AppFooter.vue'
@@ -13,6 +14,14 @@ import ProfileCompletionModal from './ProfileCompletionModal.vue'
 import InstallPromptBanner from './InstallPromptBanner.vue'
 
 const navOpen = ref(false)
+
+/* Scheduling runs as its own app on desktop (Justin, 2026-09-25): the
+   module carries a navy nav bar of its own with an "Employee Portal"
+   exit, so the portal's utility bar + masthead + primary nav stay out
+   of the way. Phones keep the compact topbar — the module's tab strip
+   already handles section nav there. */
+const route = useRoute()
+const schedApp = computed(() => route.path.startsWith('/schedule'))
 </script>
 
 <template>
@@ -22,7 +31,7 @@ const navOpen = ref(false)
     <!-- Desktop chrome (portal mockup v2): utility bar + masthead + nav.
          Mobile keeps the compact topbar + drawer — crews are phone-first,
          the professional-website reading is for desktop. -->
-    <div class="hidden lg:block">
+    <div v-if="!schedApp" class="hidden lg:block">
       <UtilityBar />
       <PortalMasthead />
     </div>

@@ -156,15 +156,10 @@ function grouped(children: NavChild[]): Array<{ category: string; items: NavChil
 function openSearch() {
   window.dispatchEvent(new CustomEvent('wcems:open-search'))
 }
-
-/* Scheduling is a dense working surface — the portal chrome steps back
-   to a slim strip there so the boards own the screen (Justin,
-   2026-09-25). */
-const compact = computed(() => route.path.startsWith('/schedule'))
 </script>
 
 <template>
-  <header class="mh" :class="{ 'mh--compact': compact }">
+  <header class="mh">
     <div class="mh__top">
       <RouterLink to="/" class="mh__wordmark">
         <img src="/wcems-patch.png" alt="" class="mh__crest" width="52" height="52" />
@@ -442,33 +437,5 @@ const compact = computed(() => route.path.startsWith('/schedule'))
 .dd-leave-to {
   opacity: 0;
   transform: translateY(-4px);
-}
-
-/* ── compact chrome (scheduling module) ──────────────────────────────
-   The wordmark row collapses to a slim strip and the nav tightens, so
-   the boards get the vertical room. Same markup, smaller clothes. */
-.mh--compact .mh__top {
-  padding: 7px 40px 6px;
-  gap: 20px;
-}
-.mh--compact .mh__crest {
-  width: 28px;
-  height: 28px;
-}
-.mh--compact .mh__title {
-  font-size: 17px;
-}
-.mh--compact .mh__tag {
-  display: none;
-}
-.mh--compact .mh__search {
-  width: 290px;
-  padding: 5px 12px;
-  border-radius: 7px;
-  box-shadow: none;
-}
-.mh--compact .mh-nav__link {
-  padding: 7px 13px;
-  font-size: 12.5px;
 }
 </style>
