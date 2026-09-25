@@ -243,8 +243,15 @@ const myPostings = computed(() =>
       (r.requesterId !== sched.myUserId.value && !!myOfferOn(r)),
   ),
 )
+/* a posting whose shift already began is dead — claiming it is blocked
+   anyway, so keep it off the public board (poster still sees it under
+   Yours to withdraw, and the Chief's queue flags it as stale) */
 const openBoard = computed(() =>
-  boardRest.value.filter((r) => r.requesterId !== sched.myUserId.value),
+  boardRest.value.filter(
+    (r) =>
+      r.requesterId !== sched.myUserId.value &&
+      !(r.startAt && Date.parse(r.startAt) <= Date.now()),
+  ),
 )
 
 function postingStatusKey(r: SchedRequest): string {

@@ -2271,59 +2271,65 @@ async function reqCancel() {
   gap: 0.4rem;
 }
 
+/* Drawer buttons follow the system (locked 2026-09-24): quiet
+   underlined text links, one flat navy 4px primary per drawer. */
 .em__btn {
   font: inherit;
   font-size: 0.82rem;
-  font-weight: 600;
-  padding: 0.38rem 0.8rem;
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
-  background: linear-gradient(180deg, var(--color-surface), var(--color-surface-soft));
-  box-shadow: 0 1px 2px oklch(0.3 0.03 260 / 0.08);
+  font-weight: 650;
+  padding: 2px;
+  border: 0;
+  background: none;
   color: var(--color-ink-soft);
   cursor: pointer;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
+  text-align: left;
+  align-self: flex-start;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--color-line);
 }
 
-.em__btn:hover {
-  border-color: var(--color-brand-300);
-  box-shadow: 0 2px 6px oklch(0.3 0.03 260 / 0.14);
-}
-
-.em__btn:active {
-  transform: translateY(1px);
+.em__btn:hover:not(:disabled) {
+  text-decoration-color: var(--color-accent-600);
 }
 
 .em__btn--primary,
 .em__btn--primary:hover {
-  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
-  border-color: var(--color-brand-800);
+  border: 1px solid var(--color-brand-800);
+  border-radius: 4px;
+  background: var(--color-brand-800);
   color: white;
-  box-shadow:
-    inset 0 1px 0 oklch(1 0 0 / 0.18),
-    0 2px 6px oklch(0.3 0.06 260 / 0.35);
+  font-weight: 700;
+  padding: 7px 14px;
+  text-align: center;
+  text-decoration: none;
 }
 
 .em__btn--danger {
+  color: var(--color-muted);
+}
+
+.em__btn--danger:hover:not(:disabled) {
   color: var(--color-danger-500);
+  text-decoration-color: var(--color-danger-500);
 }
 
 .em__btn--ghost,
 .em__btn--ghost:hover {
-  border: 0;
-  background: transparent;
-  box-shadow: none;
   color: var(--color-muted);
 }
 
 .em__btn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
+  cursor: default;
 }
 
 .em__actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.1rem;
 }
 
 .em__scope {

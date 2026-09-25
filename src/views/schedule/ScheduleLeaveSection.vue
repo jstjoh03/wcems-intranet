@@ -526,13 +526,19 @@ function fmtHire(d: string | null): string {
 .lv__head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .lv__title { font-family: var(--font-display, inherit); font-size: 1.15rem; margin: 0; color: var(--color-brand-800); }
 .lv__sub { font-size: 0.72rem; color: var(--color-muted); flex: 1; min-width: 220px; }
+/* system buttons: quiet underlined links, one flat navy primary */
 .lv__btn {
-  border: 1px solid var(--color-brand-800); background: var(--color-brand-800); color: #fff;
-  border-radius: 4px; padding: 6px 12px; font-size: 0.74rem; font-weight: 700; cursor: pointer;
+  font: inherit; font-size: 0.78rem; font-weight: 650; padding: 2px; border: 0; background: none;
+  color: var(--color-ink-soft); cursor: pointer; text-decoration: underline;
+  text-underline-offset: 3px; text-decoration-thickness: 1px; text-decoration-color: var(--color-line);
 }
+.lv__btn:hover:not(:disabled) { text-decoration-color: var(--color-accent-600); }
 .lv__btn:disabled { opacity: 0.5; cursor: default; }
-.lv__btn--ghost { background: none; color: var(--color-ink); border-color: var(--color-line); }
-.lv__btn--go { background: var(--color-success-500); border-color: var(--color-success-500); }
+.lv__btn--ghost { color: var(--color-muted); }
+.lv__btn--go {
+  border: 1px solid var(--color-brand-800); background: var(--color-brand-800); color: #fff;
+  border-radius: 4px; padding: 6px 14px; font-weight: 700; text-decoration: none;
+}
 .lv__hint { font-size: 0.74rem; color: var(--color-muted); margin: 10px 0 0; }
 .lv__trueup { margin-top: 12px; border: 1px dashed var(--color-line); border-radius: 10px; padding: 10px 12px; }
 .lv__paste { width: 100%; margin-top: 6px; border: 1px solid var(--color-line); border-radius: 8px; padding: 8px 10px; font: 0.72rem ui-monospace, Consolas, monospace; background: var(--color-canvas, transparent); color: inherit; }

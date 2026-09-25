@@ -695,7 +695,13 @@ Deno.serve(async (req: Request) => {
       // member is volunteering MORE coverage, and logging today's
       // instructor hours kept texting URGENT (Justin, 2026-09-24).
       // Urgency means a same-day hole: time off / pickups only.
-      const urgentTypes = rows.filter((r) => r.type !== 'extra_hours')
+      // And a shift already under way is not a same-day emergency —
+      // a 0900 giveaway accepted at 1602 texted the Chief URGENT for
+      // hours that were mostly worked (Justin, 2026-09-25).
+      const nowMs = Date.now()
+      const urgentTypes = rows.filter(
+        (r) => r.type !== 'extra_hours' && (!r.start_at || Date.parse(r.start_at) > nowMs),
+      )
       const soonestUrgent =
         urgentTypes.map((r) => r.work_date).filter((x): x is string => !!x).sort()[0] ?? null
       const sameDay = soonestUrgent !== null && soonestUrgent >= todayC && soonestUrgent <= tomorrow

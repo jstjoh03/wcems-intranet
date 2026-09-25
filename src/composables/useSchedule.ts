@@ -1951,7 +1951,7 @@ interface Seg {
 }
 
 export interface HoursWarning {
-  code: 'consecutive' | 'consecutive_confirm' | 'weekly' | 'ot' | 'check_failed' | 'leave_short'
+  code: 'consecutive' | 'consecutive_confirm' | 'weekly' | 'ot' | 'check_failed' | 'leave_short' | 'started'
   hours: number
   limit: number
   message: string
@@ -2658,6 +2658,17 @@ async function loadTradeOffers(): Promise<void> {
   }))
 }
 
+/** Trades and giveaways close at shift start — once the hours are being
+ *  worked there is nothing left to swap. A 0900 giveaway accepted at
+ *  1602 sent the Chief an URGENT same-day text for a shift that was
+ *  mostly over (Justin, 2026-09-25). */
+function tradeClosedReason(startAt?: string | null, workDate?: string | null): string | null {
+  const ms = startAt ? tsMs(startAt) : workDate ? tsMs(centralTs(workDate, '06:00')) : null
+  return ms !== null && ms <= Date.now()
+    ? 'This shift has already started — trades and giveaways close at shift start.'
+    : null
+}
+
 async function createTradePosting(opts: {
   type: 'giveaway' | 'trade'
   dateIso: string
@@ -2684,6 +2695,8 @@ async function createTradePosting(opts: {
     if (!q.ok) return q.reason
   }
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const closed = tradeClosedReason(w.reqStart, null)
+  if (closed) return closed
   const seat = seats.value.find((s) => s.id === opts.seatId)
   const unit = units.value.find((u) => u.id === seat?.unitId)
   const res = await supabase
@@ -2727,6 +2740,8 @@ async function respondToDirect(req: SchedRequest, accept: boolean): Promise<stri
   if (req.status !== 'pending') return 'This request has already been resolved.'
   if (accept) {
     if (req.type !== 'giveaway') return 'Accept a swap by offering one of your shifts back.'
+    const closed = tradeClosedReason(req.startAt, req.workDate)
+    if (closed) return closed
     const warnings: HoursWarning[] = []
     if (req.workDate && req.startAt && req.endAt) {
       const info = await hoursCheck(
@@ -2780,6 +2795,10 @@ async function makeOffer(opts: {
     const q = await canFillSeat(me, posting.seatId)
     if (!q.ok) return q.reason
   }
+  if (posting) {
+    const closed = tradeClosedReason(posting.startAt, posting.workDate)
+    if (closed) return closed
+  }
   let offerFields: Record<string, unknown> = {}
   if (opts.offerShift) {
     // The offerer picks which part of their shift they're putting up —
@@ -2828,6 +2847,8 @@ async function withdrawOffer(offerId: string): Promise<string | null> {
  *  Hour-threshold warnings for whoever GAINS hours are computed here and
  *  stored on the request so the Chief's approval card shows them. */
 async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string | null> {
+  const closed = tradeClosedReason(req.startAt, req.workDate)
+  if (closed) return closed
   const warnings: HoursWarning[] = []
   if (req.workDate && req.startAt && req.endAt) {
     const who = personById.value.get(offer.userId)?.fullName ?? 'The claimant'
@@ -3876,11 +3897,15 @@ async function decideRequest(
   req: SchedRequest,
   approve: boolean,
   note: string,
+  /** The Chief already made the change by hand — close the request as
+   *  approved WITHOUT touching the calendar. Her only out used to be
+   *  Deny, which reads wrong to the requester (Chief, 2026-09-25). */
+  alreadyHandled = false,
 ): Promise<string | null> {
   const auth = useAuthStore()
   const me = auth.appUser?.id ?? null
 
-  if (approve) {
+  if (approve && !alreadyHandled) {
     if (req.type === 'time_off' && req.workDate) {
       const seatId = req.seatId ?? seatHeldBy(req.requesterId, req.workDate)
       const err = await applyTimeOff(
@@ -4096,13 +4121,13 @@ async function decideRequest(
       status: approve ? 'approved' : 'denied',
       decided_by: me,
       decided_at: new Date().toISOString(),
-      decision_note: note || null,
+      decision_note: note || (alreadyHandled ? 'Already handled — the schedule was updated directly.' : null),
       updated_at: new Date().toISOString(),
     })
     .eq('id', req.id)
   if (upd.error) return upd.error.message
 
-  audit(approve ? 'request.approve' : 'request.deny', `${approve ? 'Approved' : 'Denied'} ${displayName(req.requesterId).name}'s ${(REQ_TYPE_LABELS[req.type] ?? req.type).toLowerCase()}${req.workDate ? ` for ${req.workDate}` : ''}${note ? ` — ${note}` : ''}`, { entity: 'request', entityId: req.id })
+  audit(alreadyHandled ? 'request.handled' : approve ? 'request.approve' : 'request.deny', `${alreadyHandled ? 'Marked handled (schedule already updated by hand)' : approve ? 'Approved' : 'Denied'} ${displayName(req.requesterId).name}'s ${(REQ_TYPE_LABELS[req.type] ?? req.type).toLowerCase()}${req.workDate ? ` for ${req.workDate}` : ''}${note ? ` — ${note}` : ''}`, { entity: 'request', entityId: req.id })
   notify('request_decided', { requestId: req.id })
   await Promise.all([loadRequests(), rangeStart.value ? loadRange(rangeStart.value, rangeEnd.value) : Promise.resolve()])
   return null

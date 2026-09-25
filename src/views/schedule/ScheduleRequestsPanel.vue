@@ -507,6 +507,7 @@ function chipText(w: HoursWarning): string {
   if (w.code === 'consecutive' || w.code === 'consecutive_confirm') return `${w.hours}h consecutive`
   if (w.code === 'weekly') return `${w.hours}h week`
   if (w.code === 'ot') return 'Overtime'
+  if (w.code === 'started') return 'Shift already started'
   return 'Hours unverified'
 }
 
@@ -574,14 +575,21 @@ watch(pendingQueue, () => void computeCardHours(), { immediate: true })
 
 /** Chips shown on a Chief card: live warnings win over stored ones. */
 function cardChips(r: SchedRequest): HoursWarning[] {
+  /* A request whose shift window already began is stale — the Chief got
+     an URGENT approval ask for a giveaway 7 hours into the shift
+     (2026-09-25). Flag it so she can deny or mark it handled. */
+  const started: HoursWarning[] =
+    r.startAt && Date.parse(r.startAt) <= Date.now()
+      ? [{ code: 'started', hours: 0, limit: 0, message: 'The shift window has already begun — this request is stale.' }]
+      : []
   /* Trades swap hours, they don't add them — hour-threshold chips on a
      swap are noise; the only flag a trade earns is crossing pay periods
      (Justin, 2026-09-24). The hour detail still shows in the expansion. */
-  if (r.type === 'trade') return []
+  if (r.type === 'trade') return started
   const live = cardHours.value[r.id]?.warnings ?? []
   const stored = reqWarnings(r)
   const seen = new Set(live.map((w) => w.code))
-  return [...live, ...stored.filter((w) => !seen.has(w.code))]
+  return [...started, ...live, ...stored.filter((w) => !seen.has(w.code))]
 }
 
 const busyId = ref<string | null>(null)
@@ -607,6 +615,16 @@ async function decide(r: SchedRequest, approve: boolean) {
   decideError.value = null
   busyId.value = r.id
   const err = await sched.decideRequest(r, approve, '')
+  busyId.value = null
+  if (err) decideError.value = err
+}
+
+/** The change was already made by hand on the schedule — close the
+ *  request as approved without writing anything to the calendar. */
+async function markHandled(r: SchedRequest) {
+  decideError.value = null
+  busyId.value = r.id
+  const err = await sched.decideRequest(r, true, '', true)
   busyId.value = null
   if (err) decideError.value = err
 }
@@ -870,6 +888,15 @@ async function cancel(r: SchedRequest) {
                 </button>
                 <button v-if="confirmApprove === r.id" class="rq__btn" @click="confirmApprove = null">Back</button>
                 <button v-else class="rq__btn rq__btn--deny" :disabled="busyId === r.id" @click="decide(r, false)">Deny</button>
+                <button
+                  v-if="confirmApprove !== r.id"
+                  class="rq__btn rq__btn--quiet"
+                  :disabled="busyId === r.id"
+                  title="Close this request without changing the schedule — for a change you already made by hand"
+                  @click="markHandled(r)"
+                >
+                  Already handled
+                </button>
               </td>
             </tr>
             <tr v-if="rowOpen(r)" class="rq__detailrow">
@@ -1512,6 +1539,16 @@ async function cancel(r: SchedRequest) {
 .rq__btn--deny:hover:not(:disabled) {
   color: var(--color-danger-500);
   text-decoration-color: var(--color-danger-500);
+}
+
+/* neutral third disposition — closes the request, touches nothing */
+.rq__btn--quiet {
+  color: var(--color-muted);
+}
+
+.rq__btn--quiet:hover:not(:disabled) {
+  color: var(--color-ink);
+  text-decoration-color: var(--color-ink);
 }
 
 .rq__status {
