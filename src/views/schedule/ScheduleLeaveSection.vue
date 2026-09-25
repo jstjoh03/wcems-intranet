@@ -142,10 +142,19 @@ const table = computed<Row[]>(() => {
   return out.sort((a, b) => personSortKey(a.name).localeCompare(personSortKey(b.name)))
 })
 
-/* ── per-row ledger expansion ──────────────────────────────────────── */
+/* ── per-row history drawer (2026-09-25; was an inline expansion) ──── */
 const histFor = ref<string | null>(null)
-function toggleHist(userId: string) {
-  histFor.value = histFor.value === userId ? null : userId
+const histName = computed(() =>
+  histFor.value ? (sched.personById.value.get(histFor.value)?.fullName ?? 'Member') : '',
+)
+function openHist(userId: string) {
+  histFor.value = userId
+}
+/* jump from reading the ledger to managing the person */
+function histToManage() {
+  const id = histFor.value
+  histFor.value = null
+  if (id) openDrawer(id)
 }
 
 /* ── leave profile drawer (2026-09-24) ─────────────────────────────
@@ -412,9 +421,8 @@ function fmtHire(d: string | null): string {
         </thead>
         <tbody>
           <template v-for="r in table" :key="r.userId">
-            <tr class="lv__row" @click="toggleHist(r.userId)">
+            <tr class="lv__row" @click="openHist(r.userId)">
               <td>
-                <span class="lv__chev" :class="{ 'lv__chev--open': histFor === r.userId }" aria-hidden="true">▸</span>
                 <span class="lv__name">{{ r.name }}</span>
               </td>
               <td>{{ fmtHire(r.hireDate) }}</td>
@@ -428,11 +436,6 @@ function fmtHire(d: string | null): string {
               <td class="lv__num lv__ts lv__avail" :class="{ 'lv__neg': (r.sick.available ?? 0) < 0 }">{{ r.sick.available?.toFixed(2) ?? '—' }}</td>
               <td><button type="button" class="lv__adjbtn" @click.stop="openDrawer(r.userId)">Manage</button></td>
             </tr>
-            <tr v-if="histFor === r.userId">
-              <td colspan="11" class="lv__histrow">
-                <ScheduleLeaveHistory :user-id="r.userId" :summary="false" />
-              </td>
-            </tr>
           </template>
         </tbody>
       </table>
@@ -443,6 +446,24 @@ function fmtHire(d: string | null): string {
       the full ledger.
     </p>
     <p v-if="flash" class="lv__flash">{{ flash }}</p>
+
+    <!-- history drawer — row click; read-only ledger view -->
+    <div v-if="histFor" class="lv__ovl" @click.self="histFor = null">
+      <aside class="lv__drawer" role="dialog" aria-label="Leave history">
+        <div class="lv__dh">
+          <h3 class="lv__dtitle">{{ histName }}</h3>
+          <button type="button" class="lv__dclose" aria-label="Close" @click="histFor = null">×</button>
+        </div>
+        <div class="lv__dbody">
+          <ScheduleLeaveHistory :user-id="histFor" :summary="true" />
+          <div class="lv__drow">
+            <button type="button" class="lv__btn" @click="histToManage">
+              Manage — profile, rates, adjustments
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
 
     <!-- leave profile drawer -->
     <div v-if="drawerFor" class="lv__ovl" @click.self="drawerFor = null">
@@ -572,11 +593,8 @@ tr:hover .lv__ts { background: oklch(0.945 0.012 262); }
 .lv__row { cursor: pointer; }
 .lv__row:hover .lv__name { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
 .lv__name { font-weight: 600; color: var(--color-ink); }
-.lv__chev { display: inline-block; font-size: 0.6rem; color: var(--color-muted); margin-right: 6px; transition: transform 0.12s; }
-.lv__chev--open { transform: rotate(90deg); }
 .lv__up { color: var(--color-muted); }
 .lv__avail { font-weight: 700; color: var(--color-ink); }
-.lv__histrow { background: var(--color-surface-sunk, transparent); padding: 8px 12px 10px 28px; }
 .lv__legend { font-size: 0.7rem; color: var(--color-muted); margin: 8px 0 0; }
 .lv__adjbtn { border: 1px solid var(--color-line); background: none; color: var(--color-muted); border-radius: 6px; padding: 2px 9px; font-size: 0.68rem; font-weight: 600; cursor: pointer; }
 .lv__adjbtn:hover { border-color: var(--color-brand-700); color: var(--color-brand-700); }
