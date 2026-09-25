@@ -6,6 +6,7 @@ import {
   platoonFor,
   payPeriodFor,
   hhmm,
+  personSortKey,
   OFF_LABELS,
   REQ_TYPE_LABELS,
   type HoursWarning,
@@ -871,8 +872,68 @@ watch(editor.add, (a) => {
   rsEnd.value = a.dateIso
 })
 
-function pickAdd(kind: 'event' | 'note' | 'student' | 'seat'): void {
-  if (editor.add.value) editor.add.value.kind = kind
+function pickAdd(kind: 'event' | 'note' | 'student' | 'seat' | 'timeoff'): void {
+  if (!editor.add.value) return
+  if (kind === 'timeoff') {
+    aoUser.value = editor.add.value.userId ?? ''
+    aoType.value = 'sick'
+    aoFrom.value = '06:00'
+    aoUntil.value = '06:00'
+  }
+  editor.add.value.kind = kind
+}
+
+/* ── record time off directly (Chief, 2026-09-25) ────────────────────
+   No request, no approval step, no board changes — for the member who
+   left sick after their seat was already covered. My schedule hands a
+   preselected person in; the month add menu offers a picker. */
+const aoUser = ref('')
+const aoType = ref('sick')
+const aoFrom = ref('06:00')
+const aoUntil = ref('06:00')
+const aoBal = ref<{ vacation: number | null; sick: number | null }>({ vacation: null, sick: null })
+
+const aoPeople = computed(() =>
+  sched.allPeople.value
+    .filter((p) => p.active)
+    .sort((a, b) => personSortKey(a.fullName).localeCompare(personSortKey(b.fullName))),
+)
+
+watch(
+  () => editor.add.value,
+  (a) => {
+    if (a && a.kind === 'timeoff') {
+      aoUser.value = a.userId ?? ''
+      aoType.value = 'sick'
+      aoFrom.value = '06:00'
+      aoUntil.value = '06:00'
+    }
+  },
+)
+
+watch(aoUser, async (id) => {
+  aoBal.value = { vacation: null, sick: null }
+  if (!id) return
+  const rows = await sched.fetchLeaveBalances(id)
+  aoBal.value = {
+    vacation: rows.find((b) => b.kind === 'vacation')?.balance ?? null,
+    sick: rows.find((b) => b.kind === 'sick')?.balance ?? null,
+  }
+})
+
+async function submitAssignOff(): Promise<void> {
+  const a = editor.add.value
+  if (!a || !aoUser.value || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.assignTimeOff(aoUser.value, a.dateIso, aoType.value, aoFrom.value, aoUntil.value)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Time off recorded.')
+  editor.closeAll()
 }
 
 async function submitAddSeat(): Promise<void> {
@@ -1697,7 +1758,47 @@ async function reqCancel() {
           <button class="em__btn" @click="pickAdd('note')">Add a note</button>
           <button class="em__btn" @click="pickAdd('student')">Add a student</button>
           <button class="em__btn" @click="pickAdd('seat')">Add an extra seat (3rd rider)</button>
+          <button class="em__btn" @click="pickAdd('timeoff')">Record time off for a member</button>
           <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+        </template>
+
+        <template v-else-if="editor.add.value.kind === 'timeoff'">
+          <h3 class="em__title">Record time off</h3>
+          <p class="em__sub">
+            {{ fmtLong(editor.add.value.dateIso) }} — books the hours directly: no request,
+            no approval step, and the boards stay exactly as they are (any cover you've
+            assigned keeps its shift). To open the seat up for pickup instead, use Mark off
+            on the person's row.
+          </p>
+          <p v-if="err" class="em__error">{{ err }}</p>
+          <label class="em__field">
+            <span>Member</span>
+            <select v-model="aoUser" class="em__input">
+              <option value="" disabled>— choose —</option>
+              <option v-for="p in aoPeople" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+            </select>
+          </label>
+          <label class="em__field">
+            <span>Type</span>
+            <select v-model="aoType" class="em__input">
+              <option value="sick">Sick</option>
+              <option value="vacation">Vacation</option>
+              <option value="unpaid">Unpaid time off</option>
+              <option value="bereavement">Bereavement</option>
+            </select>
+          </label>
+          <div class="em__times">
+            <label>From <TimeSelect24 v-model="aoFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="aoUntil" class="em__input em__input--time" /></label>
+          </div>
+          <p v-if="aoUser && (aoType === 'sick' || aoType === 'vacation')" class="em__notetext">
+            {{ aoType === 'sick' ? 'Sick' : 'Vacation' }} balance today:
+            {{ (aoType === 'sick' ? aoBal.sick : aoBal.vacation)?.toFixed(1) ?? '…' }} hrs
+          </p>
+          <button class="em__btn em__btn--primary" :disabled="busy || !aoUser" @click="submitAssignOff">
+            {{ busy ? 'Working…' : 'Record time off' }}
+          </button>
+          <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Cancel</button>
         </template>
 
         <template v-else-if="editor.add.value.kind === 'seat'">

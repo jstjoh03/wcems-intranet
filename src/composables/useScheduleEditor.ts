@@ -48,7 +48,7 @@ export interface EventCtx {
   location: string | null
 }
 
-export type AddKind = 'menu' | 'event' | 'note' | 'student' | 'seat'
+export type AddKind = 'menu' | 'event' | 'note' | 'student' | 'seat' | 'timeoff'
 
 /** Crew tapping their OWN shift — Aladtec's self-service trio:
  *  request time off, post a trade, or give the shift away. */
@@ -87,6 +87,9 @@ export interface AddCtx {
   dateIso: string
   kind: AddKind
   unitId: string | null // preselected unit for students
+  /** preselected member for 'timeoff' (My schedule hands the viewed
+   *  person in; the month add menu leaves it null for a picker) */
+  userId: string | null
 }
 
 export interface ExtraCtx {
@@ -207,9 +210,14 @@ export function useScheduleEditor() {
   }
 
   /** Chief: add event / note / student on a date ('menu' shows choices). */
-  function openAdd(dateIso: string, kind: AddKind = 'menu', unitId: string | null = null): void {
+  function openAdd(
+    dateIso: string,
+    kind: AddKind = 'menu',
+    unitId: string | null = null,
+    userId: string | null = null,
+  ): void {
     closeAll()
-    add.value = { dateIso, kind, unitId }
+    add.value = { dateIso, kind, unitId, userId }
   }
 
   /** Chief: click an approved extra-hours row — change times or delete. */

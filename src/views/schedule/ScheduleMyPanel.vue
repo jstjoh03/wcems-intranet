@@ -8,6 +8,7 @@ import {
   hhmm,
   type SchedRequest,
 } from '@/composables/useSchedule'
+import { useScheduleEditor } from '@/composables/useScheduleEditor'
 import ScheduleMonthBoard from './ScheduleMonthBoard.vue'
 import ScheduleDayBoard from './ScheduleDayBoard.vue'
 import ScheduleWeekBoard from './ScheduleWeekBoard.vue'
@@ -30,6 +31,14 @@ import ScheduleSpinner from './ScheduleSpinner.vue'
  */
 
 const sched = useSchedule()
+
+/* Editors: record time off for the viewed member straight from here —
+   the "left sick, seat already covered" flow (Chief, 2026-09-25).
+   Opens the shared drawer with the person + displayed date filled. */
+const editor = useScheduleEditor()
+function recordOffForViewed() {
+  editor.openAdd(dateIso.value, 'timeoff', null, viewingId.value ?? null)
+}
 
 // ── whose calendar is displayed (default: mine) ─────────────────────
 
@@ -337,6 +346,15 @@ function pendingLine(r: SchedRequest): string {
         <input v-model="showOpen" type="checkbox" />
         Open seats
       </label>
+
+      <button
+        v-if="sched.canEdit.value"
+        class="my__setlink"
+        title="Book time off for the member being viewed on the displayed date — no request needed, boards untouched"
+        @click="recordOffForViewed"
+      >
+        Record time off
+      </button>
 
       <button class="my__setlink" @click="openSettings">My settings</button>
     </div>

@@ -3036,6 +3036,31 @@ async function applyTimeOff(
   return ins.error ? ins.error.message : null
 }
 
+/** Editor: record time off for a member directly — no request to
+ *  approve and NO seat/board changes. Built for "left sick mid-shift,
+ *  the seat's already covered" (Chief, 2026-09-25): the cover stays
+ *  exactly as assigned; this books the hours so the balance deducts,
+ *  the day's Time Off list shows it, and the member is notified. When
+ *  the seat SHOULD open up for pickup instead, use Mark off on the
+ *  person's row. */
+async function assignTimeOff(
+  userId: string,
+  dateIso: string,
+  offType: string,
+  from: string,
+  until: string,
+): Promise<string | null> {
+  const w = shiftWindow(dateIso, from, until)
+  const err = await applyTimeOff(dateIso, null, userId, offType, w.reqStart, w.reqEnd, null)
+  if (err) return err
+  const who = displayName(userId).name
+  const label = OFF_LABELS[offType] ?? 'Time off'
+  audit('timeoff.assign', `Recorded ${label.toLowerCase()} time off for ${who} — ${dateIso} ${from}–${until} (entered directly, no request)`, { entity: 'leave', entityId: userId })
+  notify('schedule_change', { userId, summary: `${label} time off recorded for you — ${dateIso}, ${from}–${until}.` })
+  await reloadRangeIfLoaded()
+  return null
+}
+
 /** Hand a shift window from one person to another on a seat. The
  *  outgoing person's coverage in the window is carved out (splits and
  *  override rows handled — nothing left behind), and the new person
@@ -4865,6 +4890,7 @@ export function useSchedule() {
     adjustLeave,
     setLeaveProfile,
     openLeaveBalances,
+    assignTimeOff,
     pendingLeaveHours,
     projectedLeaveBalance,
     fetchAccessList,
