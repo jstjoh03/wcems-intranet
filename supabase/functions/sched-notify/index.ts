@@ -931,6 +931,17 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // TIME OFF FOLLOWS THE PERSON (2026-09-25, lockstep with
+      // segsForUserOnDate in the client): booked-off hours never earn
+      // a reminder, wherever the member sits that day.
+      const offByUser = new Map<string, { s: number; e: number }[]>()
+      for (const r of rows) {
+        if (r.kind !== 'timeoff' || !r.user_id) continue
+        const l = offByUser.get(r.user_id) ?? []
+        l.push({ s: Date.parse(r.start_at), e: Date.parse(r.end_at) })
+        offByUser.set(r.user_id, l)
+      }
+
       // merge per user (multi-day blocks become one segment; the label
       // of the run's FIRST piece names the shift) → due = merged starts
       // inside the lead window
@@ -945,7 +956,22 @@ Deno.serve(async (req: Request) => {
           if (last && s.start <= last.end + 60_000) last.end = Math.max(last.end, s.end)
           else merged.push({ ...s })
         }
-        for (const m of merged) {
+        let eff = merged
+        for (const o of offByUser.get(uid) ?? []) {
+          const next: LSeg[] = []
+          for (const s of eff) {
+            const os = Math.max(s.start, o.s)
+            const oe = Math.min(s.end, o.e)
+            if (oe - os < 60_000) {
+              next.push(s)
+              continue
+            }
+            if (os - s.start >= 60_000) next.push({ ...s, end: os })
+            if (s.end - oe >= 60_000) next.push({ ...s, start: oe })
+          }
+          eff = next
+        }
+        for (const m of eff) {
           if (m.start > now && m.start <= windowEnd) due.push({ userId: uid, name, start: m.start, end: m.end, label: m.label })
         }
       }

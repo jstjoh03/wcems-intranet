@@ -1191,6 +1191,20 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
   const unitModels: UnitModel[] = []
   let openCount = 0
 
+  /* TIME OFF FOLLOWS THE PERSON (2026-09-25): time-off records are
+     user-level; any window where a seat's occupant has one renders
+     OPEN, derived live. Off hours travel with the member through
+     swaps instead of living as rows pinned to whatever seat they
+     held when it was approved — a swap-and-swap-back stranded the
+     open on the wrong seat and re-seated a member who was off. */
+  const offWindowsByUser = new Map<string, { s: number; e: number }[]>()
+  for (const e of dayEntries) {
+    if (e.kind !== 'timeoff' || !e.userId) continue
+    const l = offWindowsByUser.get(e.userId) ?? []
+    l.push({ s: tsMs(e.startAt), e: tsMs(e.endAt) })
+    offWindowsByUser.set(e.userId, l)
+  }
+
   for (const unit of units.value.filter((u) => u.active)) {
     const unitPlatoon = unitPlatoonFor(unit, dateIso)
     const unitSeats = seats.value
@@ -1202,48 +1216,94 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
       const overrides = dayEntries
         .filter((e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off')
         .sort((a, b) => a.startAt.localeCompare(b.startAt))
-      let rows: SeatRow[]
+      /* raw coverage in ms first, so occupant time off can be carved
+         out before the display mapping */
+      interface RawRow {
+        entryId: string | null
+        userId: string | null
+        s: number
+        e: number
+        kind: string
+        open: boolean
+        isRotation: boolean
+      }
+      let raw: RawRow[]
       if (overrides.length > 0) {
-        rows = overrides.map((e) => {
-          const who = displayName(e.userId)
-          const open = e.userId === null && e.status === 'open'
-          return {
-            entryId: e.id,
-            userId: e.userId,
-            name: who.name,
-            credential: who.credential,
-            start: hhmm(e.startAt),
-            end: hhmm(e.endAt),
-            kind: e.kind,
-            open,
-            isRotation: false,
-            note: null,
-          }
-        })
+        raw = overrides.map((e) => ({
+          entryId: e.id,
+          userId: e.userId,
+          s: tsMs(e.startAt),
+          e: tsMs(e.endAt),
+          kind: e.kind,
+          open: e.userId === null && e.status === 'open',
+          isRotation: false,
+        }))
       } else if (unitPlatoon === null) {
         // unit not staffed this day under its own pattern — no rows,
         // no open seats
-        rows = []
+        raw = []
       } else {
         const occupant = rotationOccupant(seat.id, unitPlatoon, dateIso)
-        const who = displayName(occupant)
-        const open = occupant === null
         const uw = unitDayWindow(unit, dateIso)
-        rows = [
+        raw = [
           {
             entryId: null,
             userId: occupant,
-            name: who.name,
-            credential: who.credential,
-            start: uw.startHm,
-            end: uw.endHm,
+            s: tsMs(uw.startTs),
+            e: tsMs(uw.endTs),
             kind: 'rotation',
-            open,
-            isRotation: !open,
-            note: null,
+            open: occupant === null,
+            isRotation: occupant !== null,
           },
         ]
       }
+      /* carve each occupied window against the occupant's time off:
+         the overlap renders as an OPEN row (claimable like any other
+         open — entryId null takes the seat+window pickup path) */
+      const carved: RawRow[] = []
+      for (const r of raw) {
+        const offs = r.userId && !r.open ? (offWindowsByUser.get(r.userId) ?? []) : []
+        if (offs.length === 0) {
+          carved.push(r)
+          continue
+        }
+        let pieces: { s: number; e: number }[] = [{ s: r.s, e: r.e }]
+        const opens: { s: number; e: number }[] = []
+        for (const o of offs) {
+          const next: { s: number; e: number }[] = []
+          for (const p of pieces) {
+            const os = Math.max(p.s, o.s)
+            const oe = Math.min(p.e, o.e)
+            if (oe - os < MIN_SEG_MS) {
+              next.push(p)
+              continue
+            }
+            if (os - p.s >= MIN_SEG_MS) next.push({ s: p.s, e: os })
+            if (p.e - oe >= MIN_SEG_MS) next.push({ s: oe, e: p.e })
+            opens.push({ s: os, e: oe })
+          }
+          pieces = next
+        }
+        for (const p of pieces) carved.push({ ...r, s: p.s, e: p.e })
+        for (const o of opens)
+          carved.push({ entryId: null, userId: null, s: o.s, e: o.e, kind: 'rotation', open: true, isRotation: false })
+      }
+      carved.sort((a, b) => a.s - b.s)
+      let rows: SeatRow[] = carved.map((r) => {
+        const who = displayName(r.userId)
+        return {
+          entryId: r.entryId,
+          userId: r.userId,
+          name: who.name,
+          credential: who.credential,
+          start: hhmm(new Date(r.s).toISOString()),
+          end: hhmm(new Date(r.e).toISOString()),
+          kind: r.kind,
+          open: r.open,
+          isRotation: r.isRotation,
+          note: null,
+        }
+      })
       if (onlyFor) {
         rows = rows.filter((r) => (r.open && !hideOpen) || r.userId === onlyFor)
       }
@@ -2049,7 +2109,30 @@ function segsForUserOnDate(dateIso: string, userId: string, rows: SchedEntry[]):
       out.push({ start: tsMs(e.startAt), end: tsMs(e.endAt) })
     }
   }
-  return out
+  /* TIME OFF FOLLOWS THE PERSON (2026-09-25): subtract the member's
+     own time-off windows so hours checks, My-schedule counts, and the
+     reminder sweep (edge-function twin — keep in lockstep) never count
+     hours they're booked off. */
+  const offs = dayRows
+    .filter((e) => e.kind === 'timeoff' && e.userId === userId)
+    .map((e) => ({ start: tsMs(e.startAt), end: tsMs(e.endAt) }))
+  if (offs.length === 0) return out
+  let result = out
+  for (const o of offs) {
+    const next: Seg[] = []
+    for (const s of result) {
+      const os = Math.max(s.start, o.start)
+      const oe = Math.min(s.end, o.end)
+      if (oe - os < MIN_SEG_MS) {
+        next.push(s)
+        continue
+      }
+      if (os - s.start >= MIN_SEG_MS) next.push({ start: s.start, end: os })
+      if (s.end - oe >= MIN_SEG_MS) next.push({ start: oe, end: s.end })
+    }
+    result = next
+  }
+  return result
 }
 
 /** Merge overlapping/abutting segments (sub-minute gaps count as joined). */
@@ -3009,33 +3092,24 @@ async function carveSeatWindow(
  * requested window is written for reports either way. Used by time-off
  * approval and the Chief's day editor.
  */
+/** TIME OFF FOLLOWS THE PERSON (2026-09-25): one user-level record —
+ *  no seat pin, no materialized open rows. The boards derive the open
+ *  window from it live (dayModel), so swaps can move people freely and
+ *  the off hours travel with them; deleting the record restores their
+ *  original coverage automatically because nothing was carved away. */
 async function applyTimeOff(
   workDate: string,
-  seatId: string | null,
   userId: string,
   offType: string | null,
   startAt: string,
   endAt: string,
   sourceRequest: string | null,
 ): Promise<string | null> {
-  const rows: Record<string, unknown>[] = []
-  if (seatId) {
-    const { segs, error } = await carveSeatWindow(workDate, seatId, userId, tsMs(startAt), tsMs(endAt))
-    if (error) return error
-    for (const seg of segs) {
-      rows.push({
-        work_date: workDate, seat_id: seatId, user_id: null,
-        start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
-        kind: 'giveaway_cover', status: 'open', source_request: sourceRequest,
-      })
-    }
-  }
-  rows.push({
-    work_date: workDate, seat_id: seatId, user_id: userId,
+  const ins = await supabase.from('sched_entries').insert({
+    work_date: workDate, seat_id: null, user_id: userId,
     start_at: startAt, end_at: endAt, kind: 'timeoff', status: 'off',
     off_type: offType, source_request: sourceRequest,
   })
-  const ins = await supabase.from('sched_entries').insert(rows)
   return ins.error ? ins.error.message : null
 }
 
@@ -3054,7 +3128,7 @@ async function assignTimeOff(
   until: string,
 ): Promise<string | null> {
   const w = shiftWindow(dateIso, from, until)
-  const err = await applyTimeOff(dateIso, null, userId, offType, w.reqStart, w.reqEnd, null)
+  const err = await applyTimeOff(dateIso, userId, offType, w.reqStart, w.reqEnd, null)
   if (err) return err
   const who = displayName(userId).name
   const label = OFF_LABELS[offType] ?? 'Time off'
@@ -3234,35 +3308,27 @@ function holdsViaOverride(userId: string, seatId: string, dateIso: string): bool
 /** Chief: mark an assigned person off for (part of) a day. */
 async function dayMarkOff(opts: {
   dateIso: string
-  seatId: string
+  seatId: string // kept for the caller's context; time off is user-level now
   userId: string
   offType: string
   from: string
   until: string
 }): Promise<string | null> {
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
-  const { segs, error } = await carveSeatWindow(
-    opts.dateIso, opts.seatId, opts.userId, tsMs(w.reqStart), tsMs(w.reqEnd),
+  /* TIME OFF FOLLOWS THE PERSON (2026-09-25): no more carving the seat
+     and pinning rows to it — one user-level record, and the boards
+     derive the open window live. Deleting the record later restores
+     their coverage automatically because nothing was carved away. */
+  const working = segsForUserOnDate(opts.dateIso, opts.userId, entries.value)
+  const overlaps = working.some(
+    (s) => Math.max(s.start, tsMs(w.reqStart)) < Math.min(s.end, tsMs(w.reqEnd)),
   )
-  if (error) return error
-  if (segs.length === 0) {
-    await reloadRangeIfLoaded()
-    return 'They are not scheduled on that seat during that window.'
-  }
-  const rows: Record<string, unknown>[] = []
-  for (const seg of segs) {
-    rows.push({
-      work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
-      start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
-      kind: 'giveaway_cover', status: 'open',
-    })
-    rows.push({
-      work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
-      start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
-      kind: 'timeoff', status: 'off', off_type: opts.offType,
-    })
-  }
-  const ins = await supabase.from('sched_entries').insert(rows)
+  if (!overlaps) return 'They are not scheduled during that window.'
+  const ins = await supabase.from('sched_entries').insert({
+    work_date: opts.dateIso, seat_id: null, user_id: opts.userId,
+    start_at: w.reqStart, end_at: w.reqEnd,
+    kind: 'timeoff', status: 'off', off_type: opts.offType,
+  })
   if (ins.error) return ins.error.message
   audit('day.mark_off', `Marked ${displayName(opts.userId).name} off (${OFF_LABELS[opts.offType] ?? opts.offType}) ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
   notify('schedule_change', { userId: opts.userId, summary: `You were marked off (${OFF_LABELS[opts.offType] ?? opts.offType}) on ${opts.dateIso} ${opts.from}–${opts.until}; that window is posted open.` })
@@ -3927,22 +3993,6 @@ async function reopenRequest(req: SchedRequest): Promise<string | null> {
   return null
 }
 
-/** Find the seat a user effectively holds on a date (entry override first,
- *  then rotation), or null if they aren't on the board that day. */
-function seatHeldBy(userId: string, dateIso: string): string | null {
-  const dayEntries = entries.value.filter((e) => e.workDate === dateIso)
-  for (const e of dayEntries) {
-    if (e.seatId && e.userId === userId && e.kind !== 'timeoff' && e.status !== 'off') return e.seatId
-  }
-  for (const seat of activeSeatList()) {
-    const hasOverride = dayEntries.some(
-      (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
-    )
-    if (!hasOverride && seatRotationOccupant(seat.id, dateIso) === userId) return seat.id
-  }
-  return null
-}
-
 /**
  * Approve a request and apply it to the calendar. Denial just records the
  * decision. Approval writes deviation entries:
@@ -3966,10 +4016,8 @@ async function decideRequest(
 
   if (approve && !alreadyHandled) {
     if (req.type === 'time_off' && req.workDate) {
-      const seatId = req.seatId ?? seatHeldBy(req.requesterId, req.workDate)
       const err = await applyTimeOff(
         req.workDate,
-        seatId,
         req.requesterId,
         req.offType,
         req.startAt ?? centralTs(req.workDate, '06:00'),
