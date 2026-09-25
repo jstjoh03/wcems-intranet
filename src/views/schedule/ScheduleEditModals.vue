@@ -1287,6 +1287,25 @@ async function reqDecide(approve: boolean) {
   editor.closeAll()
 }
 
+/** The Chief already made this change by hand on the boards — close the
+ *  request as approved without writing anything to the calendar. She
+ *  decides from the month view's request drawer, so the third
+ *  disposition lives here too (2026-09-25). */
+async function reqMarkHandled() {
+  const r = reqObj.value
+  if (!r) return
+  busy.value = true
+  err.value = null
+  const e = await sched.decideRequest(r, true, '', true)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Marked handled — the calendar was left as-is.')
+  editor.closeAll()
+}
+
 async function reqCancel() {
   const r = reqObj.value
   if (!r) return
@@ -1903,6 +1922,14 @@ async function reqCancel() {
             </button>
             <button class="em__btn em__btn--danger" :disabled="busy" @click="reqDecide(false)">
               Deny
+            </button>
+            <button
+              class="em__btn em__btn--ghost"
+              :disabled="busy"
+              title="Close this request without changing the schedule — for a change you already made by hand"
+              @click="reqMarkHandled"
+            >
+              Already handled — schedule updated by hand
             </button>
           </template>
           <button

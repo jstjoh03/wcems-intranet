@@ -89,7 +89,7 @@ const showsDateNav = computed(() => tab.value === 'month' || tab.value === 'day'
 const RAIL = computed<{ h: string; items: { key: Tab; label: string }[] }[]>(() => {
   const groups: { h: string; items: { key: Tab; label: string }[] }[] = [
     {
-      h: 'Boards',
+      h: 'Schedule',
       items: [
         { key: 'month', label: 'Month' },
         { key: 'day', label: 'Day' },
