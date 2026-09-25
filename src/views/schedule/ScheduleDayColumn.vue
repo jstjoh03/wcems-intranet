@@ -4,7 +4,6 @@ import {
   useSchedule,
   todayCentralIso,
   type LabeledRow,
-  type SeatRow,
 } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
@@ -58,22 +57,12 @@ function notesTitle(notes: { note: string }[]): string {
   return notes.map((n) => n.note).join('\n')
 }
 
-/** Time Off rows open the person editor for edit/delete (2026-09-24) —
- *  mirrors the month board; entries with no seat fall back to the day. */
+/** Time Off rows open the time-off editor — retime, change the type,
+ *  or delete the record (Chief, 2026-09-25); mirrors the month board. */
 function openTimeOff(r: LabeledRow): void {
-  if (sched.canEdit.value && r.userId && r.seatId) {
-    const seat = sched.seats.value.find((s) => s.id === r.seatId)
-    const unit = seat ? sched.units.value.find((u) => u.id === seat.unitId) : undefined
-    if (seat && unit) {
-      editor.openPerson(props.dateIso, unit.code, seat.id, seat.label, {
-        userId: r.userId,
-        name: r.name,
-        credential: r.credential,
-        start: r.start,
-        end: r.end,
-      } as SeatRow)
-      return
-    }
+  if (sched.canEdit.value && r.entryId) {
+    editor.openTimeOffEdit(props.dateIso, r)
+    return
   }
   emit('open-day', props.dateIso)
 }

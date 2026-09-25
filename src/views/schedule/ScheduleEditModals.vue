@@ -936,6 +936,66 @@ async function submitAssignOff(): Promise<void> {
   editor.closeAll()
 }
 
+/* ── edit an existing time-off record (Chief, 2026-09-25) ────────────
+   Clicked from any board's Time Off box: retime it, change the type,
+   or delete it. Deletion goes through removeEntry, which also
+   auto-voids the approved request the record came from. */
+const OFF_TYPES = ['vacation', 'sick', 'unpaid', 'bereavement']
+const toType = ref('sick')
+const toFrom = ref('06:00')
+const toUntil = ref('06:00')
+const toConfirmDelete = ref(false)
+
+function hhmmColon(s: string): string {
+  return /^\d{4}$/.test(s) ? `${s.slice(0, 2)}:${s.slice(2)}` : s
+}
+
+watch(
+  () => editor.timeOff.value,
+  (t) => {
+    toConfirmDelete.value = false
+    if (t) {
+      toType.value = t.offType && OFF_TYPES.includes(t.offType) ? t.offType : 'sick'
+      toFrom.value = hhmmColon(t.start)
+      toUntil.value = hhmmColon(t.end)
+    }
+  },
+)
+
+async function saveTimeOffEdit(): Promise<void> {
+  const t = editor.timeOff.value
+  if (!t || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.updateTimeOff(t.entryId, t.dateIso, toType.value, toFrom.value, toUntil.value)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Time off updated.')
+  editor.closeAll()
+}
+
+async function deleteTimeOffEdit(): Promise<void> {
+  const t = editor.timeOff.value
+  if (!t || busy.value) return
+  if (!toConfirmDelete.value) {
+    toConfirmDelete.value = true
+    return
+  }
+  busy.value = true
+  err.value = null
+  const e = await sched.removeEntry(t.entryId)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Time off removed — balance restored.')
+  editor.closeAll()
+}
+
 async function submitAddSeat(): Promise<void> {
   const a = editor.add.value
   if (!a || busy.value) return
@@ -2050,6 +2110,38 @@ async function reqCancel() {
           </p>
           <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
         </template>
+      </div>
+    </div>
+
+    <!-- ── time-off record editor (chief) ─────────────────────────── -->
+    <div v-if="editor.timeOff.value" class="em__overlay" @click.self="editor.closeAll()">
+      <div class="em__modal">
+        <h3 class="em__title">{{ editor.timeOff.value.name }} — time off</h3>
+        <p class="em__sub">
+          {{ fmtLong(editor.timeOff.value.dateIso) }}. Changes post straight to the calendar
+          and the member is notified. Deleting removes the record and restores their balance.
+        </p>
+        <p v-if="err" class="em__error">{{ err }}</p>
+        <label class="em__field">
+          <span>Type</span>
+          <select v-model="toType" class="em__input">
+            <option value="sick">Sick</option>
+            <option value="vacation">Vacation</option>
+            <option value="unpaid">Unpaid time off</option>
+            <option value="bereavement">Bereavement</option>
+          </select>
+        </label>
+        <div class="em__times">
+          <label>From <TimeSelect24 v-model="toFrom" class="em__input em__input--time" /></label>
+          <label>Until <TimeSelect24 v-model="toUntil" class="em__input em__input--time" /></label>
+        </div>
+        <button class="em__btn em__btn--primary" :disabled="busy" @click="saveTimeOffEdit">
+          {{ busy ? 'Working…' : 'Save changes' }}
+        </button>
+        <button class="em__btn em__btn--danger" :disabled="busy" @click="deleteTimeOffEdit">
+          {{ toConfirmDelete ? 'Really delete this time off?' : 'Delete — remove it from this day' }}
+        </button>
+        <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
       </div>
     </div>
 

@@ -6,7 +6,6 @@ import {
   todayCentralIso,
   type DayModel,
   type LabeledRow,
-  type SeatRow,
 } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
@@ -46,23 +45,13 @@ interface Cell {
   model: DayModel
 }
 
-/** Time Off rows open the person editor so an admin can adjust or
- *  restore the day right from the month (Justin, 2026-09-24). Entries
- *  with no seat context fall back to opening the day. */
+/** Time Off rows open the time-off editor — retime, change the type,
+ *  or delete the record (Chief, 2026-09-25; the old route to the
+ *  seat/person drawer offered seat tools that make no sense here). */
 function openTimeOff(iso: string, r: LabeledRow): void {
-  if (sched.canEdit.value && r.userId && r.seatId) {
-    const seat = sched.seats.value.find((s) => s.id === r.seatId)
-    const unit = seat ? sched.units.value.find((u) => u.id === seat.unitId) : undefined
-    if (seat && unit) {
-      editor.openPerson(iso, unit.code, seat.id, seat.label, {
-        userId: r.userId,
-        name: r.name,
-        credential: r.credential,
-        start: r.start,
-        end: r.end,
-      } as SeatRow)
-      return
-    }
+  if (sched.canEdit.value && r.entryId) {
+    editor.openTimeOffEdit(iso, r)
+    return
   }
   emit('open-day', iso)
 }

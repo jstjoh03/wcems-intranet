@@ -250,16 +250,23 @@ async function removeNote(id: string) {
     <section v-if="model.timeOff.length > 0" class="db__station">
       <h3 class="db__station-name db__station-name--off">Time Off</h3>
       <div class="db__labeled">
-        <div v-for="r in model.timeOff" :key="r.entryId" class="db__row">
-          <span class="db__seat">{{ r.sub }}</span>
-          <span class="db__name" :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
-          <span class="db__time">
-            {{ r.start }} – {{ r.end }}
-            <button v-if="sched.canEdit.value" class="db__x" aria-label="Remove" @click="clearRow(r.entryId)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-            </button>
-          </span>
-        </div>
+        <template v-for="r in model.timeOff" :key="r.entryId">
+          <button
+            v-if="sched.canEdit.value"
+            class="db__row db__row--offbtn"
+            title="Edit or remove this time off"
+            @click="editor.openTimeOffEdit(props.dateIso, r)"
+          >
+            <span class="db__seat">{{ r.sub }}</span>
+            <span class="db__name" :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+            <span class="db__time">{{ r.start }} – {{ r.end }}</span>
+          </button>
+          <div v-else class="db__row">
+            <span class="db__seat">{{ r.sub }}</span>
+            <span class="db__name" :class="{ 'db__name--me': !!r.userId && r.userId === sched.myUserId.value }">{{ r.name }}<span v-if="r.credential" class="db__cred"> - {{ r.credential }}</span></span>
+            <span class="db__time">{{ r.start }} – {{ r.end }}</span>
+          </div>
+        </template>
       </div>
     </section>
 
@@ -501,6 +508,24 @@ async function removeNote(id: string) {
 
 .db__x:hover {
   color: var(--color-danger-500);
+}
+
+/* time-off rows are buttons for editors — row click opens the
+   time-off editor (retime / retype / delete) */
+.db__row--offbtn {
+  font: inherit;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+.db__row--offbtn:hover .db__name {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
 }
 
 .db__station {

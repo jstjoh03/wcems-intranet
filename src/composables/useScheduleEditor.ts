@@ -102,6 +102,19 @@ export interface ExtraCtx {
   canUnassign: boolean // rider seats: keep the slot, clear the person
 }
 
+/** An existing time-off record clicked on any board — edit the window,
+ *  change the type, or delete it (Chief, 2026-09-25; previously routed
+ *  to the seat/person editor, which is the wrong tool). */
+export interface TimeOffCtx {
+  dateIso: string
+  entryId: string
+  userId: string | null
+  name: string
+  offType: string | null
+  start: string // display 'HHmm'
+  end: string
+}
+
 const slot = ref<SlotCtx | null>(null)
 const person = ref<PersonCtx | null>(null)
 const student = ref<StudentCtx | null>(null)
@@ -112,8 +125,10 @@ const extra = ref<ExtraCtx | null>(null)
 const myShift = ref<MyShiftCtx | null>(null)
 const note = ref<NoteCtx | null>(null)
 const request = ref<RequestCtx | null>(null)
+const timeOff = ref<TimeOffCtx | null>(null)
 
 function closeAll(): void {
+  timeOff.value = null
   slot.value = null
   person.value = null
   student.value = null
@@ -313,6 +328,25 @@ export function useScheduleEditor() {
     openMyShift,
     openNote,
     openRequest,
+    openTimeOffEdit,
+    timeOff,
     closeAll,
+  }
+
+  /** Chief: click a Time Off box on any board. */
+  function openTimeOffEdit(
+    dateIso: string,
+    r: { entryId: string; userId: string | null; name: string; offType?: string | null; start: string; end: string },
+  ): void {
+    closeAll()
+    timeOff.value = {
+      dateIso,
+      entryId: r.entryId,
+      userId: r.userId,
+      name: r.name,
+      offType: r.offType ?? null,
+      start: r.start,
+      end: r.end,
+    }
   }
 }

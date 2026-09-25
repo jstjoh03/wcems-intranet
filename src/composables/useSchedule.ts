@@ -276,6 +276,8 @@ export interface LabeledRow {
   /** the seat a time-off entry vacated — lets boards open the person
    *  editor straight from the Time Off box (Justin, 2026-09-24) */
   seatId?: string | null
+  /** raw off_type for time-off rows — the edit drawer preselects it */
+  offType?: string | null
 }
 
 /** A request awaiting decision, surfaced on its work date. */
@@ -1409,6 +1411,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
         end: hhmm(e.endAt),
         sub: e.note || OFF_LABELS[e.offType ?? 'other'] || 'Time Off',
         seatId: e.seatId ?? null,
+        offType: e.offType ?? null,
       }
     })
 
@@ -3645,6 +3648,37 @@ async function updateEntryWindow(
   return null
 }
 
+/** Editor: fix an existing time-off record in place — window and/or
+ *  type. Clicked straight from any board's Time Off box (Chief,
+ *  2026-09-25); deleting instead goes through removeEntry, which also
+ *  auto-voids the approved request it came from. */
+async function updateTimeOff(
+  entryId: string,
+  dateIso: string,
+  offType: string,
+  from: string,
+  until: string,
+): Promise<string | null> {
+  const w = shiftWindow(dateIso, from, until)
+  const res = await supabase
+    .from('sched_entries')
+    .update({ off_type: offType, start_at: w.reqStart, end_at: w.reqEnd, updated_at: new Date().toISOString() })
+    .eq('id', entryId)
+    .eq('kind', 'timeoff')
+    .select('id, user_id, work_date')
+  if (res.error) return res.error.message
+  if (!res.data || res.data.length === 0) {
+    await reloadRangeIfLoaded()
+    return 'That time-off record no longer exists — the board has changed.'
+  }
+  const label = OFF_LABELS[offType] ?? 'Time off'
+  audit('timeoff.update', `Updated a time-off record — ${label.toLowerCase()}, ${dateIso} ${from}–${until}`, { entity: 'entry', entityId: entryId })
+  const t = res.data[0] as { user_id: string | null; work_date: string }
+  if (t.user_id) notify('schedule_change', { userId: t.user_id, summary: `Your time off on ${t.work_date} is now ${label.toLowerCase()}, ${from}–${until}.` })
+  await reloadRangeIfLoaded()
+  return null
+}
+
 /** Update an established event's listing — hover note and/or the
  *  double-time flag. Boxes that came from staffing rows alone (no
  *  sched_events listing yet, e.g. imported history) get a listing
@@ -4934,6 +4968,7 @@ export function useSchedule() {
     addEventSlot,
     removeEntry,
     updateEntryWindow,
+    updateTimeOff,
     addStudent,
     addRiderSeats,
     updateStudentEntry,
