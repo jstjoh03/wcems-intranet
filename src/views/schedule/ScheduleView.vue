@@ -839,6 +839,21 @@ watch(dateIso, (v) => {
   margin-bottom: 0.9rem;
 }
 
+/* Desktop: the date navigator rides along under the app bar, so
+   jumping months never means scrolling back to the top (Justin,
+   2026-09-26). Full-bleed ground so board rows don't show through. */
+@media (min-width: 901px) {
+  .sched__nav {
+    position: sticky;
+    top: 42px; /* app bar height: 13px links + 11px padding + 2px rule */
+    z-index: 40;
+    background: var(--color-canvas);
+    margin: 0 -1.25rem 0.9rem;
+    padding: 0.5rem 1.25rem 0.55rem;
+    border-bottom: 1px solid var(--color-line-soft);
+  }
+}
+
 .sched__nav-arrows {
   display: inline-flex;
   align-items: center;
