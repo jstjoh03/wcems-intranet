@@ -5,6 +5,7 @@ import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,
   todayCentralIso,
+  addDaysIso,
   hhmm,
   payPeriodFor,
   type SchedRequest,
@@ -111,8 +112,10 @@ async function removeUnavailable(id: string) {
   await refreshUnavailable()
 }
 
-// extra hours
+// extra hours — start and end each carry their own date so overnight
+// windows (2345–0600 the next day) are explicit (Justin, 2026-09-27)
 const exDate = ref(todayCentralIso())
+const exEndDate = ref(todayCentralIso())
 const exFrom = ref('06:00')
 const exUntil = ref('08:00')
 const exUnit = ref('')
@@ -125,6 +128,12 @@ const exTimeType = ref('regular')
 const hourWarn = ref<HoursWarning[] | null>(null)
 
 watch([exDate, exFrom, exUntil], () => {
+  hourWarn.value = null
+  /* keep the end date sensible as they type: an until at or before the
+     from means the window crosses midnight → next day; still editable */
+  exEndDate.value = exUntil.value <= exFrom.value ? addDaysIso(exDate.value, 1) : exDate.value
+})
+watch(exEndDate, () => {
   hourWarn.value = null
 })
 
@@ -173,7 +182,7 @@ async function submit() {
       if (hourWarn.value === null) {
         const me = sched.myUserId.value
         if (me) {
-          const info = await sched.hoursCheckWindow(me, exDate.value, exFrom.value, exUntil.value, 'You')
+          const info = await sched.hoursCheckWindow(me, exDate.value, exFrom.value, exUntil.value, 'You', exEndDate.value)
           if (info.warnings.length > 0) {
             hourWarn.value = info.warnings
             awaitingAck = true
@@ -184,6 +193,7 @@ async function submit() {
       if (!awaitingAck) {
         err = await sched.createExtraRequest({
           dateIso: exDate.value,
+          endDateIso: exEndDate.value,
           from: exFrom.value,
           until: exUntil.value,
           unitId: exUnit.value || null,
@@ -765,12 +775,16 @@ async function cancel(r: SchedRequest) {
         <template v-else-if="formKind === 'extra_hours'">
           <div class="rq__grid">
             <label class="rq__field">
-              <span class="rq__label">Date</span>
+              <span class="rq__label">Starts</span>
               <input v-model="exDate" type="date" class="rq__input" />
             </label>
             <label class="rq__field">
               <span class="rq__label">From</span>
               <TimeSelect24 v-model="exFrom" class="rq__input" />
+            </label>
+            <label class="rq__field">
+              <span class="rq__label">Ends</span>
+              <input v-model="exEndDate" type="date" class="rq__input" :min="exDate" />
             </label>
             <label class="rq__field">
               <span class="rq__label">Until</span>

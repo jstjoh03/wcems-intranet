@@ -2273,7 +2273,18 @@ async function hoursCheckWindow(
   from: string,
   until: string,
   subjectName = 'They',
+  /** explicit end date for overnight windows (2345–0600 the next day) —
+   *  when given, the exact dates are used instead of the 0600-tour
+   *  convention (Justin, 2026-09-27) */
+  endDateIso?: string | null,
 ): Promise<HoursInfo> {
+  if (endDateIso) {
+    const startAt = centralTs(dateIso, from)
+    const endAt = centralTs(endDateIso, until)
+    if (tsMs(endAt) > tsMs(startAt)) {
+      return hoursCheck(userId, [{ dateIso, startAt, endAt }], subjectName)
+    }
+  }
   const w = shiftWindow(dateIso, from, until)
   return hoursCheck(userId, [{ dateIso, startAt: w.reqStart, endAt: w.reqEnd }], subjectName)
 }
@@ -2628,6 +2639,10 @@ async function createTimeOffRequests(
 
 async function createExtraRequest(opts: {
   dateIso: string
+  /** explicit end date so overnight windows are unambiguous — 2345 to
+   *  0600 THE NEXT DAY carries its own date (Justin, 2026-09-27);
+   *  omitted/equal dates fall back to the 0600-tour convention */
+  endDateIso?: string | null
   from: string
   until: string
   unitId: string | null
@@ -2639,14 +2654,26 @@ async function createExtraRequest(opts: {
   const auth = useAuthStore()
   const me = auth.appUser?.id
   if (!me) return 'Not signed in'
-  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  let reqStart: string
+  let reqEnd: string
+  if (opts.endDateIso && opts.endDateIso !== opts.dateIso) {
+    reqStart = centralTs(opts.dateIso, opts.from)
+    reqEnd = centralTs(opts.endDateIso, opts.until)
+    const span = tsMs(reqEnd) - tsMs(reqStart)
+    if (span <= 0) return 'The end date/time lands before the start — check the dates.'
+    if (span > 48 * 3600e3) return 'That window is longer than 48 hours — check the end date.'
+  } else {
+    const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+    reqStart = w.reqStart
+    reqEnd = w.reqEnd
+  }
   const unit = units.value.find((u) => u.id === opts.unitId)
   const res = await supabase.from('sched_requests').insert({
     type: 'extra_hours',
     requester_id: me,
     work_date: opts.dateIso,
-    start_at: w.reqStart,
-    end_at: w.reqEnd,
+    start_at: reqStart,
+    end_at: reqEnd,
     time_type: opts.timeType,
     unit_code: unit?.code ?? null,
     position_label: opts.positionLabel || null,
