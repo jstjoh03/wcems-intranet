@@ -35,10 +35,16 @@ const LABELS: Record<string, string> = {
   textarea8: 'Kudos',
 }
 
-function prettyLabel(key: string): string {
-  const m = key.match(/^q\d+_(.+)$/)
-  if (m && LABELS[m[1]]) return LABELS[m[1]]
-  const base = (m ? m[1] : key)
+/* Jotform DOUBLES the question prefix after some form edits
+   (q3_textbox1 → q3_q3_textbox1) — a 2026-09-27 submission arrived
+   that way, mapped to no label, and the portal showed "Unknown".
+   Strip every qN_ layer before looking anything up. */
+function innerName(key: string): string {
+  return key.replace(/^(?:q\d+_)+/i, '')
+}
+
+function prettify(inner: string): string {
+  const base = inner
     .replace(/[_-]+/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .trim()
@@ -62,14 +68,37 @@ function prettyValue(v: unknown): string {
 }
 
 function extractFields(raw: Record<string, unknown>): Record<string, string> {
-  const out: Record<string, string> = {}
+  /* Only q<N>_<name> keys are answers; everything else is webhook
+     bookkeeping (slug, tracker, submit metadata). */
+  const answers: { q: number; inner: string; val: string }[] = []
   for (const [k, v] of Object.entries(raw)) {
-    /* Only q<N>_<name> keys are answers; everything else is webhook
-       bookkeeping (slug, tracker, submit metadata). */
-    if (!/^q\d+_/.test(k)) continue
+    const m = k.match(/^q(\d+)_/i)
+    if (!m) continue
     const val = prettyValue(v)
     if (!val) continue
-    out[prettyLabel(k)] = val
+    answers.push({ q: Number(m[1]), inner: innerName(k), val })
+  }
+  answers.sort((a, b) => a.q - b.q)
+  /* If the form is ever rebuilt with brand-new field names, fall back
+     to assigning the canonical labels by field TYPE in question order:
+     two textboxes + an email for the sender, two + one for the
+     recipient, one textarea for the kudos. The portal's Kudos page
+     reads these exact labels. */
+  const typePool: Record<string, string[]> = {
+    textbox: ['Your first name', 'Your last name', "Recipient's first name", "Recipient's last name"],
+    email: ['Your email', "Recipient's email"],
+    textarea: ['Kudos'],
+  }
+  const used: Record<string, number> = { textbox: 0, email: 0, textarea: 0 }
+  const out: Record<string, string> = {}
+  for (const a of answers) {
+    let label = LABELS[a.inner]
+    if (!label) {
+      const t = a.inner.match(/^(textbox|email|textarea)/i)?.[1]?.toLowerCase()
+      const pool = t ? typePool[t] : undefined
+      label = pool && used[t as string] < pool.length ? pool[used[t as string]++] : prettify(a.inner)
+    }
+    out[label] = a.val
   }
   return out
 }
