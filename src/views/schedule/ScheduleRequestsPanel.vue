@@ -48,6 +48,7 @@ const OFF_TYPES = [
   ['sick', 'Sick'],
   ['unpaid', 'Unpaid time off'],
   ['bereavement', 'Bereavement'],
+  ['deployment', 'Deployment'],
   ['other', 'Other'],
 ] as const
 

@@ -90,6 +90,7 @@ const OFF_LABELS: Record<string, string> = {
   sick: 'Sick',
   unpaid: 'Unpaid time off',
   bereavement: 'Bereavement',
+  deployment: 'Deployment',
 }
 
 // ── formatting ───────────────────────────────────────────────────────

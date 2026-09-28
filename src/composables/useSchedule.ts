@@ -1084,6 +1084,7 @@ export const OFF_LABELS: Record<string, string> = {
   sick: 'Sick Time',
   unpaid: 'Unpaid Time Off',
   bereavement: 'Bereavement',
+  deployment: 'Deployment',
   other: 'Time Off',
 }
 

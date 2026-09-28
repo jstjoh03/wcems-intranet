@@ -940,7 +940,7 @@ async function submitAssignOff(): Promise<void> {
    Clicked from any board's Time Off box: retime it, change the type,
    or delete it. Deletion goes through removeEntry, which also
    auto-voids the approved request the record came from. */
-const OFF_TYPES = ['vacation', 'sick', 'unpaid', 'bereavement']
+const OFF_TYPES = ['vacation', 'sick', 'unpaid', 'bereavement', 'deployment']
 const toType = ref('sick')
 const toFrom = ref('06:00')
 const toUntil = ref('06:00')
@@ -1652,6 +1652,7 @@ async function reqCancel() {
             <option value="sick">Sick</option>
             <option value="unpaid">Unpaid time off</option>
             <option value="bereavement">Bereavement</option>
+            <option value="deployment">Deployment</option>
             <option value="other">Other</option>
           </select>
           <div class="em__times">
@@ -1845,6 +1846,7 @@ async function reqCancel() {
               <option value="vacation">Vacation</option>
               <option value="unpaid">Unpaid time off</option>
               <option value="bereavement">Bereavement</option>
+            <option value="deployment">Deployment</option>
             </select>
           </label>
           <div class="em__times">
@@ -2013,6 +2015,7 @@ async function reqCancel() {
             <option value="sick">Sick</option>
             <option value="unpaid">Unpaid time off</option>
             <option value="bereavement">Bereavement</option>
+            <option value="deployment">Deployment</option>
           </select>
           <div class="em__times">
             <label>From <TimeSelect24 v-model="msFrom" class="em__input em__input--time" /></label>
@@ -2129,6 +2132,7 @@ async function reqCancel() {
             <option value="vacation">Vacation</option>
             <option value="unpaid">Unpaid time off</option>
             <option value="bereavement">Bereavement</option>
+            <option value="deployment">Deployment</option>
           </select>
         </label>
         <div class="em__times">
