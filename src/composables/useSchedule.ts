@@ -1326,6 +1326,41 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
         }
         final.sort((a, b) => a.s - b.s)
       }
+      /* SAME-SEAT DEDUPE (Rhonda's 9/30 S201, 2026-09-28): a window
+         someone is SCHEDULED on this seat is not open — stray open
+         markers and carved-out coverage that later got refilled were
+         double-listing three opens beside a fully covered day. Open
+         pieces shrink to the true gaps only. */
+      const coveredWins = final
+        .filter((r) => !r.open && r.kind !== 'blocked' && r.userId)
+        .map((r) => ({ s: r.s, e: r.e }))
+      if (coveredWins.length > 0 && final.some((r) => r.open)) {
+        const dedup: RawRow[] = []
+        for (const r of final) {
+          if (!r.open) {
+            dedup.push(r)
+            continue
+          }
+          let pieces: { s: number; e: number }[] = [{ s: r.s, e: r.e }]
+          for (const c of coveredWins) {
+            const next: { s: number; e: number }[] = []
+            for (const p of pieces) {
+              const os = Math.max(p.s, c.s)
+              const oe = Math.min(p.e, c.e)
+              if (oe - os < MIN_SEG_MS) {
+                next.push(p)
+                continue
+              }
+              if (os - p.s >= MIN_SEG_MS) next.push({ s: p.s, e: os })
+              if (p.e - oe >= MIN_SEG_MS) next.push({ s: oe, e: p.e })
+            }
+            pieces = next
+          }
+          for (const p of pieces) dedup.push({ ...r, s: p.s, e: p.e })
+        }
+        dedup.sort((a, b) => a.s - b.s)
+        final = dedup
+      }
       const blockedNote = new Map(blockedWins.map((b) => [b.id, b.note]))
       let rows: SeatRow[] = final.map((r) => {
         const who = displayName(r.userId)
@@ -3524,13 +3559,19 @@ async function dayMove(opts: {
     until: opts.until,
   })
   if (assignErr) return assignErr
-  const remErr = await dayRemove({
-    dateIso: opts.dateIso,
-    seatId: opts.fromSeatId,
-    userId: opts.userId,
-  })
-  if (remErr) {
-    return `Moved onto the new seat, but their old seat could not be opened: ${remErr}`
+  /* Carve ONLY the moved window off their old seat — the rest of the
+     shift stays put. Moving Ashley to S201 for 12 hours used to take
+     three tools: full remove, partial assign, re-assign the remainder
+     (Justin/Rhonda, 2026-09-28). */
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const { segs, error } = await carveSeatWindow(
+    opts.dateIso, opts.fromSeatId, opts.userId, tsMs(w.reqStart), tsMs(w.reqEnd),
+  )
+  if (error) {
+    return `Moved onto the new seat, but their old window could not be cleared: ${error}`
+  }
+  if (segs.length === 0) {
+    return 'Moved onto the new seat — but they were not on the old seat during that window, so nothing was cleared there. Check the day.'
   }
   return null
 }

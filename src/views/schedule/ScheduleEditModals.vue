@@ -345,6 +345,17 @@ watch(editor.person, (p) => {
   editOpenSeats.value = sched.openSeatsFor(p.dateIso).filter((s) => s.seatId !== p.seatId)
 })
 
+/* Picking a move target prefills the window with the target's open
+   hours — editable, so a 12-hour ride-up moves just those hours and
+   the rest of the shift stays (Justin/Rhonda, 2026-09-28). */
+watch(editMoveTo, () => {
+  const t = editOpenSeats.value.find((s) => `${s.seatId}|${s.entryId ?? ''}` === editMoveTo.value)
+  if (t) {
+    editFrom.value = toInput(t.start)
+    editUntil.value = toInput(t.end)
+  }
+})
+
 async function runEdit(): Promise<void> {
   const ctx = editor.person.value
   if (!ctx) return
@@ -393,8 +404,8 @@ async function runEdit(): Promise<void> {
           toSeatId: target.seatId,
           toEntryId: target.entryId,
           userId: ctx.userId,
-          from: toInput(target.start),
-          until: toInput(target.end),
+          from: editFrom.value,
+          until: editUntil.value,
         })
       }
     } else if (editAction.value === 'replace') {
@@ -1442,6 +1453,9 @@ watch(
   },
 )
 
+/* Aladtec habit (Rhonda): "Blocked time" is picked from the top of the
+   assign selector, which then prompts for the note. */
+
 async function submitBlock() {
   const s = editor.slot.value
   if (!s || !s.seatId || busy.value) return
@@ -1582,16 +1596,24 @@ async function reqCancel() {
         <template v-if="sched.canEdit.value">
           <select v-model="slotAssignee" class="em__input">
             <option value="">— assign a member —</option>
+            <option v-if="editor.slot.value.seatId" value="__blocked">Blocked time</option>
             <option v-for="p in sched.people.value" :key="p.id" :value="p.id">
               {{ p.fullName }}<template v-if="p.credential"> - {{ p.credential }}</template>
             </option>
           </select>
+          <input
+            v-if="slotAssignee === '__blocked'"
+            v-model="slotBlockNote"
+            type="text"
+            class="em__input"
+            placeholder="Note — who has it? e.g. S201 covering, no extra punch"
+          />
           <button
             class="em__btn em__btn--primary"
             :disabled="busy || !slotAssignee"
-            @click="assignDirect"
+            @click="slotAssignee === '__blocked' ? submitBlock() : assignDirect()"
           >
-            Assign to this shift
+            {{ slotAssignee === '__blocked' ? 'Save blocked time' : 'Assign to this shift' }}
           </button>
           <div class="em__div">or file it as a request for yourself</div>
           <button class="em__btn" :disabled="busy" @click="submitPickup">
@@ -1603,32 +1625,15 @@ async function reqCancel() {
                 : 'Request this shift'
             }}
           </button>
-          <template v-if="editor.slot.value.seatId">
-            <div class="em__div">or close the window instead</div>
-            <input
-              v-model="slotBlockNote"
-              type="text"
-              class="em__input"
-              placeholder="Covered by whom? e.g. S201 has it"
-            />
-            <button
-              class="em__btn"
-              :disabled="busy"
-              title="No person entry, no punch expected — the window shows as covered, not a gap"
-              @click="submitBlock"
-            >
-              Mark covered — no extra punch
-            </button>
-            <button
-              v-if="editor.slot.value.entryId"
-              class="em__btn em__btn--danger"
-              :disabled="busy"
-              title="Deletes this open row from the day — for strays left behind by re-seating"
-              @click="removeOpenSeat"
-            >
-              {{ slotRemoveArm ? 'Really remove this open seat?' : 'Remove this open seat from the day' }}
-            </button>
-          </template>
+          <button
+            v-if="editor.slot.value.seatId && editor.slot.value.entryId"
+            class="em__btn em__btn--danger"
+            :disabled="busy"
+            title="Deletes this open row from the day — for strays left behind by re-seating"
+            @click="removeOpenSeat"
+          >
+            {{ slotRemoveArm ? 'Really remove this open seat?' : 'Remove this open seat from the day' }}
+          </button>
         </template>
         <button
           v-else-if="sched.canRequest.value"
@@ -1755,6 +1760,13 @@ async function reqCancel() {
               {{ s.unitCode }} {{ s.seatLabel }} · {{ s.start }} – {{ s.end }}
             </option>
           </select>
+          <div class="em__times">
+            <label>From <TimeSelect24 v-model="editFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="editUntil" class="em__input em__input--time" /></label>
+          </div>
+          <p class="em__sub">
+            Only this window moves — the rest of their shift stays on the current seat.
+          </p>
           <p v-if="editOpenSeats.length === 0" class="em__empty">No open seats today.</p>
         </template>
 
