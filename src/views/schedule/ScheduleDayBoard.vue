@@ -117,8 +117,20 @@ async function removeNote(id: string) {
             :class="{ 'db__row--open': row.open }"
           >
             <span class="db__seat">{{ sm.seat.label }}</span>
+            <span v-if="row.kind === 'blocked'" class="db__name db__name--blocked">
+              {{ row.name }}
+              <button
+                v-if="sched.canEdit.value && row.entryId"
+                class="db__x"
+                aria-label="Unblock"
+                title="Remove the block — the window shows open again"
+                @click="clearRow(row.entryId)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+              </button>
+            </span>
             <button
-              v-if="row.open"
+              v-else-if="row.open"
               class="db__name db__name--open db__name--btn"
               @click="editor.openSlot(props.dateIso, sm.seat.id, sm.seat.label, row)"
             >
@@ -508,6 +520,11 @@ async function removeNote(id: string) {
 
 .db__x:hover {
   color: var(--color-danger-500);
+}
+
+.db__name--blocked {
+  color: var(--color-muted);
+  font-style: italic;
 }
 
 /* time-off rows are buttons for editors — row click opens the

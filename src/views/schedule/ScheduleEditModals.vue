@@ -1427,6 +1427,55 @@ async function reqMarkHandled() {
   editor.closeAll()
 }
 
+/* ── open-seat cleanup + blocked windows (Rhonda, 2026-09-28) ────────
+   Re-seating strays left extra open rows nobody could delete, and a
+   covered call-out (S201 rides the seat, already punched there) needs
+   to read "covered" without a second person entry. */
+const slotBlockNote = ref('')
+const slotRemoveArm = ref(false)
+
+watch(
+  () => editor.slot.value,
+  () => {
+    slotBlockNote.value = ''
+    slotRemoveArm.value = false
+  },
+)
+
+async function submitBlock() {
+  const s = editor.slot.value
+  if (!s || !s.seatId || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.blockOpenWindow(s.dateIso, s.seatId, slotFrom.value, slotUntil.value, slotBlockNote.value)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Window marked covered — no punch expected, no gap shown.')
+  editor.closeAll()
+}
+
+async function removeOpenSeat() {
+  const s = editor.slot.value
+  if (!s || !s.entryId || busy.value) return
+  if (!slotRemoveArm.value) {
+    slotRemoveArm.value = true
+    return
+  }
+  busy.value = true
+  err.value = null
+  const e = await sched.removeEntry(s.entryId)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Open seat removed from the day.')
+  editor.closeAll()
+}
+
 async function reqCancel() {
   const r = reqObj.value
   if (!r) return
@@ -1554,6 +1603,32 @@ async function reqCancel() {
                 : 'Request this shift'
             }}
           </button>
+          <template v-if="editor.slot.value.seatId">
+            <div class="em__div">or close the window instead</div>
+            <input
+              v-model="slotBlockNote"
+              type="text"
+              class="em__input"
+              placeholder="Covered by whom? e.g. S201 has it"
+            />
+            <button
+              class="em__btn"
+              :disabled="busy"
+              title="No person entry, no punch expected — the window shows as covered, not a gap"
+              @click="submitBlock"
+            >
+              Mark covered — no extra punch
+            </button>
+            <button
+              v-if="editor.slot.value.entryId"
+              class="em__btn em__btn--danger"
+              :disabled="busy"
+              title="Deletes this open row from the day — for strays left behind by re-seating"
+              @click="removeOpenSeat"
+            >
+              {{ slotRemoveArm ? 'Really remove this open seat?' : 'Remove this open seat from the day' }}
+            </button>
+          </template>
         </template>
         <button
           v-else-if="sched.canRequest.value"

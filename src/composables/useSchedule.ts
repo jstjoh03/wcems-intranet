@@ -1290,13 +1290,51 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
           carved.push({ entryId: null, userId: null, s: o.s, e: o.e, kind: 'rotation', open: true, isRotation: false })
       }
       carved.sort((a, b) => a.s - b.s)
-      let rows: SeatRow[] = carved.map((r) => {
+      /* BLOCKED overlay (Rhonda, 2026-09-28): a 'blocked' entry paints
+         any OPEN window it overlaps as "Covered — no extra punch" (a
+         call-out handled by someone already punched elsewhere, so no
+         person entry exists on purpose). Scheduled coverage is never
+         painted — only open pieces. */
+      const blockedWins = dayEntries
+        .filter((e) => e.seatId === seat.id && e.kind === 'blocked')
+        .map((e) => ({ id: e.id, s: tsMs(e.startAt), e: tsMs(e.endAt), note: e.note }))
+      let final = carved
+      if (blockedWins.length > 0) {
+        final = []
+        for (const r of carved) {
+          if (!r.open) {
+            final.push(r)
+            continue
+          }
+          let pieces: { s: number; e: number }[] = [{ s: r.s, e: r.e }]
+          for (const b of blockedWins) {
+            const next: { s: number; e: number }[] = []
+            for (const p of pieces) {
+              const os = Math.max(p.s, b.s)
+              const oe = Math.min(p.e, b.e)
+              if (oe - os < MIN_SEG_MS) {
+                next.push(p)
+                continue
+              }
+              if (os - p.s >= MIN_SEG_MS) next.push({ s: p.s, e: os })
+              if (p.e - oe >= MIN_SEG_MS) next.push({ s: oe, e: p.e })
+              final.push({ entryId: b.id, userId: null, s: os, e: oe, kind: 'blocked', open: false, isRotation: false })
+            }
+            pieces = next
+          }
+          for (const p of pieces) final.push({ ...r, s: p.s, e: p.e })
+        }
+        final.sort((a, b) => a.s - b.s)
+      }
+      const blockedNote = new Map(blockedWins.map((b) => [b.id, b.note]))
+      let rows: SeatRow[] = final.map((r) => {
         const who = displayName(r.userId)
+        const bNote = r.kind === 'blocked' && r.entryId ? blockedNote.get(r.entryId) : null
         return {
           entryId: r.entryId,
           userId: r.userId,
-          name: who.name,
-          credential: who.credential,
+          name: r.kind === 'blocked' ? `Covered — ${bNote || 'no extra punch'}` : who.name,
+          credential: r.kind === 'blocked' ? null : who.credential,
           start: hhmm(new Date(r.s).toISOString()),
           end: hhmm(new Date(r.e).toISOString()),
           kind: r.kind,
@@ -3364,6 +3402,32 @@ async function dayMarkOff(opts: {
   return null
 }
 
+/** Editor: paint an open window as covered WITHOUT a second punch — a
+ *  call-out handled by someone already on the clock elsewhere (the
+ *  S201 supervisor rides the open seat). No person entry is written,
+ *  so payroll never sees duplicate punches, but the board stops
+ *  showing a gap: the window renders "Covered — <note>". status 'off'
+ *  keeps blocked rows out of coverage, hours, reminders and exports
+ *  everywhere; remove one via the day view's ✕ (Rhonda, 2026-09-28). */
+async function blockOpenWindow(
+  dateIso: string,
+  seatId: string,
+  from: string,
+  until: string,
+  note: string,
+): Promise<string | null> {
+  const w = shiftWindow(dateIso, from, until)
+  const ins = await supabase.from('sched_entries').insert({
+    work_date: dateIso, seat_id: seatId, user_id: null,
+    start_at: w.reqStart, end_at: w.reqEnd,
+    kind: 'blocked', status: 'off', note: note.trim() || null,
+  })
+  if (ins.error) return ins.error.message
+  audit('seat.block', `Blocked ${seatTitle(seatId)} ${dateIso} ${from}–${until} — covered, no extra punch${note.trim() ? ` (${note.trim()})` : ''}`, { entity: 'entry' })
+  await reloadRangeIfLoaded()
+  return null
+}
+
 /** Chief: open (part of) a person's day with no off record — used by
  *  remove-from-day and the conflict flow's "post the seat open". */
 async function dayOpenWindow(opts: {
@@ -5028,6 +5092,7 @@ export function useSchedule() {
     // day editor + availability
     dayMarkOff,
     dayOpenWindow,
+    blockOpenWindow,
     dayRemove,
     dayReplace,
     dayMove,
