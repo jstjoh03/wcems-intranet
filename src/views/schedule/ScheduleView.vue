@@ -133,44 +133,62 @@ const TABS = computed<{ key: Tab; label: string; group?: boolean }[]>(() => {
 
 const showsDateNav = computed(() => tab.value === 'month' || tab.value === 'day' || tab.value === 'week')
 
-/* Desktop rail (Sortren system, 2026-09-23): the same permission logic
-   as TABS, grouped BOARDS / REQUESTS / MANAGE. Phones keep the strip. */
-const RAIL = computed<{ h: string; items: { key: Tab; label: string }[] }[]>(() => {
-  const groups: { h: string; items: { key: Tab; label: string }[] }[] = [
+function badgeText(n: number): string {
+  return n > 20 ? '20+' : String(n)
+}
+
+/* Standalone app bar (Justin, 2026-09-25), CONSOLIDATED 2026-09-29:
+   eleven flat links read as "page after page", so the boards fold
+   into a Schedule menu and the admin screens into Manage — Sortren's
+   grouped-nav pattern, dropdowns styled to match. Direct tabs stay
+   for the high-traffic queues. */
+type NavEntry =
+  | { kind: 'tab'; key: Tab; label: string }
+  | { kind: 'group'; id: string; label: string; items: { key: Tab; label: string }[] }
+const APPNAV = computed<NavEntry[]>(() => {
+  const n: NavEntry[] = [
     {
-      h: 'Schedule',
+      kind: 'group',
+      id: 'boards',
+      label: 'Schedule',
       items: [
         { key: 'month', label: 'Month' },
         { key: 'day', label: 'Day' },
         { key: 'week', label: 'Week' },
         { key: 'period', label: 'Pay period' },
-        { key: 'mine', label: 'My schedule' },
       ],
     },
+    { kind: 'tab', key: 'mine', label: 'My schedule' },
   ]
-  const req: { key: Tab; label: string }[] = []
-  if (sched.canRequest.value) req.push({ key: 'requests', label: 'Requests' }, { key: 'trades', label: 'Trades' })
-  if (sched.canPageOut.value) req.push({ key: 'pages', label: 'Page-outs' })
-  if (req.length) groups.push({ h: 'Requests', items: req })
+  if (sched.canRequest.value) {
+    n.push({ kind: 'tab', key: 'requests', label: 'Requests' }, { kind: 'tab', key: 'trades', label: 'Trades' })
+  }
+  if (sched.canPageOut.value) n.push({ kind: 'tab', key: 'pages', label: 'Page-outs' })
   const man: { key: Tab; label: string }[] = []
-  if (sched.canEdit.value || sched.level.value === 'supervisor' || sched.isHr.value) man.push({ key: 'time', label: 'Time Reports' })
+  if (sched.canEdit.value || sched.level.value === 'supervisor' || sched.isHr.value)
+    man.push({ key: 'time', label: 'Time Reports' })
   if (sched.canEdit.value || sched.level.value === 'supervisor') man.push({ key: 'members', label: 'Members' })
   if (sched.canEdit.value || sched.isHr.value) man.push({ key: 'setup', label: 'Setup' })
-  if (man.length) groups.push({ h: 'Manage', items: man })
-  return groups
+  if (man.length) n.push({ kind: 'group', id: 'manage', label: 'Manage', items: man })
+  return n
 })
-
-function badgeText(n: number): string {
-  return n > 20 ? '20+' : String(n)
+const openMenu = ref<string | null>(null)
+function pickNav(key: Tab): void {
+  tab.value = key
+  openMenu.value = null
 }
-
-/* Standalone app bar (Justin, 2026-09-25): on desktop the portal
-   chrome hides and scheduling carries its own navy nav in the same
-   style — Home is the month board, then every section the viewer's
-   role admits, with an "Employee Portal" exit on the left. */
-const APPBAR = computed(() =>
-  RAIL.value.flatMap((g) => g.items).map((it) => (it.key === 'month' ? { ...it, label: 'Home' } : it)),
-)
+function groupActive(g: NavEntry): boolean {
+  return g.kind === 'group' && g.items.some((i) => i.key === tab.value)
+}
+function groupBadge(g: NavEntry): number {
+  return g.kind === 'group' ? g.items.reduce((t, i) => t + badgeFor(i.key), 0) : 0
+}
+/** Board label surfaced on the Schedule trigger so the bar still says
+ *  where you are with the flat links gone. */
+const boardLabel = computed(() => {
+  const m: Partial<Record<Tab, string>> = { month: 'Month', day: 'Day', week: 'Week', period: 'Pay period' }
+  return m[tab.value] ?? null
+})
 
 /* Breadcrumb + serif title for the non-board screens (boards carry the
    date navigator instead). */
@@ -396,6 +414,10 @@ watch(monthAnchor, () => {
 watch(tab, (t, prev) => {
   // a modal opened from the previous view shouldn't survive the switch
   editor.closeAll()
+  openMenu.value = null
+  /* The month board auto-scrolls to today; without a reset the next
+     tab inherits that offset and opens mid-page (Justin, 2026-09-29). */
+  window.scrollTo({ top: 0 })
   // returning from a tab that loads its own window (pay period, My
   // schedule), restore the month-window load
   if ((prev === 'period' || prev === 'mine') && (t === 'month' || t === 'day' || t === 'week')) {
@@ -426,18 +448,44 @@ watch(dateIso, (v) => {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7" /><path d="M19 12H5" /></svg>
           Employee Portal
         </RouterLink>
-        <button
-          v-for="it in APPBAR"
-          :key="it.key"
-          class="sched__appbar-link"
-          :class="{ 'sched__appbar-link--on': tab === it.key }"
-          @click="tab = it.key"
-        >
-          {{ it.label }}<span v-if="badgeFor(it.key) > 0" class="sched__appbar-badge">{{ badgeText(badgeFor(it.key)) }}</span>
-        </button>
+        <template v-for="it in APPNAV" :key="it.kind === 'tab' ? it.key : it.id">
+          <button
+            v-if="it.kind === 'tab'"
+            class="sched__appbar-link"
+            :class="{ 'sched__appbar-link--on': tab === it.key }"
+            @click="pickNav(it.key)"
+          >
+            {{ it.label }}<span v-if="badgeFor(it.key) > 0" class="sched__appbar-badge">{{ badgeText(badgeFor(it.key)) }}</span>
+          </button>
+          <span v-else class="sched__appbar-grp">
+            <button
+              class="sched__appbar-link sched__appbar-link--menu"
+              :class="{ 'sched__appbar-link--on': groupActive(it) }"
+              :aria-expanded="openMenu === it.id"
+              @click="openMenu = openMenu === it.id ? null : it.id"
+            >
+              {{ it.label }}<template v-if="it.id === 'boards' && boardLabel"><span class="sched__appbar-here">· {{ boardLabel }}</span></template>
+              <span v-if="groupBadge(it) > 0" class="sched__appbar-badge">{{ badgeText(groupBadge(it)) }}</span>
+              <svg class="sched__appbar-chev" :class="{ 'sched__appbar-chev--open': openMenu === it.id }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+            </button>
+            <div v-if="openMenu === it.id" class="sched__menu" role="menu">
+              <button
+                v-for="s in it.items"
+                :key="s.key"
+                class="sched__menu-item"
+                :class="{ 'sched__menu-item--on': tab === s.key }"
+                role="menuitem"
+                @click="pickNav(s.key)"
+              >
+                {{ s.label }}<span v-if="badgeFor(s.key) > 0" class="sched__menu-badge">{{ badgeText(badgeFor(s.key)) }}</span>
+              </button>
+            </div>
+          </span>
+        </template>
         <span class="sched__appbar-flex" aria-hidden="true"></span>
         <span class="sched__appbar-brand display">Waller County EMS</span>
       </nav>
+      <div v-if="openMenu" class="sched__menuscrim" @click="openMenu = null" />
 
       <header class="sched__head">
         <div>
@@ -733,6 +781,100 @@ watch(dateIso, (v) => {
   bottom: 0;
   height: 2px;
   background: var(--color-accent-on-dark);
+}
+
+/* Grouped nav (2026-09-29): Sortren's dropdown register — white card,
+   hairline border, soft shadow, quiet 120ms hovers. */
+.sched__appbar-grp {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.sched__appbar-here {
+  font-weight: 600;
+  color: oklch(0.68 0.04 250);
+  margin-left: 6px;
+}
+
+.sched__appbar-link--on .sched__appbar-here {
+  color: var(--color-accent-on-dark);
+  opacity: 0.85;
+}
+
+.sched__appbar-chev {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+  transition: transform 120ms var(--ease-out);
+}
+
+.sched__appbar-chev--open {
+  transform: rotate(180deg);
+}
+
+.sched__menuscrim {
+  position: fixed;
+  inset: 0;
+  z-index: 65;
+}
+
+.sched__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 8px;
+  z-index: 70;
+  min-width: 176px;
+  display: grid;
+  gap: 1px;
+  padding: 5px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  box-shadow: var(--shadow-lg);
+}
+
+.sched__menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-ink-soft);
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms, color 120ms, border-color 120ms;
+}
+
+.sched__menu-item:hover {
+  background: var(--color-surface-soft);
+  color: var(--color-ink);
+}
+
+.sched__menu-item--on {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.06);
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.sched__menu-badge {
+  margin-left: auto;
+  font-size: 0.6rem;
+  font-weight: 700;
+  background: var(--color-danger-500);
+  color: white;
+  border-radius: 999px;
+  min-width: 16px;
+  line-height: 16px;
+  text-align: center;
+  padding: 0 4px;
 }
 
 .sched__appbar-badge {

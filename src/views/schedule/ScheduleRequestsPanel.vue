@@ -1083,40 +1083,55 @@ async function cancel(r: SchedRequest) {
 }
 
 /* ── workbench toolbar ─────────────────────────────────────────────── */
+/* Segmented control (Sortren register, 2026-09-29): the underline tabs
+   got lost in the page — a contained bar reads as a control. */
 .rq__tabs {
-  display: flex;
-  gap: 18px;
-  border-bottom: 1px solid var(--color-line);
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   margin: 0 0 10px;
+  max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
 }
 
 .rq__tab {
-  border: 0;
+  border: 1px solid transparent;
   background: none;
-  padding: 6px 2px 8px;
+  padding: 6px 11px;
   font: inherit;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--color-muted);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-ink-soft);
+  border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color 120ms, color 120ms, border-color 120ms;
+}
+
+.rq__tab:hover {
+  background: var(--color-surface-soft);
+  color: var(--color-ink);
+}
+
+.rq__tab--on {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.06);
+  color: var(--color-ink);
+  font-weight: 600;
 }
 
 .rq__tab i {
   font-style: normal;
-  font-weight: 600;
-  opacity: 0.6;
-  margin-left: 3px;
+  font-weight: 500;
+  color: var(--color-muted);
+  margin-left: 4px;
   font-variant-numeric: tabular-nums;
-}
-
-.rq__tab--on {
-  color: var(--color-ink);
-  border-bottom-color: var(--color-accent-600);
+  font-size: 0.72rem;
 }
 
 .rq__filterrow {
