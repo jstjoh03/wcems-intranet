@@ -59,37 +59,60 @@ async function moveWixEvent(
   token: string,
   siteId: string,
 ): Promise<{ ok: boolean; detail: string }> {
-  // Same path family the create/cancel functions use; try the public
-  // host first, the _api fallback second.
-  const attempts = [
-    `https://www.wixapis.com/calendar/v3/events/${eventId}`,
-    `https://www.wixapis.com/_api/calendar/v3/events/${eventId}`,
-  ]
-  const body = JSON.stringify({
-    event: {
-      start: { localDate: startLocal, timeZone: TIME_ZONE },
-      end: { localDate: endLocal, timeZone: TIME_ZONE },
-    },
-  })
+  // Wix v3 updates are optimistic-locked: PATCH must carry the event's
+  // CURRENT revision ("revision must not be empty", live 2026-09-29),
+  // so read the event first. Two rounds cover a revision that moves
+  // between the read and the write. Path family mirrors create/cancel.
+  const headers = {
+    Authorization: token,
+    'wix-site-id': siteId,
+    'Content-Type': 'application/json',
+  }
+  const hosts = ['https://www.wixapis.com', 'https://www.wixapis.com/_api']
   const tried: string[] = []
-  for (const url of attempts) {
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: token,
-        'wix-site-id': siteId,
-        'Content-Type': 'application/json',
-      },
-      body,
-    })
-    const text = await res.text()
-    tried.push(`${url.replace('https://www.wixapis.com', '')} → ${res.status}`)
-    if (res.ok) return { ok: true, detail: tried.join('; ') }
-    if (res.status !== 404) {
-      return { ok: false, detail: `${tried.join('; ')} — ${text.slice(0, 300)}` }
+  for (const host of hosts) {
+    const base = `${host}/calendar/v3/events/${eventId}`
+    for (let round = 0; round < 2; round++) {
+      const getRes = await fetch(base, { headers })
+      const getText = await getRes.text()
+      tried.push(`GET ${base.replace('https://www.wixapis.com', '')} → ${getRes.status}`)
+      if (getRes.status === 404) break // wrong host — try the fallback
+      if (!getRes.ok) {
+        return { ok: false, detail: `${tried.join('; ')} — ${getText.slice(0, 300)}` }
+      }
+      let revision: string | number | undefined
+      try {
+        const ev = JSON.parse(getText)?.event
+        revision = ev?.revision
+      } catch {
+        return { ok: false, detail: `${tried.join('; ')} — unparseable event body` }
+      }
+      if (revision === undefined || revision === null) {
+        return { ok: false, detail: `${tried.join('; ')} — event has no revision field` }
+      }
+      const res = await fetch(base, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          event: {
+            revision,
+            start: { localDate: startLocal, timeZone: TIME_ZONE },
+            end: { localDate: endLocal, timeZone: TIME_ZONE },
+          },
+        }),
+      })
+      const text = await res.text()
+      tried.push(`PATCH → ${res.status}`)
+      if (res.ok) return { ok: true, detail: tried.join('; ') }
+      // stale revision (someone touched the event between read and
+      // write) — loop once more with a fresh read
+      const stale = res.status === 409 || /revision/i.test(text)
+      if (!stale || round === 1) {
+        return { ok: false, detail: `${tried.join('; ')} — ${text.slice(0, 300)}` }
+      }
     }
   }
-  return { ok: false, detail: tried.join('; ') }
+  return { ok: false, detail: `${tried.join('; ')} — event not found` }
 }
 
 // @ts-expect-error Deno.serve available in Edge Runtime

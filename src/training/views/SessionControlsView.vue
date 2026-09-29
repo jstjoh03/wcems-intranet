@@ -555,20 +555,17 @@ async function saveEditDetails() {
   editWixWarn.value = null
   editSaved.value = false
   try {
-    // Date/times first — a schedule change moves the Wix event and the
-    // portal calendar tile through the edge function.
-    const scheduleChanged =
-      editForm.value.classDate !== (s.value.classDate || '').slice(0, 10) ||
-      editForm.value.startTime !== (s.value.startTime || '') ||
-      editForm.value.endTime !== (s.value.endTime || '')
-    if (scheduleChanged) {
-      const res = await sessions.updateSessionSchedule(s.value.sessionId, {
-        classDate: editForm.value.classDate,
-        startTime: editForm.value.startTime,
-        endTime: editForm.value.endTime,
-      })
-      if (res?.wixWarning) editWixWarn.value = res.wixWarning
-    }
+    // Date/times first — the edge function moves the Wix event and the
+    // portal calendar tile with our row. Called on EVERY save, not just
+    // when the fields changed: if an earlier move saved locally but Wix
+    // refused (revision error, outage), a plain re-save pushes Wix back
+    // into line instead of stranding the divergence.
+    const res = await sessions.updateSessionSchedule(s.value.sessionId, {
+      classDate: editForm.value.classDate,
+      startTime: editForm.value.startTime,
+      endTime: editForm.value.endTime,
+    })
+    if (res?.wixWarning) editWixWarn.value = res.wixWarning
     const [a1, a2, a3] = [
       editForm.value.assists[0] ?? blankSlot(),
       editForm.value.assists[1] ?? blankSlot(),
