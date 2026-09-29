@@ -10,6 +10,7 @@ import {
   personSortKey,
   OFF_LABELS,
   REQ_TYPE_LABELS,
+  BALANCE_TOL_MS,
   type HoursWarning,
   type OpenSeatInfo,
   type SchedRequest,
@@ -489,8 +490,27 @@ async function runEdit(): Promise<void> {
     err.value = e
     return
   }
+  finishPersonEdit(ctx)
+}
+
+/** Shared close for the person day-edit flows: if the edit left this
+ *  rotation holder's day unaccounted (worked + off + traded < their
+ *  template window), open Record-time-off prefilled with the gap
+ *  instead of closing silently — the 9/15 hole, caught at the moment
+ *  it's made (Justin, 2026-09-29). */
+function finishPersonEdit(
+  ctx: { dateIso: string; userId: string; personName: string },
+  doneMsg = 'Done.',
+): void {
+  const led = sched.dayLedgerFor(ctx.userId, ctx.dateIso)
+  if (led && led.shortMs >= BALANCE_TOL_MS) {
+    const [gf, gu] = led.gapLabels[0].split('–')
+    flash(`Done — ${(led.shortMs / 3_600_000).toFixed(1)}h of ${ctx.personName}'s day is now unaccounted.`)
+    editor.openAdd(ctx.dateIso, 'timeoff', null, ctx.userId, hhmmColon(gf), hhmmColon(gu))
+    return
+  }
   editor.closeAll()
-  flash('Done.')
+  flash(doneMsg)
 }
 
 async function applyReplace(): Promise<void> {
@@ -530,8 +550,7 @@ async function applyReplace(): Promise<void> {
     return
   }
   conflict.value = null
-  editor.closeAll()
-  flash('Done.')
+  finishPersonEdit(ctx)
 }
 
 /** Permanent replace where the replacement holds another rotation seat:
@@ -563,8 +582,7 @@ async function applyReplaceResolved(resolution: 'swap' | 'open'): Promise<void> 
     return
   }
   conflict.value = null
-  editor.closeAll()
-  flash('Done.')
+  finishPersonEdit(ctx)
 }
 
 async function conflictLeaveOpen(): Promise<void> {
@@ -585,8 +603,7 @@ async function conflictLeaveOpen(): Promise<void> {
     return
   }
   conflict.value = null
-  editor.closeAll()
-  flash('Seat posted as open.')
+  finishPersonEdit(ctx, 'Seat posted as open.')
 }
 
 // ── approved extra-hours editor ──────────────────────────────────────
@@ -926,11 +943,21 @@ watch(
     if (a && a.kind === 'timeoff') {
       aoUser.value = a.userId ?? ''
       aoType.value = 'sick'
-      aoFrom.value = '06:00'
-      aoUntil.value = '06:00'
+      aoFrom.value = a.from ?? '06:00'
+      aoUntil.value = a.until ?? '06:00'
     }
   },
 )
+
+/* Day-balance readout for the record-off drawer: a rotation holder's
+   worked + off + traded-away hours should cover their template window
+   (Justin, 2026-09-29). Live — updates as records land. */
+const aoLedger = computed(() => {
+  const a = editor.add.value
+  if (!a || a.kind !== 'timeoff' || !aoUser.value) return null
+  return sched.dayLedgerFor(aoUser.value, a.dateIso)
+})
+const hrs = (ms: number): string => (ms / 3_600_000).toFixed(1)
 
 watch(aoUser, async (id) => {
   aoBal.value = { vacation: null, sick: null }
@@ -951,6 +978,16 @@ async function submitAssignOff(): Promise<void> {
   busy.value = false
   if (e) {
     err.value = e
+    return
+  }
+  // Day balance: if their rotation day is still short, stay open with
+  // the next gap prefilled instead of closing on an unbalanced day.
+  const led = sched.dayLedgerFor(aoUser.value, a.dateIso)
+  if (led && led.shortMs >= BALANCE_TOL_MS) {
+    const [gf, gu] = led.gapLabels[0].split('–')
+    aoFrom.value = hhmmColon(gf)
+    aoUntil.value = hhmmColon(gu)
+    flash(`Recorded — ${hrs(led.shortMs)}h of their day is still unaccounted.`)
     return
   }
   flash('Time off recorded.')
@@ -994,7 +1031,12 @@ async function saveTimeOffEdit(): Promise<void> {
     err.value = e
     return
   }
-  flash('Time off updated.')
+  const led = t.userId ? sched.dayLedgerFor(t.userId, t.dateIso) : null
+  if (led && led.shortMs >= BALANCE_TOL_MS) {
+    flash(`Updated — ${t.name}'s day now has ${hrs(led.shortMs)}h unaccounted (${led.gapLabels.join(', ')}).`)
+  } else {
+    flash('Time off updated.')
+  }
   editor.closeAll()
 }
 
@@ -1013,7 +1055,12 @@ async function deleteTimeOffEdit(): Promise<void> {
     err.value = e
     return
   }
-  flash('Time off removed — balance restored.')
+  const led = t.userId ? sched.dayLedgerFor(t.userId, t.dateIso) : null
+  if (led && led.shortMs >= BALANCE_TOL_MS) {
+    flash(`Removed — ${t.name}'s day now has ${hrs(led.shortMs)}h unaccounted (${led.gapLabels.join(', ')}).`)
+  } else {
+    flash('Time off removed — balance restored.')
+  }
   editor.closeAll()
 }
 
@@ -2134,6 +2181,15 @@ async function reqCancel() {
             {{ aoType === 'sick' ? 'Sick' : 'Vacation' }} balance today:
             {{ (aoType === 'sick' ? aoBal.sick : aoBal.vacation)?.toFixed(1) ?? '…' }} hrs
           </p>
+          <p v-if="aoLedger && aoLedger.shortMs >= BALANCE_TOL_MS" class="em__notetext em__notetext--short">
+            Day balance: accounts for {{ hrs(aoLedger.expectedMs - aoLedger.shortMs) }}h of
+            {{ hrs(aoLedger.expectedMs) }}h on this rotation day
+            (worked {{ hrs(aoLedger.workedMs) }}h · time off {{ hrs(aoLedger.offMs) }}h<template v-if="aoLedger.tradedMs > 0"> · traded away {{ hrs(aoLedger.tradedMs) }}h</template>).
+            Unaccounted: {{ aoLedger.gapLabels.join(', ') }}.
+          </p>
+          <p v-else-if="aoLedger" class="em__notetext">
+            Day balance: their rotation day is fully accounted for.
+          </p>
           <button class="em__btn em__btn--primary" :disabled="busy || !aoUser" @click="submitAssignOff">
             {{ busy ? 'Working…' : 'Record time off' }}
           </button>
@@ -2625,6 +2681,11 @@ async function reqCancel() {
   color: var(--color-muted);
   margin: 0.1rem 0 0.2rem;
   line-height: 1.45;
+}
+
+.em__notetext--short {
+  color: #92600a;
+  font-weight: 600;
 }
 
 .em__notetext--body {

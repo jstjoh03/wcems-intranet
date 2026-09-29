@@ -43,6 +43,16 @@ interface Cell {
   isToday: boolean
   worksMe: boolean
   model: DayModel
+  /** rotation holders whose day doesn't balance (editors only) */
+  imb: number
+}
+
+/** Hover detail for the ± marker — who's short and by how much. */
+function imbTitle(iso: string): string {
+  return sched
+    .dayImbalances(iso)
+    .map((b) => `${b.name} — ${(b.shortMs / 3_600_000).toFixed(1)}h unaccounted (${b.gapLabels.join(', ')})`)
+    .join('\n')
 }
 
 /** Time Off rows open the time-off editor — retime, change the type,
@@ -109,6 +119,7 @@ const weeks = computed<Cell[][]>(() => {
         isToday: iso === todayIso,
         worksMe: worksMe(model, me),
         model,
+        imb: !props.mine && sched.canEdit.value ? sched.dayImbalances(iso).length : 0,
       })
     }
     if (row.every((c) => !c.inMonth)) break
@@ -158,6 +169,7 @@ const weeks = computed<Cell[][]>(() => {
             <b class="mb__shl" :data-platoon="c.model.platoon">{{ c.model.platoon }}</b>
           </button>
           <span v-if="c.model.openCount > 0" class="mb__open">{{ c.model.openCount }}<span class="mb__openword"> open</span></span>
+          <span v-if="c.imb > 0" class="mb__imb" :title="imbTitle(c.iso)">±{{ c.imb }}</span>
         </div>
 
         <div class="mb__roster">
@@ -637,6 +649,21 @@ const weeks = computed<Cell[][]>(() => {
   color: var(--color-danger-500);
   margin-left: auto;
   white-space: nowrap;
+}
+
+/* Day-balance radar: rotation holders whose worked + off + traded
+   hours don't cover their template day (editors only; hover lists). */
+.mb__imb {
+  font-size: 10px;
+  font-weight: 700;
+  color: #92600a;
+  white-space: nowrap;
+  margin-left: auto;
+  cursor: help;
+}
+
+.mb__open + .mb__imb {
+  margin-left: 0.35rem;
 }
 
 .mb__roster {

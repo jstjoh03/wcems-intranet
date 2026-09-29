@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useSchedule } from '@/composables/useSchedule'
+import { useSchedule, type DayImbalance } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 /**
@@ -59,6 +59,19 @@ async function removeNote(id: string) {
   busy.value = false
   if (e) err.value = e
 }
+
+/* Day balance radar (Justin, 2026-09-29): every rotation holder whose
+   worked + off + traded-away hours don't cover their template window.
+   Editors only; the personal calendar never nags. */
+const imbalances = computed<DayImbalance[]>(() =>
+  !props.mine && sched.canEdit.value ? sched.dayImbalances(props.dateIso) : [],
+)
+const hrs = (ms: number): string => (ms / 3_600_000).toFixed(1)
+function fixBalance(b: DayImbalance): void {
+  const [gf, gu] = b.gapLabels[0].split('–')
+  const colon = (s: string): string => `${s.slice(0, 2)}:${s.slice(2)}`
+  editor.openAdd(props.dateIso, 'timeoff', null, b.userId, colon(gf), colon(gu))
+}
 </script>
 
 <template>
@@ -78,6 +91,16 @@ async function removeNote(id: string) {
     </div>
 
     <p v-if="err" class="db__error">{{ err }}</p>
+
+    <div v-if="imbalances.length" class="db__balance">
+      <p class="db__balance-h">Day doesn't balance</p>
+      <p v-for="b in imbalances" :key="b.userId" class="db__balance-row">
+        <b>{{ b.name }}</b> — {{ hrs(b.expectedMs - b.shortMs) }}h of {{ hrs(b.expectedMs) }}h accounted
+        (worked {{ hrs(b.workedMs) }}h · time off {{ hrs(b.offMs) }}h<template v-if="b.tradedMs > 0"> · traded away {{ hrs(b.tradedMs) }}h</template>)
+        · gap {{ b.gapLabels.join(', ') }}
+        <button class="db__balance-fix" @click="fixBalance(b)">Record time off</button>
+      </p>
+    </div>
 
     <div v-for="n in model.notes" :key="n.id" class="db__daynote">
       <span>{{ n.note }}</span>
@@ -446,6 +469,46 @@ async function removeNote(id: string) {
   text-decoration-style: dotted;
   text-decoration-color: var(--color-line);
   text-underline-offset: 3px;
+}
+
+.db__balance {
+  border: 1px solid #e7cf9a;
+  background: #fdf6e5;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.85rem;
+}
+
+.db__balance-h {
+  margin: 0 0 0.2rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #92600a;
+}
+
+.db__balance-row {
+  margin: 0.12rem 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--color-ink);
+}
+
+.db__balance-fix {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  border: 0;
+  background: none;
+  color: var(--color-accent-700);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+  margin-left: 0.3rem;
 }
 
 .db__addlink:hover {

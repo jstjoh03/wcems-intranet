@@ -90,6 +90,10 @@ export interface AddCtx {
   /** preselected member for 'timeoff' (My schedule hands the viewed
    *  person in; the month add menu leaves it null for a picker) */
   userId: string | null
+  /** prefilled window for 'timeoff' — the day-balance prompts hand in
+   *  the unaccounted gap (Justin, 2026-09-29) */
+  from?: string
+  until?: string
 }
 
 export interface ExtraCtx {
@@ -240,9 +244,11 @@ export function useScheduleEditor() {
     kind: AddKind = 'menu',
     unitId: string | null = null,
     userId: string | null = null,
+    from?: string,
+    until?: string,
   ): void {
     closeAll()
-    add.value = { dateIso, kind, unitId, userId }
+    add.value = { dateIso, kind, unitId, userId, from, until }
   }
 
   /** Chief: click an approved extra-hours row — change times or delete. */

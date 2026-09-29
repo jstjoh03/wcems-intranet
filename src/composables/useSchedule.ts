@@ -3904,6 +3904,106 @@ async function dayMove(opts: {
   return null
 }
 
+// ── day balance ledger (Justin, 2026-09-29) ──────────────────────────
+/* "If someone is on a normal rotation, they either need 24 hrs on one
+   of the units that day, or a time-off event logged" — a rotation
+   holder's worked hours (any unit) + time off + hours traded away
+   should cover their template window. 9/15 slipped through with only
+   12 h of unpaid off logged while the whole day was hand-covered. */
+
+export const BALANCE_TOL_MS = 15 * 60_000 // ignore shortfalls under 15 min
+
+export interface DayLedger {
+  userId: string
+  expectedMs: number
+  workedMs: number
+  offMs: number
+  tradedMs: number
+  shortMs: number
+  gaps: Seg[]
+  /** display 'HHMM–HHMM' per gap */
+  gapLabels: string[]
+}
+
+/** null = no rotation-template expectation for them that day (pickups,
+ *  admin staff, unstaffed units — nothing owed, nothing flagged). */
+function dayLedgerFor(userId: string, dateIso: string): DayLedger | null {
+  const dayS = tsMs(centralTs(dateIso, '06:00'))
+  const dayE = tsMs(centralTs(addDaysIso(dateIso, 1), '06:00'))
+  let expected: Seg[] = []
+  const tSeatIds: string[] = []
+  for (const seat of activeSeatList()) {
+    if (seatRotationOccupant(seat.id, dateIso) !== userId) continue
+    const unit = units.value.find((u) => u.id === seat.unitId) ?? null
+    const uw = unitDayWindow(unit, dateIso)
+    tSeatIds.push(seat.id)
+    expected.push({ start: tsMs(uw.startTs), end: tsMs(uw.endTs) })
+  }
+  if (expected.length === 0) return null
+  expected = mergeSegs(expected)
+
+  const dayRows = entries.value.filter((e) => e.workDate === dateIso)
+  const worked = segsForUserOnDate(dateIso, userId, entries.value)
+  const offs = mergeSegs(
+    dayRows
+      .filter((e) => e.kind === 'timeoff' && e.userId === userId)
+      .map((e) => ({ start: Math.max(tsMs(e.startAt), dayS), end: Math.min(tsMs(e.endAt), dayE) }))
+      .filter((s) => s.end - s.start >= MIN_SEG_MS),
+  )
+  // hours of their template day covered by someone else THROUGH A TRADE
+  // OR GIVEAWAY are documented by the trade record — accounted. A plain
+  // hand-assigned cover is not: the holder still owes an off record.
+  const traded = mergeSegs(
+    dayRows
+      .filter(
+        (e) =>
+          e.seatId !== null &&
+          tSeatIds.includes(e.seatId) &&
+          !!e.userId &&
+          e.userId !== userId &&
+          e.status === 'scheduled' &&
+          (e.kind === 'trade' || e.kind === 'giveaway_cover'),
+      )
+      .map((e) => ({ start: tsMs(e.startAt), end: tsMs(e.endAt) })),
+  )
+  let gaps = expected.map((s) => ({ ...s }))
+  for (const a of [...worked, ...offs, ...traded]) gaps = cutSegs(gaps, a.start, a.end)
+  gaps = gaps.filter((g) => g.end - g.start >= MIN_SEG_MS)
+  const sum = (l: Seg[]): number => l.reduce((t, s) => t + (s.end - s.start), 0)
+  return {
+    userId,
+    expectedMs: sum(expected),
+    workedMs: sum(worked),
+    offMs: sum(offs),
+    tradedMs: sum(traded),
+    shortMs: sum(gaps),
+    gaps,
+    gapLabels: gaps.map(
+      (g) => `${hhmm(new Date(g.start).toISOString())}–${hhmm(new Date(g.end).toISOString())}`,
+    ),
+  }
+}
+
+export interface DayImbalance extends DayLedger {
+  name: string
+}
+
+/** Every rotation holder whose day doesn't balance (editor radar). */
+function dayImbalances(dateIso: string): DayImbalance[] {
+  const seen = new Set<string>()
+  const out: DayImbalance[] = []
+  for (const seat of activeSeatList()) {
+    const occ = seatRotationOccupant(seat.id, dateIso)
+    if (!occ || seen.has(occ)) continue
+    seen.add(occ)
+    const led = dayLedgerFor(occ, dateIso)
+    if (led && led.shortMs >= BALANCE_TOL_MS) {
+      out.push({ ...led, name: displayName(occ).name })
+    }
+  }
+  return out.sort((a, b) => b.shortMs - a.shortMs || a.name.localeCompare(b.name))
+}
+
 // ── availability (protected days off; no approval) ───────────────────
 
 async function markUnavailable(dateIso: string, reason: string): Promise<string | null> {
@@ -5902,6 +6002,8 @@ export function useSchedule() {
     dayRetime,
     dayReplace,
     dayMove,
+    dayLedgerFor,
+    dayImbalances,
     holdsViaOverride,
     markUnavailable,
     clearUnavailable,
