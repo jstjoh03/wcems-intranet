@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { DEFAULT_HIGHLIGHT, useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSchedule'
+import {
+  DEFAULT_HIGHLIGHT,
+  useSchedule,
+  todayCentralIso,
+  addDaysIso,
+  VERIFY_SURFACE_FLOOR_ISO,
+} from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 import ScheduleMonthBoard from './ScheduleMonthBoard.vue'
 import ScheduleDayBoard from './ScheduleDayBoard.vue'
@@ -45,6 +51,49 @@ type Tab =
 const isPhone = window.matchMedia('(max-width: 900px)').matches
 const tab = ref<Tab>(isPhone ? 'day' : 'month')
 const dateIso = ref(todayCentralIso())
+
+/* Outstanding time approvals, surfaced on the boards crews actually
+   use (Justin, 2026-09-29) — Month and Day get a quiet gold strip;
+   the cards on My schedule stay the durable home. Only from the
+   chain's go-live period, so nobody is chased for prompts that never
+   existed. */
+const myPending = ref<{ key: string; label: string; overdue: boolean }[]>([])
+function fmtVb(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+async function loadMyPending(): Promise<void> {
+  if (!sched.myUserId.value) {
+    myPending.value = []
+    return
+  }
+  const res = await sched.fetchMyVerifyPending()
+  const out: { key: string; label: string; overdue: boolean }[] = []
+  for (const b of res.blocks) {
+    const last = b.dates[b.dates.length - 1]
+    if (last < VERIFY_SURFACE_FLOOR_ISO) continue
+    const first = b.dates[0]
+    out.push({
+      key: `v${b.endMs}`,
+      label: `Confirm your shift times — ${b.dates.length > 1 ? `${fmtVb(first)} – ${fmtVb(last)}` : fmtVb(first)}`,
+      overdue: false,
+    })
+  }
+  if (res.signoff && res.signoff.period.end >= VERIFY_SURFACE_FLOOR_ISO) {
+    out.push({
+      key: 'signoff',
+      label: `Sign off your pay period (${res.signoff.period.label}) — ${res.signoff.overdue ? 'past due' : `due ${res.signoff.dueText}`}`,
+      overdue: res.signoff.overdue,
+    })
+  }
+  myPending.value = out
+}
+watch(tab, (t) => {
+  if (t === 'month' || t === 'day') void loadMyPending()
+})
 
 /* Members and Setup are editor tools — non-editors (supervisors during
    the soft launch, crew after) get the calendar + request tabs only.
@@ -212,6 +261,7 @@ const booting = ref(true)
 onMounted(async () => {
   try {
     await sched.ensureLoaded()
+    void loadMyPending()
     if (typeof route.query.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.d)) {
       dateIso.value = route.query.d
     }
@@ -457,6 +507,20 @@ watch(dateIso, (v) => {
           <h2 class="sched__pagetitle">{{ PANEL_META[tab]!.title }}</h2>
           <p v-if="PANEL_META[tab]!.sub" class="sched__pagesub">{{ PANEL_META[tab]!.sub }}</p>
         </div>
+        <div v-if="(tab === 'month' || tab === 'day') && myPending.length" class="sched__verifybar">
+          <div class="sched__verifylist">
+            <p
+              v-for="p in myPending"
+              :key="p.key"
+              class="sched__verifyitem"
+              :class="{ 'sched__verifyitem--late': p.overdue }"
+            >
+              {{ p.label }}
+            </p>
+          </div>
+          <button class="sched__verifygo" @click="tab = 'mine'">Review on My schedule</button>
+        </div>
+
         <ScheduleMonthBoard v-if="tab === 'month'" :month="monthAnchor" @open-day="openDay" />
         <ScheduleDayBoard v-else-if="tab === 'day'" :date-iso="dateIso" />
         <ScheduleWeekBoard v-else-if="tab === 'week'" :date-iso="dateIso" @open-day="openDay" />
@@ -951,6 +1015,49 @@ watch(dateIso, (v) => {
 .sched__error {
   color: var(--color-danger-500);
   font-size: 0.85rem;
+}
+
+/* Outstanding time approvals — the quiet gold band above Month/Day. */
+.sched__verifybar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+  flex-wrap: wrap;
+  border: 1px solid color-mix(in oklab, var(--color-accent-600), white 55%);
+  border-left: 3px solid var(--color-accent-600);
+  background: color-mix(in oklab, var(--color-accent-600), white 92%);
+  border-radius: 8px;
+  padding: 0.55rem 0.85rem;
+  margin: 0 0 0.9rem;
+}
+
+.sched__verifyitem {
+  margin: 0.1rem 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: var(--color-ink);
+}
+
+.sched__verifyitem--late {
+  color: var(--color-danger-500);
+}
+
+.sched__verifygo {
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #fff;
+  background: #182644;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  flex: none;
+}
+
+.sched__verifygo:hover {
+  filter: brightness(1.15);
 }
 
 .sched__linkdismiss {

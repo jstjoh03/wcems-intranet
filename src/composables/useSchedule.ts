@@ -3913,6 +3913,16 @@ async function dayMove(opts: {
 
 export const BALANCE_TOL_MS = 15 * 60_000 // ignore shortfalls under 15 min
 
+/** The radar only looks at the last pay period and beyond — September's
+ *  hand-seeded Aladtec days have no trade trail to honor, so flagging
+ *  them is pure noise (Justin, 2026-09-29). */
+export const BALANCE_FLOOR_ISO = '2026-09-13'
+
+/** Verification prompts only surface on the boards/nudge from the
+ *  chain's go-live period — nobody gets chased for approvals that
+ *  didn't exist yet (Justin, 2026-09-29). */
+export const VERIFY_SURFACE_FLOOR_ISO = '2026-09-27'
+
 export interface DayLedger {
   userId: string
   expectedMs: number
@@ -3953,8 +3963,11 @@ function dayLedgerFor(userId: string, dateIso: string): DayLedger | null {
   // hours of their template day covered by someone else THROUGH A TRADE
   // OR GIVEAWAY are documented by the trade record — accounted. A plain
   // hand-assigned cover is not: the holder still owes an off record.
-  const traded = mergeSegs(
-    dayRows
+  // Belt and suspenders: the APPROVED swap/giveaway request itself also
+  // accounts the window, even when later hand edits changed the cover
+  // rows' kinds (chained trades, re-covers).
+  const traded = mergeSegs([
+    ...dayRows
       .filter(
         (e) =>
           e.seatId !== null &&
@@ -3965,7 +3978,22 @@ function dayLedgerFor(userId: string, dateIso: string): DayLedger | null {
           (e.kind === 'trade' || e.kind === 'giveaway_cover'),
       )
       .map((e) => ({ start: tsMs(e.startAt), end: tsMs(e.endAt) })),
-  )
+    ...requests.value
+      .filter(
+        (r) =>
+          r.status === 'approved' &&
+          (r.type === 'trade' || r.type === 'giveaway') &&
+          r.requesterId === userId &&
+          r.workDate === dateIso &&
+          !!r.startAt &&
+          !!r.endAt,
+      )
+      .map((r) => ({
+        start: Math.max(tsMs(r.startAt as string), dayS),
+        end: Math.min(tsMs(r.endAt as string), dayE),
+      }))
+      .filter((s) => s.end - s.start >= MIN_SEG_MS),
+  ])
   let gaps = expected.map((s) => ({ ...s }))
   for (const a of [...worked, ...offs, ...traded]) gaps = cutSegs(gaps, a.start, a.end)
   gaps = gaps.filter((g) => g.end - g.start >= MIN_SEG_MS)
@@ -3990,6 +4018,7 @@ export interface DayImbalance extends DayLedger {
 
 /** Every rotation holder whose day doesn't balance (editor radar). */
 function dayImbalances(dateIso: string): DayImbalance[] {
+  if (dateIso < BALANCE_FLOOR_ISO) return []
   const seen = new Set<string>()
   const out: DayImbalance[] = []
   for (const seat of activeSeatList()) {
@@ -6004,6 +6033,7 @@ export function useSchedule() {
     dayMove,
     dayLedgerFor,
     dayImbalances,
+    seatTitle,
     holdsViaOverride,
     markUnavailable,
     clearUnavailable,

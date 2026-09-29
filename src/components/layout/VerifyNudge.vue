@@ -1,19 +1,18 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useScheduleAccess } from '@/composables/useScheduleAccess'
 import type { VerifyBlock, SignoffPending } from '@/composables/useSchedule'
 
 /**
- * App-open fallback for the time-verification prompts (Justin,
- * 2026-09-28): push + email carry them, but a member with push
- * disabled would never see one until payroll chased them — so the
- * portal pops this once per session when something is waiting. Anyone
- * with a push subscription on ANY device is never nagged here; the
- * cards on My schedule stay the durable home either way. No SMS
- * anywhere in this flow.
+ * App-open pop-up for the time-verification prompts, modeled on the
+ * profile-completion modal: EVERYONE with something waiting sees it
+ * once per session when the intranet opens (Justin, 2026-09-29 — it
+ * started as a push-fallback, but push can be dismissed and payroll
+ * still needs the approval). Only prompts from the chain's go-live
+ * period surface. The cards on My schedule stay the durable home.
+ * No SMS anywhere in this flow.
  */
 
 const auth = useAuthStore()
@@ -42,23 +41,18 @@ async function check() {
   if (route.path.startsWith('/schedule')) return // the cards are right there
   if (!access.canSeeSchedule.value) return
 
-  // push enabled on any device = the prompt already reached them
-  const subs = await supabase
-    .from('push_subscriptions')
-    .select('id')
-    .eq('user_id', auth.appUser.id)
-    .limit(1)
-  if (!subs.error && (subs.data ?? []).length > 0) return
-
   // dynamic import — the scheduling store is a big lazy chunk and this
   // check must not drag it into the portal's entry bundle
-  const { useSchedule } = await import('@/composables/useSchedule')
-  const sched = useSchedule()
+  const mod = await import('@/composables/useSchedule')
+  const sched = mod.useSchedule()
   await sched.ensureLoaded()
   const res = await sched.fetchMyVerifyPending()
-  if (res.blocks.length === 0 && !res.signoff) return
-  blocks.value = res.blocks
-  signoff.value = res.signoff
+  const floor = mod.VERIFY_SURFACE_FLOOR_ISO
+  const dueBlocks = res.blocks.filter((b) => b.dates[b.dates.length - 1] >= floor)
+  const dueSignoff = res.signoff && res.signoff.period.end >= floor ? res.signoff : null
+  if (dueBlocks.length === 0 && !dueSignoff) return
+  blocks.value = dueBlocks
+  signoff.value = dueSignoff
   try {
     sessionStorage.setItem(KEY, '1')
   } catch {

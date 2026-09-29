@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, nextTick, ref, watch } from 'vue'
 import {
   useSchedule,
   addDaysIso,
   todayCentralIso,
   type DayModel,
   type LabeledRow,
+  type SeatRow,
 } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
@@ -33,6 +34,52 @@ const emit = defineEmits<{ (e: 'open-day', iso: string): void }>()
 const sched = useSchedule()
 const editor = useScheduleEditor()
 const todayIso = todayCentralIso()
+
+/* Opening the month lands on TODAY's row, not January-1st of the
+   scroll (Justin, 2026-09-29). Re-centers when navigating back to the
+   current month; other months have no --today cell, so it's a no-op. */
+const rootEl = ref<HTMLElement | null>(null)
+function scrollToToday(): void {
+  /* The router's scroll reset and the page-enter transition both land
+     AFTER mount and yank back to top — retry past them, but never
+     fight a reader who has already scrolled somewhere themselves. */
+  const attempt = (retry: boolean): void => {
+    const el = rootEl.value?.querySelector<HTMLElement>('.mb__cell--today')
+    if (!el) return
+    if (!retry || window.scrollY < 40) el.scrollIntoView({ block: 'center' })
+  }
+  requestAnimationFrame(() => attempt(false))
+  window.setTimeout(() => attempt(true), 300)
+  window.setTimeout(() => attempt(true), 800)
+}
+onMounted(() => void nextTick(scrollToToday))
+watch(
+  () => props.month,
+  () => void nextTick(scrollToToday),
+)
+
+/* Swap/giveaway marker: a ⇄ beside anyone covering through the trade
+   system; hover names the other member and the shift they take in
+   exchange (Justin, 2026-09-29). */
+function swapTitle(row: SeatRow): string {
+  const entry = row.entryId ? sched.entries.value.find((e) => e.id === row.entryId) : null
+  const req = entry?.sourceRequest
+    ? sched.requests.value.find((q) => q.id === entry.sourceRequest)
+    : null
+  const nameOf = (id: string | null): string =>
+    id ? (sched.personById.value.get(id)?.fullName ?? 'another member') : 'another member'
+  if (!req) return row.kind === 'giveaway_cover' ? 'Giveaway pickup' : 'Shift swap'
+  if (req.type === 'giveaway') return `Giveaway — picked up from ${nameOf(req.requesterId)}`
+  const isCounter = row.userId === req.counterpartyId
+  const other = isCounter ? req.requesterId : req.counterpartyId
+  const otherDate = isCounter ? req.counterWorkDate : req.workDate
+  const otherSeat = isCounter ? req.counterSeatId : req.seatId
+  const when = otherDate
+    ? new Date(`${otherDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : null
+  const where = otherSeat ? ` · ${sched.seatTitle(otherSeat)}` : ''
+  return `Swap with ${nameOf(other)}${when ? ` — they take ${when}${where}` : ''}`
+}
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thur', 'Fri', 'Sat']
 
@@ -131,7 +178,7 @@ const weeks = computed<Cell[][]>(() => {
 </script>
 
 <template>
-  <div class="mb" :class="{ 'mb--mine': props.mine }">
+  <div ref="rootEl" class="mb" :class="{ 'mb--mine': props.mine }">
     <!-- Shift letters in shift colors — nothing to memorize, the color
          is reinforcement, not the code (Justin, 2026-09-24). -->
     <div class="mb__legend">
@@ -229,6 +276,11 @@ const weeks = computed<Cell[][]>(() => {
                 <span v-else class="mb__name">
                   {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
                 </span>
+                <span
+                  v-if="!row.open && (row.kind === 'trade' || row.kind === 'giveaway_cover')"
+                  class="mb__swap"
+                  :title="swapTitle(row)"
+                >⇄</span>
                 <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
               </div>
             </template>
@@ -649,6 +701,17 @@ const weeks = computed<Cell[][]>(() => {
   color: var(--color-danger-500);
   margin-left: auto;
   white-space: nowrap;
+}
+
+/* Trade marker: covering through a swap or giveaway — hover names the
+   other member and the shift they take in exchange. */
+.mb__swap {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--color-accent-700);
+  cursor: help;
+  line-height: 1;
+  flex: none;
 }
 
 /* Day-balance radar: rotation holders whose worked + off + traded

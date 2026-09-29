@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import ScheduleLeaveSection from './ScheduleLeaveSection.vue'
 import ScheduleSpinner from './ScheduleSpinner.vue'
+import { useScheduleEditor } from '@/composables/useScheduleEditor'
 import {
   useSchedule,
   todayCentralIso,
@@ -25,12 +26,17 @@ import {
  */
 
 const sched = useSchedule()
+const editor = useScheduleEditor()
 
 /* Two audiences, one tab. Supervisors get the schedule-accuracy half —
    hours summary, per-day drill-down, punch review — because verifying
    the schedule matches reality is their duty. The payroll flow (CSV,
    Paycom export, earning codes, EE codes) stays editor-only. */
 const payrollAccess = computed(() => sched.canEdit.value || sched.isHr.value)
+/* Supervisors see the Sign-offs board too — who on their crews has
+   approved the period and who's outstanding (Justin, 2026-09-29).
+   Paycom export and Balances stay payroll-only. */
+const signoffAccess = computed(() => payrollAccess.value || sched.level.value === 'supervisor')
 
 // ── range controls ───────────────────────────────────────────────────
 
@@ -651,7 +657,7 @@ const boardPeriod = computed(
 )
 
 async function loadBoard() {
-  if (!payrollAccess.value || !boardPeriod.value) return
+  if (!signoffAccess.value || !boardPeriod.value) return
   const res = await sched.fetchVerifyBoard(boardPeriod.value)
   vbErr.value = res.error
   vb.value = res
@@ -815,11 +821,9 @@ function downloadPaycom(onlySelected = false): void {
     <div class="tm__tabs" role="tablist">
       <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'verify' }" @click="ttab = 'verify'">Verify punches</button>
       <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'hours' }" @click="ttab = 'hours'">Hours</button>
-      <template v-if="payrollAccess">
-        <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'export' }" @click="ttab = 'export'">Paycom export</button>
-        <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'signoffs' }" @click="ttab = 'signoffs'">Sign-offs</button>
-        <button class="tm__tab" :class="{ 'tm__tab--on': ttab === 'balances' }" @click="ttab = 'balances'">Balances</button>
-      </template>
+      <button v-if="payrollAccess" class="tm__tab" :class="{ 'tm__tab--on': ttab === 'export' }" @click="ttab = 'export'">Paycom export</button>
+      <button v-if="signoffAccess" class="tm__tab" :class="{ 'tm__tab--on': ttab === 'signoffs' }" @click="ttab = 'signoffs'">Sign-offs</button>
+      <button v-if="payrollAccess" class="tm__tab" :class="{ 'tm__tab--on': ttab === 'balances' }" @click="ttab = 'balances'">Balances</button>
     </div>
 
     <ScheduleSpinner v-if="!ready" label="Loading time reports…" />
@@ -1172,7 +1176,7 @@ function downloadPaycom(onlySelected = false): void {
     <!-- Sign-offs & attestations — who verified the period, before
          export. Soft gate: unverified never blocks payroll, it's just
          visible right next to the export. -->
-    <section v-if="payrollAccess" v-show="ttab === 'signoffs'" class="tm__signoffs">
+    <section v-if="signoffAccess" v-show="ttab === 'signoffs'" class="tm__signoffs">
       <div class="tm__exptop">
         <label class="tm__field">
           <span class="tm__label">Pay period</span>
@@ -1180,13 +1184,13 @@ function downloadPaycom(onlySelected = false): void {
             <option v-for="pp in periods" :key="pp.start" :value="pp.start">{{ pp.label }}</option>
           </select>
         </label>
-        <span class="tm__sochips">
-          <span class="tm__sochip tm__sochip--ok">{{ soApprovedCount }} approved</span>
-          <span v-if="soDisputedCount" class="tm__sochip tm__sochip--warn">{{ soDisputedCount }} disputed</span>
-          <span class="tm__sochip" :class="{ 'tm__sochip--late': soOverdueNow && soPendingCount > 0 }">
+        <span class="tm__sostats">
+          <span class="tm__sostat tm__sostat--ok">{{ soApprovedCount }} approved</span>
+          <span v-if="soDisputedCount" class="tm__sostat tm__sostat--warn">{{ soDisputedCount }} disputed</span>
+          <span class="tm__sostat" :class="{ 'tm__sostat--late': soOverdueNow && soPendingCount > 0 }">
             {{ soPendingCount }} pending{{ soOverdueNow && soPendingCount > 0 ? ' — past due' : '' }}
           </span>
-          <span v-if="openFlags.length" class="tm__sochip tm__sochip--warn">
+          <span v-if="openFlags.length" class="tm__sostat tm__sostat--warn">
             {{ openFlags.length }} open discrepanc{{ openFlags.length === 1 ? 'y' : 'ies' }}
           </span>
         </span>
@@ -1200,19 +1204,23 @@ function downloadPaycom(onlySelected = false): void {
 
       <h3 class="tm__soh">Supervisor attestations by day</h3>
       <div class="tm__attstrip">
-        <div
+        <button
           v-for="d in attestDays"
           :key="d.dateIso"
           class="tm__attday"
-          :class="{
-            'tm__attday--done': d.total > 0 && d.done >= d.total,
-            'tm__attday--flag': d.flagged > 0,
-          }"
+          :title="`Open ${fmtAttDay(d.dateIso)} — see each truck's attestation`"
+          @click="editor.openAttest(d.dateIso)"
         >
           <span class="tm__attdate">{{ fmtAttDay(d.dateIso) }}</span>
-          <span class="tm__attcount">{{ d.done }}/{{ d.total }}</span>
+          <span
+            class="tm__attcount"
+            :class="{
+              'tm__attcount--done': d.total > 0 && d.done >= d.total,
+              'tm__attcount--flag': d.flagged > 0,
+            }"
+          >{{ d.done }}/{{ d.total }}</span>
           <span v-if="d.flagged" class="tm__attflag">{{ d.flagged }} flag{{ d.flagged === 1 ? '' : 's' }}</span>
-        </div>
+        </button>
         <p v-if="attestDays.length === 0" class="tm__muted">No period days have closed yet.</p>
       </div>
 
@@ -1236,17 +1244,17 @@ function downloadPaycom(onlySelected = false): void {
               <td class="tm__n">{{ r.hours.toFixed(1) }}</td>
               <td>
                 <span
-                  class="tm__sochip"
+                  class="tm__sostat"
                   :class="{
-                    'tm__sochip--ok': r.status === 'approved',
-                    'tm__sochip--warn': r.status === 'disputed',
-                    'tm__sochip--late': r.status === 'pending' && soOverdueNow,
+                    'tm__sostat--ok': r.status === 'approved',
+                    'tm__sostat--warn': r.status === 'disputed',
+                    'tm__sostat--late': r.status === 'pending' && soOverdueNow,
                   }"
                 >
                   {{ r.status === 'approved' ? 'Approved' : r.status === 'disputed' ? 'Disputed' : 'Pending' }}
                 </span>
                 <span v-if="r.at" class="tm__soat">{{ fmtSoAt(r.at) }}</span>
-                <span v-if="r.changed" class="tm__sochip tm__sochip--warn" title="The schedule changed after this member signed off — re-check their days before export.">Changed after sign-off</span>
+                <span v-if="r.changed" class="tm__sochanged" title="The schedule changed after this member signed off — re-check their days before export.">Changed after sign-off</span>
               </td>
               <td class="tm__sonote">{{ r.note ?? '' }}</td>
             </tr>
@@ -1889,40 +1897,40 @@ function downloadPaycom(onlySelected = false): void {
 }
 
 /* ── sign-off / attestation board ── */
-.tm__sochips {
+/* Plain colored text, not pills — the de-bulk doctrine (Justin,
+   2026-09-29: "that tab reverted back to the old pill style"). */
+.tm__sostats {
   display: inline-flex;
-  gap: 6px;
+  gap: 0.9rem;
   flex-wrap: wrap;
   align-items: center;
 }
 
-.tm__sochip {
-  font-size: 10.5px;
+.tm__sostat {
+  font-size: 0.78rem;
   font-weight: 700;
-  border: 1px solid var(--color-line);
-  background: var(--color-surface);
   color: var(--color-muted);
-  border-radius: 999px;
-  padding: 2px 9px;
   white-space: nowrap;
 }
 
-.tm__sochip--ok {
-  border-color: oklch(0.82 0.09 148);
-  background: oklch(0.97 0.02 148);
+.tm__sostat--ok {
   color: oklch(0.42 0.11 148);
 }
 
-.tm__sochip--warn {
-  border-color: oklch(0.85 0.07 60);
-  background: var(--color-warning-50);
+.tm__sostat--warn {
   color: oklch(0.48 0.13 60);
 }
 
-.tm__sochip--late {
-  border-color: oklch(0.8 0.09 27);
-  background: oklch(0.97 0.02 27);
+.tm__sostat--late {
   color: var(--color-danger-500);
+}
+
+.tm__sochanged {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--color-danger-500);
+  margin-left: 6px;
+  white-space: nowrap;
 }
 
 .tm__soh {
@@ -1936,29 +1944,22 @@ function downloadPaycom(onlySelected = false): void {
 
 .tm__attstrip {
   display: flex;
-  gap: 6px;
+  gap: 0.35rem 1.1rem;
   flex-wrap: wrap;
 }
 
+/* Each day is a quiet text button — click opens that day's attestation
+   drawer (who attested each truck, flags, editor undo). */
 .tm__attday {
-  border: 1px solid var(--color-line);
-  border-radius: 9px;
-  padding: 4px 9px;
+  font: inherit;
+  border: 0;
+  background: none;
+  padding: 2px 0;
   display: grid;
   justify-items: center;
   gap: 1px;
-  background: var(--color-surface);
-  min-width: 52px;
-}
-
-.tm__attday--done {
-  border-color: oklch(0.82 0.09 148);
-  background: oklch(0.985 0.01 148);
-}
-
-.tm__attday--flag {
-  border-color: oklch(0.85 0.07 60);
-  background: var(--color-warning-50);
+  min-width: 46px;
+  cursor: pointer;
 }
 
 .tm__attdate {
@@ -1967,13 +1968,30 @@ function downloadPaycom(onlySelected = false): void {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--color-muted);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+}
+
+.tm__attday:hover .tm__attdate {
+  color: var(--color-ink);
+  text-decoration-color: var(--color-accent-600);
 }
 
 .tm__attcount {
   font-size: 0.85rem;
   font-weight: 650;
-  color: var(--color-ink);
+  color: var(--color-ink-soft);
   font-variant-numeric: tabular-nums;
+}
+
+.tm__attcount--done {
+  color: oklch(0.42 0.11 148);
+}
+
+.tm__attcount--flag {
+  color: oklch(0.48 0.13 60);
 }
 
 .tm__attflag {
