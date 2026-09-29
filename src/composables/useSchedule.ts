@@ -3656,6 +3656,182 @@ async function dayRemove(opts: {
   return dayOpenWindow({ ...opts, from: '06:00', until: '06:00' })
 }
 
+/** Chief: set a person's coverage on a seat to EXACTLY from–until for
+ *  the day — the answer to "she actually worked 0600–1800, not the
+ *  whole 24" without remove/reassign gymnastics (Justin, 2026-09-29).
+ *  Hours they give up post as OPEN on the seat (merging with adjacent
+ *  opens); extending is allowed only into hours nobody else covers,
+ *  consuming any explicit open rows it lands on. Handles entry-backed
+ *  holders and bare rotation occupants alike. */
+async function dayRetime(opts: {
+  dateIso: string
+  seatId: string
+  userId: string
+  from: string
+  until: string
+}): Promise<string | null> {
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const newS = tsMs(w.reqStart)
+  const newE = tsMs(w.reqEnd)
+  if (newE - newS < MIN_SEG_MS) return 'Set a real time window.'
+
+  // Fresh rows — a stale view must never decide what gets rewritten.
+  const fres = await supabase
+    .from('sched_entries')
+    .select('*')
+    .eq('work_date', opts.dateIso)
+    .eq('seat_id', opts.seatId)
+  if (fres.error) return fres.error.message
+  const seatRows = (fres.data ?? [])
+    .map(mapEntry)
+    .filter((e) => e.kind !== 'timeoff' && e.status !== 'off')
+  const mine = seatRows.filter((e) => e.userId === opts.userId && e.status === 'scheduled')
+  const bare =
+    mine.length === 0 &&
+    seatRows.length === 0 &&
+    seatRotationOccupant(opts.seatId, opts.dateIso) === opts.userId
+
+  let held: Seg[]
+  if (mine.length > 0) {
+    held = mergeSegs(mine.map((e) => ({ start: tsMs(e.startAt), end: tsMs(e.endAt) })))
+  } else if (bare) {
+    const seatRec = seats.value.find((s2) => s2.id === opts.seatId)
+    const unit = seatRec ? units.value.find((u) => u.id === seatRec.unitId) : null
+    const uw = unitDayWindow(unit, opts.dateIso)
+    held = [{ start: tsMs(uw.startTs), end: tsMs(uw.endTs) }]
+  } else {
+    return 'They are not scheduled on that seat that day.'
+  }
+
+  let gained: Seg[] = [{ start: newS, end: newE }]
+  for (const h of held) gained = cutSegs(gained, h.start, h.end)
+  const vacated = cutSegs(
+    held.map((h) => ({ ...h })),
+    newS,
+    newE,
+  )
+  if (gained.length === 0 && vacated.length === 0) {
+    return 'Their scheduled times already match that window. If part of the shift shows open, a time-off record is carving it — remove that record instead.'
+  }
+
+  // Extending only works into hours nobody else covers.
+  if (gained.length > 0) {
+    const offsRes = await supabase
+      .from('sched_entries')
+      .select('*')
+      .eq('work_date', opts.dateIso)
+      .eq('kind', 'timeoff')
+    if (offsRes.error) return offsRes.error.message
+    const offs = (offsRes.data ?? []).map(mapEntry)
+    for (const r of seatRows) {
+      if (r.status !== 'scheduled' || !r.userId || r.userId === opts.userId) continue
+      let segs: Seg[] = [{ start: tsMs(r.startAt), end: tsMs(r.endAt) }]
+      for (const o of offs.filter((o2) => o2.userId === r.userId)) {
+        segs = cutSegs(segs, tsMs(o.startAt), tsMs(o.endAt))
+      }
+      for (const s of segs) {
+        const hit = gained.find((g) => Math.min(g.end, s.end) - Math.max(g.start, s.start) >= MIN_SEG_MS)
+        if (hit) {
+          const os = Math.max(hit.start, s.start)
+          const oe = Math.min(hit.end, s.end)
+          return `${hhmm(new Date(os).toISOString())}–${hhmm(new Date(oe).toISOString())} is already covered by ${displayName(r.userId).name} on this seat — retime or remove them first.`
+        }
+      }
+    }
+  }
+
+  if (bare) {
+    // Materialize the hours they keep BEFORE anything else lands on the
+    // seat — once any row exists, bare rotation stops rendering.
+    const kept: Seg[] = []
+    for (const h of held) {
+      const s = Math.max(h.start, newS)
+      const en = Math.min(h.end, newE)
+      if (en - s >= MIN_SEG_MS) kept.push({ start: s, end: en })
+    }
+    if (kept.length > 0) {
+      const ins = await supabase.from('sched_entries').insert(
+        kept.map((k) => ({
+          work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
+          start_at: new Date(k.start).toISOString(), end_at: new Date(k.end).toISOString(),
+          kind: 'rotation', status: 'scheduled',
+        })),
+      )
+      if (ins.error) return ins.error.message
+    }
+  } else {
+    // Trim their rows down to the kept window (splits handled per row).
+    for (const v of vacated) {
+      const cv = await carveSeatWindow(opts.dateIso, opts.seatId, opts.userId, v.start, v.end)
+      if (cv.error) return cv.error
+    }
+  }
+
+  // The extension consumes any explicit open rows it lands on — the
+  // pieces outside the new window survive as open.
+  for (const r of seatRows) {
+    if (r.status !== 'open') continue
+    const os = tsMs(r.startAt)
+    const oe = tsMs(r.endAt)
+    if (Math.min(oe, newE) - Math.max(os, newS) < MIN_SEG_MS) continue
+    const del = await supabase.from('sched_entries').delete().eq('id', r.id)
+    if (del.error) return del.error.message
+    const rest = cutSegs([{ start: os, end: oe }], newS, newE)
+    if (rest.length > 0) {
+      const ins = await supabase.from('sched_entries').insert(
+        rest.map((p) => ({
+          work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
+          start_at: new Date(p.start).toISOString(), end_at: new Date(p.end).toISOString(),
+          kind: r.kind, status: 'open',
+        })),
+      )
+      if (ins.error) return ins.error.message
+    }
+  }
+
+  // Hours they now cover that they didn't before.
+  if (gained.length > 0) {
+    const kindFor = (g: Seg): string => {
+      const touch = mine.find(
+        (e) => Math.abs(tsMs(e.endAt) - g.start) < MIN_SEG_MS || Math.abs(tsMs(e.startAt) - g.end) < MIN_SEG_MS,
+      )
+      return touch?.kind ?? mine[0]?.kind ?? 'rotation'
+    }
+    const ins = await supabase.from('sched_entries').insert(
+      gained.map((g) => ({
+        work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
+        start_at: new Date(g.start).toISOString(), end_at: new Date(g.end).toISOString(),
+        kind: kindFor(g), status: 'scheduled',
+      })),
+    )
+    if (ins.error) return ins.error.message
+  }
+
+  // Hours they gave up post open, then merge with any neighbors.
+  if (vacated.length > 0) {
+    const ins = await supabase.from('sched_entries').insert(
+      vacated.map((v) => ({
+        work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
+        start_at: new Date(v.start).toISOString(), end_at: new Date(v.end).toISOString(),
+        kind: 'rotation', status: 'open',
+      })),
+    )
+    if (ins.error) return ins.error.message
+  }
+  const co = await coalesceSeatOpens(opts.dateIso, opts.seatId)
+  if (co) return co
+
+  const fromLbl = normTime(opts.from).replace(':', '')
+  const untilLbl = normTime(opts.until).replace(':', '')
+  audit('day.retime', `Changed ${displayName(opts.userId).name}'s times on ${seatTitle(opts.seatId)} ${opts.dateIso} to ${fromLbl}–${untilLbl}`, { entity: 'entry' })
+  notify('schedule_change', {
+    userId: opts.userId,
+    summary: `Your times on ${seatTitle(opts.seatId)} for ${opts.dateIso} were corrected to ${fromLbl}–${untilLbl}.${vacated.length > 0 ? ' The hours you gave up are posted open.' : ''}`,
+  })
+  await reloadRangeIfLoaded()
+  return null
+}
+
 /** Chief: replace the person on a seat for a window of the day. The
  *  outgoing person's coverage is carved (never left behind), and the
  *  replacement covers exactly the hours that were carved. */
@@ -5723,6 +5899,7 @@ export function useSchedule() {
     dayOpenWindow,
     blockOpenWindow,
     dayRemove,
+    dayRetime,
     dayReplace,
     dayMove,
     holdsViaOverride,

@@ -302,7 +302,7 @@ async function applyAssign(): Promise<void> {
 
 // ── Chief person day-edit modal ──────────────────────────────────────
 
-type EditAction = '' | 'off' | 'remove' | 'move' | 'replace'
+type EditAction = '' | 'retime' | 'off' | 'remove' | 'move' | 'replace'
 const editAction = ref<EditAction>('')
 const editOffType = ref('vacation')
 const editFrom = ref('06:00')
@@ -374,7 +374,15 @@ async function runEdit(): Promise<void> {
   err.value = null
   let e: string | null = null
   try {
-    if (editAction.value === 'off') {
+    if (editAction.value === 'retime') {
+      e = await sched.dayRetime({
+        dateIso: ctx.dateIso,
+        seatId: ctx.seatId,
+        userId: ctx.userId,
+        from: editFrom.value,
+        until: editUntil.value,
+      })
+    } else if (editAction.value === 'off') {
       e = await sched.dayMarkOff({
         dateIso: ctx.dateIso,
         seatId: ctx.seatId,
@@ -1886,7 +1894,7 @@ async function reqCancel() {
 
         <div class="em__actions">
           <button
-            v-for="[k, label] in ([['off','Mark time off'],['remove','Remove from day'],['move','Move to open seat'],['replace','Replace with…']] as const)"
+            v-for="[k, label] in ([['retime','Change times'],['off','Mark time off'],['remove','Remove from day'],['move','Move to open seat'],['replace','Replace with…']] as const)"
             :key="k"
             class="em__btn"
             :class="{ 'em__btn--primary': editAction === k }"
@@ -1896,7 +1904,19 @@ async function reqCancel() {
           </button>
         </div>
 
-        <template v-if="editAction === 'off'">
+        <template v-if="editAction === 'retime'">
+          <div class="em__times">
+            <label>From <TimeSelect24 v-model="editFrom" class="em__input em__input--time" /></label>
+            <label>Until <TimeSelect24 v-model="editUntil" class="em__input em__input--time" /></label>
+          </div>
+          <p class="em__notetext">
+            Their coverage on this seat becomes exactly this window. Hours they give
+            up post as open (and merge with adjacent opens); extending only works
+            into hours nobody else covers. Hours on other units aren't touched.
+          </p>
+        </template>
+
+        <template v-else-if="editAction === 'off'">
           <select v-model="editOffType" class="em__input">
             <option value="vacation">Vacation</option>
             <option value="sick">Sick</option>
