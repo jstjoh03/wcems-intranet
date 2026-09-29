@@ -1268,6 +1268,31 @@ export const useSessionsStore = defineStore('sessions', () => {
     await loadRecentSessions()
   }
 
+  /** Move a session's date/times after creation (Justin, 2026-09-29):
+   *  updates our row, PATCHes the Wix event for a card class so bookers
+   *  and the booking page follow, and moves the portal calendar tile.
+   *  A Wix failure comes back as wixWarning — the local change stuck. */
+  async function updateSessionSchedule(
+    sessionId: string,
+    patch: { classDate: string; startTime: string; endTime: string },
+  ) {
+    const auth = useAuthStore()
+    const res = await invokeEdge<{
+      success: boolean
+      wixMoved?: boolean
+      wixWarning?: string | null
+    }>(
+      'training-update-schedule',
+      { sessionId, ...patch },
+      { authToken: auth.accessToken },
+    )
+    if (currentSession.value?.sessionId === sessionId) {
+      await loadSessionDetail(sessionId)
+    }
+    await loadRecentSessions()
+    return res
+  }
+
   /** Cancel a session — distinct from Close. Calls the edge function so
    *  the Wix Bookings event for a Card Class is canceled too (notifying
    *  bookers). Closes check-in/eval as part of the same flip. */
@@ -1309,6 +1334,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     teardown,
     createSession,
     updateSessionDetails,
+    updateSessionSchedule,
     setCheckInStatus,
     setEvalStatus,
     savePsaScore,

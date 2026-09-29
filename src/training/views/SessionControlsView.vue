@@ -413,9 +413,12 @@ const hoursDirty = computed(
 
 /* ─── Edit details modal ───────────────────────────────────────────
  * Lets the instructor change the card course (e.g. BLS Renewal → Full
- * BLS) and update all 4 instructor slots after the session is created.
- * The existing SessionType stays fixed — Card ↔ Lecture would break
- * downstream calendar links, so we require Cancel + Create for that. */
+ * BLS), fix the DATE/times (a mis-picked date shouldn't force Cancel +
+ * recreate — the edge function moves the Wix event and the portal
+ * calendar tile along with it; Justin, 2026-09-29), and update all 4
+ * instructor slots after the session is created. The SessionType stays
+ * fixed — Card ↔ Lecture would break downstream calendar links, so we
+ * require Cancel + Create for that. */
 interface EditInstructorSlot {
   name: string
   number: string
@@ -430,12 +433,19 @@ function blankSlot(): EditInstructorSlot {
 const editOpen = ref(false)
 const editBusy = ref(false)
 const editErr = ref<string | null>(null)
+const editWixWarn = ref<string | null>(null)
 const editSaved = ref(false)
 const editForm = ref<{
+  classDate: string
+  startTime: string
+  endTime: string
   cardCourse: string
   primary: EditInstructorSlot
   assists: EditInstructorSlot[]
 }>({
+  classDate: '',
+  startTime: '',
+  endTime: '',
   cardCourse: '',
   primary: blankSlot(),
   assists: [],
@@ -464,11 +474,15 @@ function openEditDetails() {
   const cs = s.value
   if (!cs) return
   editErr.value = null
+  editWixWarn.value = null
   editSaved.value = false
   // Load the course catalog on demand — Create Session pre-loads it,
   // but a user landing straight on Controls wouldn't have it yet.
   void sessions.loadCourses()
   editForm.value = {
+    classDate: (cs.classDate || '').slice(0, 10),
+    startTime: cs.startTime || '',
+    endTime: cs.endTime || '',
     cardCourse: cs.cardCourseName ?? '',
     primary: {
       name: cs.primaryInstructorName ?? '',
@@ -532,10 +546,29 @@ async function saveEditDetails() {
     editErr.value = 'Pick a card course before saving.'
     return
   }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(editForm.value.classDate)) {
+    editErr.value = 'Pick a class date before saving.'
+    return
+  }
   editBusy.value = true
   editErr.value = null
+  editWixWarn.value = null
   editSaved.value = false
   try {
+    // Date/times first — a schedule change moves the Wix event and the
+    // portal calendar tile through the edge function.
+    const scheduleChanged =
+      editForm.value.classDate !== (s.value.classDate || '').slice(0, 10) ||
+      editForm.value.startTime !== (s.value.startTime || '') ||
+      editForm.value.endTime !== (s.value.endTime || '')
+    if (scheduleChanged) {
+      const res = await sessions.updateSessionSchedule(s.value.sessionId, {
+        classDate: editForm.value.classDate,
+        startTime: editForm.value.startTime,
+        endTime: editForm.value.endTime,
+      })
+      if (res?.wixWarning) editWixWarn.value = res.wixWarning
+    }
     const [a1, a2, a3] = [
       editForm.value.assists[0] ?? blankSlot(),
       editForm.value.assists[1] ?? blankSlot(),
@@ -558,12 +591,15 @@ async function saveEditDetails() {
       quaternaryInstructorName: a3.name,
     })
     editSaved.value = true
-    // Small delay so the user sees the "Saved" confirmation before
-    // the modal closes.
-    setTimeout(() => {
-      editOpen.value = false
-      editSaved.value = false
-    }, 900)
+    // Small delay so the user sees the "Saved" confirmation before the
+    // modal closes — unless Wix couldn't be moved, in which case the
+    // modal stays open so the warning actually gets read.
+    if (!editWixWarn.value) {
+      setTimeout(() => {
+        editOpen.value = false
+        editSaved.value = false
+      }, 900)
+    }
   } catch (err) {
     console.error('[SessionControls] updateSessionDetails failed:', err)
     editErr.value =
@@ -2643,10 +2679,26 @@ function fmtSubmittedAt(ts: string) {
           </button>
         </div>
         <p class="muted modalbox__hint">
-          Change the course (Renewal ↔ Full) or add/edit assisting instructors.
-          Roster will reflect the new course. Session type + date are not
-          editable here — cancel and recreate if those need to change.
+          Change the course (Renewal ↔ Full), fix the date or times, or
+          add/edit assisting instructors. Date changes move the Wix booking
+          event and the portal calendar too. Session type is not editable —
+          cancel and recreate to switch Card ↔ Lecture.
         </p>
+
+        <div class="fld-row">
+          <label class="fld">
+            <span>Class date</span>
+            <input v-model="editForm.classDate" type="date" />
+          </label>
+          <label class="fld">
+            <span>Start</span>
+            <input v-model="editForm.startTime" type="time" />
+          </label>
+          <label class="fld">
+            <span>End</span>
+            <input v-model="editForm.endTime" type="time" />
+          </label>
+        </div>
 
         <label class="fld">
           <span>Card course</span>
@@ -2780,6 +2832,7 @@ function fmtSubmittedAt(ts: string) {
         </button>
 
         <div v-if="editErr" class="edit__err">{{ editErr }}</div>
+        <div v-if="editWixWarn" class="edit__warn">{{ editWixWarn }}</div>
         <div v-if="editSaved" class="edit__ok">Saved.</div>
 
         <div class="modalbox__actions">
@@ -4588,6 +4641,15 @@ select:focus {
   border-radius: 8px;
   background: oklch(0.96 0.045 28);
   color: oklch(0.45 0.14 28);
+  font-size: 13px;
+  font-weight: 500;
+}
+.edit__warn {
+  padding: 10px 14px;
+  margin: 8px 0 0;
+  border-radius: 8px;
+  background: oklch(0.97 0.035 80);
+  color: oklch(0.45 0.11 70);
   font-size: 13px;
   font-weight: 500;
 }

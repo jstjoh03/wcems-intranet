@@ -26,7 +26,8 @@ export async function invokeEdge<T = unknown>(
     | 'training-public'
     | 'training-wix-bookings'
     | 'training-wix-classes'
-    | 'training-cancel-session',
+    | 'training-cancel-session'
+    | 'training-update-schedule',
   body: Record<string, unknown>,
   opts: { authToken?: string | null } = {},
 ): Promise<T> {
