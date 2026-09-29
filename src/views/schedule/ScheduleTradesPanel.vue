@@ -16,9 +16,11 @@ import {
 /**
  * Trades board — Aladtec's "Available Trades", but with the swap-offer
  * step built in. Crew post a shift as a giveaway (anyone can claim) or
- * a swap (others offer one of their shifts back). The poster accepts
- * one offer; the deal then lands in the Chief's approval queue, and
- * approval rewrites both calendars.
+ * a swap (others offer one of their shifts back). A giveaway claim
+ * goes STRAIGHT to the Chief's approval queue — the poster already
+ * said "anyone take it" (Justin, 2026-09-28). Swap offers still wait
+ * on the poster to accept one; the deal then lands in the Chief's
+ * queue, and approval rewrites both calendars.
  */
 
 const sched = useSchedule()
@@ -403,7 +405,11 @@ async function takeShift(r: SchedRequest) {
   const e = await sched.makeOffer({ requestId: r.id, offerShift: null, note: '' })
   busy.value = false
   if (e) err.value = e
-  else done.value = 'Claim placed — the poster and Chief will see it.'
+  else
+    done.value =
+      r.type === 'giveaway'
+        ? 'Claimed — sent straight to the Chief for approval.'
+        : 'Claim placed — the poster and Chief will see it.'
 }
 
 async function submitOffer(r: SchedRequest) {

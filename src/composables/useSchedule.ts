@@ -2991,6 +2991,44 @@ async function makeOffer(opts: {
     const closed = tradeClosedReason(posting.startAt, posting.workDate)
     if (closed) return closed
   }
+  /* GIVEAWAYS SKIP THE POSTER-ACCEPT STEP (Justin, 2026-09-28): the
+     poster already said "anyone take it" — there's nothing for them to
+     weigh, so the first claim goes STRAIGHT to the Chief's queue.
+     Swaps keep the offer/accept dance (the poster must judge what's
+     offered back). RLS: the "giveaway claim" policy admits exactly
+     this pending→partner_accepted self-claim transition. */
+  if (posting && posting.type === 'giveaway' && !opts.offerShift) {
+    const warnings: HoursWarning[] = []
+    if (posting.workDate && posting.startAt && posting.endAt) {
+      const info = await hoursCheck(
+        me,
+        [{ dateIso: posting.workDate, startAt: posting.startAt, endAt: posting.endAt }],
+        displayName(me).name || 'The claimant',
+      )
+      warnings.push(...info.warnings)
+    }
+    const res = await supabase
+      .from('sched_requests')
+      .update({
+        counterparty_id: me,
+        status: 'partner_accepted',
+        warnings,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', posting.id)
+      .eq('status', 'pending')
+      .select('id')
+    if (res.error) return res.error.message
+    if (!res.data || res.data.length === 0) {
+      await loadRequests()
+      return 'Someone beat you to this giveaway — it has already been claimed.'
+    }
+    audit('trade.claim', `Claimed ${displayName(posting.requesterId).name}'s giveaway — straight to the Chief's queue`, { entity: 'request', entityId: posting.id })
+    notify('request_submitted', { requestIds: [posting.id] })
+    notify('trade_activity', { requestId: posting.id, event: 'direct_accepted' })
+    await Promise.all([loadRequests(), loadTradeOffers()])
+    return null
+  }
   let offerFields: Record<string, unknown> = {}
   if (opts.offerShift) {
     // The offerer picks which part of their shift they're putting up —
