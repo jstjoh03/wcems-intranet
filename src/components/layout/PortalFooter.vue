@@ -12,7 +12,7 @@ import { useQuickLinks } from '@/composables/useQuickLinks'
 const year = new Date().getFullYear()
 const { links } = useQuickLinks()
 
-const SYSTEM_PRIORITY = ['ESO', 'Aladtec', 'Lexipol', 'Paycom', 'Operative IQ', 'Supply Portal']
+const SYSTEM_PRIORITY = ['ESO', 'Lexipol', 'Paycom', 'Operative IQ', 'Supply Portal']
 const systems = computed(() =>
   SYSTEM_PRIORITY
     .map((label) => links.value.find((l) => l.label === label))

@@ -4,6 +4,7 @@ import { Settings2 } from 'lucide-vue-next'
 import IconRender from '@/components/primitives/IconRender.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
+import { useScheduleAccess } from '@/composables/useScheduleAccess'
 import FeaturedLinksEditModal from './FeaturedLinksEditModal.vue'
 
 /**
@@ -28,9 +29,9 @@ interface FeaturedTile {
 
 const FEATURED_LABELS_CREW = [
   'Outlook',
+  'Protocols',
   'Employee Shoutout',
   'Supply Portal',
-  'Protocols',
 ]
 const FEATURED_LABELS_SUPERVISOR = [
   'Outlook',
@@ -47,8 +48,20 @@ const INTERNAL_HOSPITALS: FeaturedTile = {
   internal: true,
 }
 
+/* Aladtec is gone (2026-09-28) — the scheduling module leads the
+   default strip for anyone who hasn't customized, once the module
+   admits them (soft-launch gate). */
+const INTERNAL_SCHEDULE: FeaturedTile = {
+  id: 'schedule',
+  label: 'Scheduling',
+  iconName: 'Calendar',
+  url: '/schedule',
+  internal: true,
+}
+
 const auth = useAuthStore()
 const { links } = useQuickLinks()
+const { canSeeSchedule } = useScheduleAccess()
 
 const editOpen = ref(false)
 
@@ -64,33 +77,39 @@ function tileFromLink(l: { id: string; label: string; iconName: string; url: str
 
 const featured = computed<FeaturedTile[]>(() => {
   const userIds = auth.appUser?.featuredQuickLinkIds ?? []
-  const externals: FeaturedTile[] = []
+  const tiles: FeaturedTile[] = []
 
   /* 1) The user's chosen tiles, in their saved order, resolved
      against the live catalog. Missing IDs (e.g. admin deleted that
      link) silently drop. */
   for (const id of userIds) {
     const match = links.value.find((l) => l.id === id)
-    if (match) externals.push(tileFromLink(match))
-    if (externals.length >= 4) break
+    if (match) tiles.push(tileFromLink(match))
+    if (tiles.length >= 4) break
   }
 
-  /* 2) Top up empty slots from the role-based default list, skipping
+  /* 2) Users who never customized lead with the scheduling module —
+     the Aladtec replacement — when the soft-launch gate admits them. */
+  if (userIds.length === 0 && canSeeSchedule.value) {
+    tiles.unshift(INTERNAL_SCHEDULE)
+  }
+
+  /* 3) Top up empty slots from the role-based default list, skipping
      anything already chosen above to avoid duplicates. */
-  if (externals.length < 4) {
+  if (tiles.length < 4) {
     const defaultLabels = auth.isSupervisor
       ? FEATURED_LABELS_SUPERVISOR
       : FEATURED_LABELS_CREW
     for (const label of defaultLabels) {
-      if (externals.length >= 4) break
+      if (tiles.length >= 4) break
       const match = links.value.find((l) => l.label === label)
       if (!match) continue
-      if (externals.some((t) => t.id === match.id)) continue
-      externals.push(tileFromLink(match))
+      if (tiles.some((t) => t.id === match.id)) continue
+      tiles.push(tileFromLink(match))
     }
   }
 
-  return [...externals, INTERNAL_HOSPITALS]
+  return [...tiles.slice(0, 4), INTERNAL_HOSPITALS]
 })
 </script>
 

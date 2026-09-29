@@ -9,7 +9,6 @@
   { "id": "outlook", "label": "Outlook", "sub": "M365 mail", "url": "https://outlook.cloud.microsoft/mail/", "iconName": "Mail", "category": "Communication", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 110 },
   { "id": "teams", "label": "Microsoft Teams", "sub": "Chat", "url": "https://teams.cloud.microsoft/", "iconName": "MessageSquare", "category": "Communication", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 120 },
 
-  { "id": "aladtec", "label": "Aladtec", "sub": "Schedule", "url": "https://aladtec.com/wcvems", "iconName": "Calendar", "category": "Schedule & Pay", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 210 },
   { "id": "paycom", "label": "Paycom", "sub": "Time & pay", "url": "https://www.paycomonline.net/v4/ee/web.php/app/login", "iconName": "ClipboardList", "category": "Schedule & Pay", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 220 },
 
   { "id": "internal-edu", "label": "Internal Education", "sub": "CE catalog", "url": "https://www.wallercountyems.com/internaleducation", "iconName": "GraduationCap", "category": "Training", "visibleTo": ["crew", "supervisor", "admin"], "defaultSort": 310 },
