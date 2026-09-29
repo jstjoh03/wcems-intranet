@@ -838,7 +838,10 @@ watch(dateIso, (v) => {
 .sched__menuscrim {
   position: fixed;
   inset: 0;
-  z-index: 65;
+  /* BELOW the app bar (z 45): the bar is its own stacking context, so
+     the menu's z-index only counts inside it — a scrim above the bar
+     would swallow the menu's clicks (Justin, 2026-09-29). */
+  z-index: 44;
 }
 
 .sched__menu {
