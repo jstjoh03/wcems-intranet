@@ -17,6 +17,16 @@
 //     controls it (default: on, 12h). Sends once per merged shift start
 //     (sched_reminders_sent claims), honoring each member's 'reminders'
 //     notification row.
+//     The SAME cron tick also drives the time-verification prompts
+//     (Justin, 2026-09-28), each exactly-once via sched_notify_claims:
+//       · end-of-shift "verify your times" when a merged block ends
+//       · "attest yesterday's trucks" to the on-duty supervisors at
+//         the 0600 changeover (per-truck attest rows)
+//       · pay-period sign-off the Sunday after close (initial 0700,
+//         last call 0900, crew deadline 1000) + a Monday-0700
+//         verification summary to editors/HR
+//     Verification prompts are push + email ONLY — never SMS (cost
+//     control; matrix key 'verify').
 //
 // Recipients and their addresses are ALWAYS resolved server-side:
 // the caller supplies ids, this function decides who may be told what
@@ -84,6 +94,7 @@ const REQ_LABELS: Record<string, string> = {
   pickup: 'Shift pickup',
   trade: 'Shift trade',
   giveaway: 'Giveaway',
+  discrepancy: 'Time discrepancy',
 }
 const OFF_LABELS: Record<string, string> = {
   vacation: 'Vacation',
@@ -401,6 +412,7 @@ interface ReqRow {
   off_type: string | null
   unit_code: string | null
   position_label: string | null
+  comments: string | null
   decision_note: string | null
   status: string
 }
@@ -408,7 +420,7 @@ interface ReqRow {
 async function loadRequests(ids: string[]): Promise<ReqRow[]> {
   const { data, error } = await sb
     .from('sched_requests')
-    .select('id, type, requester_id, counterparty_id, work_date, start_at, end_at, off_type, unit_code, position_label, decision_note, status')
+    .select('id, type, requester_id, counterparty_id, work_date, start_at, end_at, off_type, unit_code, position_label, comments, decision_note, status')
     .in('id', ids)
   if (error) throw new Error(error.message)
   return (data ?? []) as ReqRow[]
@@ -423,7 +435,9 @@ async function nameOf(userId: string | null): Promise<string> {
 function reqLine(r: ReqRow): string {
   const label = r.type === 'time_off' ? `${OFF_LABELS[r.off_type ?? ''] ?? 'Time off'} time off` : (REQ_LABELS[r.type] ?? r.type)
   const where = [r.unit_code, r.position_label].filter(Boolean).join(' ')
-  return `${label} — ${fmtDate(r.work_date)}${windowText(r.start_at, r.end_at)}${where ? ` (${where})` : ''}`
+  // the note IS the discrepancy — carry it in the approver line
+  const note = r.type === 'discrepancy' && r.comments ? ` — "${clean(r.comments, 140)}"` : ''
+  return `${label} — ${fmtDate(r.work_date)}${windowText(r.start_at, r.end_at)}${where ? ` (${where})` : ''}${note}`
 }
 
 // ── schedule math for shift reminders ────────────────────────────────
@@ -851,7 +865,9 @@ Deno.serve(async (req: Request) => {
 
       const { data: remSet } = await sb.from('sched_settings').select('value').eq('key', 'reminders').maybeSingle()
       const cfg = (remSet?.value ?? {}) as { enabled?: boolean; lead_hours?: number }
-      if (cfg.enabled === false) return Response.json({ ok: true, disabled: true }, { headers: CORS })
+      // reminders can be switched off in Setup; the verification
+      // sweeps below still run on every tick
+      const remindersEnabled = cfg.enabled !== false
       const leadH = Number(cfg.lead_hours ?? 12) || 12
       const now = Date.now()
       const windowEnd = now + leadH * 3_600_000
@@ -892,96 +908,256 @@ Deno.serve(async (req: Request) => {
       }
 
       interface LSeg { start: number; end: number; label: string }
-      const byUser = new Map<string, LSeg[]>()
-      const pushSeg = (uid: string, seg: LSeg) => {
-        const l = byUser.get(uid) ?? []
-        l.push(seg)
-        byUser.set(uid, l)
+      interface EntryRowLite {
+        work_date: string
+        seat_id: string | null
+        user_id: string | null
+        kind: string
+        status: string
+        start_at: string
+        end_at: string
+        note: string | null
       }
 
-      for (const dateIso of dates) {
-        const dayRows = rows.filter((r) => r.work_date === dateIso)
-        for (const seat of seatsA) {
-          const unit = unitById.get(seat.unit_id)!
-          const label = `${unit.code} ${seat.label}`
-          const seatRows = dayRows.filter((r) => r.seat_id === seat.id && r.kind !== 'timeoff' && r.status !== 'off')
-          if (seatRows.length > 0) {
-            for (const r of seatRows) {
-              if (r.user_id && r.status === 'scheduled')
-                pushSeg(r.user_id, { start: Date.parse(r.start_at), end: Date.parse(r.end_at), label })
+      /**
+       * Per-user merged on-duty blocks (time off subtracted) across a
+       * date span — the schedule truth every sweep shares. KEEP IN
+       * LOCKSTEP with segsForUserOnDate in the client. Also reports
+       * which units were staffed per date and who held the S-trucks
+       * (per-truck attestation recipients).
+       */
+      const buildBlocks = (dateList: string[], entryRows: EntryRowLite[]) => {
+        const byUser = new Map<string, LSeg[]>()
+        const supsByDate = new Map<string, Set<string>>()
+        const staffedByDate = new Map<string, Set<string>>()
+        const pushSeg = (uid: string, seg: LSeg) => {
+          const l = byUser.get(uid) ?? []
+          l.push(seg)
+          byUser.set(uid, l)
+        }
+        const markStaffed = (dateIso: string, unitId: string) => {
+          const s = staffedByDate.get(dateIso) ?? new Set<string>()
+          s.add(unitId)
+          staffedByDate.set(dateIso, s)
+        }
+        const markSup = (dateIso: string, uid: string) => {
+          const s = supsByDate.get(dateIso) ?? new Set<string>()
+          s.add(uid)
+          supsByDate.set(dateIso, s)
+        }
+
+        for (const dateIso of dateList) {
+          const dayRows = entryRows.filter((r) => r.work_date === dateIso)
+          for (const seat of seatsA) {
+            const unit = unitById.get(seat.unit_id)!
+            const label = `${unit.code} ${seat.label}`
+            const isSupUnit = String(unit.code).toUpperCase().startsWith('S')
+            const seatRows = dayRows.filter((r) => r.seat_id === seat.id && r.kind !== 'timeoff' && r.status !== 'off')
+            if (seatRows.length > 0) {
+              for (const r of seatRows) {
+                if (r.user_id && r.status === 'scheduled') {
+                  pushSeg(r.user_id, { start: Date.parse(r.start_at), end: Date.parse(r.end_at), label })
+                  markStaffed(dateIso, unit.id)
+                  if (isSupUnit) markSup(dateIso, r.user_id)
+                }
+              }
+            } else {
+              const platoon = unitPlatoonFor(unit.rotation_pattern, unit.rotation_anchor, dateIso)
+              if (!platoon) continue
+              const occ = rotOccupant(seat.id, platoon, dateIso)
+              if (!occ) continue
+              const w = unitWindow(unit.shift_start, unit.shift_end, dateIso)
+              pushSeg(occ, { start: w.start, end: w.end, label })
+              markStaffed(dateIso, unit.id)
+              if (isSupUnit) markSup(dateIso, occ)
             }
-          } else {
-            const platoon = unitPlatoonFor(unit.rotation_pattern, unit.rotation_anchor, dateIso)
-            if (!platoon) continue
-            const occ = rotOccupant(seat.id, platoon, dateIso)
-            if (!occ) continue
-            const w = unitWindow(unit.shift_start, unit.shift_end, dateIso)
-            pushSeg(occ, { start: w.start, end: w.end, label })
+          }
+          for (const r of dayRows) {
+            if (r.seat_id !== null || !r.user_id || r.status !== 'scheduled') continue
+            if (r.kind === 'extra' || r.kind === 'event' || r.kind === 'student' || r.kind === 'rider') {
+              const label =
+                r.kind === 'event' ? (r.note || 'Special event')
+                : r.kind === 'extra' ? 'Extra hours'
+                : r.kind === 'student' ? 'Student ride'
+                : 'Rider'
+              pushSeg(r.user_id, { start: Date.parse(r.start_at), end: Date.parse(r.end_at), label })
+            }
           }
         }
-        for (const r of dayRows) {
-          if (r.seat_id !== null || !r.user_id || r.status !== 'scheduled') continue
-          if (r.kind === 'extra' || r.kind === 'event' || r.kind === 'student' || r.kind === 'rider') {
-            const label =
-              r.kind === 'event' ? (r.note || 'Special event')
-              : r.kind === 'extra' ? 'Extra hours'
-              : r.kind === 'student' ? 'Student ride'
-              : 'Rider'
-            pushSeg(r.user_id, { start: Date.parse(r.start_at), end: Date.parse(r.end_at), label })
-          }
+
+        // TIME OFF FOLLOWS THE PERSON (2026-09-25, lockstep with
+        // segsForUserOnDate in the client): booked-off hours never
+        // earn a prompt, wherever the member sits that day.
+        const offByUser = new Map<string, { s: number; e: number }[]>()
+        for (const r of entryRows) {
+          if (r.kind !== 'timeoff' || !r.user_id) continue
+          const l = offByUser.get(r.user_id) ?? []
+          l.push({ s: Date.parse(r.start_at), e: Date.parse(r.end_at) })
+          offByUser.set(r.user_id, l)
         }
+
+        // merge per user (multi-day blocks become one segment; the
+        // label of the run's FIRST piece names the shift)
+        const blocks = new Map<string, LSeg[]>()
+        for (const [uid, segs] of byUser) {
+          const sorted = segs.filter((s) => s.end - s.start >= 60_000).sort((a, b) => a.start - b.start)
+          const merged: LSeg[] = []
+          for (const s of sorted) {
+            const last = merged[merged.length - 1]
+            if (last && s.start <= last.end + 60_000) last.end = Math.max(last.end, s.end)
+            else merged.push({ ...s })
+          }
+          let eff = merged
+          for (const o of offByUser.get(uid) ?? []) {
+            const next: LSeg[] = []
+            for (const s of eff) {
+              const os = Math.max(s.start, o.s)
+              const oe = Math.min(s.end, o.e)
+              if (oe - os < 60_000) {
+                next.push(s)
+                continue
+              }
+              if (os - s.start >= 60_000) next.push({ ...s, end: os })
+              if (s.end - oe >= 60_000) next.push({ ...s, start: oe })
+            }
+            eff = next
+          }
+          blocks.set(uid, eff)
+        }
+        return { blocks, supsByDate, staffedByDate }
       }
 
-      // TIME OFF FOLLOWS THE PERSON (2026-09-25, lockstep with
-      // segsForUserOnDate in the client): booked-off hours never earn
-      // a reminder, wherever the member sits that day.
-      const offByUser = new Map<string, { s: number; e: number }[]>()
-      for (const r of rows) {
-        if (r.kind !== 'timeoff' || !r.user_id) continue
-        const l = offByUser.get(r.user_id) ?? []
-        l.push({ s: Date.parse(r.start_at), e: Date.parse(r.end_at) })
-        offByUser.set(r.user_id, l)
-      }
+      const main = buildBlocks(dates, rows as EntryRowLite[])
 
-      // merge per user (multi-day blocks become one segment; the label
-      // of the run's FIRST piece names the shift) → due = merged starts
-      // inside the lead window
+      // 1) shift reminders — due = merged starts inside the lead window
       const due: { userId: string; name: string; start: number; end: number; label: string }[] = []
-      for (const [uid, segs] of byUser) {
+      if (remindersEnabled) {
+        for (const [uid, blocks] of main.blocks) {
+          const name = nameById.get(uid)
+          if (!name) continue
+          for (const m of blocks) {
+            if (m.start > now && m.start <= windowEnd) due.push({ userId: uid, name, start: m.start, end: m.end, label: m.label })
+          }
+        }
+      }
+
+      // 2) end-of-shift verify — blocks that ENDED inside the last 45
+      //    minutes get "do your times look right?" (claims dedupe)
+      const VERIFY_LOOKBACK = 45 * 60_000
+      const verifyDue: { userId: string; name: string; end: number; label: string; dates: string[] }[] = []
+      for (const [uid, blocks] of main.blocks) {
         const name = nameById.get(uid)
         if (!name) continue
-        const sorted = segs.filter((s) => s.end - s.start >= 60_000).sort((a, b) => a.start - b.start)
-        const merged: LSeg[] = []
-        for (const s of sorted) {
-          const last = merged[merged.length - 1]
-          if (last && s.start <= last.end + 60_000) last.end = Math.max(last.end, s.end)
-          else merged.push({ ...s })
-        }
-        let eff = merged
-        for (const o of offByUser.get(uid) ?? []) {
-          const next: LSeg[] = []
-          for (const s of eff) {
-            const os = Math.max(s.start, o.s)
-            const oe = Math.min(s.end, o.e)
-            if (oe - os < 60_000) {
-              next.push(s)
-              continue
-            }
-            if (os - s.start >= 60_000) next.push({ ...s, end: os })
-            if (s.end - oe >= 60_000) next.push({ ...s, start: oe })
+        for (const m of blocks) {
+          if (m.end > now || m.end <= now - VERIFY_LOOKBACK) continue
+          const covered: string[] = []
+          for (const d of dates) {
+            const dayStart = centralMs(d, '06:00')
+            const dayEnd = centralMs(addDaysIso(d, 1), '06:00')
+            if (Math.min(m.end, dayEnd) - Math.max(m.start, dayStart) >= 60_000) covered.push(d)
           }
-          eff = next
-        }
-        for (const m of eff) {
-          if (m.start > now && m.start <= windowEnd) due.push({ userId: uid, name, start: m.start, end: m.end, label: m.label })
+          if (covered.length > 0) verifyDue.push({ userId: uid, name, end: m.end, label: m.label, dates: covered })
         }
       }
+      // drop anyone who already confirmed every covered work date
+      if (verifyDue.length > 0) {
+        const uids = [...new Set(verifyDue.map((v) => v.userId))]
+        const conf = await sb
+          .from('sched_verifications')
+          .select('user_id, work_date')
+          .eq('kind', 'shift_confirm')
+          .in('user_id', uids)
+          .gte('work_date', dates[0])
+        const confSet = new Set((conf.data ?? []).map((r) => `${r.user_id}|${r.work_date}`))
+        for (let i = verifyDue.length - 1; i >= 0; i--) {
+          const v = verifyDue[i]
+          if (v.dates.every((d) => confSet.has(`${v.userId}|${d}`))) verifyDue.splice(i, 1)
+        }
+      }
+
+      // 3) supervisor attest — the work date that ended this morning,
+      //    prompted once per on-duty supervisor (15-min buffer past
+      //    the 0600 changeover; skipped once every staffed truck has
+      //    an attest row)
+      const workDateOf = (ms: number) => centralDateOf(ms - 6 * 3_600_000)
+      const nowWork = workDateOf(now)
+      const attDate = addDaysIso(nowWork, -1)
+      let attestPrompts: { userId: string; name: string }[] = []
+      if (now >= centralMs(nowWork, '06:15')) {
+        const sups = main.supsByDate.get(attDate) ?? new Set<string>()
+        const staffed = main.staffedByDate.get(attDate) ?? new Set<string>()
+        if (sups.size > 0 && staffed.size > 0) {
+          const aRes = await sb
+            .from('sched_verifications')
+            .select('unit_id')
+            .eq('kind', 'shift_attest')
+            .eq('work_date', attDate)
+          const attested = new Set((aRes.data ?? []).map((r) => r.unit_id))
+          if ([...staffed].some((u) => !attested.has(u))) {
+            attestPrompts = [...sups]
+              .map((uid) => ({ userId: uid, name: nameById.get(uid) ?? '' }))
+              .filter((x) => x.name)
+          }
+        }
+      }
+
+      // 4) pay-period sign-off — the Sunday after close: initial from
+      //    0700, last call from 0900 (crew deadline 1000); HR summary
+      //    Monday from 0700
+      const anchorDays = (d: string) => ((daysBetweenIso('2026-08-30', d) % 14) + 14) % 14
+      const centralHour = Number(
+        new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/Chicago' }).format(new Date(now)),
+      )
+      const yesterday = addDaysIso(today, -1)
+      let signoffSends: { userId: string; name: string; stage: 'initial' | 'reminder' }[] = []
+      let signoffPeriodEnd: string | null = null
+      if (anchorDays(yesterday) === 13 && centralHour >= 7) {
+        signoffPeriodEnd = yesterday
+        const pStart = addDaysIso(yesterday, -13)
+        const pDates: string[] = []
+        for (let d = pStart; d <= yesterday; d = addDaysIso(d, 1)) pDates.push(d)
+        const eP = await sb
+          .from('sched_entries')
+          .select('work_date, seat_id, user_id, kind, status, start_at, end_at, note')
+          .gte('work_date', pStart)
+          .lte('work_date', yesterday)
+        if (eP.error) {
+          // fail quiet — next tick retries; claims keep it exactly-once
+        } else {
+          const per = buildBlocks(pDates, (eP.data ?? []) as EntryRowLite[])
+          const withHours = [...per.blocks.entries()]
+            .filter(([uid, bl]) => nameById.has(uid) && bl.reduce((t, b) => t + (b.end - b.start), 0) >= 360_000)
+            .map(([uid]) => uid)
+          let signed = new Set<string>()
+          if (withHours.length > 0) {
+            const soRes = await sb
+              .from('sched_verifications')
+              .select('user_id')
+              .eq('kind', 'period_signoff')
+              .eq('period_end', yesterday)
+              .in('user_id', withHours)
+            signed = new Set((soRes.data ?? []).map((r) => r.user_id))
+          }
+          const stage: 'initial' | 'reminder' = centralHour >= 9 ? 'reminder' : 'initial'
+          signoffSends = withHours
+            .filter((u) => !signed.has(u))
+            .map((uid) => ({ userId: uid, name: nameById.get(uid)!, stage }))
+        }
+      }
+      const twoBack = addDaysIso(today, -2)
+      const summaryDue: string | null = anchorDays(twoBack) === 13 && centralHour >= 7 ? twoBack : null
 
       if (dryRun) {
         return Response.json(
           {
-            ok: true, dryRun: true, leadHours: leadH, checked: byUser.size,
+            ok: true, dryRun: true, leadHours: leadH, checked: main.blocks.size,
             due: due.map((d) => ({ name: d.name, label: d.label, start: fmtStamp(d.start), end: fmtStamp(d.end) })),
+            verifyDue: verifyDue.map((v) => ({ name: v.name, label: v.label, end: fmtStamp(v.end), dates: v.dates })),
+            attest: { date: attDate, prompts: attestPrompts.map((a) => a.name) },
+            signoff: signoffPeriodEnd
+              ? { periodEnd: signoffPeriodEnd, stage: signoffSends[0]?.stage ?? null, unsigned: signoffSends.map((s) => s.name) }
+              : null,
+            summaryDue,
           },
           { headers: CORS },
         )
@@ -1029,10 +1205,158 @@ Deno.serve(async (req: Request) => {
         delivery.sms += del.sms
         errors.push(...del.errors)
       }
-      // prune claims older than two weeks
+      // ── verification sends — push + email ONLY, never SMS ─────────
+      const claim = async (ckind: string, userId: string, ref: string): Promise<boolean> => {
+        const ins = await sb
+          .from('sched_notify_claims')
+          .upsert({ kind: ckind, user_id: userId, ref }, { onConflict: 'kind,user_id,ref', ignoreDuplicates: true })
+          .select('id')
+        if (ins.error) {
+          errors.push(`claim ${ckind}: ${ins.error.message}`)
+          return false
+        }
+        return !!ins.data && ins.data.length > 0
+      }
+
+      // end-of-shift verify
+      for (const v of verifyDue) {
+        if (!(await claim('shift_verify', v.userId, new Date(v.end).toISOString()))) continue
+        const lastDate = v.dates[v.dates.length - 1]
+        const line = `Your shift (${v.label}) ended ${fmtStamp(v.end)}. Do your scheduled times look right?`
+        const del = await deliver(
+          [v.userId],
+          'verify',
+          {
+            title: 'Shift complete — verify your times',
+            body: line,
+            tag: `sched-verify-${v.userId}-${v.end}`,
+            subject: 'WCEMS Scheduling — verify your shift times',
+            emailLines: [
+              esc(line),
+              'Open <b>My schedule</b> to confirm your times — or report extra hours / time off if the day changed.',
+            ],
+            sms: '',
+            url: `/schedule?verify=${lastDate}`,
+            channels: { sms: false },
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        errors.push(...del.errors)
+      }
+
+      // supervisor attest prompts (per-truck attest rows)
+      for (const a of attestPrompts) {
+        if (!(await claim('shift_attest', a.userId, attDate))) continue
+        const line = `Attest ${fmtDate(attDate)}: confirm each truck's roster matched who actually worked, and flag anything that changed.`
+        const del = await deliver(
+          [a.userId],
+          'verify',
+          {
+            title: "Attest yesterday's trucks",
+            body: line,
+            tag: `sched-attest-${a.userId}-${attDate}`,
+            subject: "WCEMS Scheduling — attest yesterday's trucks",
+            emailLines: [esc(line)],
+            sms: '',
+            url: `/schedule?attest=${attDate}`,
+            channels: { sms: false },
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        errors.push(...del.errors)
+      }
+
+      // pay-period sign-off prompts
+      for (const s of signoffSends) {
+        if (!signoffPeriodEnd) break
+        if (!(await claim('period_signoff', s.userId, `${signoffPeriodEnd}:${s.stage}`))) continue
+        const pl = `${fmtDate(addDaysIso(signoffPeriodEnd, -13))} – ${fmtDate(signoffPeriodEnd)}`
+        const line =
+          s.stage === 'initial'
+            ? `Review and approve your hours for ${pl} — deadline 10:00 this morning. HR keys Paycom first thing tomorrow.`
+            : `Last call: approve your pay-period hours (${pl}) by 10:00 — HR keys Paycom first thing tomorrow.`
+        const del = await deliver(
+          [s.userId],
+          'verify',
+          {
+            title: s.stage === 'initial' ? 'Approve your pay-period hours' : 'Last call — hours due by 10:00',
+            body: line,
+            tag: `sched-signoff-${s.userId}-${signoffPeriodEnd}`,
+            subject: 'WCEMS Scheduling — approve your pay-period hours',
+            emailLines: [esc(line)],
+            sms: '',
+            url: `/schedule?signoff=${signoffPeriodEnd}`,
+            channels: { sms: false },
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        errors.push(...del.errors)
+      }
+
+      // Monday-morning verification summary → editors + HR
+      if (summaryDue) {
+        const acc = await sb.from('sched_access').select('user_id, level').in('level', ['global_admin', 'scheduler', 'hr'])
+        const admins = (acc.data ?? []).map((r) => r.user_id as string)
+        if (admins.length > 0) {
+          const [soR, atR, dqR] = await Promise.all([
+            sb.from('sched_verifications').select('user_id, status').eq('kind', 'period_signoff').eq('period_end', summaryDue),
+            sb.from('sched_verifications').select('id, status').eq('kind', 'shift_attest')
+              .gte('work_date', addDaysIso(summaryDue, -13)).lte('work_date', summaryDue),
+            sb.from('sched_requests').select('id').eq('type', 'discrepancy').eq('status', 'pending'),
+          ])
+          const approved = (soR.data ?? []).filter((r) => r.status === 'approved').length
+          const disputed = (soR.data ?? []).filter((r) => r.status === 'disputed').length
+          const attests = (atR.data ?? []).length
+          const attFlags = (atR.data ?? []).filter((r) => r.status === 'flagged').length
+          const flags = (dqR.data ?? []).length
+          const pl = `${fmtDate(addDaysIso(summaryDue, -13))} – ${fmtDate(summaryDue)}`
+          const line = `Period ${pl}: ${approved} sign-offs approved · ${disputed} disputed · ${attests} truck attestations (${attFlags} flagged) · ${flags} open discrepanc${flags === 1 ? 'y' : 'ies'}.`
+          for (const uid of admins) {
+            if (!(await claim('signoff_summary', uid, summaryDue))) continue
+            const del = await deliver(
+              [uid],
+              'verify',
+              {
+                title: 'Payroll verification summary',
+                body: line,
+                tag: `sched-vsum-${uid}-${summaryDue}`,
+                subject: 'WCEMS Scheduling — payroll verification summary',
+                emailLines: [
+                  esc(line),
+                  'The full board is under Payroll → Sign-offs. Pending sign-offs and open flags are worth a look before the export goes out.',
+                ],
+                sms: '',
+                url: '/schedule',
+                channels: { sms: false },
+              },
+              null,
+            )
+            sent++
+            delivery.push += del.push
+            delivery.email += del.email
+            errors.push(...del.errors)
+          }
+        }
+      }
+
+      // prune claims older than two weeks (both tables)
       await sb.from('sched_reminders_sent').delete().lt('sent_at', new Date(now - 14 * 86_400_000).toISOString())
+      await sb.from('sched_notify_claims').delete().lt('sent_at', new Date(now - 14 * 86_400_000).toISOString())
       return Response.json(
-        { ok: true, checked: byUser.size, due: due.length, sent, delivery, errors: errors.slice(0, 20) },
+        {
+          ok: true, checked: main.blocks.size, due: due.length,
+          verify: verifyDue.length, attest: attestPrompts.length, signoff: signoffSends.length,
+          sent, delivery, errors: errors.slice(0, 20),
+        },
         { headers: CORS },
       )
     }

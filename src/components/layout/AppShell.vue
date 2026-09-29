@@ -12,6 +12,7 @@ import GlobalSearchOverlay from './GlobalSearchOverlay.vue'
 import UserProfileModal from './UserProfileModal.vue'
 import ProfileCompletionModal from './ProfileCompletionModal.vue'
 import InstallPromptBanner from './InstallPromptBanner.vue'
+import VerifyNudge from './VerifyNudge.vue'
 
 const navOpen = ref(false)
 
@@ -73,5 +74,10 @@ const schedApp = computed(() => route.path.startsWith('/schedule'))
          localStorage dismiss flag — desktop + already-installed users
          never see it. -->
     <InstallPromptBanner />
+
+    <!-- Time-verification fallback for members WITHOUT push: pops once
+         per session when a shift confirm or pay-period sign-off is
+         waiting. Self-gates on push subscriptions + schedule access. -->
+    <VerifyNudge />
   </div>
 </template>

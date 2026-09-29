@@ -89,7 +89,7 @@ export interface SchedEntry {
 
 export interface SchedRequest {
   id: string
-  type: 'pickup' | 'trade' | 'giveaway' | 'time_off' | 'extra_hours'
+  type: 'pickup' | 'trade' | 'giveaway' | 'time_off' | 'extra_hours' | 'discrepancy'
   status: 'pending' | 'partner_accepted' | 'approved' | 'denied' | 'cancelled'
   requesterId: string
   counterpartyId: string | null
@@ -169,12 +169,16 @@ export interface MemberSettings {
  *  sched_member_settings.notify as {key: {push,email,sms}} — a missing
  *  key or channel means ON. The notifications/page-out build consumes
  *  these; until then the matrix records preferences ahead of delivery. */
-export const NOTIFY_TYPES: { key: string; label: string; editorOnly?: boolean }[] = [
+export const NOTIFY_TYPES: { key: string; label: string; editorOnly?: boolean; noSms?: boolean }[] = [
   { key: 'request_decision', label: 'A request of mine is approved or denied' },
   { key: 'schedule_change', label: 'My schedule is changed by a scheduler' },
   { key: 'open_shift', label: 'Open shifts & page-outs' },
   { key: 'trade_activity', label: 'Trades — offers and claims on my postings' },
   { key: 'reminders', label: 'Shift reminders' },
+  /* Verification prompts NEVER text — push + email only (Justin,
+     2026-09-28: routine nags would run up Twilio). The edge function
+     hard-disables the SMS lane for these regardless of matrix state. */
+  { key: 'verify', label: 'Time verification — end of shift & pay period', noSms: true },
   { key: 'announcements', label: 'Announcements from the scheduler' },
   { key: 'approvals', label: 'A request needs approval', editorOnly: true },
 ]
@@ -1094,6 +1098,7 @@ export const REQ_TYPE_LABELS: Record<string, string> = {
   extra_hours: 'Extra hours',
   giveaway: 'Giveaway',
   trade: 'Trade',
+  discrepancy: 'Time discrepancy',
 }
 
 /** Undecided requests targeting a date — the Chief sees them ON the
@@ -5003,6 +5008,402 @@ async function fetchAccessList(): Promise<{ userId: string; level: string }[]> {
   return (res.data ?? []).map((r) => ({ userId: r.user_id, level: r.level }))
 }
 
+// ── time verification (end-of-shift · truck attest · pay-period) ────
+// Three-layer attestation chain (Justin, 2026-09-28): members confirm
+// their own times when a shift block ends, the on-duty supervisors
+// attest each truck's roster the morning after (per truck — S201 may
+// not know about a change on S202's side of the county), and everyone
+// signs off their pay-period hours before HR keys Paycom Monday
+// morning (crew deadline: 10:00 Sunday). Discrepancies ride
+// sched_requests as type 'discrepancy' so the existing queue and
+// "Already handled" close them. The sched-notify cron sends the
+// prompts — push + email ONLY, never SMS.
+
+export interface VerificationRow {
+  id: string
+  kind: 'shift_confirm' | 'shift_attest' | 'period_signoff'
+  userId: string
+  workDate: string | null
+  unitId: string | null
+  periodEnd: string | null
+  status: 'confirmed' | 'flagged' | 'approved' | 'disputed'
+  note: string | null
+  snapshot: Record<string, unknown>
+  createdAt: string
+}
+
+function mapVerification(r: Record<string, unknown>): VerificationRow {
+  return {
+    id: r.id as string,
+    kind: r.kind as VerificationRow['kind'],
+    userId: r.user_id as string,
+    workDate: (r.work_date as string | null) ?? null,
+    unitId: (r.unit_id as string | null) ?? null,
+    periodEnd: (r.period_end as string | null) ?? null,
+    status: r.status as VerificationRow['status'],
+    note: (r.note as string | null) ?? null,
+    snapshot: (r.snapshot as Record<string, unknown>) ?? {},
+    createdAt: r.created_at as string,
+  }
+}
+
+/** One ended-but-unconfirmed run of shifts on my schedule. */
+export interface VerifyBlock {
+  dates: string[] // work dates the run covers, oldest first
+  lines: { dateIso: string; window: string; hours: number }[]
+  endMs: number
+  hours: number
+}
+
+export interface SignoffPending {
+  period: PayPeriod
+  dueText: string
+  overdue: boolean
+}
+
+async function fetchEntriesFresh(startIso: string, endIso: string): Promise<SchedEntry[] | null> {
+  const res = await supabase
+    .from('sched_entries')
+    .select('*')
+    .gte('work_date', startIso)
+    .lte('work_date', endIso)
+  if (res.error) return null
+  return (res.data ?? []).map(mapEntry)
+}
+
+/** The most recently CLOSED pay period — the one sign-off targets. */
+export function lastClosedPeriod(todayIso: string): PayPeriod {
+  const cur = payPeriodFor(todayIso)
+  return payPeriodFor(addDaysIso(cur.start, -1))
+}
+
+/**
+ * Everything the signed-in member still owes: shift runs that ended
+ * without a confirmation, and the last closed period's sign-off.
+ * Fresh-fetched; call after ensureLoaded().
+ */
+async function fetchMyVerifyPending(): Promise<{
+  blocks: VerifyBlock[]
+  signoff: SignoffPending | null
+}> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (auth.usingDevStub || !me) return { blocks: [], signoff: null }
+  const today = todayCentralIso()
+  const start = addDaysIso(today, -4)
+  const rows = await fetchEntriesFresh(start, today)
+  if (rows === null) return { blocks: [], signoff: null }
+
+  // per-date segments → merged runs (a 48 abuts at 0600 and joins)
+  const dates: string[] = []
+  for (let d = start; d <= today; d = addDaysIso(d, 1)) dates.push(d)
+  const perDate = new Map<string, Seg[]>()
+  const all: Seg[] = []
+  for (const d of dates) {
+    const segs = segsForUserOnDate(d, me, rows)
+    perDate.set(d, segs)
+    all.push(...segs)
+  }
+  const now = Date.now()
+  const ended = mergeSegs(all).filter((r) => r.end <= now)
+
+  let blocks: VerifyBlock[] = []
+  if (ended.length > 0) {
+    const cRes = await supabase
+      .from('sched_verifications')
+      .select('work_date')
+      .eq('kind', 'shift_confirm')
+      .eq('user_id', me)
+      .gte('work_date', start)
+    const confirmed = new Set(
+      ((cRes.data ?? []) as { work_date: string }[]).map((r) => r.work_date),
+    )
+    for (const run of ended) {
+      const covered = dates.filter((d) => {
+        const dayStart = tsMs(centralTs(d, '06:00'))
+        const dayEnd = tsMs(centralTs(addDaysIso(d, 1), '06:00'))
+        return Math.min(run.end, dayEnd) - Math.max(run.start, dayStart) >= MIN_SEG_MS
+      })
+      if (covered.length === 0 || covered.every((d) => confirmed.has(d))) continue
+      const lines = covered.map((d) => {
+        const segs = (perDate.get(d) ?? []).filter(
+          (s) => Math.min(s.end, run.end) - Math.max(s.start, run.start) >= MIN_SEG_MS,
+        )
+        const window = segs
+          .map((s) => `${hhmm(new Date(s.start).toISOString())} – ${hhmm(new Date(s.end).toISOString())}`)
+          .join(', ')
+        return { dateIso: d, window, hours: round1(segHours(segs)) }
+      })
+      blocks.push({
+        dates: covered,
+        lines,
+        endMs: run.end,
+        hours: round1((run.end - run.start) / 3_600_000),
+      })
+    }
+    blocks = blocks.sort((a, b) => a.endMs - b.endMs)
+  }
+
+  // pay-period sign-off: pending until answered, only if they had hours
+  let signoff: SignoffPending | null = null
+  const period = lastClosedPeriod(today)
+  const sRes = await supabase
+    .from('sched_verifications')
+    .select('id')
+    .eq('kind', 'period_signoff')
+    .eq('user_id', me)
+    .eq('period_end', period.end)
+    .maybeSingle()
+  if (!sRes.error && !sRes.data) {
+    const pRows = await fetchEntriesFresh(period.start, period.end)
+    if (pRows) {
+      let total = 0
+      for (let d = period.start; d <= period.end; d = addDaysIso(d, 1)) {
+        total += segHours(segsForUserOnDate(d, me, pRows))
+      }
+      if (total >= 0.1) {
+        const dueIso = addDaysIso(period.end, 1)
+        const dueMs = tsMs(centralTs(dueIso, '10:00'))
+        const dueText = `${new Date(`${dueIso}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} 10:00`
+        signoff = { period, dueText, overdue: now > dueMs }
+      }
+    }
+  }
+  return { blocks, signoff }
+}
+
+/** "My times are right" — one confirm row per covered work date. */
+async function confirmMyTimes(block: VerifyBlock): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (auth.usingDevStub || !me) return 'Not available in the dev preview.'
+  for (const d of block.dates) {
+    const res = await supabase.from('sched_verifications').insert({
+      kind: 'shift_confirm',
+      user_id: me,
+      work_date: d,
+      status: 'confirmed',
+      snapshot: { lines: block.lines.filter((l) => l.dateIso === d) },
+    })
+    // 23505 = already confirmed (double-tap, or a prior partial run)
+    if (res.error && res.error.code !== '23505') return res.error.message
+  }
+  audit('verify.confirm', `Confirmed shift times for ${block.dates.join(', ')}`, { entity: 'verification' })
+  return null
+}
+
+/** A "something's off" note → the approval queue as a discrepancy. */
+async function fileDiscrepancy(opts: {
+  workDate: string
+  note: string
+  unitCode?: string | null
+  subjectUserId?: string | null
+}): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (auth.usingDevStub || !me) return 'Not available in the dev preview.'
+  const note = opts.note.trim()
+  if (!note) return 'Say what was off — the note is what the schedulers act on.'
+  const res = await supabase
+    .from('sched_requests')
+    .insert({
+      type: 'discrepancy',
+      requester_id: me,
+      counterparty_id: opts.subjectUserId ?? null,
+      work_date: opts.workDate,
+      unit_code: opts.unitCode ?? null,
+      comments: note.slice(0, 500),
+    })
+    .select('id')
+  if (res.error) return res.error.message
+  notify('request_submitted', {
+    requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id),
+  })
+  audit(
+    'verify.discrepancy',
+    `Flagged a time discrepancy on ${opts.workDate}${opts.unitCode ? ` (${opts.unitCode})` : ''}: "${note.slice(0, 80)}"`,
+    { entity: 'request' },
+  )
+  await loadRequests()
+  return null
+}
+
+/** Attest rows for one work date (all trucks). */
+async function fetchAttestDay(dateIso: string): Promise<VerificationRow[]> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return []
+  const res = await supabase
+    .from('sched_verifications')
+    .select('*')
+    .eq('kind', 'shift_attest')
+    .eq('work_date', dateIso)
+  if (res.error) return []
+  return (res.data ?? []).map(mapVerification)
+}
+
+/**
+ * One truck, one verdict: roster matched, or a flag with a note. A
+ * flag also files the note as a discrepancy so the queue carries it
+ * to the schedulers.
+ */
+async function attestTruck(
+  dateIso: string,
+  unitId: string,
+  flagged: boolean,
+  note: string,
+): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (auth.usingDevStub || !me) return 'Not available in the dev preview.'
+  const unit = units.value.find((u) => u.id === unitId)
+  if (flagged && !note.trim())
+    return 'Say what changed — the note is what payroll and the schedulers act on.'
+  // freeze what the board showed at attest time
+  const um = dayModel(dateIso).units.find((x) => x.unit.id === unitId)
+  const snapRows =
+    um?.seats.flatMap((sm) =>
+      sm.rows.map((r) => `${sm.seat.label}: ${r.open ? 'OPEN' : r.name} ${r.start}–${r.end}`),
+    ) ?? []
+  const res = await supabase.from('sched_verifications').insert({
+    kind: 'shift_attest',
+    user_id: me,
+    work_date: dateIso,
+    unit_id: unitId,
+    status: flagged ? 'flagged' : 'confirmed',
+    note: note.trim() || null,
+    snapshot: { rows: snapRows },
+  })
+  if (res.error) {
+    if (res.error.code === '23505')
+      return `${unit?.code ?? 'This truck'} is already attested — another supervisor beat you to it.`
+    return res.error.message
+  }
+  if (flagged) await fileDiscrepancy({ workDate: dateIso, note, unitCode: unit?.code ?? null })
+  audit(
+    'verify.attest',
+    `${flagged ? 'Flagged' : 'Attested'} ${unit?.code ?? 'unit'} for ${dateIso}${flagged ? ` — "${note.trim().slice(0, 80)}"` : ''}`,
+    { entity: 'verification' },
+  )
+  return null
+}
+
+/** Editors: unwind a mistaken verification row. */
+async function deleteVerification(id: string): Promise<string | null> {
+  const res = await supabase.from('sched_verifications').delete().eq('id', id)
+  if (res.error) return res.error.message
+  audit('verify.delete', 'Removed a verification record', { entity: 'verification', entityId: id })
+  return null
+}
+
+/** Per-day hours in a period — the sign-off review table. Worked
+ *  windows count toward the total; time-off rows show labeled. */
+async function fetchMyPeriodBreakdown(
+  period: PayPeriod,
+  userId?: string,
+): Promise<{
+  rows: { dateIso: string; window: string; hours: number; label?: string }[]
+  total: number
+  error: string | null
+}> {
+  const auth = useAuthStore()
+  const me = userId ?? auth.appUser?.id
+  if (auth.usingDevStub || !me) return { rows: [], total: 0, error: null }
+  const pRows = await fetchEntriesFresh(period.start, period.end)
+  if (pRows === null) return { rows: [], total: 0, error: 'Could not load the period.' }
+  const out: { dateIso: string; window: string; hours: number; label?: string }[] = []
+  let total = 0
+  for (let d = period.start; d <= period.end; d = addDaysIso(d, 1)) {
+    const segs = segsForUserOnDate(d, me, pRows)
+    if (segs.length > 0) {
+      const window = segs
+        .map((s) => `${hhmm(new Date(s.start).toISOString())} – ${hhmm(new Date(s.end).toISOString())}`)
+        .join(', ')
+      const hrs = round1(segHours(segs))
+      total += hrs
+      out.push({ dateIso: d, window, hours: hrs })
+    }
+    for (const o of pRows.filter(
+      (e) => e.kind === 'timeoff' && e.userId === me && e.workDate === d,
+    )) {
+      out.push({
+        dateIso: d,
+        window: `${hhmm(o.startAt)} – ${hhmm(o.endAt)}`,
+        hours: round1((tsMs(o.endAt) - tsMs(o.startAt)) / 3_600_000),
+        label: OFF_LABELS[o.offType ?? ''] ?? 'Time off',
+      })
+    }
+  }
+  return { rows: out, total: round1(total), error: null }
+}
+
+/** Approve (or dispute) my pay-period hours. */
+async function signoffPeriod(
+  period: PayPeriod,
+  total: number,
+  disputed = false,
+  note = '',
+): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (auth.usingDevStub || !me) return 'Not available in the dev preview.'
+  const res = await supabase.from('sched_verifications').insert({
+    kind: 'period_signoff',
+    user_id: me,
+    period_end: period.end,
+    status: disputed ? 'disputed' : 'approved',
+    note: note.trim() || null,
+    snapshot: { total },
+  })
+  if (res.error) {
+    if (res.error.code === '23505') return 'This period is already signed off.'
+    return res.error.message
+  }
+  audit(
+    disputed ? 'verify.dispute' : 'verify.signoff',
+    `${disputed ? 'Disputed' : 'Approved'} pay-period hours ${period.label}${note ? ` — "${note.trim().slice(0, 80)}"` : ''}`,
+    { entity: 'verification' },
+  )
+  return null
+}
+
+/** Editors/HR: the whole verification picture for one pay period. */
+async function fetchVerifyBoard(period: PayPeriod): Promise<{
+  signoffs: VerificationRow[]
+  attests: VerificationRow[]
+  confirms: VerificationRow[]
+  error: string | null
+}> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return { signoffs: [], attests: [], confirms: [], error: null }
+  const [sRes, aRes, cRes] = await Promise.all([
+    supabase
+      .from('sched_verifications')
+      .select('*')
+      .eq('kind', 'period_signoff')
+      .eq('period_end', period.end),
+    supabase
+      .from('sched_verifications')
+      .select('*')
+      .eq('kind', 'shift_attest')
+      .gte('work_date', period.start)
+      .lte('work_date', period.end),
+    supabase
+      .from('sched_verifications')
+      .select('*')
+      .eq('kind', 'shift_confirm')
+      .gte('work_date', period.start)
+      .lte('work_date', period.end),
+  ])
+  const err = sRes.error ?? aRes.error ?? cRes.error
+  if (err) return { signoffs: [], attests: [], confirms: [], error: err.message }
+  return {
+    signoffs: (sRes.data ?? []).map(mapVerification),
+    attests: (aRes.data ?? []).map(mapVerification),
+    confirms: (cRes.data ?? []).map(mapVerification),
+    error: null,
+  }
+}
+
 // ── public composable ────────────────────────────────────────────────
 
 export function useSchedule() {
@@ -5180,5 +5581,15 @@ export function useSchedule() {
     fetchMemberSettings,
     saveMemberSettings,
     setCredential,
+    // time verification
+    fetchMyVerifyPending,
+    confirmMyTimes,
+    fileDiscrepancy,
+    fetchAttestDay,
+    attestTruck,
+    deleteVerification,
+    fetchMyPeriodBreakdown,
+    signoffPeriod,
+    fetchVerifyBoard,
   }
 }

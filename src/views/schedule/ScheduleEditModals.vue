@@ -5,6 +5,7 @@ import {
   useSchedule,
   platoonFor,
   payPeriodFor,
+  addDaysIso,
   hhmm,
   personSortKey,
   OFF_LABELS,
@@ -12,6 +13,7 @@ import {
   type HoursWarning,
   type OpenSeatInfo,
   type SchedRequest,
+  type VerificationRow,
 } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
@@ -1007,6 +1009,164 @@ async function deleteTimeOffEdit(): Promise<void> {
   editor.closeAll()
 }
 
+/* ── per-truck attestation drawer (Justin, 2026-09-28) ───────────────
+   One row per truck per work date — per truck because S201 may not
+   know about a change on S202's side of the county. Supervisors
+   confirm each unit's roster matched who actually worked; a flag
+   takes a note and files a discrepancy for the schedulers. */
+const attRows = ref<VerificationRow[]>([])
+const attFlagUnit = ref<string | null>(null)
+const attNote = ref('')
+const attBusyUnit = ref<string | null>(null)
+
+const canAttest = computed(() => sched.canEdit.value || sched.level.value === 'supervisor')
+
+const attUnits = computed(() => {
+  const a = editor.attest.value
+  if (!a) return []
+  return sched.dayModel(a.dateIso).units.map((um) => ({
+    unit: um.unit,
+    rows: um.seats.flatMap((sm) =>
+      sm.rows.map((r, i) => ({
+        key: `${sm.seat.id}-${i}`,
+        text: `${sm.seat.label}: ${r.open ? 'Open' : r.name} · ${r.start} – ${r.end}`,
+        open: r.open,
+      })),
+    ),
+    state: attRows.value.find((v) => v.unitId === um.unit.id) ?? null,
+  }))
+})
+
+const attDone = computed(() => attUnits.value.filter((u) => u.state).length)
+
+async function loadAttest(): Promise<void> {
+  const a = editor.attest.value
+  if (!a) return
+  // deep links can land outside the loaded board window
+  if (a.dateIso < sched.rangeStart.value || a.dateIso > sched.rangeEnd.value) {
+    await sched.loadRange(addDaysIso(a.dateIso, -7), addDaysIso(a.dateIso, 7))
+  }
+  attRows.value = await sched.fetchAttestDay(a.dateIso)
+}
+
+watch(
+  () => editor.attest.value?.dateIso,
+  (d) => {
+    attFlagUnit.value = null
+    attNote.value = ''
+    attRows.value = []
+    if (d) void loadAttest()
+  },
+)
+
+async function attestOne(unitId: string, flagged: boolean): Promise<void> {
+  const a = editor.attest.value
+  if (!a || attBusyUnit.value) return
+  attBusyUnit.value = unitId
+  err.value = null
+  const e = await sched.attestTruck(a.dateIso, unitId, flagged, flagged ? attNote.value : '')
+  attBusyUnit.value = null
+  if (e) {
+    err.value = e
+    await loadAttest() // someone else may have gotten there first
+    return
+  }
+  attFlagUnit.value = null
+  attNote.value = ''
+  await loadAttest()
+}
+
+async function attestUndo(rowId: string): Promise<void> {
+  err.value = null
+  const e = await sched.deleteVerification(rowId)
+  if (e) {
+    err.value = e
+    return
+  }
+  await loadAttest()
+}
+
+function attWho(v: VerificationRow): string {
+  const n = sched.personById.value.get(v.userId)?.fullName ?? 'Unknown'
+  const t = new Date(v.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+  return `${n} · ${t}`
+}
+
+/* ── pay-period sign-off drawer ──────────────────────────────────────
+   Crew approve their own hours before HR keys Paycom Monday morning;
+   the crew-facing deadline is 10:00 Sunday. A dispute picks the day,
+   carries a note into the discrepancy queue, and still records the
+   sign-off row (as 'disputed') so the payroll board shows it. */
+const soRows = ref<{ dateIso: string; window: string; hours: number; label?: string }[]>([])
+const soTotal = ref(0)
+const soLoaded = ref(false)
+const soDone = ref<string | null>(null)
+const soMode = ref<'review' | 'dispute'>('review')
+const soDisputeDate = ref('')
+const soDisputeNote = ref('')
+
+const soPeriod = computed(() => {
+  const s = editor.signoff.value
+  return s ? payPeriodFor(s.periodEnd) : null
+})
+
+const soDates = computed(() => {
+  if (!soPeriod.value) return []
+  const out: string[] = []
+  for (let d = soPeriod.value.start; d <= soPeriod.value.end; d = addDaysIso(d, 1)) out.push(d)
+  return out
+})
+
+watch(
+  () => editor.signoff.value?.periodEnd,
+  async (pe) => {
+    soLoaded.value = false
+    soDone.value = null
+    soMode.value = 'review'
+    soDisputeDate.value = ''
+    soDisputeNote.value = ''
+    if (!pe || !soPeriod.value) return
+    const res = await sched.fetchMyPeriodBreakdown(soPeriod.value)
+    soRows.value = res.rows
+    soTotal.value = res.total
+    soLoaded.value = true
+    if (res.error) err.value = res.error
+  },
+)
+
+async function soApprove(): Promise<void> {
+  if (!soPeriod.value || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.signoffPeriod(soPeriod.value, soTotal.value)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  soDone.value = 'approved'
+  flash('Hours approved — payroll sees your sign-off.')
+}
+
+async function soDisputeSend(): Promise<void> {
+  if (!soPeriod.value || busy.value) return
+  if (!soDisputeDate.value || !soDisputeNote.value.trim()) {
+    err.value = 'Pick the day and say what is wrong.'
+    return
+  }
+  busy.value = true
+  err.value = null
+  let e = await sched.fileDiscrepancy({ workDate: soDisputeDate.value, note: soDisputeNote.value })
+  if (!e) e = await sched.signoffPeriod(soPeriod.value, soTotal.value, true, soDisputeNote.value)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  soDone.value = 'disputed'
+  flash('Sent — the schedulers will straighten it out before payroll.')
+}
+
 async function submitAddSeat(): Promise<void> {
   const a = editor.add.value
   if (!a || busy.value) return
@@ -1351,7 +1511,11 @@ const reqRows = computed<[string, string][]>(() => {
   const pos = [r.unitCode, r.positionLabel].filter(Boolean).join(' ')
   if (pos) rows.push(['Shift', pos])
   if (r.type === 'extra_hours' && r.timeType) rows.push(['Time type', r.timeType])
-  if (r.counterpartyId) rows.push([r.type === 'trade' ? 'Partner' : 'Claimed by', personName(r.counterpartyId)])
+  if (r.counterpartyId)
+    rows.push([
+      r.type === 'trade' ? 'Partner' : r.type === 'discrepancy' ? 'About' : 'Claimed by',
+      personName(r.counterpartyId),
+    ])
   if (r.type === 'trade' && r.counterWorkDate && r.counterStartAt && r.counterEndAt) {
     const cSeat = sched.seats.value.find((s) => s.id === r.counterSeatId)
     const cUnit = sched.units.value.find((u) => u.id === cSeat?.unitId)
@@ -2168,20 +2332,32 @@ async function reqCancel() {
                 <li v-for="w in reqChips" :key="w.code + w.message">{{ w.message }}</li>
               </ul>
             </div>
-            <button class="em__btn em__btn--primary" :disabled="busy" @click="reqDecide(true)">
-              {{ busy ? 'Working…' : reqConfirm ? 'Approve anyway' : 'Approve' }}
-            </button>
-            <button class="em__btn em__btn--danger" :disabled="busy" @click="reqDecide(false)">
-              Deny
-            </button>
-            <button
-              class="em__btn em__btn--ghost"
-              :disabled="busy"
-              title="Close this request without changing the schedule — for a change you already made by hand"
-              @click="reqMarkHandled"
-            >
-              Already handled — schedule updated by hand
-            </button>
+            <!-- a discrepancy has nothing to apply — the fix happens by
+                 hand with the day tools, then the flag gets closed -->
+            <template v-if="reqObj.type === 'discrepancy'">
+              <button class="em__btn em__btn--primary" :disabled="busy" @click="reqMarkHandled">
+                {{ busy ? 'Working…' : 'Already handled — schedule updated by hand' }}
+              </button>
+              <button class="em__btn em__btn--danger" :disabled="busy" @click="reqDecide(false)">
+                Dismiss — no change needed
+              </button>
+            </template>
+            <template v-else>
+              <button class="em__btn em__btn--primary" :disabled="busy" @click="reqDecide(true)">
+                {{ busy ? 'Working…' : reqConfirm ? 'Approve anyway' : 'Approve' }}
+              </button>
+              <button class="em__btn em__btn--danger" :disabled="busy" @click="reqDecide(false)">
+                Deny
+              </button>
+              <button
+                class="em__btn em__btn--ghost"
+                :disabled="busy"
+                title="Close this request without changing the schedule — for a change you already made by hand"
+                @click="reqMarkHandled"
+              >
+                Already handled — schedule updated by hand
+              </button>
+            </template>
           </template>
           <button
             v-else-if="reqIsMine && reqObj.status === 'pending'"
@@ -2233,6 +2409,131 @@ async function reqCancel() {
           {{ toConfirmDelete ? 'Really delete this time off?' : 'Delete — remove it from this day' }}
         </button>
         <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+      </div>
+    </div>
+
+    <!-- ── per-truck attestation (supervisors + editors) ──────────── -->
+    <div v-if="editor.attest.value" class="em__overlay" @click.self="editor.closeAll()">
+      <div class="em__modal">
+        <h3 class="em__title">Attest the trucks — {{ fmtLong(editor.attest.value.dateIso) }}</h3>
+        <p class="em__sub">
+          Confirm each truck's roster matched who actually worked. Flag a truck to say what
+          changed — the note goes straight to the schedulers, and payroll sees the attestation.
+        </p>
+        <p class="em__attprog">{{ attDone }} of {{ attUnits.length }} attested</p>
+        <p v-if="err" class="em__error">{{ err }}</p>
+        <div v-for="u in attUnits" :key="u.unit.id" class="em__attunit">
+          <div class="em__atthead">
+            <b>{{ u.unit.code }}</b>
+            <span
+              v-if="u.state"
+              class="em__attstate"
+              :class="{ 'em__attstate--flag': u.state.status === 'flagged' }"
+            >
+              {{ u.state.status === 'flagged' ? 'Flagged' : 'Matched' }} — {{ attWho(u.state) }}
+              <button
+                v-if="sched.canEdit.value"
+                class="em__attundo"
+                title="Undo this attestation"
+                @click="attestUndo(u.state.id)"
+              >✕</button>
+            </span>
+          </div>
+          <p v-for="row in u.rows" :key="row.key" class="em__attrow" :class="{ 'em__attrow--open': row.open }">
+            {{ row.text }}
+          </p>
+          <p v-if="u.state?.note" class="em__attnote">"{{ u.state.note }}"</p>
+          <template v-if="!u.state && canAttest">
+            <template v-if="attFlagUnit === u.unit.id">
+              <textarea
+                v-model="attNote"
+                class="em__input em__textarea"
+                rows="2"
+                placeholder="What changed? e.g. 'Dodd left sick 1400 — covered by Herrera, no extra punch'"
+              ></textarea>
+              <div class="em__attbtns">
+                <button class="em__btn em__btn--danger" :disabled="attBusyUnit === u.unit.id" @click="attestOne(u.unit.id, true)">
+                  {{ attBusyUnit === u.unit.id ? 'Working…' : 'Save flag' }}
+                </button>
+                <button class="em__btn em__btn--ghost" @click="attFlagUnit = null; attNote = ''">Cancel</button>
+              </div>
+            </template>
+            <div v-else class="em__attbtns">
+              <button class="em__btn em__btn--primary" :disabled="attBusyUnit === u.unit.id" @click="attestOne(u.unit.id, false)">
+                {{ attBusyUnit === u.unit.id ? 'Working…' : 'Roster matched' }}
+              </button>
+              <button class="em__btn" @click="attFlagUnit = u.unit.id; attNote = ''">Flag</button>
+            </div>
+          </template>
+        </div>
+        <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+      </div>
+    </div>
+
+    <!-- ── pay-period sign-off (the member's own hours) ───────────── -->
+    <div v-if="editor.signoff.value" class="em__overlay" @click.self="editor.closeAll()">
+      <div class="em__modal">
+        <h3 class="em__title">Approve your hours — {{ soPeriod?.label }}</h3>
+        <p class="em__sub">
+          Look these over before payroll: all time should be accurate by 10:00 Sunday of
+          payroll week — HR starts keying Paycom first thing Monday morning.
+        </p>
+        <p v-if="err" class="em__error">{{ err }}</p>
+        <template v-if="soDone">
+          <p class="em__sodone">
+            {{ soDone === 'approved'
+              ? 'Approved — thank you. Payroll sees your sign-off.'
+              : 'Dispute sent — the schedulers will straighten it out before payroll.' }}
+          </p>
+          <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+        </template>
+        <template v-else-if="soLoaded">
+          <table class="em__sotable">
+            <tbody>
+              <tr v-for="(r, i) in soRows" :key="i" :class="{ 'em__sooff': r.label }">
+                <td>{{ fmtShort(r.dateIso) }}</td>
+                <td>{{ r.label ? `${r.label} · ${r.window}` : r.window }}</td>
+                <td class="em__sohrs">{{ r.hours.toFixed(1) }}</td>
+              </tr>
+              <tr v-if="soRows.length === 0">
+                <td colspan="3">No hours on the schedule this period.</td>
+              </tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2">Worked total</td>
+                <td class="em__sohrs">{{ soTotal.toFixed(1) }}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <template v-if="soMode === 'review'">
+            <button class="em__btn em__btn--primary" :disabled="busy" @click="soApprove">
+              {{ busy ? 'Working…' : 'Approve — my times are right' }}
+            </button>
+            <button class="em__btn" @click="soMode = 'dispute'">Something's wrong</button>
+            <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+          </template>
+          <template v-else>
+            <label class="em__field">
+              <span>Which day?</span>
+              <select v-model="soDisputeDate" class="em__input">
+                <option value="" disabled>Pick the day</option>
+                <option v-for="d in soDates" :key="d" :value="d">{{ fmtShort(d) }}</option>
+              </select>
+            </label>
+            <textarea
+              v-model="soDisputeNote"
+              class="em__input em__textarea"
+              rows="3"
+              placeholder="What's off? e.g. 'Held over until 0130 — extra hours never entered'"
+            ></textarea>
+            <button class="em__btn em__btn--primary" :disabled="busy" @click="soDisputeSend">
+              {{ busy ? 'Sending…' : 'Send to the schedulers' }}
+            </button>
+            <button class="em__btn em__btn--ghost" @click="soMode = 'review'">Back</button>
+          </template>
+        </template>
+        <p v-else class="em__notetext">Loading your period…</p>
       </div>
     </div>
 
@@ -2305,6 +2606,120 @@ async function reqCancel() {
   color: var(--color-ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ── attestation + sign-off drawers ── */
+.em__attprog {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--color-muted);
+  margin: -0.2rem 0 0.3rem;
+}
+
+.em__attunit {
+  border: 1px solid var(--color-line-soft);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 0.55rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.em__atthead {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--color-ink);
+}
+
+.em__attstate {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: oklch(0.5 0.12 148);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  text-align: right;
+}
+
+.em__attstate--flag {
+  color: oklch(0.52 0.16 60);
+}
+
+.em__attundo {
+  border: 0;
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0 2px;
+}
+
+.em__attundo:hover {
+  color: var(--color-danger-500);
+}
+
+.em__attrow {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.em__attrow--open {
+  color: var(--color-danger-500);
+}
+
+.em__attnote {
+  margin: 0;
+  font-size: 0.78rem;
+  color: oklch(0.52 0.16 60);
+  font-style: italic;
+}
+
+.em__attbtns {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.em__attbtns .em__btn {
+  flex: 1;
+}
+
+.em__sotable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin-bottom: 0.4rem;
+}
+
+.em__sotable td {
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.em__sohrs {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.em__sotable tfoot td {
+  border-bottom: 0;
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+.em__sooff td {
+  color: oklch(0.5 0.12 60);
+}
+
+.em__sodone {
+  font-size: 0.9rem;
+  font-weight: 650;
+  color: oklch(0.45 0.12 148);
 }
 
 .em__toast {

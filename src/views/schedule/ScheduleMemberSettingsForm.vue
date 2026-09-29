@@ -160,7 +160,15 @@ function fmtUnavail(iso: string): string {
             <tr v-for="t in notifyTypes" :key="t.key">
               <td class="msf__ntype">{{ t.label }}</td>
               <td v-for="ch in NOTIFY_CHANNELS" :key="ch.key">
+                <!-- verification prompts never text (cost control) —
+                     the cell shows a dash instead of a dead checkbox -->
+                <span
+                  v-if="ch.key === 'sms' && t.noSms"
+                  class="msf__nna"
+                  title="This type never texts — push and email only"
+                >—</span>
                 <input
+                  v-else
                   type="checkbox"
                   :checked="nChecked(t.key, ch.key)"
                   :disabled="ch.key === 'sms' && !set.smsOptIn"
@@ -319,6 +327,11 @@ function fmtUnavail(iso: string): string {
   padding: 0.3rem 0.5rem;
   border-top: 1px solid var(--color-line-soft);
   text-align: center;
+}
+
+.msf__nna {
+  color: var(--color-muted);
+  cursor: help;
 }
 
 .msf__ntable td.msf__ntype {

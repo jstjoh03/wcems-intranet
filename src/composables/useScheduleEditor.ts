@@ -126,6 +126,14 @@ const myShift = ref<MyShiftCtx | null>(null)
 const note = ref<NoteCtx | null>(null)
 const request = ref<RequestCtx | null>(null)
 const timeOff = ref<TimeOffCtx | null>(null)
+const attest = ref<{ dateIso: string } | null>(null)
+const signoff = ref<{ periodEnd: string } | null>(null)
+
+/** Verify cards hand off to the Requests tab with this prefill — "I
+ *  worked extra" / "I left early" open the right form on the right
+ *  date instead of a blank one. Consumed (and cleared) by
+ *  ScheduleRequestsPanel. */
+const requestIntent = ref<{ kind: 'extra' | 'timeoff'; dateIso: string } | null>(null)
 
 function closeAll(): void {
   timeOff.value = null
@@ -139,6 +147,8 @@ function closeAll(): void {
   myShift.value = null
   note.value = null
   request.value = null
+  attest.value = null
+  signoff.value = null
 }
 
 export function useScheduleEditor() {
@@ -303,6 +313,18 @@ export function useScheduleEditor() {
     request.value = { requestId }
   }
 
+  /** Supervisors/editors: the per-truck attestation drawer for a date. */
+  function openAttest(dateIso: string): void {
+    closeAll()
+    attest.value = { dateIso }
+  }
+
+  /** The member's pay-period sign-off drawer. */
+  function openSignoff(periodEnd: string): void {
+    closeAll()
+    signoff.value = { periodEnd }
+  }
+
   return {
     slot,
     person,
@@ -330,6 +352,11 @@ export function useScheduleEditor() {
     openRequest,
     openTimeOffEdit,
     timeOff,
+    attest,
+    signoff,
+    openAttest,
+    openSignoff,
+    requestIntent,
     closeAll,
   }
 

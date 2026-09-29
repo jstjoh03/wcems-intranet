@@ -7,6 +7,8 @@ import {
   addDaysIso,
   hhmm,
   type SchedRequest,
+  type VerifyBlock,
+  type SignoffPending,
 } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 import ScheduleMonthBoard from './ScheduleMonthBoard.vue'
@@ -31,6 +33,8 @@ import ScheduleSpinner from './ScheduleSpinner.vue'
  */
 
 const sched = useSchedule()
+
+const emit = defineEmits<{ (e: 'go-requests'): void }>()
 
 /* Editors: record time off for the viewed member straight from here —
    the "left sick, seat already covered" flow (Chief, 2026-09-25).
@@ -186,7 +190,127 @@ onMounted(async () => {
   await sched.ensureLoaded()
   await loadVisibleRange()
   ready.value = true
+  void loadVerify()
+  void loadAttestCard()
 })
+
+// ── time verification cards (own schedule only) ─────────────────────
+// End-of-shift confirms + the pay-period sign-off; supervisors also
+// get the per-truck attest card for yesterday. The sched-notify cron
+// pushes the same prompts — these cards are the in-app home for them.
+
+const verifyBlocks = ref<VerifyBlock[]>([])
+const verifySignoff = ref<SignoffPending | null>(null)
+const vBusy = ref(false)
+const vErr = ref<string | null>(null)
+const vNoteFor = ref<number | null>(null)
+const vNote = ref('')
+
+async function loadVerify() {
+  const res = await sched.fetchMyVerifyPending()
+  verifyBlocks.value = res.blocks
+  verifySignoff.value = res.signoff
+}
+
+const attestDate = computed(() => addDaysIso(todayCentralIso(), -1))
+const attestInfo = ref<{ done: number; total: number } | null>(null)
+
+async function loadAttestCard() {
+  if (!(sched.canEdit.value || sched.level.value === 'supervisor')) {
+    attestInfo.value = null
+    return
+  }
+  const d = attestDate.value
+  const m = sched.dayModel(d)
+  if (m.units.length === 0) {
+    attestInfo.value = null
+    return
+  }
+  // supervisors see it when they worked that date; editors always
+  const me = sched.myUserId.value
+  const wasSup = m.units
+    .filter((um) => um.unit.code.toUpperCase().startsWith('S'))
+    .some((um) => um.seats.some((sm) => sm.rows.some((r) => r.userId === me)))
+  if (!wasSup && !sched.canEdit.value) {
+    attestInfo.value = null
+    return
+  }
+  const rows = await sched.fetchAttestDay(d)
+  attestInfo.value = {
+    done: rows.filter((r) => m.units.some((um) => um.unit.id === r.unitId)).length,
+    total: m.units.length,
+  }
+}
+
+/* drawer closed → the card state may have changed */
+watch(() => editor.signoff.value, (v, old) => {
+  if (old && !v) void loadVerify()
+})
+watch(() => editor.attest.value, (v, old) => {
+  if (old && !v) void loadAttestCard()
+})
+
+function fmtV(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function vBlockLabel(b: VerifyBlock): string {
+  const f = fmtV(b.dates[0])
+  const l = fmtV(b.dates[b.dates.length - 1])
+  return b.dates.length > 1 ? `${f} – ${l}` : f
+}
+
+async function vConfirm(b: VerifyBlock) {
+  if (vBusy.value) return
+  vBusy.value = true
+  vErr.value = null
+  const e = await sched.confirmMyTimes(b)
+  vBusy.value = false
+  if (e) {
+    vErr.value = e
+    return
+  }
+  await loadVerify()
+}
+
+/* "I worked extra" / "I left early" open the right Requests form on
+   the right date — the request is the report; confirm after filing. */
+function vExtra(b: VerifyBlock) {
+  editor.requestIntent.value = { kind: 'extra', dateIso: b.dates[b.dates.length - 1] }
+  emit('go-requests')
+}
+
+function vOff(b: VerifyBlock) {
+  editor.requestIntent.value = { kind: 'timeoff', dateIso: b.dates[b.dates.length - 1] }
+  emit('go-requests')
+}
+
+async function vSendNote(b: VerifyBlock) {
+  if (!vNote.value.trim()) {
+    vErr.value = 'Say what was off — that note is what the schedulers act on.'
+    return
+  }
+  if (vBusy.value) return
+  vBusy.value = true
+  vErr.value = null
+  let e = await sched.fileDiscrepancy({
+    workDate: b.dates[b.dates.length - 1],
+    note: vNote.value,
+  })
+  if (!e) e = await sched.confirmMyTimes(b) // responded — the queue carries the flag
+  vBusy.value = false
+  if (e) {
+    vErr.value = e
+    return
+  }
+  vNoteFor.value = null
+  vNote.value = ''
+  await loadVerify()
+}
 
 watch(monthAnchor, () => {
   void loadVisibleRange()
@@ -288,6 +412,72 @@ function pendingLine(r: SchedRequest): string {
         </div>
       </div>
     </div>
+    <section
+      v-if="viewingSelf && (verifyBlocks.length > 0 || verifySignoff || (attestInfo && attestInfo.done < attestInfo.total))"
+      class="my__verify"
+    >
+      <h3 class="my__h my__h--verify">Time verification</h3>
+      <p v-if="vErr" class="my__verr">{{ vErr }}</p>
+
+      <div v-for="(b, i) in verifyBlocks" :key="b.endMs" class="my__vcard">
+        <div class="my__vhead">
+          <b>Verify your shift times</b>
+          <span class="my__vwhen">{{ vBlockLabel(b) }}</span>
+        </div>
+        <p v-for="l in b.lines" :key="l.dateIso" class="my__vline">
+          {{ fmtV(l.dateIso) }} · {{ l.window }} · {{ l.hours.toFixed(1) }} h
+        </p>
+        <template v-if="vNoteFor === i">
+          <textarea
+            v-model="vNote"
+            class="my__vnote"
+            rows="2"
+            placeholder="What was off? e.g. 'Left sick at 1400 — M211 covered by Herrera'"
+          ></textarea>
+          <div class="my__vbtns">
+            <button class="my__vbtn my__vbtn--go" :disabled="vBusy" @click="vSendNote(b)">
+              {{ vBusy ? 'Sending…' : 'Send to the schedulers' }}
+            </button>
+            <button class="my__vbtn" @click="vNoteFor = null">Cancel</button>
+          </div>
+        </template>
+        <div v-else class="my__vbtns">
+          <button class="my__vbtn my__vbtn--go" :disabled="vBusy" @click="vConfirm(b)">
+            {{ vBusy ? 'Working…' : 'My times are right' }}
+          </button>
+          <button class="my__vbtn" @click="vExtra(b)">I worked extra</button>
+          <button class="my__vbtn" @click="vOff(b)">I left early / time off</button>
+          <button class="my__vbtn" @click="vNoteFor = i; vNote = ''; vErr = null">Something else is off</button>
+        </div>
+      </div>
+
+      <div v-if="verifySignoff" class="my__vcard">
+        <div class="my__vhead">
+          <b>Approve your pay-period hours</b>
+          <span class="my__vwhen">{{ verifySignoff.period.label }}</span>
+          <span v-if="verifySignoff.overdue" class="my__voverdue">Past due</span>
+          <span v-else class="my__vdue">due {{ verifySignoff.dueText }}</span>
+        </div>
+        <p class="my__vline">HR keys Paycom Monday morning — confirm your hours look right first.</p>
+        <div class="my__vbtns">
+          <button class="my__vbtn my__vbtn--go" @click="editor.openSignoff(verifySignoff.period.end)">
+            Review &amp; approve
+          </button>
+        </div>
+      </div>
+
+      <div v-if="attestInfo && attestInfo.done < attestInfo.total" class="my__vcard">
+        <div class="my__vhead">
+          <b>Attest yesterday's trucks</b>
+          <span class="my__vwhen">{{ fmtV(attestDate) }} · {{ attestInfo.done }} of {{ attestInfo.total }} done</span>
+        </div>
+        <p class="my__vline">Confirm each truck's roster matched who actually worked — flag anything that changed.</p>
+        <div class="my__vbtns">
+          <button class="my__vbtn my__vbtn--go" @click="editor.openAttest(attestDate)">Open the attest list</button>
+        </div>
+      </div>
+    </section>
+
     <section v-if="myPending.length > 0" class="my__pending">
       <h3 class="my__h my__h--pend">Your pending requests</h3>
       <div v-for="r in myPending" :key="r.id" class="my__pendrow">
@@ -421,6 +611,142 @@ function pendingLine(r: SchedRequest): string {
 
 .my__h--pend {
   color: var(--color-danger-500);
+}
+
+/* ── time-verification cards (gold family — action, not alarm) ── */
+
+.my__h--verify {
+  color: oklch(0.5 0.1 86.8);
+}
+
+.my__verify {
+  border: 1px solid oklch(0.85 0.07 86.8);
+  background: oklch(0.99 0.008 86.8);
+  border-radius: 12px;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow-sm);
+  max-width: 720px;
+}
+
+.my__vcard {
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--color-line-soft);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.my__vcard:last-child {
+  border-bottom: 0;
+  padding-bottom: 0.15rem;
+}
+
+.my__vhead {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.86rem;
+  color: var(--color-ink);
+}
+
+.my__vwhen {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+}
+
+.my__vdue {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  border: 1px solid oklch(0.88 0.05 60);
+  background: var(--color-warning-50);
+  color: oklch(0.5 0.13 60);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.my__voverdue {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 700;
+  border: 1px solid oklch(0.8 0.09 27);
+  background: oklch(0.97 0.02 27);
+  color: var(--color-danger-500);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.my__vline {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.my__vbtns {
+  display: flex;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.my__vbtn {
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 650;
+  border: 0;
+  background: none;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-line);
+  text-underline-offset: 3px;
+  padding: 2px;
+}
+
+.my__vbtn:hover {
+  color: var(--color-ink);
+  text-decoration-color: var(--color-accent-600);
+}
+
+.my__vbtn--go {
+  color: white;
+  background: linear-gradient(180deg, var(--color-brand-700), var(--color-brand-800));
+  border-radius: 8px;
+  padding: 5px 12px;
+  text-decoration: none;
+}
+
+.my__vbtn--go:hover {
+  color: white;
+  filter: brightness(1.1);
+}
+
+.my__vbtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.my__vnote {
+  font: inherit;
+  font-size: 0.8rem;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+  width: 100%;
+  resize: vertical;
+  background: var(--color-surface);
+}
+
+.my__verr {
+  margin: 0 0 0.3rem;
+  font-size: 0.78rem;
+  color: var(--color-danger-500);
+  font-weight: 600;
 }
 
 .my__pending {

@@ -13,6 +13,7 @@ import {
   type Availability,
   type HoursWarning,
 } from '@/composables/useSchedule'
+import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 /**
  * Requests — crew submit time off / extra hours / open-shift pickups;
@@ -23,11 +24,35 @@ import {
 
 const sched = useSchedule()
 
+const editor = useScheduleEditor()
+
 const ready = ref(false)
 onMounted(async () => {
   await sched.ensureLoaded()
   await sched.loadRequests()
   ready.value = true
+  consumeIntent()
+})
+
+/* Verify-card handoff (My schedule → here): open the right form on the
+   right date. End-of-shift reports are usually about a date that has
+   already passed, so time off lands on the Custom-date mode. */
+function consumeIntent() {
+  const it = editor.requestIntent.value
+  if (!it) return
+  editor.requestIntent.value = null
+  if (it.kind === 'extra') {
+    pickForm('extra_hours')
+    exDate.value = it.dateIso
+    exEndDate.value = it.dateIso
+  } else {
+    pickForm('time_off')
+    offMode.value = 'custom'
+    customDate.value = it.dateIso
+  }
+}
+watch(() => editor.requestIntent.value, () => {
+  if (ready.value) consumeIntent()
 })
 
 // ── new request form ─────────────────────────────────────────────────
@@ -225,6 +250,7 @@ const TYPE_LABELS: Record<string, string> = {
   pickup: 'Shift pickup',
   trade: 'Trade',
   giveaway: 'Giveaway',
+  discrepancy: 'Time discrepancy',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -257,6 +283,8 @@ function requestLine(r: SchedRequest): string {
         : r.timeType.charAt(0).toUpperCase() + r.timeType.slice(1),
     )
   }
+  // the note IS the discrepancy — surface it on the card itself
+  if (r.type === 'discrepancy' && r.comments) bits.push(`"${r.comments}"`)
   return bits.join(' · ')
 }
 
@@ -348,15 +376,16 @@ function periodPair(r: SchedRequest): string {
 /* Workbench toolbar (redesign 2026-09-23): search, type filter with
    counts, and sort — warnings float first by default. */
 const qFilter = ref('')
-const qType = ref<'all' | 'time_off' | 'pickup' | 'extra_hours' | 'swap'>('all')
+const qType = ref<'all' | 'time_off' | 'pickup' | 'extra_hours' | 'swap' | 'discrepancy'>('all')
 const qSort = ref<'attention' | 'oldest' | 'shift'>('attention')
 
 const typeCounts = computed(() => {
-  const c = { all: pendingQueue.value.length, time_off: 0, pickup: 0, extra_hours: 0, swap: 0 }
+  const c = { all: pendingQueue.value.length, time_off: 0, pickup: 0, extra_hours: 0, swap: 0, discrepancy: 0 }
   for (const r of pendingQueue.value) {
     if (r.type === 'time_off') c.time_off++
     else if (r.type === 'pickup') c.pickup++
     else if (r.type === 'extra_hours') c.extra_hours++
+    else if (r.type === 'discrepancy') c.discrepancy++
     else c.swap++
   }
   return c
@@ -373,6 +402,7 @@ const visibleQueue = computed(() => {
     if (qType.value === 'pickup' && r.type !== 'pickup') return false
     if (qType.value === 'extra_hours' && r.type !== 'extra_hours') return false
     if (qType.value === 'swap' && r.type !== 'trade' && r.type !== 'giveaway') return false
+    if (qType.value === 'discrepancy' && r.type !== 'discrepancy') return false
     if (q && !requesterName(r).toLowerCase().includes(q)) return false
     return true
   })
@@ -857,6 +887,7 @@ async function cancel(r: SchedRequest) {
         <button v-if="typeCounts.pickup" class="rq__tab" :class="{ 'rq__tab--on': qType === 'pickup' }" @click="qType = 'pickup'">Pickups <i>{{ typeCounts.pickup }}</i></button>
         <button v-if="typeCounts.extra_hours" class="rq__tab" :class="{ 'rq__tab--on': qType === 'extra_hours' }" @click="qType = 'extra_hours'">Extra hours <i>{{ typeCounts.extra_hours }}</i></button>
         <button v-if="typeCounts.swap" class="rq__tab" :class="{ 'rq__tab--on': qType === 'swap' }" @click="qType = 'swap'">Trades <i>{{ typeCounts.swap }}</i></button>
+        <button v-if="typeCounts.discrepancy" class="rq__tab" :class="{ 'rq__tab--on': qType === 'discrepancy' }" @click="qType = 'discrepancy'">Discrepancies <i>{{ typeCounts.discrepancy }}</i></button>
       </div>
       <div v-if="pendingQueue.length > 0" class="rq__filterrow">
         <input v-model="qFilter" type="search" class="rq__search" placeholder="Search people…" aria-label="Search requests by person" />
@@ -898,20 +929,30 @@ async function cancel(r: SchedRequest) {
               </td>
               <td class="rq__agecell" :title="'Submitted ' + new Date(r.createdAt).toLocaleString()">{{ waitingAge(r) }}</td>
               <td class="rq__actcell">
-                <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="approveClicked(r)">
-                  {{ confirmApprove === r.id ? 'Approve anyway' : 'Approve' }}
-                </button>
-                <button v-if="confirmApprove === r.id" class="rq__btn" @click="confirmApprove = null">Back</button>
-                <button v-else class="rq__btn rq__btn--deny" :disabled="busyId === r.id" @click="decide(r, false)">Deny</button>
-                <button
-                  v-if="confirmApprove !== r.id"
-                  class="rq__btn rq__btn--quiet"
-                  :disabled="busyId === r.id"
-                  title="Close this request without changing the schedule — for a change you already made by hand"
-                  @click="markHandled(r)"
-                >
-                  Already handled
-                </button>
+                <!-- a discrepancy has nothing to apply: fix by hand,
+                     then close the flag — or dismiss it outright -->
+                <template v-if="r.type === 'discrepancy'">
+                  <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="markHandled(r)">
+                    Already handled
+                  </button>
+                  <button class="rq__btn rq__btn--deny" :disabled="busyId === r.id" @click="decide(r, false)">Dismiss</button>
+                </template>
+                <template v-else>
+                  <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="approveClicked(r)">
+                    {{ confirmApprove === r.id ? 'Approve anyway' : 'Approve' }}
+                  </button>
+                  <button v-if="confirmApprove === r.id" class="rq__btn" @click="confirmApprove = null">Back</button>
+                  <button v-else class="rq__btn rq__btn--deny" :disabled="busyId === r.id" @click="decide(r, false)">Deny</button>
+                  <button
+                    v-if="confirmApprove !== r.id"
+                    class="rq__btn rq__btn--quiet"
+                    :disabled="busyId === r.id"
+                    title="Close this request without changing the schedule — for a change you already made by hand"
+                    @click="markHandled(r)"
+                  >
+                    Already handled
+                  </button>
+                </template>
               </td>
             </tr>
             <tr v-if="rowOpen(r)" class="rq__detailrow">

@@ -221,6 +221,27 @@ onMounted(async () => {
       tab.value = 'day'
       void router.replace({ query: { ...route.query, v: undefined } })
     }
+    if (route.query.v === 'mine') {
+      tab.value = 'mine'
+      void router.replace({ query: { ...route.query, v: undefined } })
+    }
+    // Verification deep links from the sched-notify prompts: the
+    // verify cards live on My schedule; attest + sign-off open their
+    // drawers directly (rendered globally in ScheduleEditModals).
+    if (typeof route.query.verify === 'string') {
+      tab.value = 'mine'
+      void router.replace({ query: { ...route.query, verify: undefined } })
+    }
+    if (typeof route.query.attest === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.attest)) {
+      tab.value = 'mine'
+      editor.openAttest(route.query.attest)
+      void router.replace({ query: { ...route.query, attest: undefined } })
+    }
+    if (typeof route.query.signoff === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.signoff)) {
+      tab.value = 'mine'
+      editor.openSignoff(route.query.signoff)
+      void router.replace({ query: { ...route.query, signoff: undefined } })
+    }
     // Requests + trade offers load with the shell (not just on their
     // tabs) so pending rows show on the boards and the tab badges are
     // right from the first paint; realtime keeps them fresh after that.
@@ -438,7 +459,7 @@ watch(dateIso, (v) => {
           @open-day="openDay"
           @range="onPeriodRange"
         />
-        <ScheduleMyPanel v-else-if="tab === 'mine'" />
+        <ScheduleMyPanel v-else-if="tab === 'mine'" @go-requests="tab = 'requests'" />
         <ScheduleRequestsPanel v-else-if="tab === 'requests'" />
         <ScheduleTradesPanel v-else-if="tab === 'trades'" />
         <SchedulePagesPanel v-else-if="tab === 'pages'" />
