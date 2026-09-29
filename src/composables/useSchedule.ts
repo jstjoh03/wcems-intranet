@@ -3322,6 +3322,132 @@ async function coverShift(
 /** Editor path: put someone straight onto an open seat (no request).
  *  The open entry is re-validated FRESH from the database so a stale
  *  view errors loudly instead of silently dropping or double-booking. */
+/** Cut [cutS,cutE) out of a segment list (MIN_SEG_MS slivers drop). */
+function cutSegs(segs: Seg[], cutS: number, cutE: number): Seg[] {
+  const next: Seg[] = []
+  for (const s of segs) {
+    const os = Math.max(s.start, cutS)
+    const oe = Math.min(s.end, cutE)
+    if (oe - os < MIN_SEG_MS) {
+      next.push(s)
+      continue
+    }
+    if (os - s.start >= MIN_SEG_MS) next.push({ start: s.start, end: os })
+    if (s.end - oe >= MIN_SEG_MS) next.push({ start: oe, end: s.end })
+  }
+  return next
+}
+
+/**
+ * Claim a window on a seat whose "open" is DERIVED — a time-off carve,
+ * a dedupe leftover, or a bare gap — rather than backed by an open row.
+ * Claimable = the requested window minus everyone's STANDING coverage
+ * (scheduled rows minus each holder's own time off): the same math the
+ * boards draw, so whatever renders open (or sits as an invisible gap)
+ * is exactly what can be claimed. A bare-rotation seat carves the
+ * occupant's remainder first so their kept hours stay explicit; a
+ * truly unheld rotation seat keeps its leftover window visible as
+ * open rows.
+ * Born of Fulton's covered day (9/22, fixed 2026-09-29): Dodd worked
+ * the off-carved half but the old guard refused because "rows exist
+ * on the seat" — which is true of every derived open ever.
+ */
+async function claimSeatWindow(
+  dateIso: string,
+  seatId: string,
+  userId: string,
+  reqStart: number,
+  reqEnd: number,
+  meta: { kind?: string; note?: string | null; sourceRequest?: string | null } = {},
+): Promise<{ claimed: Seg[]; error: null } | { claimed: null; error: string }> {
+  const [rowsRes, offsRes] = await Promise.all([
+    supabase.from('sched_entries').select('*').eq('work_date', dateIso).eq('seat_id', seatId),
+    supabase.from('sched_entries').select('*').eq('work_date', dateIso).eq('kind', 'timeoff'),
+  ])
+  if (rowsRes.error) return { claimed: null, error: rowsRes.error.message }
+  if (offsRes.error) return { claimed: null, error: offsRes.error.message }
+  const seatRows = (rowsRes.data ?? [])
+    .map(mapEntry)
+    .filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
+  const offs = (offsRes.data ?? []).map(mapEntry)
+  const offsFor = (uid: string | null): Seg[] =>
+    uid
+      ? offs
+          .filter((o) => o.userId === uid)
+          .map((o) => ({ start: tsMs(o.startAt), end: tsMs(o.endAt) }))
+      : []
+
+  const seatRec = seats.value.find((s2) => s2.id === seatId)
+  const unit = seatRec ? units.value.find((u) => u.id === seatRec.unitId) : null
+  const uw = unitDayWindow(unit, dateIso)
+  const uS = tsMs(uw.startTs)
+  const uE = tsMs(uw.endTs)
+  /* Bounds: a bare seat claims inside its unit window; once rows exist
+     the day may legitimately hold anything inside the 0600 work date. */
+  const boundS = seatRows.length > 0 ? tsMs(centralTs(dateIso, '06:00')) : uS
+  const boundE = seatRows.length > 0 ? tsMs(centralTs(addDaysIso(dateIso, 1), '06:00')) : uE
+
+  let standing: Seg[] = []
+  for (const r of seatRows) {
+    if (r.status !== 'scheduled' || !r.userId) continue
+    let segs: Seg[] = [{ start: tsMs(r.startAt), end: tsMs(r.endAt) }]
+    for (const o of offsFor(r.userId)) segs = cutSegs(segs, o.start, o.end)
+    standing.push(...segs)
+  }
+  const rotOcc = seatRows.length === 0 ? seatRotationOccupant(seatId, dateIso) : null
+  if (rotOcc) {
+    let segs: Seg[] = [{ start: uS, end: uE }]
+    for (const o of offsFor(rotOcc)) segs = cutSegs(segs, o.start, o.end)
+    standing.push(...segs)
+  }
+  standing = mergeSegs(standing)
+
+  let claim: Seg[] = [{ start: Math.max(boundS, reqStart), end: Math.min(boundE, reqEnd) }]
+  claim = claim.filter((s) => s.end - s.start >= MIN_SEG_MS)
+  for (const s of standing) claim = cutSegs(claim, s.start, s.end)
+  if (claim.length === 0) {
+    await reloadRangeIfLoaded()
+    return { claimed: null, error: 'That whole window is already covered on this seat — refresh and check the day.' }
+  }
+
+  if (rotOcc) {
+    // keep the occupant's remaining hours as explicit rows before the
+    // claim lands (once rows exist, bare rotation stops rendering)
+    for (const cseg of claim) {
+      const cv = await carveSeatWindow(dateIso, seatId, rotOcc, cseg.start, cseg.end)
+      if (cv.error) return { claimed: null, error: cv.error }
+    }
+  }
+
+  const inserts: Record<string, unknown>[] = claim.map((s) => ({
+    work_date: dateIso,
+    seat_id: seatId,
+    user_id: userId,
+    start_at: new Date(s.start).toISOString(),
+    end_at: new Date(s.end).toISOString(),
+    kind: meta.kind ?? 'pickup',
+    status: 'scheduled',
+    note: meta.note ?? null,
+    source_request: meta.sourceRequest ?? null,
+  }))
+  if (seatRows.length === 0 && !rotOcc) {
+    // truly unheld rotation seat: keep the unclaimed leftovers visible
+    const first = claim[0]
+    const last = claim[claim.length - 1]
+    if (first.start - uS >= MIN_SEG_MS)
+      inserts.push({ work_date: dateIso, seat_id: seatId, user_id: null,
+        start_at: uw.startTs, end_at: new Date(first.start).toISOString(),
+        kind: 'rotation', status: 'open' })
+    if (uE - last.end >= MIN_SEG_MS)
+      inserts.push({ work_date: dateIso, seat_id: seatId, user_id: null,
+        start_at: new Date(last.end).toISOString(), end_at: uw.endTs,
+        kind: 'rotation', status: 'open' })
+  }
+  const ins = await supabase.from('sched_entries').insert(inserts)
+  if (ins.error) return { claimed: null, error: ins.error.message }
+  return { claimed: claim, error: null }
+}
+
 async function assignOpenSeat(opts: {
   dateIso: string
   seatId: string
@@ -3332,6 +3458,8 @@ async function assignOpenSeat(opts: {
 }): Promise<string | null> {
   const STALE = 'That open shift is no longer available — the board has changed. Refresh and try again.'
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  let actualFrom = opts.from.replace(':', '')
+  let actualUntil = opts.until.replace(':', '')
   if (opts.entryId) {
     const fres = await supabase
       .from('sched_entries')
@@ -3351,6 +3479,8 @@ async function assignOpenSeat(opts: {
     if (rEnd - rStart < MIN_SEG_MS) {
       return 'The requested window does not overlap that open shift.'
     }
+    actualFrom = hhmm(new Date(rStart).toISOString())
+    actualUntil = hhmm(new Date(rEnd).toISOString())
     if (rStart - oStart < MIN_SEG_MS && oEnd - rEnd < MIN_SEG_MS) {
       // full window: claim the open row in place
       const upd = await supabase
@@ -3385,50 +3515,26 @@ async function assignOpenSeat(opts: {
       if (del.error) return del.error.message
     }
   } else {
-    // Rotation-open seat: verify no rows have appeared on it meanwhile.
-    const fres = await supabase
-      .from('sched_entries')
-      .select('id, status, kind')
-      .eq('work_date', opts.dateIso)
-      .eq('seat_id', opts.seatId)
-    if (fres.error) return fres.error.message
-    const liveRows = (fres.data ?? []).filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
-    if (liveRows.length > 0) {
-      await reloadRangeIfLoaded()
-      return STALE
-    }
-    // The open window is the seat's UNIT shift window (part-time trucks
-    // are not 0600–0600) — clamp the claim and remainders inside it.
-    const seatRec = seats.value.find((s2) => s2.id === opts.seatId)
-    const unit = seatRec ? units.value.find((u) => u.id === seatRec.unitId) : null
-    const uw = unitDayWindow(unit, opts.dateIso)
-    const uS = tsMs(uw.startTs)
-    const uE = tsMs(uw.endTs)
-    const cS = Math.max(uS, tsMs(w.reqStart))
-    const cE = Math.min(uE, tsMs(w.reqEnd))
-    if (cE - cS < MIN_SEG_MS) {
-      return 'The requested window does not overlap this shift.'
-    }
-    const rows: Record<string, unknown>[] = [
-      { work_date: opts.dateIso, seat_id: opts.seatId, user_id: opts.userId,
-        start_at: new Date(cS).toISOString(), end_at: new Date(cE).toISOString(),
-        kind: 'pickup', status: 'scheduled' },
-    ]
-    if (cS - uS >= MIN_SEG_MS) {
-      rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
-        start_at: uw.startTs, end_at: new Date(cS).toISOString(), kind: 'rotation', status: 'open' })
-    }
-    if (uE - cE >= MIN_SEG_MS) {
-      rows.push({ work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
-        start_at: new Date(cE).toISOString(), end_at: uw.endTs, kind: 'rotation', status: 'open' })
-    }
-    const ins = await supabase.from('sched_entries').insert(rows)
-    if (ins.error) return ins.error.message
+    /* Seat-derived open — a time-off carve, a dedupe leftover, or a
+       bare gap. No backing row exists, so claim against the STANDING
+       coverage math instead of demanding an empty seat (the old guard
+       failed the moment any live row existed — which is every derived
+       open: Fulton's covered day, 2026-09-22). The claim clamps to
+       what's genuinely unheld, so "0600–0600" over a half-covered day
+       assigns exactly the uncovered hours. */
+    const res = await claimSeatWindow(
+      opts.dateIso, opts.seatId, opts.userId,
+      tsMs(w.reqStart), tsMs(w.reqEnd),
+      { kind: 'pickup' },
+    )
+    if (res.error !== null) return res.error
+    actualFrom = hhmm(new Date(res.claimed[0].start).toISOString())
+    actualUntil = hhmm(new Date(res.claimed[res.claimed.length - 1].end).toISOString())
   }
   const seatA = seats.value.find((s2) => s2.id === opts.seatId)
   const unitA = units.value.find((u) => u.id === seatA?.unitId)
-  audit('assign.seat', `Assigned ${displayName(opts.userId).name} to ${unitA?.code ?? '?'} ${seatA?.label ?? 'seat'} on ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
-  notify('schedule_change', { userId: opts.userId, summary: `You were assigned to ${unitA?.code ?? 'a unit'} ${seatA?.label ?? 'seat'} on ${opts.dateIso}, ${opts.from}–${opts.until}.` })
+  audit('assign.seat', `Assigned ${displayName(opts.userId).name} to ${unitA?.code ?? '?'} ${seatA?.label ?? 'seat'} on ${opts.dateIso} ${actualFrom}–${actualUntil}`, { entity: 'entry' })
+  notify('schedule_change', { userId: opts.userId, summary: `You were assigned to ${unitA?.code ?? 'a unit'} ${seatA?.label ?? 'seat'} on ${opts.dateIso}, ${actualFrom}–${actualUntil}.` })
   await reloadRangeIfLoaded()
   return null
 }
@@ -4346,58 +4452,20 @@ async function decideRequest(
           if (del.error) return del.error.message
         }
       } else {
-        // Rotation-open seat (no entry rows yet) — the open window is
-        // the seat's UNIT shift window, not always 0600–0600.
-        const seatRec = seats.value.find((s2) => s2.id === req.seatId)
-        const unit = seatRec ? units.value.find((u) => u.id === seatRec.unitId) : null
-        const uw = unitDayWindow(unit, req.workDate)
-        const uS = tsMs(uw.startTs)
-        const uE = tsMs(uw.endTs)
-        const rS = req.startAt ? Math.max(uS, tsMs(req.startAt)) : uS
-        const rE = req.endAt ? Math.min(uE, tsMs(req.endAt)) : uE
-        if (rE - rS < MIN_SEG_MS) {
-          return 'The requested window does not overlap this shift.'
-        }
-        const rows: Record<string, unknown>[] = [
-          {
-            work_date: req.workDate,
-            seat_id: req.seatId,
-            user_id: req.requesterId,
-            start_at: new Date(rS).toISOString(),
-            end_at: new Date(rE).toISOString(),
-            kind: 'pickup',
-            status: 'scheduled',
-            source_request: req.id,
-          },
-        ]
-        if (rS - uS >= MIN_SEG_MS) {
-          rows.push({
-            work_date: req.workDate,
-            seat_id: req.seatId,
-            user_id: null,
-            start_at: uw.startTs,
-            end_at: new Date(rS).toISOString(),
-            kind: 'rotation',
-            status: 'open',
-          })
-        }
-        if (uE - rE >= MIN_SEG_MS) {
-          rows.push({
-            work_date: req.workDate,
-            seat_id: req.seatId,
-            user_id: null,
-            start_at: new Date(rE).toISOString(),
-            end_at: uw.endTs,
-            kind: 'rotation',
-            status: 'open',
-          })
-        }
-        const ins = await supabase.from('sched_entries').insert(rows)
-        if (ins.error) return ins.error.message
+        /* Seat-derived / rotation-open pickup — approve with the same
+           coverage-aware claim the Chief's direct assign uses (the old
+           unit-window remainder writes displaced any occupant and knew
+           nothing about time-off carves — Fulton's day, 9/22). */
+        const rS = req.startAt ? tsMs(req.startAt) : tsMs(centralTs(req.workDate, '06:00'))
+        const rE = req.endAt ? tsMs(req.endAt) : tsMs(centralTs(addDaysIso(req.workDate, 1), '06:00'))
+        const res = await claimSeatWindow(req.workDate, req.seatId, req.requesterId, rS, rE, {
+          kind: 'pickup',
+          sourceRequest: req.id,
+        })
+        if (res.error) return res.error
       }
     }
   }
-
   const upd = await supabase
     .from('sched_requests')
     .update({
