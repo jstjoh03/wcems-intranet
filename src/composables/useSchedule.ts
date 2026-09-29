@@ -3637,6 +3637,9 @@ async function dayOpenWindow(opts: {
   }))
   const ins = await supabase.from('sched_entries').insert(rows)
   if (ins.error) return ins.error.message
+  // a freshly opened window next to an existing open reads as ONE seat
+  const co = await coalesceSeatOpens(opts.dateIso, opts.seatId)
+  if (co) return co
   audit('day.open', `Opened ${displayName(opts.userId).name}'s seat ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
   notify('schedule_change', { userId: opts.userId, summary: `You were taken off your seat on ${opts.dateIso} ${opts.from}–${opts.until}; the window is posted open.` })
   await reloadRangeIfLoaded()
@@ -3949,18 +3952,96 @@ async function voidRequestIfOrphaned(requestId: string): Promise<void> {
   await loadRequests()
 }
 
+/** Merge a seat-day's contiguous/overlapping OPEN rows into one row —
+ *  so deleting the 0600–1100 half next to an 1100–0600 leftover reads
+ *  as ONE 0600–0600 open seat again, not a jigsaw (Justin, 2026-09-29). */
+async function coalesceSeatOpens(dateIso: string, seatId: string): Promise<string | null> {
+  const res = await supabase
+    .from('sched_entries')
+    .select('*')
+    .eq('work_date', dateIso)
+    .eq('seat_id', seatId)
+    .eq('status', 'open')
+  if (res.error) return res.error.message
+  const opens = (res.data ?? []).map(mapEntry).sort((a, b) => tsMs(a.startAt) - tsMs(b.startAt))
+  if (opens.length < 2) return null
+  const groups: (typeof opens)[] = []
+  for (const o of opens) {
+    const g = groups[groups.length - 1]
+    if (g && tsMs(o.startAt) <= tsMs(g[g.length - 1].endAt) + MIN_SEG_MS) g.push(o)
+    else groups.push([o])
+  }
+  for (const g of groups) {
+    if (g.length < 2) continue
+    const start = new Date(Math.min(...g.map((o) => tsMs(o.startAt)))).toISOString()
+    const end = new Date(Math.max(...g.map((o) => tsMs(o.endAt)))).toISOString()
+    const del = await supabase.from('sched_entries').delete().in('id', g.map((o) => o.id))
+    if (del.error) return del.error.message
+    const ins = await supabase.from('sched_entries').insert({
+      work_date: dateIso, seat_id: seatId, user_id: null,
+      start_at: start, end_at: end, kind: 'rotation', status: 'open',
+    })
+    if (ins.error) return ins.error.message
+  }
+  return null
+}
+
+/** Seat-coverage kinds — rows that hold a seat (vs riders, extras,
+ *  events, students, time off, blocked overlays). */
+const SEAT_COVER_KINDS = new Set(['rotation', 'pickup', 'trade', 'giveaway_cover'])
+
 async function removeEntry(entryId: string): Promise<string | null> {
   const res = await supabase
     .from('sched_entries')
     .delete()
     .eq('id', entryId)
-    .select('source_request, user_id, work_date, kind')
+    .select('source_request, user_id, work_date, kind, status, seat_id, start_at, end_at')
   if (res.error) return res.error.message
   const gone = res.data?.[0] as
-    | { source_request: string | null; user_id: string | null; work_date: string; kind: string }
+    | { source_request: string | null; user_id: string | null; work_date: string; kind: string;
+        status: string; seat_id: string | null; start_at: string; end_at: string }
     | undefined
   const reqId = gone?.source_request ?? null
   if (reqId) await voidRequestIfOrphaned(reqId)
+
+  /* Deleting someone's seat coverage REOPENS their window (merged with
+     any adjacent opens) instead of leaving an invisible gap. Only when
+     other rows remain on the seat — a seat gone rowless falls back to
+     bare rotation on its own, and writing opens there would fight it.
+     Windows another row already spans (standing coverage OR an offed
+     holder's row, whose carve derives its own open) are skipped. */
+  if (
+    gone && gone.seat_id && gone.user_id && gone.status === 'scheduled' &&
+    SEAT_COVER_KINDS.has(gone.kind)
+  ) {
+    const rem = await supabase
+      .from('sched_entries')
+      .select('*')
+      .eq('work_date', gone.work_date)
+      .eq('seat_id', gone.seat_id)
+    if (!rem.error) {
+      const others = (rem.data ?? [])
+        .map(mapEntry)
+        .filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
+      if (others.length > 0) {
+        let pieces: Seg[] = [{ start: tsMs(gone.start_at), end: tsMs(gone.end_at) }]
+        for (const r of others) pieces = cutSegs(pieces, tsMs(r.startAt), tsMs(r.endAt))
+        if (pieces.length > 0) {
+          const ins = await supabase.from('sched_entries').insert(
+            pieces.map((s) => ({
+              work_date: gone.work_date, seat_id: gone.seat_id, user_id: null,
+              start_at: new Date(s.start).toISOString(), end_at: new Date(s.end).toISOString(),
+              kind: 'rotation', status: 'open',
+            })),
+          )
+          if (ins.error) return ins.error.message
+        }
+        const co = await coalesceSeatOpens(gone.work_date, gone.seat_id)
+        if (co) return co
+      }
+    }
+  }
+
   audit('entry.remove', `Removed a ${gone?.kind ?? 'schedule'} entry${gone?.user_id ? ` for ${displayName(gone.user_id).name}` : ''}${gone?.work_date ? ` on ${gone.work_date}` : ''}`, { entity: 'entry', entityId: entryId })
   if (gone?.user_id) {
     const what = gone.kind === 'extra' ? 'extra-hours entry' : gone.kind === 'timeoff' ? 'time-off record' : 'shift entry'
