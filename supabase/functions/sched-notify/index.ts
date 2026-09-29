@@ -206,8 +206,12 @@ async function sendSms(to: string, body: string): Promise<void> {
   if (!res.ok) throw new Error(`Twilio ${res.status}: ${(await res.text()).slice(0, 200)}`)
 }
 
-function schedEmail(firstName: string, lines: string[]): string {
+/* The button carries the SAME deep link as the push (verify/attest/
+   sign-off drawers, day boards) — a hardcoded /schedule dumped attest
+   clicks on the month view (Justin, 2026-09-28). */
+function schedEmail(firstName: string, lines: string[], url?: string): string {
   const paras = lines.map((l) => `<p style="margin:0 0 10px;">${l}</p>`).join('\n    ')
+  const href = `${PORTAL}${url && url.startsWith('/') ? url : '/schedule'}`
   return `
   <div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.55;color:#273142;max-width:640px;">
     <div style="border-bottom:3px solid #182644;padding-bottom:10px;margin-bottom:16px;">
@@ -217,7 +221,7 @@ function schedEmail(firstName: string, lines: string[]): string {
     <p>Hi ${esc(firstName)},</p>
     ${paras}
     <p style="margin:16px 0 0;">
-      <a href="${PORTAL}/schedule" style="display:inline-block;background:#182644;color:#ffffff;text-decoration:none;font-weight:600;padding:9px 18px;border-radius:8px;">Open the schedule</a>
+      <a href="${href}" style="display:inline-block;background:#182644;color:#ffffff;text-decoration:none;font-weight:600;padding:9px 18px;border-radius:8px;">Open the schedule</a>
     </p>
     <p style="margin-top:18px;color:#8a8f99;font-size:12px;">Manage which messages you receive under My schedule → My settings on the portal.</p>
   </div>`
@@ -314,7 +318,7 @@ async function deliver(
         for (const u of emailTo) {
           const first = (u.full_name ?? '').split(' ')[0] || 'there'
           try {
-            await sendMail(tok, u.email as string, m.subject, schedEmail(first, m.emailLines))
+            await sendMail(tok, u.email as string, m.subject, schedEmail(first, m.emailLines, m.url))
             out.email++
           } catch (e) {
             out.errors.push(`email ${u.full_name}: ${(e as Error).message}`)
@@ -930,6 +934,12 @@ Deno.serve(async (req: Request) => {
         const byUser = new Map<string, LSeg[]>()
         const supsByDate = new Map<string, Set<string>>()
         const staffedByDate = new Map<string, Set<string>>()
+        /* Raw S-truck coverage — resolved into supsByDate only AFTER
+           time off is subtracted. Erica Torr held S201 via a trade row
+           but was on vacation with a pickup covering her: the raw walk
+           counted her on duty and the attest prompt reached her on the
+           beach (Justin, 2026-09-28). */
+        const supSegsRaw: { dateIso: string; uid: string; start: number; end: number }[] = []
         const pushSeg = (uid: string, seg: LSeg) => {
           const l = byUser.get(uid) ?? []
           l.push(seg)
@@ -939,11 +949,6 @@ Deno.serve(async (req: Request) => {
           const s = staffedByDate.get(dateIso) ?? new Set<string>()
           s.add(unitId)
           staffedByDate.set(dateIso, s)
-        }
-        const markSup = (dateIso: string, uid: string) => {
-          const s = supsByDate.get(dateIso) ?? new Set<string>()
-          s.add(uid)
-          supsByDate.set(dateIso, s)
         }
 
         for (const dateIso of dateList) {
@@ -956,9 +961,10 @@ Deno.serve(async (req: Request) => {
             if (seatRows.length > 0) {
               for (const r of seatRows) {
                 if (r.user_id && r.status === 'scheduled') {
-                  pushSeg(r.user_id, { start: Date.parse(r.start_at), end: Date.parse(r.end_at), label })
+                  const seg = { start: Date.parse(r.start_at), end: Date.parse(r.end_at), label }
+                  pushSeg(r.user_id, seg)
                   markStaffed(dateIso, unit.id)
-                  if (isSupUnit) markSup(dateIso, r.user_id)
+                  if (isSupUnit) supSegsRaw.push({ dateIso, uid: r.user_id, start: seg.start, end: seg.end })
                 }
               }
             } else {
@@ -969,7 +975,7 @@ Deno.serve(async (req: Request) => {
               const w = unitWindow(unit.shift_start, unit.shift_end, dateIso)
               pushSeg(occ, { start: w.start, end: w.end, label })
               markStaffed(dateIso, unit.id)
-              if (isSupUnit) markSup(dateIso, occ)
+              if (isSupUnit) supSegsRaw.push({ dateIso, uid: occ, start: w.start, end: w.end })
             }
           }
           for (const r of dayRows) {
@@ -994,6 +1000,32 @@ Deno.serve(async (req: Request) => {
           const l = offByUser.get(r.user_id) ?? []
           l.push({ s: Date.parse(r.start_at), e: Date.parse(r.end_at) })
           offByUser.set(r.user_id, l)
+        }
+
+        // resolve raw S-truck coverage into ON-DUTY supervisors:
+        // subtract each candidate's time off first — only sups with
+        // real remaining duty time on the date get attest prompts
+        for (const s of supSegsRaw) {
+          let segs = [{ start: s.start, end: s.end }]
+          for (const o of offByUser.get(s.uid) ?? []) {
+            const next: { start: number; end: number }[] = []
+            for (const x of segs) {
+              const os = Math.max(x.start, o.s)
+              const oe = Math.min(x.end, o.e)
+              if (oe - os < 60_000) {
+                next.push(x)
+                continue
+              }
+              if (os - x.start >= 60_000) next.push({ start: x.start, end: os })
+              if (x.end - oe >= 60_000) next.push({ start: oe, end: x.end })
+            }
+            segs = next
+          }
+          if (segs.length > 0) {
+            const set = supsByDate.get(s.dateIso) ?? new Set<string>()
+            set.add(s.uid)
+            supsByDate.set(s.dateIso, set)
+          }
         }
 
         // merge per user (multi-day blocks become one segment; the
