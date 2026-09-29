@@ -58,18 +58,20 @@ watch(
   () => void nextTick(scrollToToday),
 )
 
-/* Swap/giveaway marker: a ⇄ beside anyone covering through the trade
-   system; hover names the other member and the shift they take in
-   exchange (Justin, 2026-09-29). */
-function swapTitle(row: SeatRow): string {
+/* Swap marker: a ⇄ ONLY beside a TRUE recorded swap — an approved
+   seat-for-seat trade with both sides on file. OT pickups, giveaway
+   claims, and hand-tagged rows are just coverage and stay unmarked
+   (Justin, 2026-09-29). Returns null when the row doesn't qualify. */
+function swapTitle(row: SeatRow): string | null {
+  if (row.kind !== 'trade') return null
   const entry = row.entryId ? sched.entries.value.find((e) => e.id === row.entryId) : null
   const req = entry?.sourceRequest
     ? sched.requests.value.find((q) => q.id === entry.sourceRequest)
     : null
+  if (!req || req.type !== 'trade' || req.status !== 'approved') return null
+  if (!req.counterpartyId || !req.counterWorkDate) return null
   const nameOf = (id: string | null): string =>
     id ? (sched.personById.value.get(id)?.fullName ?? 'another member') : 'another member'
-  if (!req) return row.kind === 'giveaway_cover' ? 'Giveaway pickup' : 'Shift swap'
-  if (req.type === 'giveaway') return `Giveaway — picked up from ${nameOf(req.requesterId)}`
   const isCounter = row.userId === req.counterpartyId
   const other = isCounter ? req.requesterId : req.counterpartyId
   const otherDate = isCounter ? req.counterWorkDate : req.workDate
@@ -277,9 +279,9 @@ const weeks = computed<Cell[][]>(() => {
                   {{ row.name }}<span v-if="row.credential" class="mb__cred"> - {{ row.credential }}</span>
                 </span>
                 <span
-                  v-if="!row.open && (row.kind === 'trade' || row.kind === 'giveaway_cover')"
+                  v-if="!row.open && !!swapTitle(row)"
                   class="mb__swap"
-                  :title="swapTitle(row)"
+                  :title="swapTitle(row) || undefined"
                 >⇄</span>
                 <span class="mb__time">{{ row.start }}-{{ row.end }}</span>
               </div>
