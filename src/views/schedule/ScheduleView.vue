@@ -173,6 +173,23 @@ const APPNAV = computed<NavEntry[]>(() => {
   return n
 })
 const openMenu = ref<string | null>(null)
+/* The app bar scrolls horizontally (overflow-x:auto), which also clips
+   anything absolutely positioned inside it — so the menu renders FIXED
+   at the trigger's measured spot instead (Justin, 2026-09-29: chevron
+   turned but no menu). */
+const menuPos = ref<{ left: number; top: number }>({ left: 0, top: 0 })
+function toggleMenu(id: string, ev: MouseEvent): void {
+  if (openMenu.value === id) {
+    openMenu.value = null
+    return
+  }
+  const r = (ev.currentTarget as HTMLElement).getBoundingClientRect()
+  menuPos.value = {
+    left: Math.round(Math.min(r.left, window.innerWidth - 208)),
+    top: Math.round(r.bottom + 6),
+  }
+  openMenu.value = id
+}
 function pickNav(key: Tab): void {
   tab.value = key
   openMenu.value = null
@@ -462,13 +479,18 @@ watch(dateIso, (v) => {
               class="sched__appbar-link sched__appbar-link--menu"
               :class="{ 'sched__appbar-link--on': groupActive(it) }"
               :aria-expanded="openMenu === it.id"
-              @click="openMenu = openMenu === it.id ? null : it.id"
+              @click="toggleMenu(it.id, $event)"
             >
               {{ it.label }}<template v-if="it.id === 'boards' && boardLabel"><span class="sched__appbar-here">· {{ boardLabel }}</span></template>
               <span v-if="groupBadge(it) > 0" class="sched__appbar-badge">{{ badgeText(groupBadge(it)) }}</span>
               <svg class="sched__appbar-chev" :class="{ 'sched__appbar-chev--open': openMenu === it.id }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg>
             </button>
-            <div v-if="openMenu === it.id" class="sched__menu" role="menu">
+            <div
+              v-if="openMenu === it.id"
+              class="sched__menu"
+              role="menu"
+              :style="{ left: menuPos.left + 'px', top: menuPos.top + 'px' }"
+            >
               <button
                 v-for="s in it.items"
                 :key="s.key"
@@ -820,9 +842,9 @@ watch(dateIso, (v) => {
 }
 
 .sched__menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 8px;
+  /* fixed: escapes the app bar's overflow clip; coordinates come from
+     the trigger's rect at open time */
+  position: fixed;
   z-index: 70;
   min-width: 176px;
   display: grid;
