@@ -1057,6 +1057,10 @@ watch(
     attRows.value = []
     if (d) void loadAttest()
   },
+  // immediate: deep links open the drawer BEFORE this component mounts
+  // (it sits behind the shell's ready gate) — without it the watch
+  // registers after the value is already set and never fires
+  { immediate: true },
 )
 
 async function attestOne(unitId: string, flagged: boolean): Promise<void> {
@@ -1132,6 +1136,8 @@ watch(
     soLoaded.value = true
     if (res.error) err.value = res.error
   },
+  // immediate: deep links set the drawer state before this mounts
+  { immediate: true },
 )
 
 async function soApprove(): Promise<void> {

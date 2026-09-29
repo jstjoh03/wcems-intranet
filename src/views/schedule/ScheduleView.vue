@@ -233,14 +233,20 @@ onMounted(async () => {
       void router.replace({ query: { ...route.query, verify: undefined } })
     }
     if (typeof route.query.attest === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.attest)) {
+      const d = route.query.attest
       tab.value = 'mine'
-      editor.openAttest(route.query.attest)
       void router.replace({ query: { ...route.query, attest: undefined } })
+      // the tab watcher calls editor.closeAll() on its next flush —
+      // wait it out, or it closes this drawer the instant it opens
+      await nextTick()
+      editor.openAttest(d)
     }
     if (typeof route.query.signoff === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.signoff)) {
+      const pe = route.query.signoff
       tab.value = 'mine'
-      editor.openSignoff(route.query.signoff)
       void router.replace({ query: { ...route.query, signoff: undefined } })
+      await nextTick()
+      editor.openSignoff(pe)
     }
     // Requests + trade offers load with the shell (not just on their
     // tabs) so pending rows show on the boards and the tab badges are
