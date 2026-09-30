@@ -607,6 +607,40 @@ async function saveEditDetails() {
     editBusy.value = false
   }
 }
+/* ── Fix an attendee's name/email (Justin, 2026-09-30) ──────────────
+ * Students check in as "Kara" or "Keeshaun" and the generated AHA
+ * roster inherits it. Pencil on the roster row → correct both. */
+const eaOpen = ref(false)
+const eaBusy = ref(false)
+const eaErr = ref<string | null>(null)
+const eaId = ref('')
+const eaName = ref('')
+const eaEmail = ref('')
+function openEditAttendee(a: { id: string; studentName: string; studentEmail: string }): void {
+  eaId.value = a.id
+  eaName.value = a.studentName
+  eaEmail.value = a.studentEmail
+  eaErr.value = null
+  eaOpen.value = true
+}
+async function saveEditAttendee(): Promise<void> {
+  if (eaBusy.value) return
+  eaBusy.value = true
+  eaErr.value = null
+  try {
+    await sessions.updateAttendance(eaId.value, {
+      studentName: eaName.value,
+      studentEmail: eaEmail.value,
+    })
+    eaOpen.value = false
+    if (s.value) await sessions.loadSessionDetail(s.value.sessionId)
+  } catch (err) {
+    eaErr.value = err instanceof Error ? err.message : 'Save failed — try again.'
+  } finally {
+    eaBusy.value = false
+  }
+}
+
 async function saveHours() {
   if (!s.value || !hoursDirty.value) return
   hoursSaving.value = true
@@ -1868,7 +1902,11 @@ function fmtSubmittedAt(ts: string) {
           </thead>
           <tbody>
             <tr v-for="a in roster" :key="a.id">
-              <td>{{ a.studentName }}</td>
+              <td>
+                <button class="namefix" title="Fix name / email — corrects the generated roster" @click="openEditAttendee(a)">
+                  {{ a.studentName }}<Pencil :size="11" class="namefix__pen" />
+                </button>
+              </td>
               <td class="muted">{{ a.studentEmail }}</td>
               <td><span class="chip">{{ a.attendanceMode || '—' }}</span></td>
               <td v-if="!psaIsUpload">
@@ -2667,6 +2705,33 @@ function fmtSubmittedAt(ts: string) {
     </template>
 
     <!-- ── Edit session details modal ────────────────────────────── -->
+    <div v-if="eaOpen" class="modal" @click.self="eaOpen = false">
+      <div class="modalbox">
+        <div class="modalbox__head">
+          <h3>Fix attendee</h3>
+          <button class="iconbtn" aria-label="Close" @click="eaOpen = false">
+            <X :size="17" />
+          </button>
+        </div>
+        <p class="muted modalbox__hint">
+          Corrects the roster, sign-in sheet and eCard export — use the name as it should
+          print (first and last).
+        </p>
+        <label class="fld">
+          <span>Full name</span>
+          <input v-model="eaName" type="text" placeholder="First Last" />
+        </label>
+        <label class="fld">
+          <span>Email</span>
+          <input v-model="eaEmail" type="email" />
+        </label>
+        <div v-if="eaErr" class="edit__err">{{ eaErr }}</div>
+        <button class="btn btn-primary" :disabled="eaBusy" @click="saveEditAttendee">
+          {{ eaBusy ? 'Saving…' : 'Save' }}
+        </button>
+      </div>
+    </div>
+
     <div v-if="editOpen" class="modal" @click.self="editOpen = false">
       <div class="modalbox modalbox--wide">
         <div class="modalbox__head">
@@ -4640,6 +4705,29 @@ select:focus {
   color: oklch(0.45 0.14 28);
   font-size: 13px;
   font-weight: 500;
+}
+
+/* roster name → click to fix (half-names break the generated roster) */
+.namefix {
+  font: inherit;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.namefix__pen {
+  opacity: 0;
+  color: var(--color-muted, #6b7080);
+  transition: opacity 120ms;
+}
+
+.namefix:hover .namefix__pen {
+  opacity: 1;
 }
 .edit__warn {
   padding: 10px 14px;

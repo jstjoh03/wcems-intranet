@@ -93,6 +93,13 @@ async function submit() {
     formMsg.value = 'Please fill in all required fields.'
     return
   }
+  /* First AND last name required (Justin, 2026-09-30) — "Kara" with no
+     last name prints straight onto the AHA roster and eCards. */
+  const nameParts = form.name.trim().split(/\s+/).filter((p) => p.length >= 2)
+  if (nameParts.length < 2) {
+    formMsg.value = 'Please enter your first AND last name — this is exactly how it will print on your card.'
+    return
+  }
   // Card classes are always in person — the mode picker is hidden and
   // we force InPerson. Lectures still require an explicit choice.
   const mode = isCard.value ? 'InPerson' : form.mode
@@ -155,8 +162,8 @@ async function submit() {
         <div class="divider" />
 
         <label
-          >Full Name <i>*</i>
-          <input v-model="form.name" type="text" autocomplete="name" />
+          >First and Last Name <i>*</i>
+          <input v-model="form.name" type="text" autocomplete="name" placeholder="exactly as it should print on your card" />
         </label>
         <label
           >Work Email <i>*</i>
