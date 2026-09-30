@@ -1,0 +1,84 @@
+# Portal uptime monitor (Justin, 2026-09-29 — after the Nano wedge).
+# Every ~5 minutes: probe the Supabase database THROUGH the public REST
+# gateway (any fast HTTP answer = alive; timeout/5xx = down — during
+# the 9/29 outage this exact request hung) and the portal itself.
+# On two consecutive failures it OPENS A GITHUB ISSUE — GitHub emails
+# the owner immediately — and closes it with a note on recovery.
+# The apikey below is the PUBLIC client key (shipped in every browser).
+name: uptime
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SB_URL: https://orywxdbusnhsrkopmtme.supabase.co
+      SB_KEY: sb_publishable_gLrSduQyvdKCV-O8PqpMSg_bcppCEgS
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Probe database and portal
+        id: probe
+        run: |
+          probe_db() {
+            curl -s -o /dev/null -m 12 -w "%{http_code}" \
+              "$SB_URL/rest/v1/sched_units?select=id&limit=1" \
+              -H "apikey: $SB_KEY" -H "Authorization: Bearer $SB_KEY" || echo 000
+          }
+          up() { [ "$1" != "000" ] && [ "$1" -lt 500 ] 2>/dev/null; }
+
+          DB1=$(probe_db)
+          if up "$DB1"; then DB_OK=1; else
+            sleep 25
+            DB2=$(probe_db)
+            if up "$DB2"; then DB_OK=1; else DB_OK=0; fi
+          fi
+          PORTAL=$(curl -s -o /dev/null -m 12 -w "%{http_code}" https://employee.wallercountyems.com/ || echo 000)
+          if up "$PORTAL"; then PORTAL_OK=1; else PORTAL_OK=0; fi
+
+          echo "db_ok=$DB_OK"         >> "$GITHUB_OUTPUT"
+          echo "portal_ok=$PORTAL_OK" >> "$GITHUB_OUTPUT"
+          echo "db_code=${DB2:-$DB1}" >> "$GITHUB_OUTPUT"
+          echo "portal_code=$PORTAL"  >> "$GITHUB_OUTPUT"
+          echo "DB=$DB1/${DB2:-} PORTAL=$PORTAL"
+
+      - name: Alert or resolve
+        run: |
+          DB_OK='${{ steps.probe.outputs.db_ok }}'
+          PORTAL_OK='${{ steps.probe.outputs.portal_ok }}'
+          NOW=$(TZ=America/Chicago date '+%a %b %d, %I:%M %p %Z')
+          OPEN=$(gh issue list --repo "$GITHUB_REPOSITORY" --label outage --state open --json number --jq '.[0].number // empty')
+
+          if [ "$DB_OK" = "1" ] && [ "$PORTAL_OK" = "1" ]; then
+            if [ -n "$OPEN" ]; then
+              gh issue comment "$OPEN" --repo "$GITHUB_REPOSITORY" \
+                --body "✅ Recovered — database and portal both answering as of $NOW."
+              gh issue close "$OPEN" --repo "$GITHUB_REPOSITORY"
+            fi
+            exit 0
+          fi
+
+          WHAT=""
+          [ "$DB_OK" != "1" ]     && WHAT="Database not responding (rest code ${{ steps.probe.outputs.db_code }})"
+          [ "$PORTAL_OK" != "1" ] && WHAT="${WHAT:+$WHAT · }Portal page failing (code ${{ steps.probe.outputs.portal_code }})"
+
+          if [ -z "$OPEN" ]; then
+            gh label create outage --repo "$GITHUB_REPOSITORY" --color B60205 --force >/dev/null 2>&1 || true
+            gh issue create --repo "$GITHUB_REPOSITORY" --label outage \
+              --title "🔴 Portal outage detected — $WHAT" \
+              --body "$WHAT — first confirmed $NOW after two failed probes 25s apart.
+
+**Likely fix:** Supabase dashboard → Restart project (Settings → General), same as the 9/29 Nano wedge. Verify recovery: this issue closes itself when both probes pass.
+
+Probes: \`rest/v1/sched_units\` via public gateway · \`employee.wallercountyems.com\`. Runs every ~5 min from GitHub Actions."
+          fi
