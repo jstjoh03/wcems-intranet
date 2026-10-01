@@ -840,15 +840,29 @@ export const INTERNAL_CREDENTIALS = [
 /** Command staff + P4 hold any seat (Justin, 2026-09-17). */
 const ANY_SEAT_CREDENTIALS = ['Chief', 'Assistant Chief', 'CDO', 'P4', 'Supervisor'] as const
 
+/** Cleared-at-P2 set — carries narcotics safe access. NOT a request
+ *  gate anymore (see below); it drives the Chief's warning chip when
+ *  someone outside it lands on a Paramedic-in-charge seat. */
+export const P2_CLEARED_CREDENTIALS: readonly string[] = [
+  'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS,
+]
+
+/** AEMT-or-higher — the M231 crew-minimum bar (one aboard at all times). */
+export const AEMT_PLUS_CREDENTIALS: readonly string[] = [
+  'AEMT', 'AEMT-FTO', 'P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS,
+]
+
 /** Which internal credentials satisfy each seat rule for SELF-SERVICE
  *  (pickups, trade claims). Command staff/Supervisor/P4 hold any seat.
- *  P1s may cover a Paramedic-in-charge seat ONLY by Chief assignment —
- *  never listed here for p2, so they cannot pick those up themselves;
- *  the Chief's direct-assign path is the approval and bypasses this
- *  list. */
+ *  Chief's rule (2026-10-01): ANY paramedic — P1C/P1 included — may
+ *  REQUEST a Paramedic-in-charge or attendant spot before they are
+ *  P2-cleared; her approval queue shows a not-P2-cleared warning chip
+ *  instead of the old hard block. AEMT/EMT still cannot self-request
+ *  p2 seats. The M231 exception (any level when the other seat holds
+ *  an AEMT-or-higher) lives in canFillSeat, not in this map. */
 export const QUAL_RULE_CREDENTIALS: Record<string, readonly string[]> = {
-  p2: ['P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
-  aemt_or_higher: ['AEMT', 'AEMT-FTO', 'P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
+  p2: ['P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
+  aemt_or_higher: [...AEMT_PLUS_CREDENTIALS],
   supervisor: [...ANY_SEAT_CREDENTIALS],
   any_field: [...INTERNAL_CREDENTIALS],
   any: [...INTERNAL_CREDENTIALS],
@@ -864,6 +878,9 @@ async function canFillSeat(
   userId: string,
   seatId: string,
   subjectName = 'You',
+  /** Shift context — lets the M231 crew-minimum exception look at who
+   *  covers the unit's other seat for that window. */
+  ctx?: { dateIso: string; startAt?: string | null; endAt?: string | null },
 ): Promise<{ ok: boolean; reason: string | null }> {
   const seat = seats.value.find((s) => s.id === seatId)
   if (!seat) return { ok: true, reason: null }
@@ -900,10 +917,167 @@ async function canFillSeat(
   const allowed = QUAL_RULE_CREDENTIALS[seat.qualRule] ?? []
   const cred = person?.credential ?? null
   if (cred && allowed.includes(cred)) return { ok: true, reason: null }
+  /* M231 rule (Chief, 2026-10-01): the AIC seat may be covered by ANY
+     level when the unit's other seat has an AEMT-or-higher aboard for
+     the whole requested window — the truck still meets the AEMT/EMT
+     crew minimum (1.51). */
+  if (seat.qualRule === 'aemt_or_higher' && unit && ctx?.dateIso) {
+    const win = ctxWindowMs(ctx, unit)
+    const cover = await unitAemtPlusCoverage(ctx.dateIso, unit.id, seat.id)
+    if (!cover.error && windowCovered(cover.segs, win.start, win.end)) {
+      return { ok: true, reason: null }
+    }
+    return {
+      ok: false,
+      reason:
+        `${poss} credential (${cred ?? 'not set'}) can only take this ${seat.label} seat when an ` +
+        `AEMT or paramedic covers ${unit.code}'s other seat for the whole window — right now it ` +
+        `isn't. The Chief can still assign it directly.`,
+    }
+  }
   return {
     ok: false,
     reason: `${poss} credential (${cred ?? 'not set'}) does not qualify for this ${seat.label} seat. The Chief can still assign it directly.`,
   }
+}
+
+/** Resolve a request window to epoch ms, defaulting to the unit's day
+ *  window when explicit times are missing. */
+function ctxWindowMs(
+  ctx: { dateIso: string; startAt?: string | null; endAt?: string | null },
+  unit: SchedUnit | null,
+): { start: number; end: number } {
+  if (ctx.startAt && ctx.endAt) return { start: tsMs(ctx.startAt), end: tsMs(ctx.endAt) }
+  const uw = unitDayWindow(unit ?? null, ctx.dateIso)
+  return { start: tsMs(uw.startTs), end: tsMs(uw.endTs) }
+}
+
+/** Do the merged segments fully cover [start, end)? Sliver-tolerant. */
+function windowCovered(segs: Seg[], start: number, end: number): boolean {
+  let left: Seg[] = [{ start, end }]
+  for (const s of mergeSegs(segs)) left = cutSegs(left, s.start, s.end)
+  return left.every((s) => s.end - s.start < MIN_SEG_MS)
+}
+
+/**
+ * AEMT-or-higher standing coverage across a unit's OTHER seats on a
+ * date (read-only twin of claimSeatWindow's standing math: scheduled
+ * rows minus each holder's own time off; a rowless seat falls back to
+ * its rotation occupant inside the unit window). Fresh-fetched — the
+ * Trades board files against dates far outside the loaded range.
+ */
+async function unitAemtPlusCoverage(
+  dateIso: string,
+  unitId: string,
+  excludeSeatId: string,
+): Promise<{ segs: Seg[]; error: string | null }> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return { segs: [], error: null }
+  const otherSeats = seats.value.filter(
+    (s) => s.unitId === unitId && s.id !== excludeSeatId && s.active,
+  )
+  if (otherSeats.length === 0) return { segs: [], error: null }
+  const unit = units.value.find((u) => u.id === unitId) ?? null
+  const [rowsRes, offsRes] = await Promise.all([
+    supabase
+      .from('sched_entries')
+      .select('*')
+      .eq('work_date', dateIso)
+      .in('seat_id', otherSeats.map((s) => s.id)),
+    supabase.from('sched_entries').select('*').eq('work_date', dateIso).eq('kind', 'timeoff'),
+  ])
+  if (rowsRes.error) return { segs: [], error: rowsRes.error.message }
+  if (offsRes.error) return { segs: [], error: offsRes.error.message }
+  const offs = (offsRes.data ?? []).map(mapEntry)
+  const offsFor = (uid: string | null): Seg[] =>
+    uid
+      ? offs
+          .filter((o) => o.userId === uid)
+          .map((o) => ({ start: tsMs(o.startAt), end: tsMs(o.endAt) }))
+      : []
+  const isAemtPlus = (uid: string | null): boolean => {
+    const cred = uid ? (personById.value.get(uid)?.credential ?? null) : null
+    return !!cred && AEMT_PLUS_CREDENTIALS.includes(cred)
+  }
+  const segs: Seg[] = []
+  for (const seat of otherSeats) {
+    const seatRows = (rowsRes.data ?? [])
+      .map(mapEntry)
+      .filter((r) => r.seatId === seat.id && r.kind !== 'timeoff' && r.status !== 'off')
+    for (const r of seatRows) {
+      if (r.status !== 'scheduled' || !r.userId || !isAemtPlus(r.userId)) continue
+      let s: Seg[] = [{ start: tsMs(r.startAt), end: tsMs(r.endAt) }]
+      for (const o of offsFor(r.userId)) s = cutSegs(s, o.start, o.end)
+      segs.push(...s)
+    }
+    if (seatRows.length === 0) {
+      const occ = seatRotationOccupant(seat.id, dateIso)
+      if (occ && isAemtPlus(occ)) {
+        const uw = unitDayWindow(unit, dateIso)
+        let s: Seg[] = [{ start: tsMs(uw.startTs), end: tsMs(uw.endTs) }]
+        for (const o of offsFor(occ)) s = cutSegs(s, o.start, o.end)
+        segs.push(...s)
+      }
+    }
+  }
+  return { segs: mergeSegs(segs), error: null }
+}
+
+/**
+ * Advisory chips for the approval queue — NEVER blocking. Today:
+ *  - not_p2_cleared: someone outside the P2-cleared set landing on a
+ *    Paramedic-in-charge seat (no narcotics safe access yet) — the
+ *    Chief asked to see this at approval time (2026-10-01).
+ *  - crew_minimum: a below-AEMT member filling a non-AIC seat on a
+ *    unit with an AIC seat (M231) while no AEMT-or-higher covers the
+ *    in-charge side for the whole window.
+ */
+async function qualWarnings(
+  userId: string,
+  seatId: string | null | undefined,
+  ctx?: { dateIso?: string | null; startAt?: string | null; endAt?: string | null },
+  subjectName?: string,
+): Promise<HoursWarning[]> {
+  if (!seatId) return []
+  const seat = seats.value.find((s) => s.id === seatId)
+  if (!seat) return []
+  const person = personById.value.get(userId)
+  const cred = person?.credential ?? null
+  const name = subjectName ?? person?.fullName ?? 'This member'
+  const out: HoursWarning[] = []
+  if (seat.qualRule === 'p2' && (!cred || !P2_CLEARED_CREDENTIALS.includes(cred))) {
+    out.push({
+      code: 'not_p2_cleared',
+      hours: 0,
+      limit: 0,
+      message: `${name} (${cred ?? 'no credential set'}) is not cleared at P2 yet — no narcotics safe access.`,
+    })
+  }
+  if (
+    seat.qualRule !== 'aemt_or_higher' &&
+    (!cred || !AEMT_PLUS_CREDENTIALS.includes(cred)) &&
+    ctx?.dateIso
+  ) {
+    const unit = units.value.find((u) => u.id === seat.unitId) ?? null
+    const hasAicSeat = seats.value.some(
+      (s) => s.unitId === seat.unitId && s.active && s.qualRule === 'aemt_or_higher',
+    )
+    if (unit && hasAicSeat) {
+      const win = ctxWindowMs({ dateIso: ctx.dateIso, startAt: ctx.startAt, endAt: ctx.endAt }, unit)
+      const cover = await unitAemtPlusCoverage(ctx.dateIso, unit.id, seat.id)
+      if (!cover.error && !windowCovered(cover.segs, win.start, win.end)) {
+        out.push({
+          code: 'crew_minimum',
+          hours: 0,
+          limit: 0,
+          message:
+            `${name} is below AEMT and no AEMT or paramedic covers ${unit.code}'s in-charge seat ` +
+            `for the whole window — the truck would fall under the AEMT/EMT minimum (1.51).`,
+        })
+      }
+    }
+  }
+  return out
 }
 
 /** Best-effort default when no internal credential has been set on the
@@ -2093,7 +2267,16 @@ interface Seg {
 }
 
 export interface HoursWarning {
-  code: 'consecutive' | 'consecutive_confirm' | 'weekly' | 'ot' | 'check_failed' | 'leave_short' | 'started'
+  code:
+    | 'consecutive'
+    | 'consecutive_confirm'
+    | 'weekly'
+    | 'ot'
+    | 'check_failed'
+    | 'leave_short'
+    | 'started'
+    | 'not_p2_cleared'
+    | 'crew_minimum'
   hours: number
   limit: number
   message: string
@@ -2779,8 +2962,13 @@ async function createPickupRequest(opts: {
   const auth = useAuthStore()
   const me = auth.appUser?.id
   if (!me) return 'Not signed in'
+  const w0 = shiftWindow(opts.dateIso, opts.from, opts.until)
   if (opts.seatId) {
-    const q = await canFillSeat(me, opts.seatId)
+    const q = await canFillSeat(me, opts.seatId, 'You', {
+      dateIso: opts.dateIso,
+      startAt: w0.reqStart,
+      endAt: w0.reqEnd,
+    })
     if (!q.ok) return q.reason
   }
   // Re-validate a referenced open entry FRESH: a board left open while
@@ -2798,9 +2986,15 @@ async function createPickupRequest(opts: {
       return 'That open shift is no longer available — the board has changed (it may have just been filled). The board has refreshed; try again from the current view.'
     }
   }
-  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
+  const w = w0
   const seat = seats.value.find((s) => s.id === opts.seatId)
   const unit = units.value.find((u) => u.id === seat?.unitId)
+  const qw = await qualWarnings(
+    me,
+    opts.seatId,
+    { dateIso: opts.dateIso, startAt: w.reqStart, endAt: w.reqEnd },
+    displayName(me).name || 'The requester',
+  )
   const res = await supabase.from('sched_requests').insert({
     type: 'pickup',
     requester_id: me,
@@ -2812,7 +3006,7 @@ async function createPickupRequest(opts: {
     unit_code: unit?.code ?? null,
     position_label: seat?.label ?? opts.positionLabel ?? null,
     comments: opts.comments || null,
-    warnings: opts.warnings ?? [],
+    warnings: [...(opts.warnings ?? []), ...qw],
   }).select('id')
   if (res.error) return res.error.message
   notify('request_submitted', { requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id) })
@@ -2875,6 +3069,7 @@ async function createTradePosting(opts: {
   const auth = useAuthStore()
   const me = auth.appUser?.id
   if (!me) return 'Not signed in'
+  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
   if (opts.toUserId) {
     if (opts.toUserId === me) return 'Pick someone other than yourself.'
     // The target ends up covering the poster's seat either way — check
@@ -2883,10 +3078,10 @@ async function createTradePosting(opts: {
       opts.toUserId,
       opts.seatId,
       displayName(opts.toUserId).name || 'They',
+      { dateIso: opts.dateIso, startAt: w.reqStart, endAt: w.reqEnd },
     )
     if (!q.ok) return q.reason
   }
-  const w = shiftWindow(opts.dateIso, opts.from, opts.until)
   const closed = tradeClosedReason(w.reqStart, null)
   if (closed) return closed
   const seat = seats.value.find((s) => s.id === opts.seatId)
@@ -2942,6 +3137,14 @@ async function respondToDirect(req: SchedRequest, accept: boolean): Promise<stri
         displayName(me).name || 'The claimant',
       )
       warnings.push(...info.warnings)
+      warnings.push(
+        ...(await qualWarnings(
+          me,
+          req.seatId,
+          { dateIso: req.workDate, startAt: req.startAt, endAt: req.endAt },
+          displayName(me).name || 'The claimant',
+        )),
+      )
     }
     const res = await supabase
       .from('sched_requests')
@@ -2984,7 +3187,14 @@ async function makeOffer(opts: {
     return 'That request was sent directly to someone else.'
   }
   if (posting?.seatId) {
-    const q = await canFillSeat(me, posting.seatId)
+    const q = await canFillSeat(
+      me,
+      posting.seatId,
+      'You',
+      posting.workDate
+        ? { dateIso: posting.workDate, startAt: posting.startAt, endAt: posting.endAt }
+        : undefined,
+    )
     if (!q.ok) return q.reason
   }
   if (posting) {
@@ -3006,6 +3216,14 @@ async function makeOffer(opts: {
         displayName(me).name || 'The claimant',
       )
       warnings.push(...info.warnings)
+      warnings.push(
+        ...(await qualWarnings(
+          me,
+          posting.seatId,
+          { dateIso: posting.workDate, startAt: posting.startAt, endAt: posting.endAt },
+          displayName(me).name || 'The claimant',
+        )),
+      )
     }
     const res = await supabase
       .from('sched_requests')
@@ -3079,6 +3297,18 @@ async function withdrawOffer(offerId: string): Promise<string | null> {
 async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string | null> {
   const closed = tradeClosedReason(req.startAt, req.workDate)
   if (closed) return closed
+  /* BOTH legs of a swap get the eligibility check (the claimant was
+     vetted at offer time against the poster's seat; the poster covers
+     the OFFERED seat and was never checked before 2026-10-01). */
+  if (offer.offerSeatId && offer.offerWorkDate) {
+    // acceptOffer runs as the poster — 'You' addresses them correctly
+    const q = await canFillSeat(req.requesterId, offer.offerSeatId, 'You', {
+      dateIso: offer.offerWorkDate,
+      startAt: offer.offerStartAt,
+      endAt: offer.offerEndAt,
+    })
+    if (!q.ok) return q.reason
+  }
   const warnings: HoursWarning[] = []
   if (req.workDate && req.startAt && req.endAt) {
     const who = personById.value.get(offer.userId)?.fullName ?? 'The claimant'
@@ -3088,6 +3318,14 @@ async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string
       who,
     )
     warnings.push(...info.warnings)
+    warnings.push(
+      ...(await qualWarnings(
+        offer.userId,
+        req.seatId,
+        { dateIso: req.workDate, startAt: req.startAt, endAt: req.endAt },
+        who,
+      )),
+    )
   }
   if (offer.offerWorkDate && offer.offerStartAt && offer.offerEndAt) {
     const who = personById.value.get(req.requesterId)?.fullName ?? 'The poster'
@@ -3097,6 +3335,14 @@ async function acceptOffer(req: SchedRequest, offer: TradeOffer): Promise<string
       who,
     )
     warnings.push(...info.warnings)
+    warnings.push(
+      ...(await qualWarnings(
+        req.requesterId,
+        offer.offerSeatId,
+        { dateIso: offer.offerWorkDate, startAt: offer.offerStartAt, endAt: offer.offerEndAt },
+        who,
+      )),
+    )
   }
   const up1 = await supabase
     .from('sched_trade_offers')
@@ -6019,6 +6265,7 @@ export function useSchedule() {
     createPickupRequest,
     assignOpenSeat,
     canFillSeat,
+    qualWarnings,
     cancelRequest,
     decideRequest,
     updateRequestWindow,

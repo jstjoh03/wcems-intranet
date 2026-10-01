@@ -786,6 +786,76 @@ async function saveReminderCfg() {
   rmSaved.value = true
 }
 
+// ── approval notifications (Justin, 2026-10-01) ─────────────────────
+// Request/claim pings previously went to EVERY editor; the schedulers
+// who handle students and events don't work the queue. The explicit
+// recipient list lives in sched_settings 'notify'.approver_user_ids;
+// empty falls back to all Global admins (enforced in sched-notify).
+
+const anIds = ref<string[]>([])
+const anCandidates = ref<{ id: string; name: string; level: string }[]>([])
+const anBusy = ref(false)
+const anSaved = ref(false)
+const anLoaded = ref(false)
+
+async function loadApprovers() {
+  if (anLoaded.value || !sched.isGlobalAdmin.value) return
+  const acc = await sched.fetchAccessList()
+  const editors = new Map(
+    acc
+      .filter((a) => a.level === 'global_admin' || a.level === 'scheduler')
+      .map((a) => [a.userId, a.level]),
+  )
+  anCandidates.value = sched.people.value
+    .filter((p) => editors.has(p.id))
+    .map((p) => ({
+      id: p.id,
+      name: p.fullName,
+      level: editors.get(p.id) === 'global_admin' ? 'Global admin' : 'Scheduler',
+    }))
+  const cfg = (sched.settings.value['notify'] ?? {}) as { approver_user_ids?: unknown }
+  const saved = Array.isArray(cfg.approver_user_ids)
+    ? (cfg.approver_user_ids as unknown[]).map(String)
+    : []
+  anIds.value = saved.length
+    ? saved.filter((id) => anCandidates.value.some((c) => c.id === id))
+    : anCandidates.value.filter((c) => c.level === 'Global admin').map((c) => c.id)
+  anLoaded.value = true
+}
+
+watch(
+  [() => sched.settings.value, () => sched.people.value.length],
+  () => {
+    if (Object.keys(sched.settings.value).length > 0 && sched.people.value.length > 0)
+      void loadApprovers()
+  },
+  { immediate: true },
+)
+
+function anToggle(id: string) {
+  anSaved.value = false
+  anIds.value = anIds.value.includes(id)
+    ? anIds.value.filter((x) => x !== id)
+    : [...anIds.value, id]
+}
+
+async function saveApprovers() {
+  anBusy.value = true
+  anSaved.value = false
+  err.value = null
+  const existing = (sched.settings.value['notify'] ?? {}) as Record<string, unknown>
+  const e = await sched.saveSetting('notify', {
+    ...existing,
+    approver_user_ids: anIds.value,
+  })
+  anBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  anSaved.value = true
+}
+
 async function saveWarnCfg() {
   wBusy.value = true
   wDone.value = null
@@ -1256,6 +1326,24 @@ async function saveWarnCfg() {
           <p v-if="wDone" class="setup__done">{{ wDone }}</p>
           <button class="setup__btn setup__btn--primary" :disabled="wBusy" @click="saveWarnCfg">
             {{ wBusy ? 'Saving…' : 'Save thresholds' }}
+          </button>
+        </section>
+
+        <section v-if="sched.isGlobalAdmin.value" class="setup__card">
+          <h2 class="setup__h">Approval notifications</h2>
+          <p class="setup__muted">
+            Who is pinged (push/email) when a pickup, giveaway, swap, time-off, or
+            extra-hours request lands in the queue. Schedulers who only handle students
+            and events can be left out — they keep full access, they just stop getting
+            the pings. With nobody ticked, every Global admin gets them.
+          </p>
+          <label v-for="c in anCandidates" :key="c.id" class="setup__checkrow">
+            <input type="checkbox" :checked="anIds.includes(c.id)" @change="anToggle(c.id)" />
+            {{ c.name }} <span class="setup__muted">&nbsp;· {{ c.level }}</span>
+          </label>
+          <p v-if="anSaved" class="setup__done">Saved — applies to the next request filed.</p>
+          <button class="setup__btn setup__btn--primary" :disabled="anBusy" @click="saveApprovers">
+            {{ anBusy ? 'Saving…' : 'Save recipients' }}
           </button>
         </section>
 

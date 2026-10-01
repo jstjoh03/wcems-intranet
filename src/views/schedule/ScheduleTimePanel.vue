@@ -685,6 +685,12 @@ interface SignoffBoardRow {
   at: string | null
   note: string | null
   changed: boolean
+  /** Daily shift confirms ("my times are right"): done / due so far,
+   *  with the unconfirmed dates for the hover (Justin, 2026-10-01 —
+   *  the prompts fired daily but nothing showed who ignored them). */
+  confirmDone: number
+  confirmDue: number
+  confirmMissing: string[]
 }
 
 const boardRows = computed<SignoffBoardRow[]>(() => {
@@ -693,11 +699,31 @@ const boardRows = computed<SignoffBoardRow[]>(() => {
   const hoursByUser = new Map<string, number>()
   for (const s of worked.value)
     hoursByUser.set(s.userId, (hoursByUser.get(s.userId) ?? 0) + s.hours)
+  // Confirmable days: worked dates whose block has ended (a 0600 work
+  // date is done once the NEXT day starts) — i.e. dates before today.
+  const today = todayCentralIso()
+  const workedDates = new Map<string, Set<string>>()
+  for (const s of worked.value) {
+    if (s.dateIso >= today) continue
+    const set = workedDates.get(s.userId) ?? new Set<string>()
+    set.add(s.dateIso)
+    workedDates.set(s.userId, set)
+  }
+  const confirmed = new Map<string, Set<string>>()
+  for (const c of vb.value.confirms) {
+    if (!c.workDate) continue
+    const set = confirmed.get(c.userId) ?? new Set<string>()
+    set.add(c.workDate)
+    confirmed.set(c.userId, set)
+  }
   const rows: SignoffBoardRow[] = []
   for (const [uid, hrs] of hoursByUser) {
     if (hrs < 0.1) continue
     const so = soByUser.get(uid) ?? null
     const snapTotal = so ? Number((so.snapshot as { total?: number }).total ?? NaN) : NaN
+    const due = [...(workedDates.get(uid) ?? [])].sort()
+    const conf = confirmed.get(uid) ?? new Set<string>()
+    const missing = due.filter((d) => !conf.has(d))
     rows.push({
       userId: uid,
       name: sched.personById.value.get(uid)?.fullName ?? 'Unknown',
@@ -706,12 +732,19 @@ const boardRows = computed<SignoffBoardRow[]>(() => {
       at: so?.createdAt ?? null,
       note: so?.note ?? null,
       changed: !!so && Number.isFinite(snapTotal) && Math.abs(snapTotal - hrs) > 0.05,
+      confirmDone: due.length - missing.length,
+      confirmDue: due.length,
+      confirmMissing: missing,
     })
   }
   return rows.sort(
     (a, b) => byLast(a.name, b.name),
   )
 })
+
+const confirmShortCount = computed(
+  () => boardRows.value.filter((r) => r.confirmMissing.length > 0).length,
+)
 
 const soApprovedCount = computed(() => boardRows.value.filter((r) => r.status === 'approved').length)
 const soDisputedCount = computed(() => boardRows.value.filter((r) => r.status === 'disputed').length)
@@ -1190,6 +1223,9 @@ function downloadPaycom(onlySelected = false): void {
           <span class="tm__sostat" :class="{ 'tm__sostat--late': soOverdueNow && soPendingCount > 0 }">
             {{ soPendingCount }} pending{{ soOverdueNow && soPendingCount > 0 ? ' — past due' : '' }}
           </span>
+          <span v-if="confirmShortCount" class="tm__sostat tm__sostat--warn">
+            {{ confirmShortCount }} behind on daily confirms
+          </span>
           <span v-if="openFlags.length" class="tm__sostat tm__sostat--warn">
             {{ openFlags.length }} open discrepanc{{ openFlags.length === 1 ? 'y' : 'ies' }}
           </span>
@@ -1231,17 +1267,27 @@ function downloadPaycom(onlySelected = false): void {
             <tr>
               <th>Member</th>
               <th class="tm__n">Hours</th>
+              <th class="tm__n" title="End-of-shift confirms answered vs shifts worked so far this period">Daily confirms</th>
               <th>Status</th>
               <th>Note</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="boardRows.length === 0">
-              <td colspan="4" class="tm__muted" style="padding: 0.7rem 0">No hours in this period yet.</td>
+              <td colspan="5" class="tm__muted" style="padding: 0.7rem 0">No hours in this period yet.</td>
             </tr>
             <tr v-for="r in boardRows" :key="r.userId">
               <td>{{ r.name }}</td>
               <td class="tm__n">{{ r.hours.toFixed(1) }}</td>
+              <td class="tm__n">
+                <span
+                  v-if="r.confirmDue > 0"
+                  class="tm__sostat"
+                  :class="r.confirmMissing.length === 0 ? 'tm__sostat--ok' : 'tm__sostat--warn'"
+                  :title="r.confirmMissing.length ? `Not confirmed: ${r.confirmMissing.map(fmtDay).join(', ')}` : 'Every ended shift confirmed'"
+                >{{ r.confirmDone }} of {{ r.confirmDue }}</span>
+                <span v-else class="tm__muted">—</span>
+              </td>
               <td>
                 <span
                   class="tm__sostat"

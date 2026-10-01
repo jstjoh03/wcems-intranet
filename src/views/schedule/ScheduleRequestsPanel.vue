@@ -549,6 +549,8 @@ function chipText(w: HoursWarning): string {
   if (w.code === 'weekly') return `${w.hours}h week`
   if (w.code === 'ot') return 'Overtime'
   if (w.code === 'started') return 'Shift already started'
+  if (w.code === 'not_p2_cleared') return 'Not P2-cleared — no safe access'
+  if (w.code === 'crew_minimum') return 'Below AEMT/EMT crew minimum'
   return 'Hours unverified'
 }
 
@@ -567,16 +569,16 @@ async function computeCardHours() {
   const queue = pendingQueue.value
   const results = await Promise.all(
     queue.map(async (r) => {
-      const subs: { userId: string; dateIso: string; startAt: string; endAt: string; name: string }[] = []
+      const subs: { userId: string; dateIso: string; startAt: string; endAt: string; name: string; seatId: string | null }[] = []
       if ((r.type === 'pickup' || r.type === 'extra_hours') && r.workDate && r.startAt && r.endAt) {
-        subs.push({ userId: r.requesterId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name: requesterName(r) })
+        subs.push({ userId: r.requesterId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name: requesterName(r), seatId: r.seatId ?? null })
       } else if (r.type === 'giveaway' && r.counterpartyId && r.workDate && r.startAt && r.endAt) {
         const name = sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Claimant'
-        subs.push({ userId: r.counterpartyId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name })
+        subs.push({ userId: r.counterpartyId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name, seatId: r.seatId ?? null })
       } else if (r.type === 'trade') {
         if (r.counterpartyId && r.workDate && r.startAt && r.endAt) {
           const name = sched.personById.value.get(r.counterpartyId)?.fullName ?? 'Partner'
-          subs.push({ userId: r.counterpartyId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name })
+          subs.push({ userId: r.counterpartyId, dateIso: r.workDate, startAt: r.startAt, endAt: r.endAt, name, seatId: r.seatId ?? null })
         }
         if (r.counterpartyId && r.counterWorkDate && r.counterStartAt && r.counterEndAt) {
           subs.push({
@@ -585,6 +587,7 @@ async function computeCardHours() {
             startAt: r.counterStartAt,
             endAt: r.counterEndAt,
             name: requesterName(r),
+            seatId: r.counterSeatId ?? null,
           })
         }
       }
@@ -601,6 +604,16 @@ async function computeCardHours() {
           `${s.name}: ${info.weekHours}h week · ${info.periodHours}h period · ${info.consecutiveHours}h consecutive`,
         )
         warnings.push(...info.warnings)
+        // Live qual chips — P2 clearance / crew minimum, recomputed at
+        // review time like the hours so credential fixes show through.
+        warnings.push(
+          ...(await sched.qualWarnings(
+            s.userId,
+            s.seatId,
+            { dateIso: s.dateIso, startAt: s.startAt, endAt: s.endAt },
+            s.name,
+          )),
+        )
       }
       return [r.id, { lines, warnings }] as const
     }),
@@ -625,10 +638,22 @@ function cardChips(r: SchedRequest): HoursWarning[] {
       : []
   /* Trades swap hours, they don't add them — hour-threshold chips on a
      swap are noise; the only flag a trade earns is crossing pay periods
-     (Justin, 2026-09-24). The hour detail still shows in the expansion. */
-  if (r.type === 'trade') return started
+     (Justin, 2026-09-24). The hour detail still shows in the expansion.
+     QUAL chips are the exception (2026-10-01): a not-P2-cleared or
+     crew-minimum flag matters on a swap as much as on a pickup. */
   const live = cardHours.value[r.id]?.warnings ?? []
   const stored = reqWarnings(r)
+  if (r.type === 'trade') {
+    const seenQ = new Set<string>()
+    const qual = [...live, ...stored].filter((w) => {
+      if (w.code !== 'not_p2_cleared' && w.code !== 'crew_minimum') return false
+      const k = `${w.code}|${w.message}`
+      if (seenQ.has(k)) return false
+      seenQ.add(k)
+      return true
+    })
+    return [...started, ...qual]
+  }
   const seen = new Set(live.map((w) => w.code))
   return [...started, ...live, ...stored.filter((w) => !seen.has(w.code))]
 }
@@ -1694,7 +1719,9 @@ async function cancel(r: SchedRequest) {
 }
 
 .rq__chip[data-code='consecutive_confirm'],
-.rq__chip[data-code='check_failed'] {
+.rq__chip[data-code='check_failed'],
+.rq__chip[data-code='not_p2_cleared'],
+.rq__chip[data-code='crew_minimum'] {
   border-color: oklch(0.8 0.1 27);
   background: oklch(0.97 0.02 27);
   color: var(--color-danger-500);

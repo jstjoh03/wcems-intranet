@@ -398,8 +398,21 @@ async function resolveCaller(req: Request): Promise<Caller | null> {
 const isEditor = (c: Caller) => c.level === 'global_admin' || c.level === 'scheduler'
 const canPage = (c: Caller) => isEditor(c) || c.level === 'supervisor'
 
-async function editorIds(): Promise<string[]> {
-  const { data } = await sb.from('sched_access').select('user_id, level').in('level', ['global_admin', 'scheduler'])
+/** Who gets the approval-queue pings (request filed / claimed). The
+ *  schedulers who handle students and events do NOT work the queue —
+ *  only the approvers do (Rhonda G + Justin today; Justin, 2026-10-01).
+ *  Setup → "Approval notifications" writes the explicit list to
+ *  sched_settings 'notify'.approver_user_ids; unset/empty falls back
+ *  to every global_admin. NEVER falls back to schedulers. */
+async function approverIds(): Promise<string[]> {
+  const { data: s } = await sb
+    .from('sched_settings')
+    .select('value')
+    .eq('key', 'notify')
+    .maybeSingle()
+  const ids = (s?.value as { approver_user_ids?: unknown } | null)?.approver_user_ids
+  if (Array.isArray(ids) && ids.length > 0) return ids.map(String)
+  const { data } = await sb.from('sched_access').select('user_id').eq('level', 'global_admin')
   return (data ?? []).map((r) => r.user_id)
 }
 
@@ -725,7 +738,7 @@ Deno.serve(async (req: Request) => {
         urgentTypes.map((r) => r.work_date).filter((x): x is string => !!x).sort()[0] ?? null
       const sameDay = soonestUrgent !== null && soonestUrgent >= todayC && soonestUrgent <= tomorrow
       const d = await deliver(
-        await editorIds(),
+        await approverIds(),
         'approvals',
         {
           title: sameDay ? 'SAME-DAY request needs approval' : 'Request needs approval',

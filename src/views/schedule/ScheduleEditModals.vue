@@ -90,18 +90,23 @@ async function conflictChoice(run: () => Promise<void>): Promise<void> {
   busy.value = false
 }
 
-/** Double-booking + unavailability + would-be hours for scheduling
- *  `userId` into a window. */
+/** Double-booking + unavailability + would-be hours (and, with a seat,
+ *  P2-clearance / crew-minimum advisories) for scheduling `userId`
+ *  into a window. */
 async function gatherConflicts(
   userId: string,
   dateIso: string,
   from: string,
   until: string,
+  seatId?: string | null,
 ): Promise<string[]> {
   const name = sched.personById.value.get(userId)?.fullName ?? 'This member'
-  const [un, info] = await Promise.all([
+  const [un, info, qual] = await Promise.all([
     sched.checkUnavailable(userId, dateIso),
     sched.hoursCheckWindow(userId, dateIso, from, until, name),
+    seatId
+      ? sched.qualWarnings(userId, seatId, { dateIso }, name)
+      : Promise.resolve([]),
   ])
   const items: string[] = []
   for (const o of sched.dayOverlaps(userId, dateIso, from, until)) {
@@ -115,6 +120,7 @@ async function gatherConflicts(
     )
   }
   for (const w of info.warnings) items.push(w.message)
+  for (const w of qual) items.push(w.message)
   return items
 }
 
@@ -249,7 +255,7 @@ async function assignDirect(): Promise<void> {
   const s = editor.slot.value
   if (!s || !slotAssignee.value || busy.value) return
   busy.value = true
-  const items = await gatherConflicts(slotAssignee.value, s.dateIso, slotFrom.value, slotUntil.value)
+  const items = await gatherConflicts(slotAssignee.value, s.dateIso, slotFrom.value, slotUntil.value, s.seatId)
   if (items.length > 0) {
     const who = sched.personById.value.get(slotAssignee.value)?.fullName ?? 'This member'
     conflict.value = {
@@ -429,6 +435,7 @@ async function runEdit(): Promise<void> {
           ctx.dateIso,
           editFrom.value,
           editUntil.value,
+          ctx.seatId,
         )
         // Permanent replace: if the replacement already holds a rotation
         // seat, Save becomes a choice — swap the two people, or move
