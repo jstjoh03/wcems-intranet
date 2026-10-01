@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import ScheduleSpinner from './ScheduleSpinner.vue'
+import { useScheduleEditor } from '@/composables/useScheduleEditor'
 import {
   useSchedule,
   todayCentralIso,
   addDaysIso,
   type OpenShiftItem,
   type PageLogRow,
+  type PageShift,
   type SchedPerson,
 } from '@/composables/useSchedule'
 
@@ -17,16 +19,61 @@ import {
  * Claims come back through the normal pickup flow, so the Requests
  * queue is the ordered claims list (with hours context) and approval
  * fills the seat.
+ *
+ * CREW see this tab as "Messages": every page-out/announcement sent to
+ * them, in full — a dismissed push notification is never lost (an
+ * employee had no way to read a truncated announcement, 2026-10-01).
+ * Push/email deep links carry /schedule?page=<id>; the highlight prop
+ * flashes that message.
  */
 
 const sched = useSchedule()
+const editor = useScheduleEditor()
+
+const props = defineProps<{ highlight?: string | null }>()
 
 const ready = ref(false)
 onMounted(async () => {
   await sched.ensureLoaded()
   await refreshLog()
   ready.value = true
+  if (props.highlight) {
+    showAllLog.value = true
+    await nextTick()
+    document
+      .getElementById(`pgmsg-${props.highlight}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
 })
+
+// ── crew message archive ─────────────────────────────────────────────
+
+const myMessages = computed(() => {
+  const me = sched.myUserId.value
+  if (!me) return []
+  return log.value.filter((p) => p.recipients.includes(me))
+})
+
+/** Tapping an attached shift opens the same pickup modal the boards
+ *  use — fetched fresh, like ScheduleView's ?pickup= deep link. */
+const shiftMsg = ref<string | null>(null)
+async function openPagedShift(s: PageShift) {
+  if (!s.entryId) return
+  shiftMsg.value = null
+  const info = await sched.fetchOpenEntryInfo(s.entryId)
+  if (!info) {
+    shiftMsg.value = 'That shift is no longer open — it may have just been filled.'
+    return
+  }
+  editor.openSlotDirect({
+    dateIso: info.dateIso,
+    seatId: info.seatId,
+    entryId: s.entryId,
+    label: info.label,
+    start: info.start,
+    end: info.end,
+  })
+}
 
 // ── compose ──────────────────────────────────────────────────────────
 
@@ -361,7 +408,42 @@ function deliveryLine(p: PageLogRow): string {
 
 <template>
   <div class="pg">
-    <ScheduleSpinner v-if="!ready" label="Loading page-outs…" />
+    <ScheduleSpinner v-if="!ready" label="Loading messages…" />
+
+    <!-- ── crew view: the message archive ── -->
+    <div v-else-if="!sched.canPageOut.value" class="pg__crew">
+      <section class="pg__card">
+        <h2 class="pg__h">Messages sent to you</h2>
+        <p class="pg__muted">
+          Every page-out and announcement you were sent, in full — so a dismissed
+          notification is never lost. Tap an attached shift to request it.
+        </p>
+        <p v-if="shiftMsg" class="pg__error">{{ shiftMsg }}</p>
+        <p v-if="logLoaded && myMessages.length === 0" class="pg__muted">Nothing yet.</p>
+        <div
+          v-for="p in myMessages"
+          :id="`pgmsg-${p.id}`"
+          :key="p.id"
+          class="pg__logrow"
+          :class="{ 'pg__logrow--hl': p.id === props.highlight }"
+        >
+          <div class="pg__loghead">
+            <span class="pg__logwhen">{{ fmtSent(p.sentAt) }}</span>
+            <span class="pg__logwho">{{ senderName(p.sentBy) }}</span>
+            <span v-if="p.urgent" class="pg__urgentchip">URGENT</span>
+            <span v-if="p.messageType === 'announcement'" class="pg__typechip">Announcement</span>
+          </div>
+          <p v-if="p.message" class="pg__logmsg pg__logmsg--full">{{ p.message }}</p>
+          <template v-for="(sh, i) in p.shifts" :key="i">
+            <button v-if="sh.entryId" class="pg__shiftlink" @click="openPagedShift(sh)">
+              {{ sh.text }}
+            </button>
+            <p v-else class="pg__logshift">{{ sh.text }}</p>
+          </template>
+        </div>
+      </section>
+    </div>
+
     <div v-else class="pg__cols">
       <!-- ── composer ── -->
       <section class="pg__card">
@@ -501,7 +583,13 @@ function deliveryLine(p: PageLogRow): string {
       <section class="pg__card">
         <h2 class="pg__h">Recent page-outs</h2>
         <p v-if="logLoaded && log.length === 0" class="pg__muted">Nothing sent yet.</p>
-        <div v-for="p in visibleLog" :key="p.id" class="pg__logrow">
+        <div
+          v-for="p in visibleLog"
+          :id="`pgmsg-${p.id}`"
+          :key="p.id"
+          class="pg__logrow"
+          :class="{ 'pg__logrow--hl': p.id === props.highlight }"
+        >
           <div class="pg__loghead">
             <span class="pg__logwhen">{{ fmtSent(p.sentAt) }}</span>
             <span class="pg__logwho">{{ senderName(p.sentBy) }}</span>
@@ -1166,6 +1254,59 @@ function deliveryLine(p: PageLogRow): string {
 
 .pg__logrow:first-of-type {
   border-top: 0;
+}
+
+/* deep-linked message (/schedule?page=<id>) flashes gold then settles */
+.pg__logrow--hl {
+  animation: pg-hl 2.4s ease-out 1;
+  border-radius: 8px;
+}
+
+@keyframes pg-hl {
+  0% {
+    background: oklch(0.93 0.07 86.8);
+    box-shadow: 0 0 0 2px var(--color-accent-700, #a8842c);
+  }
+  100% {
+    background: transparent;
+    box-shadow: none;
+  }
+}
+
+/* crew message archive */
+.pg__crew {
+  max-width: 720px;
+}
+
+.pg__logmsg--full {
+  font-size: 0.92rem;
+  color: var(--color-ink);
+}
+
+.pg__shiftlink {
+  display: block;
+  background: none;
+  border: 0;
+  padding: 0.1rem 0 0.1rem 0.9rem;
+  margin: 0.1rem 0;
+  font: inherit;
+  font-size: 0.84rem;
+  color: var(--color-brand-700);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+  font-variant-numeric: tabular-nums;
+}
+
+.pg__shiftlink::before {
+  content: '•';
+  position: absolute;
+  left: 0.15rem;
+}
+
+.pg__shiftlink:hover {
+  text-decoration: underline;
 }
 
 .pg__loghead {

@@ -110,8 +110,10 @@ const TABS = computed<{ key: Tab; label: string; group?: boolean }[]>(() => {
   if (sched.canRequest.value) {
     t.push({ key: 'requests', label: 'Requests', group: true }, { key: 'trades', label: 'Trades' })
   }
-  if (sched.canPageOut.value) {
-    t.push({ key: 'pages', label: 'Page-outs' })
+  /* Everyone gets the message archive — a dismissed push notification
+     was unreadable for crew (2026-10-01); senders keep the composer. */
+  if (!sched.isViewOnly.value) {
+    t.push({ key: 'pages', label: sched.canPageOut.value ? 'Page-outs' : 'Messages' })
   }
   /* Time Reports serves three duties from one tab: supervisors review
      punches to verify schedules are accurate; HR and editors get the
@@ -163,7 +165,8 @@ const APPNAV = computed<NavEntry[]>(() => {
   if (sched.canRequest.value) {
     n.push({ kind: 'tab', key: 'requests', label: 'Requests' }, { kind: 'tab', key: 'trades', label: 'Trades' })
   }
-  if (sched.canPageOut.value) n.push({ kind: 'tab', key: 'pages', label: 'Page-outs' })
+  if (!sched.isViewOnly.value)
+    n.push({ kind: 'tab', key: 'pages', label: sched.canPageOut.value ? 'Page-outs' : 'Messages' })
   const man: { key: Tab; label: string }[] = []
   if (sched.canEdit.value || sched.level.value === 'supervisor' || sched.isHr.value)
     man.push({ key: 'time', label: 'Time Reports' })
@@ -208,16 +211,19 @@ const boardLabel = computed(() => {
 })
 
 /* Breadcrumb + serif title for the non-board screens (boards carry the
-   date navigator instead). */
-const PANEL_META: Partial<Record<Tab, { crumb: string; title: string; sub: string }>> = {
+   date navigator instead). Computed: the pages tab is "Page-outs" for
+   senders and "Messages" for crew. */
+const PANEL_META = computed<Partial<Record<Tab, { crumb: string; title: string; sub: string }>>>(() => ({
   mine: { crumb: 'Operations · Scheduling', title: 'My schedule', sub: '' },
   requests: { crumb: 'Operations · Scheduling', title: 'Requests', sub: '' },
   trades: { crumb: 'Operations · Scheduling', title: 'Trades', sub: '' },
-  pages: { crumb: 'Operations · Scheduling', title: 'Page-outs', sub: '' },
+  pages: sched.canPageOut.value
+    ? { crumb: 'Operations · Scheduling', title: 'Page-outs', sub: '' }
+    : { crumb: 'Operations · Scheduling', title: 'Messages', sub: '' },
   time: { crumb: 'Operations · Scheduling · Manage', title: 'Time Reports', sub: '' },
   members: { crumb: 'Operations · Scheduling · Manage', title: 'Members', sub: 'Scheduling access only — names, roles and HR fields live in Manage Employees.' },
   setup: { crumb: 'Operations · Scheduling · Manage', title: 'Setup', sub: '' },
-}
+}))
 
 const monthAnchor = computed(() => dateIso.value.slice(0, 7)) // YYYY-MM
 
@@ -317,6 +323,14 @@ onMounted(async () => {
       tab.value = 'mine'
       void router.replace({ query: { ...route.query, verify: undefined } })
     }
+    // Page-out/announcement push + email: /schedule?page=<id> opens the
+    // message archive with that message highlighted — crews could not
+    // read a dismissed notification anywhere (2026-10-01).
+    if (typeof route.query.page === 'string' && route.query.page) {
+      pageHighlight.value = route.query.page
+      tab.value = 'pages'
+      void router.replace({ query: { ...route.query, page: undefined } })
+    }
     if (typeof route.query.attest === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.attest)) {
       const d = route.query.attest
       tab.value = 'mine'
@@ -353,6 +367,9 @@ onMounted(async () => {
 /** Deep link from a page-out message: fetch the entry FRESH and open
  *  the same slot modal the boards use — or say it's gone. */
 const linkMsg = ref<string | null>(null)
+
+/** /schedule?page=<id> — which message the archive should flash. */
+const pageHighlight = ref<string | null>(null)
 async function openPickupLink(entryId: string) {
   const info = await sched.fetchOpenEntryInfo(entryId)
   if (!info) {
@@ -602,7 +619,7 @@ watch(dateIso, (v) => {
         <ScheduleMyPanel v-else-if="tab === 'mine'" @go-requests="tab = 'requests'" />
         <ScheduleRequestsPanel v-else-if="tab === 'requests'" />
         <ScheduleTradesPanel v-else-if="tab === 'trades'" />
-        <SchedulePagesPanel v-else-if="tab === 'pages'" />
+        <SchedulePagesPanel v-else-if="tab === 'pages'" :highlight="pageHighlight" />
         <ScheduleTimePanel v-else-if="tab === 'time'" />
         <ScheduleMembersPanel v-else-if="tab === 'members'" />
         <ScheduleSetupPanel v-else />

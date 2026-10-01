@@ -652,12 +652,18 @@ Deno.serve(async (req: Request) => {
       if (urgent) sms += `\n${urgentNote}`
       sms += `\n${PORTAL}/schedule`
 
+      /* Announcements (and pages with no shift attached) land on the
+         message archive with THIS message highlighted — clicking the
+         push used to dump crews on a bare board with the text gone
+         (2026-10-01). Single-shift pages keep the pickup deep link. */
       const url =
-        shifts.length === 1 && shifts[0].entryId
-          ? `/schedule?d=${shifts[0].dateIso ?? ''}&pickup=${shifts[0].entryId}`
-          : shifts[0]?.dateIso
-            ? `/schedule?d=${shifts[0].dateIso}&v=day`
-            : '/schedule'
+        isAnn
+          ? `/schedule?page=${page.id}`
+          : shifts.length === 1 && shifts[0].entryId
+            ? `/schedule?d=${shifts[0].dateIso ?? ''}&pickup=${shifts[0].entryId}`
+            : shifts[0]?.dateIso
+              ? `/schedule?d=${shifts[0].dateIso}&v=day`
+              : `/schedule?page=${page.id}`
 
       const d = await deliver(
         (page.recipients ?? []) as string[],
