@@ -4,6 +4,7 @@ import { X, Megaphone } from 'lucide-vue-next'
 import AppChip from '@/components/primitives/AppChip.vue'
 import CommentThread from '@/components/engagement/CommentThread.vue'
 import { useAnnouncementComments } from '@/composables/useAnnouncementComments'
+import { renderRichText } from '@/lib/richtext'
 import type { Announcement } from '@/types'
 
 /**
@@ -28,14 +29,9 @@ watch(
   { immediate: true },
 )
 
-/** Split the body into paragraphs on blank lines (single newlines keep
- *  the paragraph together, matching how the card renders). */
-const paragraphs = computed(() =>
-  (props.announcement?.body ?? '')
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean),
-)
+/** Sanitized HTML for the body — links, bold, bullets (lib/richtext).
+ *  Blank lines still split paragraphs, matching the old rendering. */
+const bodyHtml = computed(() => renderRichText(props.announcement?.body ?? ''))
 
 async function onPost(body: string) {
   if (props.announcement) await post(props.announcement.id, body)
@@ -82,7 +78,7 @@ async function onRemove(commentId: string) {
               class="ad-image"
               referrerpolicy="no-referrer"
             />
-            <p v-for="(p, i) in paragraphs" :key="i" class="ad-para">{{ p }}</p>
+            <div v-if="bodyHtml" class="ad-rich" v-html="bodyHtml" />
 
             <div v-if="announcement.allowComments" class="ad-thread">
               <div class="ad-thread__head">Comments</div>
@@ -214,14 +210,49 @@ async function onRemove(commentId: string) {
   border-radius: 10px;
   margin-bottom: 14px;
 }
-.ad-para {
+.ad-rich :deep(p) {
+  margin: 0;
   font-size: 14px;
   line-height: 1.7;
   color: var(--color-ink-soft);
-  white-space: pre-line;
 }
-.ad-para + .ad-para {
+.ad-rich :deep(p + p),
+.ad-rich :deep(p + ul),
+.ad-rich :deep(ul + p),
+.ad-rich :deep(ul + ul) {
   margin-top: 12px;
+}
+.ad-rich :deep(ul) {
+  margin: 0;
+  padding-left: 20px;
+  list-style: disc;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-ink-soft);
+}
+.ad-rich :deep(li) {
+  margin: 3px 0;
+}
+.ad-rich :deep(li)::marker {
+  color: var(--color-accent-600);
+}
+.ad-rich :deep(strong) {
+  color: var(--color-ink);
+  font-weight: 650;
+}
+.ad-rich :deep(a.rt-link) {
+  color: var(--color-brand-600);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--color-accent-500);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  transition: color 120ms var(--ease-out);
+}
+.ad-rich :deep(a.rt-link:hover) {
+  color: var(--color-brand-800);
+  text-decoration-color: var(--color-accent-600);
 }
 
 .ad-thread {

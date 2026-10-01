@@ -1,6 +1,18 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { Plus, Edit2, X, Upload, Archive, ArchiveRestore } from 'lucide-vue-next'
+import { ref, computed, nextTick } from 'vue'
+import {
+  Plus,
+  Edit2,
+  X,
+  Upload,
+  Archive,
+  ArchiveRestore,
+  Bold,
+  Italic,
+  Link2,
+  List,
+  Eye,
+} from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -8,6 +20,7 @@ import AnnouncementDetailModal from '@/components/dashboard/AnnouncementDetailMo
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 import { useAnnouncements } from '@/composables/useAnnouncements'
+import { renderRichText, richTextToPlain } from '@/lib/richtext'
 import type { Announcement } from '@/types'
 
 const auth = useAuthStore()
@@ -142,7 +155,9 @@ const notifyOptions = computed(() =>
 /* ── Full-story view (spotlight pattern) ──
    Long bodies get a snippet in-card with a "Read the full story" link
    into the detail modal; announcements posted with comments allowed
-   always get the link so the thread is reachable. */
+   always get the link so the thread is reachable. Truncation decisions
+   run on the plain-text form so a long markdown link doesn't count its
+   URL against the limit (or get cut mid-syntax). */
 const SNIPPET_LIMIT = 240
 
 const detailId = ref<string | null>(null)
@@ -150,16 +165,145 @@ const detailAnnouncement = computed<Announcement | null>(
   () => announcements.value.find((a) => a.id === detailId.value) ?? null,
 )
 
+function plainBody(a: Announcement): string {
+  return richTextToPlain(a.body)
+}
+
 function isTruncated(a: Announcement): boolean {
-  return a.body.length > SNIPPET_LIMIT
+  return plainBody(a).length > SNIPPET_LIMIT
 }
 
 function snippetFor(a: Announcement): string {
-  if (!isTruncated(a)) return a.body
-  const cut = a.body.slice(0, SNIPPET_LIMIT)
+  const plain = plainBody(a)
+  if (plain.length <= SNIPPET_LIMIT) return plain
+  const cut = plain.slice(0, SNIPPET_LIMIT)
   const lastSpace = cut.lastIndexOf(' ')
   return `${cut.slice(0, lastSpace > SNIPPET_LIMIT * 0.6 ? lastSpace : SNIPPET_LIMIT).trimEnd()}…`
 }
+
+/* ── Body formatting (composer) ──
+   The body is stored as plain text with a tiny markdown subset
+   (see lib/richtext.ts); these helpers drive the toolbar buttons by
+   rewriting the textarea selection. */
+const bodyEl = ref<HTMLTextAreaElement | null>(null)
+const previewing = ref(false)
+const linkOpen = ref(false)
+const linkLabel = ref('')
+const linkUrl = ref('')
+const linkUrlEl = ref<HTMLInputElement | null>(null)
+let linkRange: [number, number] = [0, 0]
+
+function applyBodyEdit(next: string, selStart: number, selEnd: number) {
+  draft.value.body = next
+  void nextTick(() => {
+    const el = bodyEl.value
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(selStart, selEnd)
+  })
+}
+
+function surround(marker: string) {
+  const el = bodyEl.value
+  if (!el || previewing.value) return
+  const s = el.selectionStart
+  const e = el.selectionEnd
+  const body = draft.value.body
+  const sel = body.slice(s, e)
+  const before = body.slice(0, s)
+  const after = body.slice(e)
+  // Toggle: unwrap if the selection (or its surroundings) already carry
+  // the marker, otherwise wrap.
+  if (before.endsWith(marker) && after.startsWith(marker)) {
+    applyBodyEdit(
+      before.slice(0, -marker.length) + sel + after.slice(marker.length),
+      s - marker.length,
+      e - marker.length,
+    )
+    return
+  }
+  if (sel.startsWith(marker) && sel.endsWith(marker) && sel.length >= marker.length * 2) {
+    const inner = sel.slice(marker.length, sel.length - marker.length)
+    applyBodyEdit(before + inner + after, s, s + inner.length)
+    return
+  }
+  applyBodyEdit(before + marker + sel + marker + after, s + marker.length, e + marker.length)
+}
+
+function bulletToggle() {
+  const el = bodyEl.value
+  if (!el || previewing.value) return
+  const body = draft.value.body
+  const lineStart = body.lastIndexOf('\n', el.selectionStart - 1) + 1
+  let lineEnd = body.indexOf('\n', el.selectionEnd)
+  if (lineEnd === -1) lineEnd = body.length
+  const lines = body.slice(lineStart, lineEnd).split('\n')
+  const allBulleted = lines.every((l) => !l.trim() || /^[-•]\s/.test(l))
+  const next = lines
+    .map((l) => {
+      if (!l.trim()) return l
+      if (allBulleted) return l.replace(/^[-•]\s+/, '')
+      return /^[-•]\s/.test(l) ? l : `- ${l}`
+    })
+    .join('\n')
+  applyBodyEdit(
+    body.slice(0, lineStart) + next + body.slice(lineEnd),
+    lineStart,
+    lineStart + next.length,
+  )
+}
+
+function openLinkForm() {
+  previewing.value = false
+  const el = bodyEl.value
+  const s = el?.selectionStart ?? draft.value.body.length
+  const e = el?.selectionEnd ?? draft.value.body.length
+  linkRange = [s, e]
+  linkLabel.value = draft.value.body.slice(s, e).trim().replace(/[[\]]/g, '')
+  linkUrl.value = ''
+  linkOpen.value = true
+  void nextTick(() => linkUrlEl.value?.focus())
+}
+
+function insertLink() {
+  let url = linkUrl.value.trim()
+  if (!url) return
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('/')) url = `https://${url}`
+  // Parens/spaces would terminate the [label](url) syntax early.
+  url = url.replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/\s/g, '%20')
+  const label = linkLabel.value.trim().replace(/[[\]]/g, '')
+  const snippet = label ? `[${label}](${url})` : url
+  const [s, e] = linkRange
+  const body = draft.value.body
+  applyBodyEdit(
+    body.slice(0, s) + snippet + body.slice(e),
+    s + snippet.length,
+    s + snippet.length,
+  )
+  linkOpen.value = false
+}
+
+function onBodyKeydown(ev: KeyboardEvent) {
+  if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return
+  const k = ev.key.toLowerCase()
+  if (k === 'b') {
+    ev.preventDefault()
+    surround('**')
+  } else if (k === 'i') {
+    ev.preventDefault()
+    surround('*')
+  } else if (k === 'k') {
+    ev.preventDefault()
+    openLinkForm()
+  }
+}
+
+function togglePreview() {
+  previewing.value = !previewing.value
+  linkOpen.value = false
+}
+
+const previewHtml = computed(() => renderRichText(draft.value.body))
 
 function storyLinkLabel(a: Announcement): string {
   if (isTruncated(a)) {
@@ -172,6 +316,8 @@ function startCompose() {
   draft.value = blankDraft()
   composing.value = true
   composeError.value = null
+  previewing.value = false
+  linkOpen.value = false
   void loadRoster()
 }
 
@@ -191,12 +337,16 @@ function startEdit(id: string) {
   }
   composing.value = true
   composeError.value = null
+  previewing.value = false
+  linkOpen.value = false
   void loadRoster()
 }
 
 function cancelCompose() {
   composing.value = false
   composeError.value = null
+  previewing.value = false
+  linkOpen.value = false
 }
 
 async function onImagePicked(event: Event) {
@@ -362,12 +512,105 @@ const submitLabel = computed(() => {
         class="announcements-card__input"
         maxlength="24"
       />
-      <textarea
-        v-model="draft.body"
-        placeholder="Body (optional)"
-        class="announcements-card__textarea"
-        rows="3"
-      />
+      <div class="announcements-card__bodywrap">
+        <div class="announcements-card__fmtbar" role="toolbar" aria-label="Body formatting">
+          <button
+            type="button"
+            class="announcements-card__fmtbtn"
+            title="Bold (Ctrl+B)"
+            aria-label="Bold"
+            @click="surround('**')"
+          >
+            <Bold :size="13" :stroke-width="2.5" />
+          </button>
+          <button
+            type="button"
+            class="announcements-card__fmtbtn"
+            title="Italic (Ctrl+I)"
+            aria-label="Italic"
+            @click="surround('*')"
+          >
+            <Italic :size="13" :stroke-width="2.25" />
+          </button>
+          <button
+            type="button"
+            class="announcements-card__fmtbtn"
+            title="Insert link (Ctrl+K)"
+            aria-label="Insert link"
+            @click="openLinkForm"
+          >
+            <Link2 :size="13" :stroke-width="2.25" />
+          </button>
+          <button
+            type="button"
+            class="announcements-card__fmtbtn"
+            title="Bulleted list"
+            aria-label="Bulleted list"
+            @click="bulletToggle"
+          >
+            <List :size="13" :stroke-width="2.25" />
+          </button>
+          <button
+            type="button"
+            class="announcements-card__fmtbtn announcements-card__fmtbtn--preview"
+            :class="{ 'announcements-card__fmtbtn--on': previewing }"
+            @click="togglePreview"
+          >
+            <Edit2 v-if="previewing" :size="12" :stroke-width="2.25" />
+            <Eye v-else :size="13" :stroke-width="2.25" />
+            {{ previewing ? 'Write' : 'Preview' }}
+          </button>
+        </div>
+        <textarea
+          v-show="!previewing"
+          ref="bodyEl"
+          v-model="draft.body"
+          placeholder="Body (optional) — paste a link and it posts clickable"
+          class="announcements-card__textarea"
+          rows="4"
+          @keydown="onBodyKeydown"
+        />
+        <div
+          v-if="previewing"
+          class="announcements-card__preview announcements-card__rich"
+        >
+          <div v-if="draft.body.trim()" v-html="previewHtml" />
+          <span v-else class="announcements-card__preview-empty">Nothing to preview yet.</span>
+        </div>
+        <div v-if="linkOpen" class="announcements-card__linkpop">
+          <input
+            v-model="linkLabel"
+            type="text"
+            placeholder="Link text — what crews tap (e.g. Watch the video)"
+            class="announcements-card__input"
+            @keydown.enter.prevent="insertLink"
+          />
+          <input
+            ref="linkUrlEl"
+            v-model="linkUrl"
+            type="url"
+            placeholder="https://…"
+            class="announcements-card__input"
+            @keydown.enter.prevent="insertLink"
+          />
+          <div class="announcements-card__linkpop-actions">
+            <button type="button" class="btn btn-ghost btn--sm" @click="linkOpen = false">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary btn--sm"
+              :disabled="!linkUrl.trim()"
+              @click="insertLink"
+            >
+              Insert link
+            </button>
+          </div>
+        </div>
+        <p class="announcements-card__fmt-hint">
+          **bold** · *italic* · “- ” starts a bullet · pasted links post clickable
+        </p>
+      </div>
 
       <label class="announcements-card__toggle">
         <input v-model="draft.allowComments" type="checkbox" />
@@ -528,7 +771,15 @@ const submitLabel = computed(() => {
             referrerpolicy="no-referrer"
           />
         </button>
-        <p v-if="a.body" class="announcements-card__body">{{ snippetFor(a) }}</p>
+        <!-- Short bodies render rich in-card (links stay tappable even
+             when no story link appears); truncated ones fall back to a
+             plain snippet — the full-story modal carries the links. -->
+        <div
+          v-if="a.body && !isTruncated(a)"
+          class="announcements-card__body announcements-card__rich"
+          v-html="renderRichText(a.body)"
+        />
+        <p v-else-if="a.body" class="announcements-card__body">{{ snippetFor(a) }}</p>
         <button
           v-if="isTruncated(a) || a.allowComments"
           type="button"
@@ -669,6 +920,128 @@ const submitLabel = computed(() => {
 .announcements-card__textarea {
   resize: vertical;
   font-family: var(--font-sans);
+}
+
+/* ── Body formatting toolbar ── */
+.announcements-card__bodywrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.announcements-card__fmtbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.announcements-card__fmtbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px 7px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    border-color 120ms var(--ease-out),
+    color 120ms var(--ease-out),
+    background 120ms var(--ease-out);
+}
+.announcements-card__fmtbtn:hover {
+  border-color: var(--color-muted-soft);
+  color: var(--color-ink);
+}
+.announcements-card__fmtbtn--preview {
+  margin-left: auto;
+}
+.announcements-card__fmtbtn--on {
+  background: var(--color-brand-50);
+  border-color: var(--color-brand-200);
+  color: var(--color-brand-700);
+}
+.announcements-card__preview {
+  min-height: 96px;
+  padding: 10px 12px;
+  border: 1px dashed var(--color-line);
+  border-radius: 6px;
+  background: var(--color-surface);
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  line-height: 1.55;
+}
+.announcements-card__preview-empty {
+  font-size: 12px;
+  color: var(--color-muted-soft);
+}
+.announcements-card__linkpop {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+.announcements-card__linkpop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.announcements-card__fmt-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  color: var(--color-muted-soft);
+}
+
+/* Rendered rich bodies (card + composer preview). Generated markup is
+   limited to p / br / ul / li / strong / em / a.rt-link. */
+.announcements-card__rich :deep(p) {
+  margin: 0;
+}
+.announcements-card__rich :deep(p + p),
+.announcements-card__rich :deep(p + ul),
+.announcements-card__rich :deep(ul + p),
+.announcements-card__rich :deep(ul + ul) {
+  margin-top: 8px;
+}
+.announcements-card__rich :deep(ul) {
+  margin: 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+.announcements-card__rich :deep(li) {
+  margin: 2px 0;
+}
+.announcements-card__rich :deep(li)::marker {
+  color: var(--color-accent-600);
+}
+.announcements-card__rich :deep(strong) {
+  color: var(--color-ink);
+  font-weight: 650;
+}
+.announcements-card__rich :deep(a.rt-link) {
+  color: var(--color-brand-600);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: var(--color-accent-500);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+  transition: color 120ms var(--ease-out);
+}
+.announcements-card__rich :deep(a.rt-link:hover) {
+  color: var(--color-brand-800);
+  text-decoration-color: var(--color-accent-600);
 }
 
 .announcements-card__image-block {
@@ -977,5 +1350,9 @@ const submitLabel = computed(() => {
 .btn-ghost:hover {
   border-color: var(--color-muted-soft);
   color: var(--color-ink);
+}
+.btn--sm {
+  padding: 5px 10px;
+  font-size: 12px;
 }
 </style>

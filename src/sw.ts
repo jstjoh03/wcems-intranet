@@ -15,6 +15,8 @@
 
 import { precacheAndRoute } from 'workbox-precaching'
 
+import { richTextToPlain } from './lib/richtext'
+
 // Cast self for TS — service workers run with a ServiceWorkerGlobalScope.
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null }>
@@ -50,8 +52,13 @@ self.addEventListener('push', (event) => {
     payload = { title: event.data.text(), body: '' }
   }
   const title = payload.title || 'WCEMS Intranet'
+  // Announcement bodies may carry rich-text markup ([label](url), **…**)
+  // — show the plain form on the lock screen. The edge function slices
+  // the teaser server-side, so richTextToPlain also tolerates a link cut
+  // mid-URL. Other pushes (schedule pages etc.) pass through untouched.
+  const isAnnouncement = payload.tag?.startsWith('announcement-') ?? false
   const options: NotificationOptions & { badge?: string } = {
-    body: payload.body ?? '',
+    body: isAnnouncement ? richTextToPlain(payload.body ?? '') : (payload.body ?? ''),
     tag: payload.tag,
     icon: payload.icon ?? '/wcems-patch.png',
     badge: payload.badge ?? '/wcems-patch.png',
