@@ -381,6 +381,15 @@ export function payPeriodFor(dateIso: string): PayPeriod {
   return { start, end, label: periodLabel(start, end) }
 }
 
+/** Payday: checks land PAYDAY_LAG_DAYS after a period closes (Sat end
+ *  + 6 → the following Friday, every other week on this grid). The
+ *  boards mark these dates with a gold $ chip. */
+export function isPaydayIso(dateIso: string): boolean {
+  const diff = daysBetweenIso(PAY_ANCHOR, dateIso)
+  const paydayOffset = (PAY_DAYS - 1 + PAYDAY_LAG_DAYS) % PAY_DAYS
+  return ((diff % PAY_DAYS) + PAY_DAYS) % PAY_DAYS === paydayOffset
+}
+
 export function payPeriodList(centerIso: string, before = 6, after = 3): PayPeriod[] {
   const current = payPeriodFor(centerIso)
   const list: PayPeriod[] = []

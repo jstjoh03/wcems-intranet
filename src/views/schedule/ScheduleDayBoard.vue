@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useSchedule, type DayImbalance } from '@/composables/useSchedule'
+import { useSchedule, isPaydayIso, type DayImbalance } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
 /**
@@ -43,6 +43,7 @@ const stations = computed(() => {
 
 const err = ref<string | null>(null)
 const busy = ref(false)
+const payday = computed(() => isPaydayIso(props.dateIso))
 
 async function clearRow(entryId: string | null) {
   if (!entryId || busy.value) return
@@ -79,6 +80,9 @@ function fixBalance(b: DayImbalance): void {
     <div class="db__meta">
       <span class="db__platoon">
         <b class="db__shl" :data-platoon="model.platoon">{{ model.platoon }}</b>&nbsp;Shift on duty
+      </span>
+      <span v-if="payday" class="db__payday" title="Pay period closed Saturday — checks land today">
+        <b>$</b> Payday
       </span>
       <span v-if="model.openCount > 0" class="db__opencount">
         {{ model.openCount }} open {{ model.openCount === 1 ? 'seat' : 'seats' }}
@@ -448,6 +452,32 @@ function fixBalance(b: DayImbalance): void {
   font-size: 12px;
   font-weight: 600;
   color: var(--color-danger-500);
+}
+
+/* Gold $ on the biweekly payday — same chip as the month/week boards. */
+.db__payday {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-ink-soft);
+  cursor: default;
+}
+
+.db__payday b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: var(--color-accent-500);
+  color: var(--color-brand-900);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .db__tools {

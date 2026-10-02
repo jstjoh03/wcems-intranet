@@ -4,6 +4,7 @@ import {
   useSchedule,
   addDaysIso,
   todayCentralIso,
+  isPaydayIso,
   type DayModel,
   type LabeledRow,
   type SeatRow,
@@ -91,6 +92,7 @@ interface Cell {
   inMonth: boolean
   isToday: boolean
   worksMe: boolean
+  isPayday: boolean
   model: DayModel
   /** rotation holders whose day doesn't balance (editors only) */
   imb: number
@@ -167,6 +169,7 @@ const weeks = computed<Cell[][]>(() => {
         inMonth: iso.slice(0, 7) === props.month,
         isToday: iso === todayIso,
         worksMe: worksMe(model, me),
+        isPayday: isPaydayIso(iso),
         model,
         imb: !props.mine && sched.canEdit.value ? sched.dayImbalances(iso).length : 0,
       })
@@ -187,6 +190,7 @@ const weeks = computed<Cell[][]>(() => {
       <span class="mb__lg"><b class="mb__shl" data-platoon="A">A</b> Shift</span>
       <span class="mb__lg"><b class="mb__shl" data-platoon="B">B</b> Shift</span>
       <span class="mb__lg"><b class="mb__shl" data-platoon="C">C</b> Shift</span>
+      <span class="mb__lg"><span class="mb__payday">$</span> Payday</span>
       <span class="mb__legend-note">48/96 rotation · 0600 changeover</span>
     </div>
 
@@ -212,6 +216,7 @@ const weeks = computed<Cell[][]>(() => {
           >
             <span class="mb__daynum" :class="{ 'mb__daynum--me': c.worksMe }" :title="c.worksMe ? 'You work this day' : undefined">{{ c.dayNum }}</span>
           </button>
+          <span v-if="c.isPayday" class="mb__payday" title="Payday">$</span>
           <!-- standalone letter, matching the week/period columns
                (the letter+"Shift" pair read misaligned — 2026-09-24) -->
           <button class="mb__cellbtn" :title="c.model.platoon + ' Shift — open this day'" @click="emit('open-day', c.iso)">
@@ -663,6 +668,26 @@ const weeks = computed<Cell[][]>(() => {
   border-radius: 999px;
   background: var(--me-hl, oklch(0.94 0.13 102));
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--me-hl, oklch(0.94 0.13 102)), black 15%);
+}
+
+/* Gold $ on the biweekly payday (period close + 6 days) — same chip
+   on the week/period columns and day view. */
+.mb__payday {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: var(--color-accent-500);
+  color: var(--color-brand-900);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: default;
 }
 
 /* Shift LETTER in the shift color (2026-09-24, replaces the chip+dot:

@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import {
   useSchedule,
   todayCentralIso,
+  isPaydayIso,
   type LabeledRow,
 } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
@@ -35,6 +36,7 @@ const model = computed(() =>
   ),
 )
 const isToday = computed(() => props.dateIso === todayCentralIso())
+const payday = computed(() => isPaydayIso(props.dateIso))
 
 const header = computed(() =>
   new Date(`${props.dateIso}T00:00:00`).toLocaleDateString('en-US', {
@@ -74,6 +76,7 @@ function openTimeOff(r: LabeledRow): void {
       <button class="dc__headbtn" @click="emit('open-day', dateIso)">
         <span class="dc__date">{{ header }}</span>
       </button>
+      <span v-if="payday" class="dc__payday" title="Payday">$</span>
       <span class="dc__platoon" :data-platoon="model.platoon">
         {{ model.platoon }}
       </span>
@@ -376,6 +379,25 @@ function openTimeOff(r: LabeledRow): void {
   font-weight: 700;
   color: var(--color-brand-800);
   white-space: nowrap;
+}
+
+/* Gold $ on the biweekly payday (period close + 6 days) — same chip
+   on the month board and day view. */
+.dc__payday {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: var(--color-accent-500);
+  color: var(--color-brand-900);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: default;
 }
 
 /* shift LETTER in shift color (2026-09-24) — chip chrome retired */
