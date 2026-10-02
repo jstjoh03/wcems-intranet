@@ -4828,14 +4828,30 @@ async function updateDayNote(id: string, note: string): Promise<string | null> {
   return null
 }
 
-async function cancelRequest(id: string): Promise<string | null> {
+/** Cancel a pending request. `forMember` is the editor path — clearing
+ *  a member's own posting that reality has passed by (e.g. the Chief
+ *  already fixed the day by hand, so the giveaway sits on the boards
+ *  forever "waiting on the members"). That path also notifies the
+ *  requester (sched-notify words a cancelled row as "Request
+ *  cancelled"); self-cancels stay silent as always. */
+async function cancelRequest(
+  id: string,
+  opts?: { forMember?: boolean },
+): Promise<string | null> {
   const res = await supabase
     .from('sched_requests')
     .update({ status: 'cancelled', updated_at: new Date().toISOString() })
     .eq('id', id)
     .eq('status', 'pending')
   if (res.error) return res.error.message
-  audit('request.cancel', 'Cancelled a pending request', { entity: 'request', entityId: id })
+  audit(
+    'request.cancel',
+    opts?.forMember
+      ? "Cancelled a member's pending request (scheduler — posting was moot)"
+      : 'Cancelled a pending request',
+    { entity: 'request', entityId: id },
+  )
+  if (opts?.forMember) notify('request_decided', { requestId: id })
   await loadRequests()
   return null
 }

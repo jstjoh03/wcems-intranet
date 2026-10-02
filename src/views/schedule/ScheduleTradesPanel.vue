@@ -487,11 +487,23 @@ async function withdraw(o: TradeOffer) {
   else done.value = 'Offer withdrawn.'
 }
 
+/* Schedulers can clear a member's posting that reality has passed by
+   (day already fixed by hand) — armed with a second tap, and the
+   member gets a "request cancelled" notification. */
+const postingArm = ref<string | null>(null)
+
 async function cancelPosting(r: SchedRequest) {
+  const mine = r.requesterId === sched.myUserId.value
+  if (!mine && postingArm.value !== r.id) {
+    postingArm.value = r.id
+    return
+  }
+  postingArm.value = null
   busy.value = true
-  const e = await sched.cancelRequest(r.id)
+  const e = await sched.cancelRequest(r.id, mine ? undefined : { forMember: true })
   busy.value = false
   if (e) err.value = e
+  else if (!mine) done.value = 'Posting withdrawn — the member has been notified.'
 }
 
 /** Swaps are preferred inside one pay period — soft warning only, the
@@ -628,7 +640,20 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
                   <button v-if="offersFor(r).length" class="tr__btn" @click="reviewFor = reviewFor === r.id ? null : r.id">
                     {{ reviewFor === r.id ? 'Hide offers' : 'Review offers' }}
                   </button>
-                  <button v-if="r.requesterId === sched.myUserId.value" class="tr__btn" :disabled="busy" @click="cancelPosting(r)">Withdraw posting</button>
+                  <button
+                    v-if="r.requesterId === sched.myUserId.value || sched.canEdit.value"
+                    class="tr__btn"
+                    :disabled="busy"
+                    @click="cancelPosting(r)"
+                  >
+                    {{
+                      r.requesterId === sched.myUserId.value
+                        ? 'Withdraw posting'
+                        : postingArm === r.id
+                          ? 'Really withdraw theirs?'
+                          : 'Withdraw (scheduler)'
+                    }}
+                  </button>
                 </template>
                 <!-- someone else's open posting: claim / offer / withdraw -->
                 <template v-if="!isDirected(r) && r.requesterId !== sched.myUserId.value">

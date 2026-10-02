@@ -1727,7 +1727,12 @@ async function reqCancel() {
   if (!r) return
   busy.value = true
   err.value = null
-  const e = await sched.cancelRequest(r.id)
+  // Editors clearing someone else's moot posting also notify them —
+  // cancelling your own stays silent.
+  const e = await sched.cancelRequest(
+    r.id,
+    reqIsMine.value ? undefined : { forMember: true },
+  )
   busy.value = false
   if (e) {
     err.value = e
@@ -2411,7 +2416,8 @@ async function reqCancel() {
           <p v-if="reqAwaitingMembers" class="em__notetext">
             <strong>Waiting on the members</strong> — this
             {{ reqObj.type === 'trade' ? 'swap' : 'giveaway' }} becomes approvable once both
-            have agreed (it moves to "Partner accepted"). Manage it on the Trades tab.
+            have agreed (it moves to "Partner accepted"). Offers live on the Trades tab;
+            if it's moot — already covered by hand, or no longer needed — cancel it below.
           </p>
           <template v-if="reqDecidable">
             <p v-for="(line, i) in reqHours.lines" :key="i" class="em__notetext">{{ line }}</p>
@@ -2448,14 +2454,21 @@ async function reqCancel() {
               </button>
             </template>
           </template>
-          <button
-            v-else-if="reqIsMine && reqObj.status === 'pending'"
-            class="em__btn em__btn--danger"
-            :disabled="busy"
-            @click="reqCancel"
-          >
-            {{ busy ? 'Working…' : 'Cancel this request' }}
-          </button>
+          <template v-else-if="(reqIsMine || sched.canEdit.value) && reqObj.status === 'pending'">
+            <p v-if="!reqIsMine" class="em__notetext">
+              Cancelling clears it from the boards and sends
+              {{ personName(reqObj.requesterId) }} a "request cancelled" notification.
+            </p>
+            <button class="em__btn em__btn--danger" :disabled="busy" @click="reqCancel">
+              {{
+                busy
+                  ? 'Working…'
+                  : reqIsMine
+                    ? 'Cancel this request'
+                    : `Cancel ${personName(reqObj.requesterId).split(' ')[0]}'s request`
+              }}
+            </button>
+          </template>
           <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
         </template>
         <template v-else>
