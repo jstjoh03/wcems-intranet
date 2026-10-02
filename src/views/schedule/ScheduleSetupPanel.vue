@@ -757,15 +757,19 @@ async function savePageoutCfg() {
 
 const rmEnabled = ref(true)
 const rmLead = ref(12)
+/* Event crews get a "do the equipment shift check" push+email the
+   moment their event assignment starts (Justin, 2026-10-02). */
+const rmEventEquip = ref(true)
 const rmBusy = ref(false)
 const rmSaved = ref(false)
 
 watch(
   () => sched.settings.value['reminders'],
   (v) => {
-    const c = (v ?? {}) as { enabled?: boolean; lead_hours?: number }
+    const c = (v ?? {}) as { enabled?: boolean; lead_hours?: number; event_equip?: boolean }
     rmEnabled.value = c.enabled !== false
     rmLead.value = Number(c.lead_hours ?? 12) || 12
+    rmEventEquip.value = c.event_equip !== false
   },
   { immediate: true },
 )
@@ -777,6 +781,7 @@ async function saveReminderCfg() {
   const e = await sched.saveSetting('reminders', {
     enabled: rmEnabled.value,
     lead_hours: Math.min(48, Math.max(1, Math.round(rmLead.value || 12))),
+    event_equip: rmEventEquip.value,
   })
   rmBusy.value = false
   if (e) {
@@ -1413,6 +1418,15 @@ async function saveWarnCfg() {
               :disabled="!rmEnabled"
             />
           </label>
+          <label class="setup__checkrow">
+            <input v-model="rmEventEquip" type="checkbox" />
+            Event crews: equipment-check prompt at start of shift
+          </label>
+          <p class="setup__muted">
+            Members scheduled on a special event get a push + email the moment the
+            event starts — "complete the equipment shift check" — linking into the
+            Equipment module. Separate from the lead-time reminder above.
+          </p>
           <div class="setup__row">
             <span v-if="rmSaved" class="setup__saved">Saved.</span>
             <button class="setup__btn setup__btn--primary" :disabled="rmBusy" @click="saveReminderCfg">

@@ -25,6 +25,11 @@
 //       · pay-period sign-off the Sunday after close (initial 0700,
 //         last call 0900, crew deadline 1000) + a Monday-0700
 //         verification summary to editors/HR
+//       · event-equipment check at each event assignment's START
+//         (Justin, 2026-10-02): crews on special events get "do the
+//         equipment shift check" with a /equipment link — push+email,
+//         matrix 'reminders', gated by sched_settings
+//         reminders.event_equip (default on)
 //     Verification prompts are push + email ONLY — never SMS (cost
 //     control; matrix key 'verify').
 //
@@ -887,10 +892,11 @@ Deno.serve(async (req: Request) => {
       const dryRun = body.dryRun === true
 
       const { data: remSet } = await sb.from('sched_settings').select('value').eq('key', 'reminders').maybeSingle()
-      const cfg = (remSet?.value ?? {}) as { enabled?: boolean; lead_hours?: number }
+      const cfg = (remSet?.value ?? {}) as { enabled?: boolean; lead_hours?: number; event_equip?: boolean }
       // reminders can be switched off in Setup; the verification
       // sweeps below still run on every tick
       const remindersEnabled = cfg.enabled !== false
+      const eventEquipEnabled = cfg.event_equip !== false
       const leadH = Number(cfg.lead_hours ?? 12) || 12
       const now = Date.now()
       const windowEnd = now + leadH * 3_600_000
@@ -1092,6 +1098,38 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // 1b) event equipment check — fires AT each event assignment's
+      //     start (Justin, 2026-10-02): event crews must complete the
+      //     Equipment module's shift check before they roll, and the
+      //     12h-lead shift reminder is too early to land. Raw event
+      //     rows, not merged blocks (merging folds an event into an
+      //     adjacent truck shift and loses the event identity). The
+      //     grace window tolerates missed cron ticks; a prompt after
+      //     the event ends is pointless and skipped.
+      const EVENT_EQUIP_GRACE = 2 * 3_600_000
+      const eventEquipDue: { userId: string; name: string; start: number; end: number; label: string }[] = []
+      if (eventEquipEnabled) {
+        const offBy = new Map<string, { s: number; e: number }[]>()
+        for (const r of rows) {
+          if (r.kind !== 'timeoff' || !r.user_id) continue
+          const l = offBy.get(r.user_id) ?? []
+          l.push({ s: Date.parse(r.start_at), e: Date.parse(r.end_at) })
+          offBy.set(r.user_id, l)
+        }
+        for (const r of rows) {
+          if (r.kind !== 'event' || r.status !== 'scheduled' || !r.user_id) continue
+          const name = nameById.get(r.user_id)
+          if (!name) continue
+          const start = Date.parse(r.start_at)
+          const end = Date.parse(r.end_at)
+          if (!(start <= now && now < start + EVENT_EQUIP_GRACE) || now >= end) continue
+          // booked off across the whole event window → no prompt
+          const fullyOff = (offBy.get(r.user_id) ?? []).some((o) => o.s <= start && o.e >= end)
+          if (fullyOff) continue
+          eventEquipDue.push({ userId: r.user_id, name, start, end, label: r.note || 'Special event' })
+        }
+      }
+
       // 2) end-of-shift verify — blocks that ENDED inside the last 45
       //    minutes get "do your times look right?" (claims dedupe)
       const VERIFY_LOOKBACK = 45 * 60_000
@@ -1203,6 +1241,7 @@ Deno.serve(async (req: Request) => {
           {
             ok: true, dryRun: true, leadHours: leadH, checked: main.blocks.size,
             due: due.map((d) => ({ name: d.name, label: d.label, start: fmtStamp(d.start), end: fmtStamp(d.end) })),
+            eventEquip: eventEquipDue.map((d) => ({ name: d.name, label: d.label, start: fmtStamp(d.start) })),
             verifyDue: verifyDue.map((v) => ({ name: v.name, label: v.label, end: fmtStamp(v.end), dates: v.dates })),
             attest: { date: attDate, prompts: attestPrompts.map((a) => a.name) },
             signoff: signoffPeriodEnd
@@ -1267,6 +1306,34 @@ Deno.serve(async (req: Request) => {
           return false
         }
         return !!ins.data && ins.data.length > 0
+      }
+
+      // event equipment checks — claimed per (user, event start)
+      for (const d of eventEquipDue) {
+        if (!(await claim('event_equip', d.userId, `${new Date(d.start).toISOString()}|${d.label}`))) continue
+        const line = `${d.label} — complete the equipment shift check in the Equipment module before you roll.`
+        const del = await deliver(
+          [d.userId],
+          'reminders',
+          {
+            title: 'Event equipment check',
+            body: line,
+            tag: `sched-eqp-${d.userId}-${d.start}`,
+            subject: 'WCEMS — event equipment check',
+            emailLines: [
+              `You're on <b>${esc(d.label)}</b> — ${esc(fmtStamp(d.start))} to ${esc(fmtStamp(d.end))}.`,
+              'Complete the <b>equipment shift check</b> in the Equipment module at the start of your shift.',
+            ],
+            sms: '',
+            url: '/equipment',
+            channels: { sms: false },
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        errors.push(...del.errors)
       }
 
       // end-of-shift verify
@@ -1404,7 +1471,7 @@ Deno.serve(async (req: Request) => {
       await sb.from('sched_notify_claims').delete().lt('sent_at', new Date(now - 14 * 86_400_000).toISOString())
       return Response.json(
         {
-          ok: true, checked: main.blocks.size, due: due.length,
+          ok: true, checked: main.blocks.size, due: due.length, eventEquip: eventEquipDue.length,
           verify: verifyDue.length, attest: attestPrompts.length, signoff: signoffSends.length,
           sent, delivery, errors: errors.slice(0, 20),
         },
