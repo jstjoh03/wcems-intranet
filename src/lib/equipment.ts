@@ -33,6 +33,7 @@ export const ON_UNIT_KINDS: EquipmentEventKind[] = [
   'event_closed',
   'shift_start',
   'shift_end',
+  'reopened',
 ]
 
 /** Equipment checks: the crew marks each item here or not found. */
@@ -69,6 +70,9 @@ export const ACTION_RULES: Record<EquipmentActionKind, ActionRule> = {
      carries the photo (it replaces a separate close-out). */
   shift_start: { from: ON_UNIT_KINDS, handlerOnly: false, evidence: 'none' },
   shift_end: { from: ON_UNIT_KINDS, handlerOnly: false, evidence: 'photo' },
+  /* A close-out recorded too early (multi-night event, first crew hit
+     "close") walks back to on-assignment — honestly, in the log. */
+  reopened: { from: ['event_closed'], handlerOnly: false, evidence: 'none' },
 }
 
 export function statusFromKind(kind: EquipmentEventKind | null | undefined): EquipmentStatus {
@@ -86,6 +90,7 @@ export function statusFromKind(kind: EquipmentEventKind | null | undefined): Equ
     case 'event_closed':
     case 'shift_start':
     case 'shift_end':
+    case 'reopened':
       return 'on_unit'
     default:
       return 'available'
@@ -156,6 +161,7 @@ export const KIND_LABEL: Record<EquipmentEventKind, string> = {
   written_off: 'Written off as lost',
   shift_start: 'Start-of-shift check',
   shift_end: 'End-of-shift check',
+  reopened: 'Event reopened',
 }
 
 /** Button + sheet titles per action. */
@@ -169,6 +175,7 @@ export const ACTION_LABEL: Record<EquipmentActionKind, string> = {
   written_off: 'Write off as lost',
   shift_start: 'Start-of-shift check',
   shift_end: 'End-of-shift check',
+  reopened: 'Reopen the event',
 }
 
 /** The six custody steps a check-out walks through. */
@@ -269,6 +276,9 @@ export function summarizeCheckout(
   for (const e of evs) {
     itemKinds[e.assetId] = e.kind
     ;(seen[e.assetId] ??= new Set()).add(e.kind)
+    /* A reopen un-does the close on the step ladder — "Event closed"
+       goes back to pending until someone closes out again. */
+    if (e.kind === 'reopened') seen[e.assetId]?.delete('event_closed')
   }
 
   const ids = checkout.assetIds.length ? checkout.assetIds : Object.keys(itemKinds)

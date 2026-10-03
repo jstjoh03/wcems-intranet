@@ -551,6 +551,7 @@ export type EquipmentEventKind =
   | 'written_off'
   | 'shift_start'
   | 'shift_end'
+  | 'reopened'
 
 /** The custody steps a person records on a check-out (reported_missing
  *  rides along with the equipment checks; checked_out has its own flow). */
@@ -564,6 +565,7 @@ export type EquipmentActionKind =
   | 'written_off'
   | 'shift_start'
   | 'shift_end'
+  | 'reopened'
 
 /** available = on the shelf at Admin · in_transit = headed to the unit ·
  *  on_unit = on the event truck · missing = crew reported it not found ·

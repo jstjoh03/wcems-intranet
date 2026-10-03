@@ -54,6 +54,7 @@ const ICONS: Record<EquipmentEventKind, Component> = {
   written_off: CircleOff,
   shift_start: LogIn,
   shift_end: LogOut,
+  reopened: Undo2,
 }
 
 watch(
@@ -82,6 +83,8 @@ function detail(a: CustodyAction): string {
       return `${pluralize(a.assetIds.length, 'item')} not found`
     case 'event_closed':
       return 'photo of where it was left'
+    case 'reopened':
+      return 'equipment still needed — back on assignment'
     case 'picked_up':
       return `headed back to ${HOME_LOCATION}`
     case 'returned':

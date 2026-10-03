@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { Check, X, UserRound, Camera, PenLine } from 'lucide-vue-next'
+import { Check, X, UserRound, Camera, PenLine, TriangleAlert } from 'lucide-vue-next'
 import EquipmentSheet from './EquipmentSheet.vue'
 import EquipmentPhotoField from './EquipmentPhotoField.vue'
 import EquipmentPersonPicker from './EquipmentPersonPicker.vue'
@@ -45,6 +45,10 @@ const photo = ref<Blob | null>(null)
 const note = ref('')
 const submitting = ref(false)
 const error = ref<string | null>(null)
+/* Close-out is final — the box forces the "is the event actually over?"
+   thought before the photo even matters (Justin, 2026-10-03, after the
+   fair's first-night crew closed out a multi-night event). */
+const closeAck = ref(false)
 
 const rule = computed(() => (props.kind ? ACTION_RULES[props.kind] : null))
 const isCheck = computed(() => isCheckKind(props.kind))
@@ -76,6 +80,7 @@ watch(
     note.value = ''
     error.value = null
     submitting.value = false
+    closeAck.value = false
     if (rule.value?.evidence === 'photo-or-person') void loadPeople()
   },
   { immediate: true },
@@ -127,6 +132,8 @@ const evidenceOk = computed(() => {
 
 const blocker = computed<string | null>(() => {
   if (itemCount.value === 0) return 'Select at least one item.'
+  if (props.kind === 'event_closed' && !closeAck.value)
+    return 'Tick the box above — or leave the event open for the next crew.'
   if (!evidenceOk.value) {
     if (handingOff.value)
       return person.value
@@ -155,6 +162,8 @@ const title = computed(() => {
       return 'End-of-shift check'
     case 'event_closed':
       return 'Close out the event'
+    case 'reopened':
+      return 'Reopen the event'
     case 'picked_up':
       return `Pick up from ${truck.value}`
     case 'returned':
@@ -180,6 +189,8 @@ const intro = computed(() => {
       return 'Before you hand the truck over, make sure everything is still here — tap anything you can’t find — and take a photo of where you’re leaving it. The next crew, or the supervisor picking it up, starts from that photo.'
     case 'event_closed':
       return 'Take a photo of where the equipment is being left so the pickup finds it fast.'
+    case 'reopened':
+      return 'For a close-out recorded too soon — this event still needs the equipment. Puts the items back on assignment; the next crew checks them as usual.'
     case 'picked_up':
       return 'Select what you’re taking off the truck. Anything left behind stays on the board.'
     case 'returned':
@@ -220,6 +231,8 @@ const notePlaceholder = computed(() => {
         : 'Anything off? Damage, dead batteries, missing chargers… (optional)'
     case 'event_closed':
       return 'e.g. Left in the jump-seat cabinet (optional)'
+    case 'reopened':
+      return 'e.g. Fair runs through Saturday — crews still need it (optional)'
     case 'written_off':
       return 'What happened, and who was notified?'
     default:
@@ -238,6 +251,8 @@ function checkTally(): string {
 const submitLabel = computed(() => {
   const n = selected.value.length
   switch (props.kind) {
+    case 'reopened':
+      return `Reopen · ${pluralize(n, 'item')} back on assignment`
     case 'delivered':
       return `Mark ${pluralize(n, 'item')} delivered`
     case 'canceled':
@@ -280,6 +295,8 @@ function doneMessage(): string {
       return `End-of-shift check recorded · ${checkTally()}`
     case 'event_closed':
       return 'Closed out — ready for pickup'
+    case 'reopened':
+      return 'Reopened — equipment back on assignment'
     case 'picked_up':
       return `Picked up · ${pluralize(n, 'item')} headed to ${HOME_LOCATION}`
     case 'returned':
@@ -324,6 +341,22 @@ async function submit() {
     @close="emit('close')"
   >
     <p class="eqa__intro">{{ intro }}</p>
+
+    <!-- Closing is forever (for this check-out) — make them say so. -->
+    <div v-if="kind === 'event_closed'" class="eqa__warn">
+      <TriangleAlert :size="17" :stroke-width="2.2" />
+      <div class="eqa__warn-body">
+        <p class="eqa__warn-title">Only close out when the equipment is done being used.</p>
+        <p class="eqa__warn-sub">
+          Closing tells supervisors it's ready for pickup. If another crew works this event
+          tonight or tomorrow, don't close — they'll check the equipment when they come on.
+        </p>
+        <label class="eqa__warn-ack">
+          <input v-model="closeAck" type="checkbox" />
+          <span>The event is over — this equipment won't be needed again</span>
+        </label>
+      </div>
+    </div>
 
     <!-- Items -->
     <div class="eq-field">
@@ -480,6 +513,60 @@ async function submit() {
   line-height: 1.5;
   color: var(--color-ink-soft);
 }
+/* Gold stop-and-think box on the close-out step. */
+.eqa__warn {
+  display: flex;
+  gap: 10px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  background: oklch(0.975 0.025 86.8);
+  border: 1px solid oklch(0.85 0.07 86.8);
+  border-radius: 12px;
+}
+.eqa__warn > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--color-accent-700);
+}
+.eqa__warn-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.eqa__warn-title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--color-ink);
+  line-height: 1.4;
+}
+.eqa__warn-sub {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
+}
+.eqa__warn-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink);
+  cursor: pointer;
+  user-select: none;
+}
+.eqa__warn-ack input {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  accent-color: var(--color-brand-600);
+  cursor: pointer;
+}
+
 .eqa__all {
   font-family: var(--font-sans);
   font-size: 12px;

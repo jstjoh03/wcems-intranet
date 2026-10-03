@@ -189,6 +189,8 @@ function sentence(a: CustodyAction): string {
       return `reported ${items} not found on ${unit}`
     case 'event_closed':
       return `closed out the event on ${unit}`
+    case 'reopened':
+      return `reopened the event on ${unit}`
     case 'picked_up':
       return `picked up ${items} from ${unit}`
     case 'returned':

@@ -129,6 +129,7 @@ const ITEM_LABEL: Record<EquipmentEventKind, string> = {
   written_off: 'Lost',
   shift_start: 'Checked',
   shift_end: 'Checked',
+  reopened: 'Back on assignment',
 }
 
 function itemKind(id: string): EquipmentEventKind | undefined {
@@ -142,8 +143,8 @@ function itemKind(id: string): EquipmentEventKind | undefined {
    Then a supervisor picks up and drops off at Admin. */
 const actionOrder = computed<EquipmentActionKind[]>(() =>
   checkout.value?.extended
-    ? ['delivered', 'shift_start', 'shift_end', 'picked_up', 'returned', 'written_off']
-    : ['delivered', 'confirmed_present', 'event_closed', 'picked_up', 'returned', 'written_off'],
+    ? ['delivered', 'shift_start', 'shift_end', 'reopened', 'picked_up', 'returned', 'written_off']
+    : ['delivered', 'confirmed_present', 'event_closed', 'reopened', 'picked_up', 'returned', 'written_off'],
 )
 const PRIMARY_FOR: Record<CheckoutPhase, EquipmentActionKind[]> = {
   in_transit: ['delivered'],
