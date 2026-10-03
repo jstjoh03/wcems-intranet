@@ -724,9 +724,13 @@ const heroMoving = computed(() => counts.value.in_transit + counts.value.returni
 }
 .eqb-card__top {
   display: flex;
+  /* A long date span ("Sep 30 – Today") + a long pill ("READY FOR
+     PICKUP") can't fit one row — wrap instead of bleeding past the
+     card edge (Justin, 2026-10-03). */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 4px 10px;
 }
 .eqb-card__unit {
   display: inline-flex;
@@ -744,6 +748,7 @@ const heroMoving = computed(() => counts.value.in_transit + counts.value.returni
 }
 .eqb-card__phase {
   flex-shrink: 0;
+  white-space: nowrap;
   padding: 3px 9px;
   font-size: 10.5px;
   font-weight: 700;
