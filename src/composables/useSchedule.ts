@@ -1910,6 +1910,83 @@ function upcomingShiftsFor(userId: string, fromIso: string, days = 45): Upcoming
   return out
 }
 
+/** A shift the member can post to the trade board: a seat day, or a
+ *  special-event assignment (seatless, entry-based — giveaway only;
+ *  Justin, 2026-10-05: event crews couldn't give their standbys away).
+ *  Events are fetched FRESH so the pick list isn't limited to whatever
+ *  range the boards happen to have loaded. */
+export interface PostableShift {
+  dateIso: string
+  seatId: string | null
+  entryId: string | null
+  unitCode: string // 'Event' for event assignments (display only)
+  seatLabel: string // seat label, or the event's name
+  kind: 'seat' | 'event'
+  /** Event assignments only: the entry's own window ('HHmm'). */
+  from: string | null
+  until: string | null
+}
+
+async function postableShiftsFor(
+  userId: string,
+  fromIso: string,
+  days = 45,
+  opts?: { events?: boolean },
+): Promise<PostableShift[]> {
+  const out: PostableShift[] = upcomingShiftsFor(userId, fromIso, days).map((s) => ({
+    dateIso: s.dateIso,
+    seatId: s.seatId,
+    entryId: null,
+    unitCode: s.unitCode,
+    seatLabel: s.seatLabel,
+    kind: 'seat' as const,
+    from: null,
+    until: null,
+  }))
+  if (opts?.events !== false) {
+    const auth = useAuthStore()
+    const endIso = addDaysIso(fromIso, days - 1)
+    let evs: SchedEntry[] = []
+    if (auth.usingDevStub) {
+      evs = entries.value.filter(
+        (e) =>
+          e.kind === 'event' &&
+          e.userId === userId &&
+          e.status === 'scheduled' &&
+          e.workDate >= fromIso &&
+          e.workDate <= endIso,
+      )
+    } else {
+      const res = await supabase
+        .from('sched_entries')
+        .select('*')
+        .eq('kind', 'event')
+        .eq('user_id', userId)
+        .eq('status', 'scheduled')
+        .gte('work_date', fromIso)
+        .lte('work_date', endIso)
+        .order('work_date')
+      if (!res.error) evs = (res.data ?? []).map(mapEntry)
+    }
+    for (const e of evs) {
+      out.push({
+        dateIso: e.workDate,
+        seatId: null,
+        entryId: e.id,
+        unitCode: 'Event',
+        seatLabel: e.note || 'Special event',
+        kind: 'event',
+        from: hhmm(e.startAt),
+        until: hhmm(e.endAt),
+      })
+    }
+  }
+  out.sort(
+    (a, b) => a.dateIso.localeCompare(b.dateIso) || (a.from ?? '').localeCompare(b.from ?? ''),
+  )
+  return out
+}
+
 export interface OpenSeatInfo {
   seatId: string
   unitCode: string
@@ -3067,7 +3144,9 @@ function tradeClosedReason(startAt?: string | null, workDate?: string | null): s
 async function createTradePosting(opts: {
   type: 'giveaway' | 'trade'
   dateIso: string
-  seatId: string
+  /** null = a special-event assignment (entryId required). */
+  seatId: string | null
+  entryId?: string | null
   from: string
   until: string
   comments: string
@@ -3078,6 +3157,55 @@ async function createTradePosting(opts: {
   const auth = useAuthStore()
   const me = auth.appUser?.id
   if (!me) return 'Not signed in'
+
+  /* ── Special-event assignment (seatless) — giveaway only, whole
+     window. The entry is read FRESH: the event may have been edited or
+     reassigned since the pick list loaded (Justin, 2026-10-05). */
+  if (!opts.seatId) {
+    if (opts.type !== 'giveaway')
+      return 'Event assignments can only be given away — there is no seat to swap back into.'
+    if (!opts.entryId) return 'Pick one of your shifts.'
+    if (opts.toUserId && opts.toUserId === me) return 'Pick someone other than yourself.'
+    const fres = await supabase
+      .from('sched_entries')
+      .select('*')
+      .eq('id', opts.entryId)
+      .maybeSingle()
+    if (fres.error) return fres.error.message
+    const ev = fres.data ? mapEntry(fres.data) : null
+    if (!ev || ev.kind !== 'event' || ev.userId !== me || ev.status !== 'scheduled')
+      return 'That event assignment is no longer yours on the board — refresh and try again.'
+    const evClosed = tradeClosedReason(ev.startAt, null)
+    if (evClosed) return evClosed
+    const label = ev.note || 'Special event'
+    const res = await supabase
+      .from('sched_requests')
+      .insert({
+        type: 'giveaway',
+        requester_id: me,
+        counterparty_id: opts.toUserId ?? null,
+        seat_id: null,
+        entry_id: ev.id,
+        work_date: ev.workDate,
+        start_at: ev.startAt,
+        end_at: ev.endAt,
+        unit_code: 'Event',
+        position_label: label,
+        comments: opts.comments || null,
+      })
+      .select('id')
+      .single()
+    if (res.error) return res.error.message
+    if (opts.toUserId) {
+      audit('request.giveaway', `Sent a giveaway directly to ${displayName(opts.toUserId).name} — Event ${label} ${ev.workDate} ${hhmm(ev.startAt)}–${hhmm(ev.endAt)}`, { entity: 'request', entityId: res.data.id })
+      notify('trade_activity', { requestId: res.data.id, event: 'direct_request' })
+    } else {
+      audit('request.giveaway', `Posted a giveaway — Event ${label} ${ev.workDate} ${hhmm(ev.startAt)}–${hhmm(ev.endAt)}`, { entity: 'request', entityId: res.data.id })
+    }
+    await loadRequests()
+    return null
+  }
+
   const w = shiftWindow(opts.dateIso, opts.from, opts.until)
   if (opts.toUserId) {
     if (opts.toUserId === me) return 'Pick someone other than yourself.'
@@ -4979,6 +5107,27 @@ async function decideRequest(
         source_request: req.id,
       })
       if (ins.error) return ins.error.message
+    } else if (req.type === 'giveaway' && req.entryId && !req.seatId) {
+      // Special-event assignment giveaway — reassign the entry whole.
+      // Guarded like the event-slot pickup: a reshaped or reassigned
+      // board fails honestly instead of approving a silent no-op.
+      if (!req.counterpartyId) return 'No accepted claimant on this giveaway yet.'
+      const upd = await supabase
+        .from('sched_entries')
+        .update({
+          user_id: req.counterpartyId,
+          source_request: req.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', req.entryId)
+        .eq('user_id', req.requesterId)
+        .eq('status', 'scheduled')
+        .select('id')
+      if (upd.error) return upd.error.message
+      if (!upd.data || upd.data.length === 0) {
+        await reloadRangeIfLoaded()
+        return 'That event assignment is no longer on the board as it was filed — it may have been reassigned or removed. Check the day.'
+      }
     } else if (req.type === 'giveaway' && req.workDate && req.seatId) {
       if (!req.counterpartyId) return 'No accepted claimant on this giveaway yet.'
       const giver = personById.value.get(req.requesterId)?.fullName ?? 'requester'
@@ -6282,6 +6431,7 @@ export function useSchedule() {
     sendPageOut,
     // requests
     upcomingShiftsFor,
+    postableShiftsFor,
     openSeatsFor,
     fetchMySchedule,
     fetchTimeSegments,

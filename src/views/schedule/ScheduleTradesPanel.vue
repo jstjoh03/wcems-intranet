@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
 import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
@@ -9,7 +9,7 @@ import {
   payPeriodFor,
   type SchedRequest,
   type TradeOffer,
-  type UpcomingShift,
+  type PostableShift,
   type HoursWarning,
 } from '@/composables/useSchedule'
 
@@ -53,7 +53,7 @@ const sendToCandidates = computed(() =>
   sched.people.value.filter((p) => p.id !== sched.myUserId.value),
 )
 
-const myShifts = ref<UpcomingShift[]>([])
+const myShifts = ref<PostableShift[]>([])
 
 /* 120 days out — 45 cut Kaleb's November days off the offer list when
    Ashtin's posting was for Nov 27 (day-1 launch bug). */
@@ -61,7 +61,7 @@ const SHIFT_HORIZON_DAYS = 120
 
 /** Shifts grouped by month so long lists stay scannable in the select. */
 const myShiftGroups = computed(() => {
-  const groups: { label: string; items: UpcomingShift[] }[] = []
+  const groups: { label: string; items: PostableShift[] }[] = []
   for (const s of myShifts.value) {
     const label = new Date(`${s.dateIso}T00:00:00`).toLocaleDateString('en-US', {
       month: 'long',
@@ -74,23 +74,44 @@ const myShiftGroups = computed(() => {
   return groups
 })
 
-function openPost() {
+async function openPost() {
   posting.value = !posting.value
   err.value = done.value = null
   if (posting.value) {
     const me = sched.myUserId.value
-    myShifts.value = me ? sched.upcomingShiftsFor(me, todayCentralIso(), SHIFT_HORIZON_DAYS) : []
+    /* Seat days AND special-event assignments — event crews couldn't
+       give their standbys away (Justin, 2026-10-05). */
+    myShifts.value = me
+      ? await sched.postableShiftsFor(me, todayCentralIso(), SHIFT_HORIZON_DAYS, { events: true })
+      : []
     postShiftKey.value = myShifts.value[0] ? shiftKey(myShifts.value[0]) : ''
   }
 }
 
-function shiftKey(s: UpcomingShift): string {
-  return `${s.dateIso}|${s.seatId}`
+function shiftKey(s: PostableShift): string {
+  return `${s.dateIso}|${s.seatId ?? s.entryId ?? ''}`
 }
 
-function shiftLabel(s: UpcomingShift): string {
+function shiftLabel(s: PostableShift): string {
+  if (s.kind === 'event') {
+    return `${fmtDate(s.dateIso)} · Event — ${s.seatLabel}${s.from ? ` · ${s.from}–${s.until}` : ''}`
+  }
   return `${fmtDate(s.dateIso)} · ${s.unitCode} ${s.seatLabel}`
 }
+
+const postSel = computed(
+  () => myShifts.value.find((s) => shiftKey(s) === postShiftKey.value) ?? null,
+)
+const postSelIsEvent = computed(() => postSel.value?.kind === 'event')
+
+/* An event can only go as a full-window giveaway — no seat to swap
+   back into, no partial standbys. */
+watch(postSelIsEvent, (isEvent) => {
+  if (isEvent) {
+    postType.value = 'giveaway'
+    postPartial.value = false
+  }
+})
 
 async function submitPost() {
   const sel = myShifts.value.find((s) => shiftKey(s) === postShiftKey.value)
@@ -101,11 +122,14 @@ async function submitPost() {
   busy.value = true
   err.value = null
   const e = await sched.createTradePosting({
-    type: postType.value,
+    // Events force giveaway + the entry's whole window (composable
+    // re-reads the entry fresh and uses its own times).
+    type: sel.kind === 'event' ? 'giveaway' : postType.value,
     dateIso: sel.dateIso,
     seatId: sel.seatId,
-    from: postPartial.value ? postFrom.value : '06:00',
-    until: postPartial.value ? postUntil.value : '06:00',
+    entryId: sel.entryId,
+    from: postPartial.value && sel.kind !== 'event' ? postFrom.value : '06:00',
+    until: postPartial.value && sel.kind !== 'event' ? postUntil.value : '06:00',
     comments: postComments.value,
     toUserId: postTo.value || null,
   })
@@ -379,10 +403,14 @@ async function checkMyHours(r: SchedRequest): Promise<HoursWarning[]> {
   return info.warnings
 }
 
-function startOffer(r: SchedRequest) {
+async function startOffer(r: SchedRequest) {
   err.value = done.value = null
   const me = sched.myUserId.value
-  myShifts.value = me ? sched.upcomingShiftsFor(me, todayCentralIso(), SHIFT_HORIZON_DAYS) : []
+  /* Swap offers are seat shifts only — an event has no seat for the
+     poster to take in return. */
+  myShifts.value = me
+    ? await sched.postableShiftsFor(me, todayCentralIso(), SHIFT_HORIZON_DAYS, { events: false })
+    : []
   offerShiftKey.value = myShifts.value[0] ? shiftKey(myShifts.value[0]) : ''
   offerNote.value = ''
   offerPartial.value = false
@@ -414,7 +442,7 @@ async function takeShift(r: SchedRequest) {
 
 async function submitOffer(r: SchedRequest) {
   const sel = myShifts.value.find((s) => shiftKey(s) === offerShiftKey.value)
-  if (!sel) {
+  if (!sel || !sel.seatId) {
     err.value = 'Pick one of your shifts to offer.'
     return
   }
@@ -551,9 +579,9 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
       <div class="tr__form-grid">
         <label class="tr__field">
           <span class="tr__label">Type</span>
-          <select v-model="postType" class="tr__input">
+          <select v-model="postType" class="tr__input" :disabled="postSelIsEvent">
             <option value="giveaway">Give away — anyone can claim</option>
-            <option value="trade">Swap — I want a shift in return</option>
+            <option value="trade" :disabled="postSelIsEvent">Swap — I want a shift in return</option>
           </select>
         </label>
         <label class="tr__field">
@@ -582,10 +610,13 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
         {{ postType === 'giveaway' ? 'accept or decline' : 'offer a shift back or decline' }};
         once you both agree it goes to the Chief for final approval.
       </p>
-      <label class="tr__check">
+      <p v-if="postSelIsEvent" class="tr__muted tr__muted--sm">
+        Event assignments post as full-window giveaways — the claimant takes the whole standby.
+      </p>
+      <label v-if="!postSelIsEvent" class="tr__check">
         <input v-model="postPartial" type="checkbox" /> Part of the shift only
       </label>
-      <div v-if="postPartial" class="tr__times">
+      <div v-if="postPartial && !postSelIsEvent" class="tr__times">
         <label>From <TimeSelect24 v-model="postFrom" class="tr__input tr__input--time" /></label>
         <label>Until <TimeSelect24 v-model="postUntil" class="tr__input tr__input--time" /></label>
       </div>
