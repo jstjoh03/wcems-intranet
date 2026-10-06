@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { LayoutGrid, ChevronUp, X, Pin, Search, ExternalLink } from 'lucide-vue-next'
+import {
+  LayoutGrid,
+  ChevronUp,
+  X,
+  Pin,
+  Search,
+  ExternalLink,
+  ArrowRight,
+} from 'lucide-vue-next'
 import IconRender from '@/components/primitives/IconRender.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
 import { useUserLinkPreferences } from '@/composables/useUserLinkPreferences'
+import { useScheduleAccess } from '@/composables/useScheduleAccess'
 
 /**
  * Floating dock + slide-up sheet for the Quick Links system.
@@ -21,10 +30,55 @@ import { useUserLinkPreferences } from '@/composables/useUserLinkPreferences'
 const auth = useAuthStore()
 const { links } = useQuickLinks()
 const { getPref, togglePin } = useUserLinkPreferences()
+const { canSeeSchedule } = useScheduleAccess()
 
 const open = ref(false)
 const search = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
+
+/* Internal portal modules — fixed rows above the admin catalog, so the
+   sheet literally named "Quick Links" answers "where's Scheduling?"
+   the same way the nav does. RouterLinks (stay in the PWA), no pin. */
+interface PortalRow {
+  id: string
+  label: string
+  sub: string
+  iconName: string
+  to: string
+  keywords: string
+}
+const portalBase = computed<PortalRow[]>(() => {
+  const rows: PortalRow[] = []
+  if (canSeeSchedule.value) {
+    rows.push({
+      id: 'portal:schedule',
+      label: 'Scheduling',
+      sub: 'Shifts, trades, time off',
+      iconName: 'CalendarDays',
+      to: '/schedule',
+      keywords: 'schedule shift shifts trade swap giveaway calendar roster',
+    })
+  }
+  rows.push({
+    id: 'portal:equipment',
+    label: 'Event Equipment',
+    sub: 'Check-outs & shift checks',
+    iconName: 'Boxes',
+    to: '/equipment',
+    keywords: 'equipment gear radio ipad checkout custody',
+  })
+  return rows
+})
+const portalRows = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return portalBase.value
+  return portalBase.value.filter(
+    (r) =>
+      r.label.toLowerCase().includes(q) ||
+      r.sub.toLowerCase().includes(q) ||
+      r.keywords.includes(q),
+  )
+})
 
 const visibleLinks = computed(() => {
   const role = auth.role ?? 'crew'
@@ -127,7 +181,7 @@ onBeforeUnmount(() => {
         <div class="qld-sheet__title">
           <LayoutGrid :size="14" :stroke-width="1.85" />
           <span class="eyebrow">Quick Links</span>
-          <span class="qld-sheet__count">{{ visibleLinks.length }}</span>
+          <span class="qld-sheet__count">{{ visibleLinks.length + portalBase.length }}</span>
         </div>
         <button
           type="button"
@@ -152,6 +206,27 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="qld-sheet__body">
+        <!-- Portal modules — internal, fixed, not pinnable -->
+        <div v-if="portalRows.length > 0" class="qld-section">
+          <div class="qld-section__head">
+            <span class="eyebrow">Portal</span>
+          </div>
+          <ul class="qld-list">
+            <li v-for="r in portalRows" :key="r.id">
+              <RouterLink :to="r.to" class="qld-row" @click="closeSheet">
+                <span class="qld-row__icon">
+                  <IconRender :name="r.iconName" :size="16" :stroke-width="1.85" />
+                </span>
+                <span class="qld-row__text">
+                  <span class="qld-row__name">{{ r.label }}</span>
+                  <span class="qld-row__sub">{{ r.sub }}</span>
+                </span>
+                <ArrowRight :size="11" class="qld-row__arrow" />
+              </RouterLink>
+            </li>
+          </ul>
+        </div>
+
         <!-- Pinned -->
         <div v-if="pinned.length > 0 && !search" class="qld-section">
           <div class="qld-section__head">
@@ -226,7 +301,10 @@ onBeforeUnmount(() => {
           </ul>
         </div>
 
-        <div v-if="search && filteredAll.length === 0" class="qld-empty">
+        <div
+          v-if="search && filteredAll.length === 0 && portalRows.length === 0"
+          class="qld-empty"
+        >
           No links match "{{ search }}".
         </div>
       </div>
@@ -247,7 +325,7 @@ onBeforeUnmount(() => {
       <LayoutGrid :size="14" :stroke-width="2" />
     </span>
     <span class="qld-pill__label">Quick Links</span>
-    <span class="qld-pill__count">{{ visibleLinks.length }}</span>
+    <span class="qld-pill__count">{{ visibleLinks.length + portalBase.length }}</span>
     <ChevronUp :size="13" class="qld-pill__chev" />
   </button>
 </template>

@@ -7,8 +7,8 @@ import { useQuickLinks } from '@/composables/useQuickLinks'
 
 /**
  * Pick up to 4 quick links to feature on the dashboard hero strip.
- * Tile 5 (Hospitals) stays fixed — not editable. Empty selection
- * resets to the user's role-based defaults.
+ * Scheduling (lead) and Hospitals (tail) stay fixed — not editable.
+ * Empty selection resets to the user's role-based defaults.
  */
 
 const MAX_SELECTED = 4
@@ -110,7 +110,8 @@ async function submit() {
                 Featured shortcuts
               </h2>
               <div class="flem-modal__hint">
-                Pick up to {{ MAX_SELECTED }}. Empty falls back to the role default.
+                Pick up to {{ MAX_SELECTED }} — Scheduling and Hospitals always stay.
+                Empty falls back to the role default.
                 <span class="flem-modal__count">
                   {{ selectedCount }} / {{ MAX_SELECTED }} selected
                 </span>

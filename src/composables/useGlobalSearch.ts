@@ -13,10 +13,12 @@ import {
   Film,
   Contact,
   Boxes,
+  CalendarDays,
   type LucideIcon,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
+import { useScheduleAccess } from '@/composables/useScheduleAccess'
 import { useHospitalsStore } from '@/stores/hospitals'
 import { useStationsStore } from '@/stores/stations'
 import { useTraining } from '@/composables/useTraining'
@@ -191,6 +193,7 @@ function matchesQuery(query: string, ...fields: Array<string | undefined>) {
 
 export function useGlobalSearch() {
   const auth = useAuthStore()
+  const { canSeeSchedule } = useScheduleAccess()
   const { links: quickLinks } = useQuickLinks()
   const hospitalsStore = useHospitalsStore()
   const stationsStore = useStationsStore()
@@ -201,6 +204,21 @@ export function useGlobalSearch() {
   const allResults = computed<SearchResult[]>(() => {
     const role = auth.role ?? 'crew'
     const results: SearchResult[] = [...PAGE_ROUTES]
+
+    /* Scheduling module — gated the same way the masthead entry is.
+       Slotted right after Home so it leads the page results. */
+    if (canSeeSchedule.value) {
+      results.splice(1, 0, {
+        id: 'page:schedule',
+        title: 'Scheduling',
+        subtitle: 'Shifts, trades, time off',
+        category: 'page',
+        icon: CalendarDays,
+        to: '/schedule',
+        keywords:
+          'schedule shift shifts trade trades swap giveaway time off vacation calendar roster rotation pay period payday',
+      })
+    }
 
     /* Admin-only pages: only include for admins. */
     if (auth.isAdmin) {

@@ -12,12 +12,14 @@ import FeaturedLinksEditModal from './FeaturedLinksEditModal.vue'
  * navy layered-gradient "glass command button" — reads as operational
  * control, not content card.
  *
- * Per-user customization: tiles 1–4 come from the user's chosen list
- * (app_users.featured_quick_link_ids). When the user has picked fewer
- * than 4, the remaining slots fill from role-based defaults so the
- * strip is never bare. Tile 5 is always Hospitals — referenced
- * constantly during transports, doesn't belong in the catalog. The
- * "Edit" pencil opens FeaturedLinksEditModal to change tiles 1–4.
+ * Two tiles are FIXED anchors: Scheduling leads (the Aladtec
+ * replacement — the operational center, shown to everyone the module
+ * admits) and Hospitals closes (referenced constantly during
+ * transports). Neither belongs in the catalog. Between them sit the
+ * user's chosen tiles (app_users.featured_quick_link_ids, up to 4);
+ * when the user has picked fewer than 4, the remaining slots fill
+ * from role-based defaults so the strip is never bare. The "Edit"
+ * pencil opens FeaturedLinksEditModal to change the middle tiles.
  */
 interface FeaturedTile {
   id: string
@@ -51,9 +53,12 @@ const INTERNAL_HOSPITALS: FeaturedTile = {
 /* Aladtec is gone (2026-09-28) — the scheduling module leads the
    default strip for anyone who hasn't customized, once the module
    admits them (soft-launch gate). */
+/* Tile label is the short noun ("Schedule") — "Scheduling" breaks
+   mid-word in the ~52px columns a six-tile row leaves on a 375px
+   phone. Masthead/drawer/search keep the full module name. */
 const INTERNAL_SCHEDULE: FeaturedTile = {
   id: 'schedule',
-  label: 'Scheduling',
+  label: 'Schedule',
   iconName: 'Calendar',
   url: '/schedule',
   internal: true,
@@ -88,13 +93,7 @@ const featured = computed<FeaturedTile[]>(() => {
     if (tiles.length >= 4) break
   }
 
-  /* 2) Users who never customized lead with the scheduling module —
-     the Aladtec replacement — when the soft-launch gate admits them. */
-  if (userIds.length === 0 && canSeeSchedule.value) {
-    tiles.unshift(INTERNAL_SCHEDULE)
-  }
-
-  /* 3) Top up empty slots from the role-based default list, skipping
+  /* 2) Top up empty slots from the role-based default list, skipping
      anything already chosen above to avoid duplicates. */
   if (tiles.length < 4) {
     const defaultLabels = auth.isSupervisor
@@ -109,13 +108,20 @@ const featured = computed<FeaturedTile[]>(() => {
     }
   }
 
-  return [...tiles.slice(0, 4), INTERNAL_HOSPITALS]
+  /* 3) Scheduling ALWAYS leads for anyone the module admits —
+     customized or not. Crews kept reporting "no scheduling quick
+     link" because the lead tile used to show only for users who had
+     never customized the strip (and the picker can't add it). Fixed
+     anchor now, exactly like Hospitals at the tail. */
+  const lead = canSeeSchedule.value ? [INTERNAL_SCHEDULE] : []
+
+  return [...lead, ...tiles.slice(0, 4), INTERNAL_HOSPITALS]
 })
 </script>
 
 <template>
   <section class="fql reveal" style="animation-delay: 90ms; margin-bottom: 32px">
-    <ul class="fql__grid">
+    <ul class="fql__grid" :style="{ '--fql-cols': featured.length }">
       <li v-for="l in featured" :key="l.id">
         <RouterLink
           v-if="l.internal"
@@ -179,7 +185,11 @@ const featured = computed<FeaturedTile[]>(() => {
 }
 .fql__grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  /* Column count follows the tile count (5, or 6 once the fixed
+     Scheduling lead is admitted) — bound inline as --fql-cols.
+     minmax(0, 1fr) lets tracks compress below a long label's
+     min-content so six tiles never push past the phone edge. */
+  grid-template-columns: repeat(var(--fql-cols, 5), minmax(0, 1fr));
   gap: 8px;
   list-style: none;
   margin: 0;
@@ -222,14 +232,17 @@ const featured = computed<FeaturedTile[]>(() => {
 }
 @media (min-width: 640px) {
   .fql__grid {
-    grid-template-columns: repeat(5, 124px);
+    /* minmax(0, 124px) instead of a hard 124px: with six tiles the
+       row would otherwise overflow narrow tablets — tracks shrink
+       evenly when the container runs out of room. */
+    grid-template-columns: repeat(var(--fql-cols, 5), minmax(0, 124px));
     gap: 12px;
     justify-content: center;
   }
 }
 @media (max-width: 480px) {
   .fql__grid {
-    /* Five tiles in one row even on phones — labels wrap if they need to */
+    /* All tiles in one row even on phones — labels wrap if they need to */
     gap: 5px;
   }
 }
@@ -375,7 +388,27 @@ const featured = computed<FeaturedTile[]>(() => {
     border-radius: 14px;
   }
   .fql__name {
-    font-size: 10.5px;
+    /* 10px keeps every one-word label (Scheduling, Protocols,
+       Hospitals) on a single line in the ~53px columns a six-tile
+       row leaves on a 375px phone. */
+    font-size: 10px;
+    /* Last-resort break so a lone long word (Responder360) wraps
+       instead of clipping or shoving the last tile off-screen. (This
+       block sits after the base .fql__name rule, so it actually
+       overrides overflow-wrap: normal.) */
+    overflow-wrap: anywhere;
+  }
+}
+@media (max-width: 374px) {
+  /* Six tiles on the smallest phones (SE-class) — shrink the shapes
+     so the row still fits without horizontal scroll. */
+  .fql__shape {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+  }
+  .fql__name {
+    font-size: 9.5px;
   }
 }
 </style>
