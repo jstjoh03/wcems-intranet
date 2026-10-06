@@ -6199,10 +6199,84 @@ async function attestTruck(
   return null
 }
 
-/** Editors: unwind a mistaken verification row. */
-async function deleteVerification(id: string): Promise<string | null> {
-  const res = await supabase.from('sched_verifications').delete().eq('id', id)
+/**
+ * Amend an existing truck attestation — the attesting supervisor's
+ * own (a late call surfaces after they attested "roster matched"),
+ * or any row for editors; RLS enforces exactly that. Re-freezes the
+ * board snapshot, moves the replaced verdict into snapshot.history,
+ * and re-stamps user_id/created_at so the row reads as the amender's
+ * current statement. A flagged amend files a discrepancy just like a
+ * first-time flag.
+ */
+async function amendAttest(
+  prev: VerificationRow,
+  flagged: boolean,
+  note: string,
+): Promise<string | null> {
+  const auth = useAuthStore()
+  const me = auth.appUser?.id
+  if (auth.usingDevStub || !me) return 'Not available in the dev preview.'
+  if (prev.kind !== 'shift_attest' || !prev.workDate || !prev.unitId)
+    return 'Only truck attestations can be amended.'
+  const unit = units.value.find((u) => u.id === prev.unitId)
+  if (flagged && !note.trim())
+    return 'Say what changed — the note is what payroll and the schedulers act on.'
+  const um = dayModel(prev.workDate).units.find((x) => x.unit.id === prev.unitId)
+  const snapRows =
+    um?.seats.flatMap((sm) =>
+      sm.rows.map((r) => `${sm.seat.label}: ${r.open ? 'OPEN' : r.name} ${r.start}–${r.end}`),
+    ) ?? []
+  const history = Array.isArray(prev.snapshot.history)
+    ? (prev.snapshot.history as unknown[])
+    : []
+  const res = await supabase
+    .from('sched_verifications')
+    .update({
+      status: flagged ? 'flagged' : 'confirmed',
+      note: note.trim() || null,
+      user_id: me,
+      created_at: new Date().toISOString(),
+      snapshot: {
+        rows: snapRows,
+        history: [
+          ...history,
+          {
+            at: prev.createdAt,
+            by: prev.userId,
+            status: prev.status,
+            note: prev.note,
+            rows: prev.snapshot.rows ?? [],
+          },
+        ],
+      },
+    })
+    .eq('id', prev.id)
+    .select('id')
   if (res.error) return res.error.message
+  if (!res.data || res.data.length === 0)
+    return 'Could not amend — only the attesting supervisor or a scheduler can change this one.'
+  const noteChanged = (note.trim() || null) !== (prev.note ?? null)
+  if (flagged && (prev.status !== 'flagged' || noteChanged))
+    await fileDiscrepancy({ workDate: prev.workDate, note, unitCode: unit?.code ?? null })
+  audit(
+    'verify.attest_amend',
+    `Amended the ${unit?.code ?? 'unit'} attestation for ${prev.workDate}: ${prev.status} → ${flagged ? 'flagged' : 'confirmed'}${flagged ? ` — "${note.trim().slice(0, 80)}"` : ''}`,
+    { entity: 'verification', entityId: prev.id },
+  )
+  return null
+}
+
+/** Unwind a mistaken verification row — editors any, supervisors
+ *  their own truck attestations (RLS decides; zero rows = denied). */
+async function deleteVerification(id: string): Promise<string | null> {
+  const res = await supabase
+    .from('sched_verifications')
+    .delete()
+    .eq('id', id)
+    .select('id')
+  if (res.error) return res.error.message
+  if (!res.data || res.data.length === 0)
+    return 'Could not remove — only the attesting supervisor or a scheduler can change this one.'
   audit('verify.delete', 'Removed a verification record', { entity: 'verification', entityId: id })
   return null
 }
@@ -6505,6 +6579,7 @@ export function useSchedule() {
     fileDiscrepancy,
     fetchAttestDay,
     attestTruck,
+    amendAttest,
     deleteVerification,
     fetchMyPeriodBreakdown,
     signoffPeriod,

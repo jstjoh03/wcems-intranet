@@ -1080,8 +1080,20 @@ const attRows = ref<VerificationRow[]>([])
 const attFlagUnit = ref<string | null>(null)
 const attNote = ref('')
 const attBusyUnit = ref<string | null>(null)
+/* Unit whose EXISTING attestation is being amended (late call after a
+   "roster matched" attest). Distinct from attFlagUnit, which is the
+   first-time flag form on an unattested truck. */
+const attEditUnit = ref<string | null>(null)
 
 const canAttest = computed(() => sched.canEdit.value || sched.level.value === 'supervisor')
+
+/** Editors touch any attestation; a supervisor only their own. */
+function canAmendRow(v: VerificationRow): boolean {
+  return (
+    sched.canEdit.value ||
+    (v.userId === sched.myUserId.value && sched.level.value === 'supervisor')
+  )
+}
 
 const attUnits = computed(() => {
   const a = editor.attest.value
@@ -1115,6 +1127,7 @@ watch(
   () => editor.attest.value?.dateIso,
   (d) => {
     attFlagUnit.value = null
+    attEditUnit.value = null
     attNote.value = ''
     attRows.value = []
     if (d) void loadAttest()
@@ -1149,13 +1162,36 @@ async function attestUndo(rowId: string): Promise<void> {
     err.value = e
     return
   }
+  attEditUnit.value = null
+  await loadAttest()
+}
+
+function startAmend(unitId: string, state: VerificationRow): void {
+  attFlagUnit.value = null
+  attEditUnit.value = unitId
+  attNote.value = state.note ?? ''
+}
+
+async function amendOne(state: VerificationRow, flagged: boolean): Promise<void> {
+  if (!state.unitId || attBusyUnit.value) return
+  attBusyUnit.value = state.unitId
+  err.value = null
+  const e = await sched.amendAttest(state, flagged, flagged ? attNote.value : '')
+  attBusyUnit.value = null
+  if (e) {
+    err.value = e
+    return
+  }
+  attEditUnit.value = null
+  attNote.value = ''
   await loadAttest()
 }
 
 function attWho(v: VerificationRow): string {
   const n = sched.personById.value.get(v.userId)?.fullName ?? 'Unknown'
   const t = new Date(v.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-  return `${n} · ${t}`
+  const amended = Array.isArray(v.snapshot?.history) && (v.snapshot.history as unknown[]).length > 0
+  return `${n} · ${t}${amended ? ' · amended' : ''}`
 }
 
 /* ── pay-period sign-off drawer ──────────────────────────────────────
@@ -2521,6 +2557,8 @@ async function reqCancel() {
         <p class="em__sub">
           Confirm each truck's roster matched who actually worked. Flag a truck to say what
           changed — the note goes straight to the schedulers, and payroll sees the attestation.
+          Attested too soon (late call, held-over crew)? Amend or remove your own attestation —
+          every change is logged.
         </p>
         <p class="em__attprog">{{ attDone }} of {{ attUnits.length }} attested</p>
         <p v-if="err" class="em__error">{{ err }}</p>
@@ -2534,9 +2572,9 @@ async function reqCancel() {
             >
               {{ u.state.status === 'flagged' ? 'Flagged' : 'Matched' }} — {{ attWho(u.state) }}
               <button
-                v-if="sched.canEdit.value"
+                v-if="canAmendRow(u.state)"
                 class="em__attundo"
-                title="Undo this attestation"
+                title="Remove this attestation"
                 @click="attestUndo(u.state.id)"
               >✕</button>
             </span>
@@ -2545,6 +2583,37 @@ async function reqCancel() {
             {{ row.text }}
           </p>
           <p v-if="u.state?.note" class="em__attnote">"{{ u.state.note }}"</p>
+          <!-- amend an existing attestation (own row, or any for editors) -->
+          <template v-if="u.state && canAmendRow(u.state)">
+            <template v-if="attEditUnit === u.unit.id">
+              <textarea
+                v-model="attNote"
+                class="em__input em__textarea"
+                rows="2"
+                placeholder="What actually happened? e.g. 'Late call — crew off 0745, extra-hours request filed'"
+              ></textarea>
+              <div class="em__attbtns">
+                <button
+                  class="em__btn em__btn--primary"
+                  :disabled="attBusyUnit === u.unit.id"
+                  @click="amendOne(u.state, false)"
+                >
+                  {{ attBusyUnit === u.unit.id ? 'Working…' : 'Roster matched' }}
+                </button>
+                <button
+                  class="em__btn em__btn--danger"
+                  :disabled="attBusyUnit === u.unit.id"
+                  @click="amendOne(u.state, true)"
+                >
+                  {{ attBusyUnit === u.unit.id ? 'Working…' : 'Save flag' }}
+                </button>
+                <button class="em__btn em__btn--ghost" @click="attEditUnit = null; attNote = ''">Cancel</button>
+              </div>
+            </template>
+            <div v-else class="em__attbtns">
+              <button class="em__btn" @click="startAmend(u.unit.id, u.state)">Amend</button>
+            </div>
+          </template>
           <template v-if="!u.state && canAttest">
             <template v-if="attFlagUnit === u.unit.id">
               <textarea
