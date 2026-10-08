@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
+import { supabase } from '@/lib/supabase'
 import {
   ShieldCheck,
   Plus,
@@ -28,15 +29,25 @@ interface Draft {
   videoRef: string
   durationMinutes: string /* form text, converted to seconds on save */
   requiredBy: string
+  audienceMode: 'filters' | 'event'
   audienceRoles: Role[]
   audienceShifts: ShiftLetter[]
   audienceEmploymentTypes: EmploymentType[]
+  audienceEventLabel: string
+  audienceEventFrom: string
+  audienceEventTo: string
   attestationStatement: string
   showInLibrary: boolean
   active: boolean
 }
 
 const DEFAULT_ATTESTATION = `I have watched this training video in its entirety.
+I understand the content as presented.
+I agree to apply this guidance in my work.`
+
+/* External courses live on someone else's site — the attestation IS
+   the completion record, so the default wording says so. */
+const DEFAULT_ATTESTATION_EXTERNAL = `I have completed this course on the external training site in its entirety.
 I understand the content as presented.
 I agree to apply this guidance in my work.`
 
@@ -48,12 +59,81 @@ function blankDraft(): Draft {
     videoRef: '',
     durationMinutes: '',
     requiredBy: '',
+    audienceMode: 'filters',
     audienceRoles: [],
     audienceShifts: [],
     audienceEmploymentTypes: [],
+    audienceEventLabel: '',
+    audienceEventFrom: '',
+    audienceEventTo: '',
     attestationStatement: DEFAULT_ATTESTATION,
     showInLibrary: true,
     active: true,
+  }
+}
+
+/* ── Upcoming schedule events for the audience picker ─────────────── */
+interface EventGroup {
+  label: string
+  from: string
+  to: string
+  people: number
+}
+const eventGroups = ref<EventGroup[]>([])
+
+async function loadEventGroups() {
+  if (auth.usingDevStub) return
+  const today = new Date().toISOString().slice(0, 10)
+  const res = await supabase
+    .from('sched_entries')
+    .select('user_id, work_date, note, event:sched_events(label)')
+    .eq('kind', 'event')
+    .eq('status', 'scheduled')
+    .not('user_id', 'is', null)
+    .gte('work_date', today)
+    .order('work_date', { ascending: true })
+  if (res.error) return
+  const groups = new Map<string, { from: string; to: string; people: Set<string> }>()
+  for (const r of (res.data ?? []) as Array<{
+    user_id: string
+    work_date: string
+    note: string | null
+    event: { label: string | null } | { label: string | null }[] | null
+  }>) {
+    const ev = Array.isArray(r.event) ? r.event[0] : r.event
+    const label = ev?.label || r.note || 'Event'
+    const g = groups.get(label) ?? { from: r.work_date, to: r.work_date, people: new Set<string>() }
+    if (r.work_date < g.from) g.from = r.work_date
+    if (r.work_date > g.to) g.to = r.work_date
+    g.people.add(r.user_id)
+    groups.set(label, g)
+  }
+  eventGroups.value = [...groups.entries()]
+    .map(([label, g]) => ({ label, from: g.from, to: g.to, people: g.people.size }))
+    .sort((a, b) => a.from.localeCompare(b.from))
+}
+
+onMounted(() => {
+  void loadEventGroups()
+})
+
+function fmtEventDates(g: EventGroup): string {
+  const f = new Date(`${g.from}T12:00:00`)
+  const t = new Date(`${g.to}T12:00:00`)
+  const fs = f.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  if (g.from === g.to) return fs
+  return `${fs} – ${t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+}
+
+/* Picking an event fills the label + window (window stays editable). */
+function onPickEvent(label: string) {
+  if (!draft.value) return
+  draft.value.audienceEventLabel = label
+  const g = eventGroups.value.find((x) => x.label === label)
+  if (g) {
+    draft.value.audienceEventFrom = g.from
+    draft.value.audienceEventTo = g.to
+    if (!draft.value.requiredBy) draft.value.requiredBy = g.from
   }
 }
 
@@ -75,15 +155,35 @@ function startEdit(t: RequiredTraining) {
     videoRef: t.videoRef,
     durationMinutes: t.durationSeconds ? String(Math.round(t.durationSeconds / 60)) : '',
     requiredBy: t.requiredBy ?? '',
+    audienceMode: t.audienceEventLabel ? 'event' : 'filters',
     audienceRoles: [...t.audienceRoles],
     audienceShifts: [...t.audienceShifts],
     audienceEmploymentTypes: [...t.audienceEmploymentTypes],
-    attestationStatement: t.attestationStatement || DEFAULT_ATTESTATION,
+    audienceEventLabel: t.audienceEventLabel ?? '',
+    audienceEventFrom: t.audienceEventFrom ?? '',
+    audienceEventTo: t.audienceEventTo ?? '',
+    attestationStatement:
+      t.attestationStatement ||
+      (t.videoSource === 'external' ? DEFAULT_ATTESTATION_EXTERNAL : DEFAULT_ATTESTATION),
     showInLibrary: t.showInLibrary,
     active: t.active,
   }
   error.value = null
 }
+
+/* Switching to/from the external source swaps the suggested
+   attestation — only when the admin hasn't customized it. */
+watch(
+  () => draft.value?.videoSource,
+  (src, old) => {
+    const d = draft.value
+    if (!d || !src || !old || src === old) return
+    if (src === 'external' && d.attestationStatement.trim() === DEFAULT_ATTESTATION)
+      d.attestationStatement = DEFAULT_ATTESTATION_EXTERNAL
+    if (src !== 'external' && d.attestationStatement.trim() === DEFAULT_ATTESTATION_EXTERNAL)
+      d.attestationStatement = DEFAULT_ATTESTATION
+  },
+)
 
 function cancel() {
   draft.value = null
@@ -104,6 +204,17 @@ async function onSave() {
     Number.isFinite(durationNum) && durationNum > 0
       ? Math.round(durationNum * 60)
       : null
+  if (d.videoSource === 'external' && !/^https?:\/\//i.test(d.videoRef.trim())) {
+    error.value = 'External course needs a full link (https://…).'
+    saving.value = false
+    return
+  }
+  const eventMode = d.audienceMode === 'event'
+  if (eventMode && !d.audienceEventLabel.trim()) {
+    error.value = 'Pick the schedule event this training is tied to.'
+    saving.value = false
+    return
+  }
   const result = await saveTraining({
     id: d.id,
     title: d.title.trim(),
@@ -112,9 +223,12 @@ async function onSave() {
     videoRef: d.videoRef.trim(),
     durationSeconds,
     requiredBy: d.requiredBy ? d.requiredBy : null,
-    audienceRoles: d.audienceRoles,
-    audienceShifts: d.audienceShifts,
-    audienceEmploymentTypes: d.audienceEmploymentTypes,
+    audienceRoles: eventMode ? [] : d.audienceRoles,
+    audienceShifts: eventMode ? [] : d.audienceShifts,
+    audienceEmploymentTypes: eventMode ? [] : d.audienceEmploymentTypes,
+    audienceEventLabel: eventMode ? d.audienceEventLabel.trim() : null,
+    audienceEventFrom: eventMode && d.audienceEventFrom ? d.audienceEventFrom : null,
+    audienceEventTo: eventMode && d.audienceEventTo ? d.audienceEventTo : null,
     attestationStatement: d.attestationStatement.trim(),
     showInLibrary: d.showInLibrary,
     active: d.active,
@@ -235,21 +349,27 @@ const orderedTrainings = computed(() =>
 
           <div class="mrt-form__row mrt-form__row--cols">
             <label class="mrt-form__field">
-              <span class="mrt-form__label">Video source *</span>
+              <span class="mrt-form__label">Content source *</span>
               <select v-model="draft.videoSource" class="mrt-form__input">
                 <option value="youtube">YouTube</option>
                 <option value="cloudflare_stream">Cloudflare Stream</option>
                 <option value="direct">Direct MP4 URL</option>
                 <option value="sharepoint">SharePoint stream</option>
+                <option value="external">External course (link)</option>
               </select>
+              <span v-if="draft.videoSource === 'external'" class="mrt-form__hint">
+                Hosted elsewhere (Pulsara Academy, EMS1, a state site). Crews open the link,
+                complete it there, then sign the attestation here — the signed attestation is
+                the completion record.
+              </span>
             </label>
             <label class="mrt-form__field">
-              <span class="mrt-form__label">Video URL or ID *</span>
+              <span class="mrt-form__label">{{ draft.videoSource === 'external' ? 'Course link *' : 'Video URL or ID *' }}</span>
               <input
                 v-model="draft.videoRef"
                 type="text"
                 required
-                placeholder="https://www.youtube.com/watch?v=…"
+                :placeholder="draft.videoSource === 'external' ? 'https://www.pulsara.com/academy/…' : 'https://www.youtube.com/watch?v=…'"
                 class="mrt-form__input"
               />
             </label>
@@ -276,7 +396,63 @@ const orderedTrainings = computed(() =>
 
           <div class="mrt-form__row">
             <span class="mrt-form__label">Audience</span>
-            <div class="mrt-form__chips">
+            <div class="mrt-form__chips" style="margin-bottom: 6px">
+              <button
+                type="button"
+                class="mrt-form__chip"
+                :class="{ 'mrt-form__chip--on': draft.audienceMode === 'filters' }"
+                @click="draft.audienceMode = 'filters'"
+              >
+                Everyone matching filters
+              </button>
+              <button
+                type="button"
+                class="mrt-form__chip"
+                :class="{ 'mrt-form__chip--on': draft.audienceMode === 'event' }"
+                @click="draft.audienceMode = 'event'"
+              >
+                Scheduled on an event
+              </button>
+            </div>
+
+            <template v-if="draft.audienceMode === 'event'">
+              <div class="mrt-form__row mrt-form__row--cols" style="margin-bottom: 0">
+                <label class="mrt-form__field">
+                  <span class="mrt-form__label">Schedule event *</span>
+                  <select
+                    :value="draft.audienceEventLabel"
+                    class="mrt-form__input"
+                    @change="onPickEvent(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="" disabled>Pick an upcoming event…</option>
+                    <option
+                      v-if="draft.audienceEventLabel && !eventGroups.some((g) => g.label === draft!.audienceEventLabel)"
+                      :value="draft.audienceEventLabel"
+                    >
+                      {{ draft.audienceEventLabel }} (no upcoming slots)
+                    </option>
+                    <option v-for="g in eventGroups" :key="g.label" :value="g.label">
+                      {{ g.label }} · {{ fmtEventDates(g) }} · {{ g.people }} scheduled
+                    </option>
+                  </select>
+                </label>
+                <div class="mrt-form__field">
+                  <span class="mrt-form__label">Event window</span>
+                  <div style="display: flex; gap: 8px">
+                    <input v-model="draft.audienceEventFrom" type="date" class="mrt-form__input" />
+                    <input v-model="draft.audienceEventTo" type="date" class="mrt-form__input" />
+                  </div>
+                </div>
+              </div>
+              <span class="mrt-form__hint">
+                The audience is whoever holds a scheduled slot on this event — live from the
+                schedule, so pickups and giveaways update it automatically. Assignment
+                notifications go out within 15 minutes to anyone on the roster who hasn't
+                completed it, including people who pick up a slot later.
+              </span>
+            </template>
+
+            <div v-show="draft.audienceMode === 'filters'" class="mrt-form__chips">
               <button
                 v-for="r in ROLE_OPTIONS"
                 :key="r"
@@ -310,7 +486,7 @@ const orderedTrainings = computed(() =>
                 {{ e.label }}
               </button>
             </div>
-            <span class="mrt-form__hint">
+            <span v-show="draft.audienceMode === 'filters'" class="mrt-form__hint">
               No selection on an axis = "any" for that axis. Selections across axes are AND-ed
               (e.g. <em>crew</em> + <em>Shift A</em> + <em>Full-Time</em> = A-shift FT crew only).
               Use the per-person overrides on the roster page for individual exceptions.

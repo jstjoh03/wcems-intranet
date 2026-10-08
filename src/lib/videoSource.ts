@@ -17,6 +17,10 @@
  *    no related-videos sidebar at the end).
  *  - 'cloudflare_stream': placeholder for phase 2; ref will be the
  *    Stream video UID once that integration ships.
+ *  - 'external': not a video at all — a course hosted on an outside
+ *    site (Required Training's external-course type). Never played
+ *    inline; cross-listed library rows route to the compliance flow,
+ *    which opens the link in a new tab.
  */
 
 export type VideoSource =
@@ -25,6 +29,7 @@ export type VideoSource =
   | 'youtube'
   | 'direct'
   | 'cloudflare_stream'
+  | 'external'
 
 const YT_ID_RE = /^[A-Za-z0-9_-]{11}$/
 

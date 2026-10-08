@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
-import { ArrowLeft, ShieldCheck, Check, Lock, PartyPopper, Download } from 'lucide-vue-next'
+import { ArrowLeft, ShieldCheck, Check, Lock, PartyPopper, Download, ExternalLink } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
@@ -204,6 +204,12 @@ watch(
     if (isComplete(t.id)) {
       videoComplete.value = true
     }
+    /* External course: the gate is "opened the course at least once" —
+       a completion row (started or signed) proves a prior open, so
+       returning users aren't re-locked on another device. */
+    if (t.videoSource === 'external' && completionFor(t.id)) {
+      videoComplete.value = true
+    }
     if (t.videoSource === 'youtube') {
       await initYouTube(t.videoRef)
     }
@@ -217,8 +223,24 @@ onMounted(() => {
     if (training.value?.videoSource === 'youtube') {
       await initYouTube(training.value.videoRef)
     }
+    if (training.value?.videoSource === 'external' && completionFor(training.value.id)) {
+      videoComplete.value = true
+    }
   }, 100)
 })
+
+/* ── External course ─────────────────────────────────────────────── */
+const isExternal = computed(() => training.value?.videoSource === 'external')
+
+/* Click-through on the course link: record the start and unlock the
+   attestation. The anchor itself handles the navigation (new tab). */
+function onOpenCourse() {
+  if (!startedFired) {
+    startedFired = true
+    void markStarted(trainingId.value)
+  }
+  videoComplete.value = true
+}
 
 onBeforeUnmount(() => {
   if (ytPoll) window.clearInterval(ytPoll)
@@ -237,10 +259,16 @@ const defaultAttestation = [
   'I understand the content as presented.',
   'I agree to apply this guidance in my work.',
 ]
+const defaultAttestationExternal = [
+  'I have completed this course on the external training site in its entirety.',
+  'I understand the content as presented.',
+  'I agree to apply this guidance in my work.',
+]
 
 const statementLines = computed(() => {
   const t = training.value
-  if (!t || !t.attestationStatement.trim()) return defaultAttestation
+  if (!t || !t.attestationStatement.trim())
+    return t?.videoSource === 'external' ? defaultAttestationExternal : defaultAttestation
   return t.attestationStatement
     .split('\n')
     .map((s) => s.replace(/^\s*[-•]\s*/, '').trim())
@@ -250,7 +278,9 @@ const statementLines = computed(() => {
 async function onSubmit() {
   errorMsg.value = null
   if (!videoComplete.value) {
-    errorMsg.value = 'You must watch the full video before submitting.'
+    errorMsg.value = isExternal.value
+      ? 'Open the course first — the attestation unlocks once you have.'
+      : 'You must watch the full video before submitting.'
     return
   }
   if (!signatureData.value) {
@@ -361,10 +391,50 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
         </div>
       </AppCard>
 
+      <!-- External course — the content lives on another site; the
+           portal records the open and the signed attestation. -->
+      <AppCard v-if="isExternal && !justSubmitted" class="rtd__video-card">
+        <div class="rtd__video-label">
+          <Eyebrow>External course</Eyebrow>
+          <span class="rtd__lock" :class="{ 'rtd__lock--unlocked': videoComplete || alreadyComplete }">
+            <template v-if="alreadyComplete">
+              <Check :size="12" :stroke-width="2.5" /> Completed
+            </template>
+            <template v-else-if="videoComplete">
+              <Check :size="12" :stroke-width="2.5" /> Course opened
+            </template>
+            <template v-else>
+              <Lock :size="12" :stroke-width="2" /> Attestation unlocks when you open the course
+            </template>
+          </span>
+        </div>
+
+        <div class="rtd__course">
+          <p class="rtd__course-note">
+            This training is hosted on an outside site. Open it below, complete the course
+            there, then come back and sign the attestation — your signed attestation is the
+            completion record.
+          </p>
+          <a
+            :href="training.videoRef"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="rtd__btn rtd__btn--primary rtd__course-btn"
+            @click="onOpenCourse"
+          >
+            <ExternalLink :size="14" :stroke-width="2" />
+            {{ videoComplete || alreadyComplete ? 'Open the course again' : 'Open the course' }}
+          </a>
+          <p v-if="training.durationSeconds" class="rtd__course-dur">
+            About {{ Math.round(training.durationSeconds / 60) }} minutes.
+          </p>
+        </div>
+      </AppCard>
+
       <!-- Video — always visible (except when just-submitted, where the
            celebration card takes over). Already-complete users get free
            scrubbing for re-watch; first-time users get anti-skip. -->
-      <AppCard v-if="!justSubmitted" class="rtd__video-card">
+      <AppCard v-if="!isExternal && !justSubmitted" class="rtd__video-card">
         <div class="rtd__video-label">
           <Eyebrow>{{ alreadyComplete ? 'Re-watch · training video' : 'Training video' }}</Eyebrow>
           <span class="rtd__lock" :class="{ 'rtd__lock--unlocked': videoComplete || alreadyComplete }">
@@ -805,5 +875,25 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
 .rtd__btn--secondary:hover {
   border-color: var(--color-muted-soft);
   color: var(--color-ink);
+}
+
+/* ── External course card ─────────────────────────────────────────── */
+.rtd__course {
+  padding: 4px 2px 2px;
+}
+.rtd__course-note {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--color-ink-soft);
+  max-width: 64ch;
+  margin: 0 0 14px;
+}
+.rtd__course-btn {
+  text-decoration: none;
+}
+.rtd__course-dur {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--color-muted);
 }
 </style>

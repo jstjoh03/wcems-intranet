@@ -760,16 +760,21 @@ const rmLead = ref(12)
 /* Event crews get a "do the equipment shift check" push+email the
    moment their event assignment starts (Justin, 2026-10-02). */
 const rmEventEquip = ref(true)
+/* Event-tied required training: assignment notice when someone lands
+   on the event roster, reminder close to their event date
+   (Justin, 2026-10-08). */
+const rmRtEvent = ref(true)
 const rmBusy = ref(false)
 const rmSaved = ref(false)
 
 watch(
   () => sched.settings.value['reminders'],
   (v) => {
-    const c = (v ?? {}) as { enabled?: boolean; lead_hours?: number; event_equip?: boolean }
+    const c = (v ?? {}) as { enabled?: boolean; lead_hours?: number; event_equip?: boolean; rt_event?: boolean }
     rmEnabled.value = c.enabled !== false
     rmLead.value = Number(c.lead_hours ?? 12) || 12
     rmEventEquip.value = c.event_equip !== false
+    rmRtEvent.value = c.rt_event !== false
   },
   { immediate: true },
 )
@@ -782,6 +787,7 @@ async function saveReminderCfg() {
     enabled: rmEnabled.value,
     lead_hours: Math.min(48, Math.max(1, Math.round(rmLead.value || 12))),
     event_equip: rmEventEquip.value,
+    rt_event: rmRtEvent.value,
   })
   rmBusy.value = false
   if (e) {
@@ -1426,6 +1432,16 @@ async function saveWarnCfg() {
             Members scheduled on a special event get a push + email the moment the
             event starts — "complete the equipment shift check" — linking into the
             Equipment module. Separate from the lead-time reminder above.
+          </p>
+          <label class="setup__checkrow">
+            <input v-model="rmRtEvent" type="checkbox" />
+            Event crews: required-training assignment notices
+          </label>
+          <p class="setup__muted">
+            When a Required Training module is tied to a schedule event, everyone on
+            the event roster who hasn't completed it gets an assignment push + email
+            within 15 minutes — including people who pick up a slot later — plus a
+            final reminder two days before their event date.
           </p>
           <div class="setup__row">
             <span v-if="rmSaved" class="setup__saved">Saved.</span>

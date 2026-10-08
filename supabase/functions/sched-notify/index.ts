@@ -30,6 +30,17 @@
 //         equipment shift check" with a /equipment link — push+email,
 //         matrix 'reminders', gated by sched_settings
 //         reminders.event_equip (default on)
+//       · event-tied REQUIRED TRAINING (Justin, 2026-10-08): modules
+//         with audience_event_label get (a) an assignment notice to
+//         every incomplete person on the event roster — later
+//         pickups/giveaway claims covered on the next tick — and
+//         (b) one reminder when their first event day is ≤2 days out.
+//         Claims rt_assign / rt_remind keyed (user, module);
+//         push+email, matrix 'reminders', gated by
+//         reminders.rt_event (default on). The 14-day claim prune
+//         re-opens the assign notice on long-lived modules — treated
+//         as a deliberate re-nudge, not a bug. Membership rule must
+//         KEEP IN STEP with useRequiredTraining.loadEventRosters.
 //     Verification prompts are push + email ONLY — never SMS (cost
 //     control; matrix key 'verify').
 //
@@ -892,11 +903,12 @@ Deno.serve(async (req: Request) => {
       const dryRun = body.dryRun === true
 
       const { data: remSet } = await sb.from('sched_settings').select('value').eq('key', 'reminders').maybeSingle()
-      const cfg = (remSet?.value ?? {}) as { enabled?: boolean; lead_hours?: number; event_equip?: boolean }
+      const cfg = (remSet?.value ?? {}) as { enabled?: boolean; lead_hours?: number; event_equip?: boolean; rt_event?: boolean }
       // reminders can be switched off in Setup; the verification
       // sweeps below still run on every tick
       const remindersEnabled = cfg.enabled !== false
       const eventEquipEnabled = cfg.event_equip !== false
+      const rtEventEnabled = cfg.rt_event !== false
       const leadH = Number(cfg.lead_hours ?? 12) || 12
       const now = Date.now()
       const windowEnd = now + leadH * 3_600_000
@@ -1130,6 +1142,86 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // 1c) event-tied required training (Justin, 2026-10-08): modules
+      //     whose audience is a schedule event. Live roster — whoever
+      //     holds a scheduled event entry for the module's label inside
+      //     its window and hasn't signed the attestation gets (a) an
+      //     assignment notice the first tick they appear on the roster
+      //     (covers later pickups/giveaway claims too) and (b) one
+      //     reminder when their first event day is 2 days out or
+      //     closer. Claims keep both exactly-once per (user, module);
+      //     the 14-day claim cleanup doubles as a gentle re-nudge on
+      //     modules created far ahead. KEEP THE MEMBERSHIP RULE IN
+      //     STEP with useRequiredTraining.loadEventRosters.
+      const rtAssignDue: { userId: string; name: string; trainingId: string; title: string; label: string; dueText: string }[] = []
+      const rtRemindDue: { userId: string; name: string; trainingId: string; title: string; label: string; firstDate: string }[] = []
+      if (rtEventEnabled) {
+        const rtRes = await sb
+          .from('required_trainings')
+          .select('id, title, required_by, audience_event_label, audience_event_from, audience_event_to')
+          .eq('active', true)
+          .not('audience_event_label', 'is', null)
+        const mods = (rtRes.data ?? []).filter((m) => !m.audience_event_to || m.audience_event_to >= today)
+        for (const m of mods) {
+          const from = m.audience_event_from ?? '1970-01-01'
+          const to = m.audience_event_to ?? '2999-12-31'
+          const [enRes, coRes, ovRes] = await Promise.all([
+            sb.from('sched_entries')
+              .select('user_id, work_date, note, event:sched_events(label)')
+              .eq('kind', 'event').eq('status', 'scheduled').not('user_id', 'is', null)
+              .gte('work_date', from).lte('work_date', to),
+            sb.from('required_training_completions')
+              .select('user_id')
+              .eq('required_training_id', m.id).eq('attestation_signed', true),
+            sb.from('required_training_user_overrides')
+              .select('user_id, included')
+              .eq('required_training_id', m.id),
+          ])
+          if (enRes.error || coRes.error || ovRes.error) continue
+          const doneSet = new Set((coRes.data ?? []).map((r) => r.user_id))
+          const excluded = new Set((ovRes.data ?? []).filter((o) => o.included === false).map((o) => o.user_id))
+          /* member → earliest UPCOMING event day (empty string when all
+             their dates have passed or they're a force-include with no
+             entry — notice still goes, no date-based reminder). */
+          const memberFirstUpcoming = new Map<string, string>()
+          for (const r of (enRes.data ?? []) as Array<{
+            user_id: string
+            work_date: string
+            note: string | null
+            event: { label: string | null } | { label: string | null }[] | null
+          }>) {
+            const ev = Array.isArray(r.event) ? r.event[0] : r.event
+            if ((ev?.label ?? null) !== m.audience_event_label && r.note !== m.audience_event_label) continue
+            if (excluded.has(r.user_id) || doneSet.has(r.user_id)) continue
+            const cur = memberFirstUpcoming.get(r.user_id)
+            if (r.work_date >= today && (cur === undefined || cur === '' || r.work_date < cur)) {
+              memberFirstUpcoming.set(r.user_id, r.work_date)
+            } else if (cur === undefined) {
+              memberFirstUpcoming.set(r.user_id, '')
+            }
+          }
+          for (const o of ovRes.data ?? []) {
+            if (o.included === true && !doneSet.has(o.user_id) && !memberFirstUpcoming.has(o.user_id))
+              memberFirstUpcoming.set(o.user_id, '')
+          }
+          const dueText = m.required_by
+            ? fmtDate(m.required_by)
+            : m.audience_event_from
+              ? fmtDate(m.audience_event_from)
+              : ''
+          const remindCutoff = addDaysIso(today, 2)
+          for (const [uid, firstUpcoming] of memberFirstUpcoming) {
+            const name = nameById.get(uid)
+            if (!name) continue
+            const label = m.audience_event_label as string
+            rtAssignDue.push({ userId: uid, name, trainingId: m.id, title: m.title, label, dueText })
+            if (firstUpcoming && firstUpcoming <= remindCutoff) {
+              rtRemindDue.push({ userId: uid, name, trainingId: m.id, title: m.title, label, firstDate: firstUpcoming })
+            }
+          }
+        }
+      }
+
       // 2) end-of-shift verify — blocks that ENDED inside the last 45
       //    minutes get "do your times look right?" (claims dedupe)
       const VERIFY_LOOKBACK = 45 * 60_000
@@ -1242,6 +1334,8 @@ Deno.serve(async (req: Request) => {
             ok: true, dryRun: true, leadHours: leadH, checked: main.blocks.size,
             due: due.map((d) => ({ name: d.name, label: d.label, start: fmtStamp(d.start), end: fmtStamp(d.end) })),
             eventEquip: eventEquipDue.map((d) => ({ name: d.name, label: d.label, start: fmtStamp(d.start) })),
+            rtAssign: rtAssignDue.map((d) => ({ name: d.name, title: d.title, label: d.label })),
+            rtRemind: rtRemindDue.map((d) => ({ name: d.name, title: d.title, label: d.label, firstDate: d.firstDate })),
             verifyDue: verifyDue.map((v) => ({ name: v.name, label: v.label, end: fmtStamp(v.end), dates: v.dates })),
             attest: { date: attDate, prompts: attestPrompts.map((a) => a.name) },
             signoff: signoffPeriodEnd
@@ -1326,6 +1420,65 @@ Deno.serve(async (req: Request) => {
             ],
             sms: '',
             url: '/equipment',
+            channels: { sms: false },
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        errors.push(...del.errors)
+      }
+
+      // event-tied required training — assignment notice, once per
+      // (user, module); later roster joiners get theirs on the tick
+      // after they appear
+      for (const d of rtAssignDue) {
+        if (!(await claim('rt_assign', d.userId, d.trainingId))) continue
+        const line = `${d.title} — required before you work ${d.label}${d.dueText ? ` (due ${d.dueText})` : ''}.`
+        const del = await deliver(
+          [d.userId],
+          'reminders',
+          {
+            title: 'Required training assigned',
+            body: line,
+            tag: `rt-assign-${d.userId}-${d.trainingId}`,
+            subject: 'WCEMS — required training assigned',
+            emailLines: [
+              `You're scheduled on <b>${esc(d.label)}</b>, which requires <b>${esc(d.title)}</b>.`,
+              `Open the portal link below, complete the course, and sign the attestation${d.dueText ? ` by <b>${esc(d.dueText)}</b>` : ''}.`,
+            ],
+            sms: '',
+            url: `/training/required/${d.trainingId}`,
+            channels: { sms: false },
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        errors.push(...del.errors)
+      }
+
+      // event-tied required training — final reminder when their first
+      // event day is 2 days out or closer and it's still unsigned
+      for (const d of rtRemindDue) {
+        if (!(await claim('rt_remind', d.userId, d.trainingId))) continue
+        const line = `${d.title} — you work ${d.label} on ${fmtDate(d.firstDate)} and haven't completed it yet.`
+        const del = await deliver(
+          [d.userId],
+          'reminders',
+          {
+            title: 'Training due before your event shift',
+            body: line,
+            tag: `rt-remind-${d.userId}-${d.trainingId}`,
+            subject: 'WCEMS — training due before your event shift',
+            emailLines: [
+              `You work <b>${esc(d.label)}</b> on <b>${esc(fmtDate(d.firstDate))}</b> and <b>${esc(d.title)}</b> is still outstanding.`,
+              'Open the portal link below, complete the course, and sign the attestation before your shift.',
+            ],
+            sms: '',
+            url: `/training/required/${d.trainingId}`,
             channels: { sms: false },
           },
           null,
@@ -1472,6 +1625,7 @@ Deno.serve(async (req: Request) => {
       return Response.json(
         {
           ok: true, checked: main.blocks.size, due: due.length, eventEquip: eventEquipDue.length,
+          rtAssign: rtAssignDue.length, rtRemind: rtRemindDue.length,
           verify: verifyDue.length, attest: attestPrompts.length, signoff: signoffSends.length,
           sent, delivery, errors: errors.slice(0, 20),
         },

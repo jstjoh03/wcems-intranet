@@ -30,6 +30,9 @@ interface TrainingRow {
   audience_roles: string[] | null
   audience_shifts: string[] | null
   audience_employment_types: string[] | null
+  audience_event_label: string | null
+  audience_event_from: string | null
+  audience_event_to: string | null
   attestation_statement: string
   quiz: unknown | null
   show_in_library: boolean
@@ -68,6 +71,9 @@ function trainingFromRow(r: TrainingRow): RequiredTraining {
     audienceRoles: (r.audience_roles ?? []) as Role[],
     audienceShifts: (r.audience_shifts ?? []) as ShiftLetter[],
     audienceEmploymentTypes: (r.audience_employment_types ?? []) as EmploymentType[],
+    audienceEventLabel: r.audience_event_label ?? null,
+    audienceEventFrom: r.audience_event_from ?? null,
+    audienceEventTo: r.audience_event_to ?? null,
     attestationStatement: r.attestation_statement,
     quiz: r.quiz,
     showInLibrary: r.show_in_library,
@@ -116,11 +122,56 @@ function overrideFromRow(r: OverrideRow): RequiredTrainingOverride {
 const trainings = ref<RequiredTraining[]>([])
 const completions = ref<RequiredTrainingCompletion[]>([])
 const overrides = ref<RequiredTrainingOverride[]>([])
+/** trainingId → user ids currently scheduled on that module's event.
+ *  Loaded alongside the modules; the KEEP-IN-STEP twin of the server
+ *  sweep in sched-notify (rt_event). */
+const eventRosters = ref<Record<string, string[]>>({})
 const ready = ref(false)
 let loadStarted = false
 
+/** Who is scheduled on this event right now? Entries match by the
+ *  event's label (or the entry note for label-only rows) inside the
+ *  module's date window. Fails quiet to an empty roster — users
+ *  without schedule read access simply aren't event staff. */
+async function loadEventRosters(list: RequiredTraining[]): Promise<void> {
+  const eventModules = list.filter((t) => t.audienceEventLabel)
+  if (eventModules.length === 0) {
+    eventRosters.value = {}
+    return
+  }
+  const next: Record<string, string[]> = {}
+  for (const t of eventModules) {
+    const from = t.audienceEventFrom ?? '1970-01-01'
+    const to = t.audienceEventTo ?? '2999-12-31'
+    const res = await supabase
+      .from('sched_entries')
+      .select('user_id, note, event:sched_events(label)')
+      .eq('kind', 'event')
+      .eq('status', 'scheduled')
+      .not('user_id', 'is', null)
+      .gte('work_date', from)
+      .lte('work_date', to)
+    if (res.error) {
+      next[t.id] = []
+      continue
+    }
+    const label = t.audienceEventLabel
+    const ids = new Set<string>()
+    for (const r of (res.data ?? []) as Array<{
+      user_id: string
+      note: string | null
+      event: { label: string | null } | { label: string | null }[] | null
+    }>) {
+      const ev = Array.isArray(r.event) ? r.event[0] : r.event
+      if ((ev?.label ?? null) === label || r.note === label) ids.add(r.user_id)
+    }
+    next[t.id] = [...ids]
+  }
+  eventRosters.value = next
+}
+
 const TRAINING_COLUMNS =
-  'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, audience_employment_types, attestation_statement, quiz, show_in_library, active, created_by, created_at, updated_at'
+  'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, audience_employment_types, audience_event_label, audience_event_from, audience_event_to, attestation_statement, quiz, show_in_library, active, created_by, created_at, updated_at'
 
 const COMPLETION_COLUMNS =
   'id, required_training_id, user_id, started_at, completed_at, signature_data, signed_method, marked_by, marked_note, quiz_score, attestation_signed, certificate_storage_path, created_at, updated_at'
@@ -155,6 +206,7 @@ async function load() {
   trainings.value = (tRes.data ?? []).map((r) => trainingFromRow(r as TrainingRow))
   completions.value = (cRes.data ?? []).map((r) => completionFromRow(r as CompletionRow))
   overrides.value = (oRes.data ?? []).map((r) => overrideFromRow(r as OverrideRow))
+  await loadEventRosters(trainings.value)
   ready.value = true
 }
 
@@ -169,6 +221,9 @@ export interface SaveTrainingInput {
   audienceRoles: Role[]
   audienceShifts: ShiftLetter[]
   audienceEmploymentTypes: EmploymentType[]
+  audienceEventLabel: string | null
+  audienceEventFrom: string | null
+  audienceEventTo: string | null
   attestationStatement: string
   showInLibrary: boolean
   active: boolean
@@ -192,6 +247,8 @@ export function useRequiredTraining() {
       return false
     }
     const u = auth.appUser
+    /* Event-tied module: the audience IS the event roster. */
+    if (t.audienceEventLabel) return (eventRosters.value[t.id] ?? []).includes(u.id)
     const roleOk = t.audienceRoles.length === 0 || t.audienceRoles.includes(u.role)
     const shiftOk =
       t.audienceShifts.length === 0 ||
@@ -207,8 +264,12 @@ export function useRequiredTraining() {
      separate app_users query rather than auth.appUser). */
   function matchesAudienceFilterForUser(
     t: RequiredTraining,
-    user: { role: Role; shift: ShiftLetter | null; employmentType: EmploymentType },
+    user: { id?: string; role: Role; shift: ShiftLetter | null; employmentType: EmploymentType },
   ): boolean {
+    /* Event-tied module: membership comes from the schedule, so the
+       caller must supply the user's id (the roster view does). */
+    if (t.audienceEventLabel)
+      return !!user.id && (eventRosters.value[t.id] ?? []).includes(user.id)
     const roleOk = t.audienceRoles.length === 0 || t.audienceRoles.includes(user.role)
     const shiftOk =
       t.audienceShifts.length === 0 ||
@@ -443,6 +504,9 @@ export function useRequiredTraining() {
       audience_roles: input.audienceRoles,
       audience_shifts: input.audienceShifts,
       audience_employment_types: input.audienceEmploymentTypes,
+      audience_event_label: input.audienceEventLabel,
+      audience_event_from: input.audienceEventFrom,
+      audience_event_to: input.audienceEventTo,
       attestation_statement: input.attestationStatement,
       show_in_library: input.showInLibrary,
       active: input.active,
@@ -457,6 +521,7 @@ export function useRequiredTraining() {
       if (error) return { ok: false, error: error.message }
       const next = trainingFromRow(data as TrainingRow)
       trainings.value = trainings.value.map((t) => (t.id === next.id ? next : t))
+      await loadEventRosters(trainings.value)
       return { ok: true, id: next.id }
     }
     const { data, error } = await supabase
@@ -467,6 +532,7 @@ export function useRequiredTraining() {
     if (error) return { ok: false, error: error.message }
     const inserted = trainingFromRow(data as TrainingRow)
     trainings.value = [inserted, ...trainings.value]
+    await loadEventRosters(trainings.value)
     return { ok: true, id: inserted.id }
   }
 
@@ -491,6 +557,7 @@ export function useRequiredTraining() {
     trainings,
     completions,
     overrides,
+    eventRosters,
     activeForUser,
     outstandingCount,
     completionFor,

@@ -53,10 +53,10 @@ export interface AppUser {
 }
 
 /* ── Required Training ─────────────────────────────────────────────
-   Compliance training: admin posts a video that crew MUST watch and
-   attest to. */
+   Compliance training: admin posts a video (or an external course
+   link) that crew MUST complete and attest to. */
 
-export type VideoSource = 'youtube' | 'cloudflare_stream' | 'direct' | 'sharepoint'
+export type VideoSource = 'youtube' | 'cloudflare_stream' | 'direct' | 'sharepoint' | 'external'
 
 export interface RequiredTraining {
   id: string
@@ -70,6 +70,13 @@ export interface RequiredTraining {
   audienceRoles: Role[]
   audienceShifts: ShiftLetter[]
   audienceEmploymentTypes: EmploymentType[]
+  /** Schedule-event audience: when set, the audience is whoever holds
+   *  a scheduled event entry with this label inside [from, to] —
+   *  live from the schedule, replacing the three axes above.
+   *  Per-user overrides still apply on top. */
+  audienceEventLabel: string | null
+  audienceEventFrom: string | null
+  audienceEventTo: string | null
   attestationStatement: string
   /** Reserved for v1.1 quiz UI. */
   quiz: unknown | null

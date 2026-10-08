@@ -114,6 +114,7 @@ const rows = computed<RosterRow[]>(() => {
       : 'not_started'
     const override = getOverride(trainingId.value, u.id)
     const matchesFilter = matchesAudienceFilterForUser(t, {
+      id: u.id,
       role: u.role,
       shift: u.shift,
       employmentType: u.employmentType,
@@ -145,6 +146,7 @@ async function onToggleRequirement(row: RosterRow) {
   const t = training.value
   if (!t) return
   const matchesFilter = matchesAudienceFilterForUser(t, {
+    id: row.user.id,
     role: row.user.role,
     shift: row.user.shift,
     employmentType: row.user.employmentType,

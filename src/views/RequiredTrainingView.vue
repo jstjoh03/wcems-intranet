@@ -92,8 +92,8 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
         <h1 class="display rt__title">Required Training</h1>
       </div>
       <p class="rt__sub">
-        Compliance modules from the Chief and Medical Director. Watch the full video and sign
-        the attestation. A certificate downloads automatically when you finish.
+        Compliance modules from the Chief and Medical Director. Complete the video or course
+        and sign the attestation. A certificate downloads automatically when you finish.
       </p>
     </header>
 
