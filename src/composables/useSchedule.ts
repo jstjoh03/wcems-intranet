@@ -822,6 +822,44 @@ function seedDevStub(): void {
     { id: 'dev-p-2', fullName: 'Sample Attendant', shift: 'A', role: 'crew', credential: 'EMT', credentialAuto: 'EMT', credentialSource: 'title', title: 'EMT', email: 'sample2@wallercountyems.com', phone: '(555) 555-0102', paycomCode: null, employmentType: 'part_time', active: true },
   ]
   allPeople.value = people.value
+
+  /* Trades-board fixtures (2026-10-11): the board was never testable
+     in dev, which is how the phone layout breaking the swap-offer flow
+     shipped unseen (Cody Sholar). One public swap + one public
+     giveaway two weeks out, and a rotation seat for the dev user so
+     the offer picker has shifts to list. Writes stay disabled — the
+     dev claim/offer actions error, which exercises the in-row error
+     display. */
+  const devDay = addDaysIso(todayCentralIso(), 14)
+  const devDay2 = addDaysIso(devDay, 1)
+  const blankReq = {
+    counterpartyId: null, entryId: null, counterEntryId: null, counterSeatId: null,
+    counterWorkDate: null, counterStartAt: null, counterEndAt: null, offType: null,
+    timeType: null, warnings: [] as unknown[], decidedBy: null, decidedAt: null,
+    decisionNote: null, createdAt: new Date().toISOString(),
+  }
+  requests.value = [
+    {
+      ...blankReq, id: 'dev-r-1', type: 'trade', status: 'pending', requesterId: 'dev-p-1',
+      seatId: 'dev-s-M231-0', workDate: devDay, startAt: centralTs(devDay, '06:00'),
+      endAt: centralTs(addDaysIso(devDay, 1), '06:00'), unitCode: 'M231',
+      positionLabel: 'AIC / Medic', comments: 'Need this one covered — happy to trade.',
+    },
+    {
+      ...blankReq, id: 'dev-r-2', type: 'giveaway', status: 'pending', requesterId: 'dev-p-2',
+      seatId: 'dev-s-M281-1', workDate: devDay2, startAt: centralTs(devDay2, '06:00'),
+      endAt: centralTs(addDaysIso(devDay2, 1), '06:00'), unitCode: 'M281',
+      positionLabel: 'Attendant', comments: null,
+    },
+  ]
+  rotation.value = (['A', 'B', 'C'] as const).map((pl) => ({
+    id: `dev-rot-${pl}`,
+    seatId: 'dev-s-M211-0',
+    platoon: pl,
+    userId: '1507',
+    effectiveFrom: '2026-01-01',
+    effectiveTo: null,
+  }))
 }
 
 /** Default "my shift" gold + the curated highlight palette members

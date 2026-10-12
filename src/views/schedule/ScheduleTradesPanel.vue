@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
 import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
@@ -47,6 +47,31 @@ const postTo = ref('')
 const busy = ref(false)
 const err = ref<string | null>(null)
 const done = ref<string | null>(null)
+/* Which board row the last error/success belongs to. The top-of-panel
+   err/done lines are off-screen from a row deep in the board (Cody
+   Sholar tapped "Offer a shift" on his phone and saw nothing happen,
+   2026-10-11) — row outcomes now render inside that row's detail
+   strip, which also opens for them. */
+const errOn = ref<string | null>(null)
+const doneOn = ref<string | null>(null)
+/* Row whose shift list is loading after "Offer a shift" (the fetch is
+   a network round-trip — the button needs to say so). */
+const offerLoading = ref<string | null>(null)
+
+function detailOpen(r: SchedRequest): boolean {
+  return (
+    !!hourWarnFor.value[r.id] ||
+    offeringOn.value === r.id ||
+    reviewFor.value === r.id ||
+    (errOn.value === r.id && !!err.value) ||
+    (doneOn.value === r.id && !!done.value)
+  )
+}
+
+async function scrollDetail(id: string) {
+  await nextTick()
+  document.getElementById(`trdetail-${id}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
 
 /* people arrives last-name sorted from the store (personSortKey). */
 const sendToCandidates = computed(() =>
@@ -183,28 +208,40 @@ function directedToName(r: SchedRequest): string {
 
 async function acceptDirect(r: SchedRequest) {
   busy.value = true
-  err.value = null
+  err.value = done.value = errOn.value = doneOn.value = null
   if (!(r.id in hourWarnFor.value)) {
     const w = await checkMyHours(r)
     if (w.length > 0) {
       hourWarnFor.value = { ...hourWarnFor.value, [r.id]: w }
       busy.value = false
+      void scrollDetail(r.id)
       return
     }
   }
   const e = await sched.respondToDirect(r, true)
   busy.value = false
-  if (e) err.value = e
-  else done.value = 'Accepted — sent to the Chief for final approval.'
+  if (e) {
+    err.value = e
+    errOn.value = r.id
+  } else {
+    done.value = 'Accepted — sent to the Chief for final approval.'
+    doneOn.value = r.id
+  }
+  void scrollDetail(r.id)
 }
 
 async function declineDirect(r: SchedRequest) {
   busy.value = true
-  err.value = null
+  err.value = done.value = errOn.value = doneOn.value = null
   const e = await sched.respondToDirect(r, false)
   busy.value = false
-  if (e) err.value = e
-  else done.value = 'Declined — the poster has been notified.'
+  if (e) {
+    err.value = e
+    errOn.value = r.id
+  } else {
+    done.value = 'Declined — the poster has been notified.'
+    doneOn.value = r.id
+  }
 }
 
 const awaitingApproval = computed(() =>
@@ -404,55 +441,72 @@ async function checkMyHours(r: SchedRequest): Promise<HoursWarning[]> {
 }
 
 async function startOffer(r: SchedRequest) {
-  err.value = done.value = null
-  const me = sched.myUserId.value
-  /* Swap offers are seat shifts only — an event has no seat for the
-     poster to take in return. */
-  myShifts.value = me
-    ? await sched.postableShiftsFor(me, todayCentralIso(), SHIFT_HORIZON_DAYS, { events: false })
-    : []
+  if (offerLoading.value) return
+  err.value = done.value = errOn.value = doneOn.value = null
+  offerLoading.value = r.id
+  try {
+    const me = sched.myUserId.value
+    /* Swap offers are seat shifts only — an event has no seat for the
+       poster to take in return. */
+    myShifts.value = me
+      ? await sched.postableShiftsFor(me, todayCentralIso(), SHIFT_HORIZON_DAYS, { events: false })
+      : []
+  } catch {
+    myShifts.value = []
+  } finally {
+    offerLoading.value = null
+  }
   offerShiftKey.value = myShifts.value[0] ? shiftKey(myShifts.value[0]) : ''
   offerNote.value = ''
   offerPartial.value = false
   offerFrom.value = '06:00'
   offerUntil.value = '06:00'
   offeringOn.value = r.id
+  void scrollDetail(r.id)
 }
 
 async function takeShift(r: SchedRequest) {
   busy.value = true
-  err.value = null
+  err.value = done.value = errOn.value = doneOn.value = null
   if (!(r.id in hourWarnFor.value)) {
     const w = await checkMyHours(r)
     if (w.length > 0) {
       hourWarnFor.value = { ...hourWarnFor.value, [r.id]: w }
       busy.value = false
+      void scrollDetail(r.id)
       return
     }
   }
   const e = await sched.makeOffer({ requestId: r.id, offerShift: null, note: '' })
   busy.value = false
-  if (e) err.value = e
-  else
+  if (e) {
+    err.value = e
+    errOn.value = r.id
+    void scrollDetail(r.id)
+  } else {
     done.value =
       r.type === 'giveaway'
         ? 'Claimed — sent straight to the Chief for approval.'
         : 'Claim placed — the poster and Chief will see it.'
+    doneOn.value = r.id
+  }
 }
 
 async function submitOffer(r: SchedRequest) {
   const sel = myShifts.value.find((s) => shiftKey(s) === offerShiftKey.value)
   if (!sel || !sel.seatId) {
     err.value = 'Pick one of your shifts to offer.'
+    errOn.value = r.id
     return
   }
   busy.value = true
-  err.value = null
+  err.value = done.value = errOn.value = doneOn.value = null
   if (!(r.id in hourWarnFor.value)) {
     const w = await checkMyHours(r)
     if (w.length > 0) {
       hourWarnFor.value = { ...hourWarnFor.value, [r.id]: w }
       busy.value = false
+      void scrollDetail(r.id)
       return
     }
   }
@@ -469,10 +523,13 @@ async function submitOffer(r: SchedRequest) {
   busy.value = false
   if (e) {
     err.value = e
+    errOn.value = r.id
+    void scrollDetail(r.id)
     return
   }
   offeringOn.value = null
   done.value = 'Swap offer sent to the poster.'
+  doneOn.value = r.id
 }
 
 /** Warnings stored on a request when the poster accepted the deal. */
@@ -484,18 +541,26 @@ function reqWarnings(r: SchedRequest): HoursWarning[] {
 
 async function accept(r: SchedRequest, o: TradeOffer) {
   busy.value = true
-  err.value = null
+  err.value = done.value = errOn.value = doneOn.value = null
   const e = await sched.acceptOffer(r, o)
   busy.value = false
-  if (e) err.value = e
-  else done.value = 'Accepted — sent to the Chief for final approval.'
+  if (e) {
+    err.value = e
+    errOn.value = r.id
+  } else {
+    done.value = 'Accepted — sent to the Chief for final approval.'
+    doneOn.value = r.id
+  }
 }
 
-async function decline(o: TradeOffer) {
+async function decline(r: SchedRequest, o: TradeOffer) {
   busy.value = true
   const e = await sched.declineOffer(o.id)
   busy.value = false
-  if (e) err.value = e
+  if (e) {
+    err.value = e
+    errOn.value = r.id
+  }
 }
 
 /* Two-tap withdraw — a single stray tap silently pulled Kaleb's offer
@@ -642,7 +707,7 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
         </thead>
         <tbody>
           <template v-for="r in laneRows" :key="r.id">
-            <tr class="tr__row" :class="{ 'tr__row--att': statusParts(r).you }">
+            <tr class="tr__row" :class="{ 'tr__row--att': statusParts(r).you, 'tr__row--open': detailOpen(r) }">
               <td><span class="tr__typ">{{ r.type === 'giveaway' ? 'Giveaway' : 'Swap' }}</span></td>
               <td class="tr__poster">
                 {{ posterName(r) }}<span v-if="r.requesterId === sched.myUserId.value" class="tr__youtag"> (you)</span>
@@ -663,7 +728,9 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
                   <button v-if="r.type === 'giveaway'" class="tr__btn tr__btn--primary" :disabled="busy" @click="acceptDirect(r)">
                     {{ hourWarnFor[r.id] ? (warnConfirm(hourWarnFor[r.id]!) ? 'I understand — accept' : 'Accept anyway') : 'Accept' }}
                   </button>
-                  <button v-else-if="offeringOn !== r.id" class="tr__btn tr__btn--primary" @click="startOffer(r)">Offer a shift back</button>
+                  <button v-else-if="offeringOn !== r.id" class="tr__btn tr__btn--primary" :disabled="offerLoading === r.id" @click="startOffer(r)">
+                    {{ offerLoading === r.id ? 'Loading your shifts…' : 'Offer a shift back' }}
+                  </button>
                   <button class="tr__btn" :disabled="busy" @click="declineDirect(r)">Decline</button>
                 </template>
                 <!-- my posting (admins can watch offers on any) -->
@@ -695,14 +762,19 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
                     <button v-if="r.type === 'giveaway'" class="tr__btn tr__btn--primary" :disabled="busy" @click="takeShift(r)">
                       {{ hourWarnFor[r.id] ? (warnConfirm(hourWarnFor[r.id]!) ? 'I understand — take it' : 'Take it anyway') : 'Claim' }}
                     </button>
-                    <button v-else class="tr__btn tr__btn--primary" @click="startOffer(r)">Offer a shift</button>
+                    <button v-else class="tr__btn tr__btn--primary" :disabled="offerLoading === r.id" @click="startOffer(r)">
+                      {{ offerLoading === r.id ? 'Loading your shifts…' : 'Offer a shift' }}
+                    </button>
                   </template>
                 </template>
               </td>
             </tr>
 
-            <tr v-if="hourWarnFor[r.id] || offeringOn === r.id || reviewFor === r.id" class="tr__detailrow">
+            <tr v-if="detailOpen(r)" :id="`trdetail-${r.id}`" class="tr__detailrow">
               <td colspan="5">
+                <p v-if="errOn === r.id && err" class="tr__error tr__error--row">{{ err }}</p>
+                <p v-if="doneOn === r.id && done" class="tr__done tr__done--row">{{ done }}</p>
+
                 <div v-if="hourWarnFor[r.id]" class="tr__warnbox">
                   <p class="tr__warnhead">Before you take this:</p>
                   <ul class="tr__warnlist">
@@ -719,7 +791,7 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
                     </div>
                     <div v-if="r.requesterId === sched.myUserId.value" class="tr__offer-actions">
                       <button class="tr__btn tr__btn--primary" :disabled="busy" @click="accept(r, o)">Accept</button>
-                      <button class="tr__btn" :disabled="busy" @click="decline(o)">Decline</button>
+                      <button class="tr__btn" :disabled="busy" @click="decline(r, o)">Decline</button>
                     </div>
                   </div>
                   <p v-if="offersFor(r).length === 0" class="tr__muted tr__muted--sm">No offers yet.</p>
@@ -737,6 +809,11 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
                       </optgroup>
                     </select>
                   </label>
+                  <p v-if="myShifts.length === 0" class="tr__muted tr__muted--sm">
+                    You have no upcoming shifts to offer back, so this swap can't be answered
+                    from here — ask {{ posterName(r) }} to repost it as a giveaway, or the
+                    Chief can assign you directly.
+                  </p>
                   <label class="tr__check">
                     <input v-model="offerPartial" type="checkbox" /> Part of that shift only
                   </label>
@@ -889,6 +966,15 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
 .tr__error {
   color: var(--color-danger-500);
   font-size: 0.85rem;
+}
+
+/* Row-level outcome lines — rendered inside the detail strip of the
+   board row they belong to, so the answer appears where the tap
+   happened (the top-of-panel lines sit off-screen from deep rows). */
+.tr__error--row,
+.tr__done--row {
+  margin: 6px 0 8px;
+  font-weight: 600;
 }
 
 .tr__form {
@@ -1324,5 +1410,72 @@ function offerCrossesPeriod(r: SchedRequest): boolean {
   border-radius: 8px;
   padding: 0.3rem 0.55rem;
   margin: 0.1rem 0 0;
+}
+
+/* ── PHONE: the board stacks into cards (2026-10-11) ────────────────
+   The 5-column nowrap table ran far past a phone screen; crews panned
+   right to reach the action buttons, and tapping "Offer a shift"
+   opened the detail row's form at the far LEFT of the wide table —
+   all they saw at their scroll position was a blank surface-colored
+   strip (Cody Sholar on Stephanie Adams' M231 swaps). Stacked cards
+   keep every column, button, form and outcome inside the viewport. */
+@media (max-width: 900px) {
+  .tr__table,
+  .tr__table tbody,
+  .tr__table tr,
+  .tr__table td {
+    display: block;
+    width: 100%;
+  }
+  .tr__table thead {
+    display: none;
+  }
+  .tr__row {
+    border: 1px solid var(--color-line-soft);
+    border-radius: 12px;
+    background: var(--color-surface);
+    margin-bottom: 10px;
+    padding: 6px 2px 4px;
+  }
+  .tr__row td {
+    border-bottom: 0;
+    padding: 3px 12px;
+  }
+  .tr__row td:first-child {
+    padding-top: 8px;
+  }
+  .tr__row--att td:first-child {
+    box-shadow: inset 2.5px 0 0 var(--color-accent-600);
+    border-radius: 12px 0 0 0;
+  }
+  .tr__l1,
+  .tr__l2,
+  .tr__typ {
+    white-space: normal;
+  }
+  .tr__act {
+    text-align: left;
+    white-space: normal;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px 10px;
+  }
+  /* a row with its detail strip open joins visually with the card
+     below it */
+  .tr__row--open {
+    border-radius: 12px 12px 0 0;
+    border-bottom: 0;
+    margin-bottom: 0;
+  }
+  .tr__detailrow {
+    margin: 0 0 10px;
+  }
+  .tr__detailrow > td {
+    border: 1px solid var(--color-line-soft);
+    border-top: 0;
+    border-radius: 0 0 12px 12px;
+    padding: 6px 12px 12px;
+  }
 }
 </style>
