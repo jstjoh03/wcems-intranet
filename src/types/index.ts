@@ -190,6 +190,23 @@ export interface SkillsCheckoff {
   active: boolean
 }
 
+/* A scheduled Skills Day session: which stations run on which date,
+   and which trainees attend (optionally scoped to specific stations —
+   an EMT cohort member may skip ALS-only stops). */
+export interface SkillsDaySession {
+  id: string
+  onDate: string
+  label: string
+  note: string
+  active: boolean
+}
+
+export interface SkillsDayCandidate {
+  userId: string
+  /* null = every station scheduled that day */
+  stationIds: string[] | null
+}
+
 export type SkillItemResult = 'pass' | 'redo'
 
 export interface SkillsRecheck {

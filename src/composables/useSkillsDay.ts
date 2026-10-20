@@ -4,6 +4,8 @@ import { useAuthStore } from '@/stores/auth'
 import type {
   SkillsCheckoff,
   SkillsCheckoffSection,
+  SkillsDayCandidate,
+  SkillsDaySession,
   SkillsEvaluation,
   SkillsRecheck,
   SkillItemResult,
@@ -87,9 +89,16 @@ function evalFromRow(r: EvaluationRow): SkillsEvaluation {
   }
 }
 
-const checkoffs = ref<SkillsCheckoff[]>([])
+/* Every checkoff (incl. inactive) for the admin Setup surface; the
+   exported `checkoffs` keeps its original meaning of active-only so
+   the board, runner, and clinical file behave unchanged. */
+const allCheckoffs = ref<SkillsCheckoff[]>([])
+const checkoffs = computed(() => allCheckoffs.value.filter((c) => c.active))
 const evaluations = ref<SkillsEvaluation[]>([])
 const candidates = ref<SkillsCandidate[]>([])
+const days = ref<SkillsDaySession[]>([])
+const dayStationIds = ref<Record<string, string[]>>({})
+const dayCandidates = ref<Record<string, SkillsDayCandidate[]>>({})
 const evaluatorIds = ref<string[]>([])
 const ftoIds = ref<string[]>([])
 const peopleNames = ref<Record<string, string>>({})
@@ -97,12 +106,16 @@ const ready = ref(false)
 let loadStarted = false
 let realtimeSubscribed = false
 
+function sortDays(list: SkillsDaySession[]): SkillsDaySession[] {
+  return [...list].sort((a, b) => a.onDate.localeCompare(b.onDate) || a.label.localeCompare(b.label))
+}
+
 async function load() {
   if (loadStarted) return
   loadStarted = true
   const auth = useAuthStore()
   if (auth.usingDevStub) {
-    checkoffs.value = [
+    allCheckoffs.value = [
       {
         id: 'co-airway',
         key: 'airway',
@@ -158,18 +171,46 @@ async function load() {
       'cand-2': 'Dennis Ho',
       'cand-3': 'Tara Roth',
       'dev-admin': 'Dev Admin',
+      '1507': 'Justin St. John',
+    }
+    const today = new Date()
+    const plus = (n: number) => {
+      const d = new Date(today)
+      d.setDate(d.getDate() + n)
+      return d.toISOString().slice(0, 10)
+    }
+    days.value = [
+      { id: 'dev-day-1', onDate: plus(0), label: 'Session 1', note: '', active: true },
+      { id: 'dev-day-2', onDate: plus(2), label: 'Session 2', note: '', active: true },
+    ]
+    dayStationIds.value = {
+      'dev-day-1': ['co-airway'],
+      'dev-day-2': ['co-airway', 'co-trauma'],
+    }
+    dayCandidates.value = {
+      'dev-day-1': [
+        { userId: 'cand-1', stationIds: null },
+        { userId: 'cand-2', stationIds: null },
+      ],
+      'dev-day-2': [
+        { userId: 'cand-2', stationIds: ['co-trauma'] },
+        { userId: 'cand-3', stationIds: null },
+      ],
     }
     ready.value = true
     return
   }
 
-  const [cRes, eRes, candRes, gRes, ftoRes, namesRes] = await Promise.all([
-    supabase.from('skills_checkoffs').select('*').eq('active', true).order('sort'),
+  const [cRes, eRes, candRes, dRes, dsRes, dcRes, gRes, ftoRes, namesRes] = await Promise.all([
+    supabase.from('skills_checkoffs').select('*').order('sort'),
     supabase.from('skills_evaluations').select(EVAL_COLUMNS),
     /* Candidates = the pending pipeline cohort, via SECURITY DEFINER
        RPC so grant-only evaluators (no pipeline visibility) still get
        the list. */
     supabase.rpc('skills_candidates'),
+    supabase.from('skills_days').select('*').order('on_date'),
+    supabase.from('skills_day_stations').select('day_id, checkoff_id'),
+    supabase.from('skills_day_candidates').select('day_id, user_id, station_ids'),
     supabase.from('skills_evaluators').select('user_id'),
     supabase.from('pipeline_records').select('user_id').eq('is_fto', true),
     supabase
@@ -181,14 +222,44 @@ async function load() {
   if (cRes.error) console.error('[skills] checkoffs load:', cRes.error.message)
   if (eRes.error) console.error('[skills] evaluations load:', eRes.error.message)
   if (candRes.error) console.error('[skills] candidates load:', candRes.error.message)
+  if (dRes.error) console.error('[skills] days load:', dRes.error.message)
 
-  checkoffs.value = (cRes.data ?? []).map((r) => checkoffFromRow(r as unknown as CheckoffRow))
+  allCheckoffs.value = (cRes.data ?? []).map((r) => checkoffFromRow(r as unknown as CheckoffRow))
   evaluations.value = (eRes.data ?? []).map((r) => evalFromRow(r as EvaluationRow))
   candidates.value = ((candRes.data ?? []) as unknown as Array<{
     id: string
     full_name: string
     title: string | null
   }>).map((r) => ({ id: r.id, fullName: r.full_name, title: r.title }))
+  days.value = sortDays(
+    ((dRes.data ?? []) as Array<{
+      id: string
+      on_date: string
+      label: string
+      note: string
+      active: boolean
+    }>).map((r) => ({
+      id: r.id,
+      onDate: r.on_date,
+      label: r.label,
+      note: r.note,
+      active: r.active,
+    })),
+  )
+  const dsMap: Record<string, string[]> = {}
+  for (const r of (dsRes.data ?? []) as Array<{ day_id: string; checkoff_id: string }>) {
+    ;(dsMap[r.day_id] ??= []).push(r.checkoff_id)
+  }
+  dayStationIds.value = dsMap
+  const dcMap: Record<string, SkillsDayCandidate[]> = {}
+  for (const r of (dcRes.data ?? []) as Array<{
+    day_id: string
+    user_id: string
+    station_ids: string[] | null
+  }>) {
+    ;(dcMap[r.day_id] ??= []).push({ userId: r.user_id, stationIds: r.station_ids })
+  }
+  dayCandidates.value = dcMap
   evaluatorIds.value = (gRes.data ?? []).map((r) => r.user_id as string)
   ftoIds.value = (ftoRes.data ?? []).map((r) => r.user_id as string)
   peopleNames.value = Object.fromEntries(
@@ -260,11 +331,262 @@ export function useSkillsDay() {
   }
 
   function checkoffById(id: string): SkillsCheckoff | null {
-    return checkoffs.value.find((c) => c.id === id) ?? null
+    /* Includes inactive stations so old records still resolve. */
+    return allCheckoffs.value.find((c) => c.id === id) ?? null
   }
 
   function candidateById(id: string): SkillsCandidate | null {
-    return candidates.value.find((c) => c.id === id) ?? null
+    const fromCohort = candidates.value.find((c) => c.id === id)
+    if (fromCohort) return fromCohort
+    /* Day-assigned trainees may not be in the pending pipeline cohort —
+       resolve their name from the staff directory instead. */
+    const name = peopleNames.value[id]
+    return name ? { id, fullName: name, title: null } : null
+  }
+
+  /* ── Skills Day sessions ──────────────────────────────────────────
+     With a day selected, the board shows exactly the stations
+     scheduled that day × the trainees assigned to it; a null dayId is
+     the unscoped view (every active station × the pipeline cohort
+     plus anyone assigned to any day). */
+
+  function stationsForDay(dayId: string | null): SkillsCheckoff[] {
+    if (!dayId) return checkoffs.value
+    const ids = dayStationIds.value[dayId] ?? []
+    return checkoffs.value.filter((c) => ids.includes(c.id))
+  }
+
+  function candidatesForDay(dayId: string | null): SkillsCandidate[] {
+    if (!dayId) {
+      const seen = new Set(candidates.value.map((c) => c.id))
+      const extra: SkillsCandidate[] = []
+      for (const list of Object.values(dayCandidates.value)) {
+        for (const entry of list) {
+          if (seen.has(entry.userId)) continue
+          seen.add(entry.userId)
+          const c = candidateById(entry.userId)
+          if (c) extra.push(c)
+        }
+      }
+      return [...candidates.value, ...extra].sort((a, b) =>
+        a.fullName.localeCompare(b.fullName),
+      )
+    }
+    return (dayCandidates.value[dayId] ?? [])
+      .map((entry) => candidateById(entry.userId))
+      .filter((c): c is SkillsCandidate => c !== null)
+      .sort((a, b) => a.fullName.localeCompare(b.fullName))
+  }
+
+  /* Whether a station applies to a trainee on a day (their assignment
+     may be scoped to specific stations). */
+  function appliesTo(dayId: string | null, checkoffId: string, userId: string): boolean {
+    if (!dayId) return true
+    const entry = (dayCandidates.value[dayId] ?? []).find((e) => e.userId === userId)
+    if (!entry) return false
+    return entry.stationIds === null || entry.stationIds.includes(checkoffId)
+  }
+
+  /* Admin: create/update a Skills Day with its station schedule and
+     trainee roster in one save. */
+  async function saveDayFull(input: {
+    id?: string
+    onDate: string
+    label: string
+    note: string
+    active: boolean
+    stationIds: string[]
+    candidates: SkillsDayCandidate[]
+  }): Promise<{ ok: boolean; error?: string }> {
+    const normalized = input.candidates.map((c) => ({
+      userId: c.userId,
+      stationIds: c.stationIds && c.stationIds.length ? c.stationIds : null,
+    }))
+    if (auth.usingDevStub) {
+      const id = input.id ?? `dev-day-${Date.now()}`
+      const row: SkillsDaySession = {
+        id,
+        onDate: input.onDate,
+        label: input.label,
+        note: input.note,
+        active: input.active,
+      }
+      days.value = sortDays([...days.value.filter((d) => d.id !== id), row])
+      dayStationIds.value = { ...dayStationIds.value, [id]: [...input.stationIds] }
+      dayCandidates.value = { ...dayCandidates.value, [id]: normalized }
+      return { ok: true }
+    }
+    let dayId = input.id ?? null
+    if (dayId) {
+      const { error } = await supabase
+        .from('skills_days')
+        .update({
+          on_date: input.onDate,
+          label: input.label,
+          note: input.note,
+          active: input.active,
+        })
+        .eq('id', dayId)
+      if (error) return { ok: false, error: error.message }
+    } else {
+      const { data, error } = await supabase
+        .from('skills_days')
+        .insert({
+          on_date: input.onDate,
+          label: input.label,
+          note: input.note,
+          active: input.active,
+        })
+        .select('id')
+        .single()
+      if (error) return { ok: false, error: error.message }
+      dayId = (data as { id: string }).id
+    }
+    {
+      const { error } = await supabase.from('skills_day_stations').delete().eq('day_id', dayId)
+      if (error) return { ok: false, error: error.message }
+    }
+    if (input.stationIds.length) {
+      const { error } = await supabase
+        .from('skills_day_stations')
+        .insert(input.stationIds.map((checkoff_id) => ({ day_id: dayId, checkoff_id })))
+      if (error) return { ok: false, error: error.message }
+    }
+    {
+      const { error } = await supabase.from('skills_day_candidates').delete().eq('day_id', dayId)
+      if (error) return { ok: false, error: error.message }
+    }
+    if (normalized.length) {
+      const { error } = await supabase.from('skills_day_candidates').insert(
+        normalized.map((c) => ({
+          day_id: dayId,
+          user_id: c.userId,
+          station_ids: c.stationIds,
+        })),
+      )
+      if (error) return { ok: false, error: error.message }
+    }
+    const row: SkillsDaySession = {
+      id: dayId,
+      onDate: input.onDate,
+      label: input.label,
+      note: input.note,
+      active: input.active,
+    }
+    days.value = sortDays([...days.value.filter((d) => d.id !== dayId), row])
+    dayStationIds.value = { ...dayStationIds.value, [dayId]: [...input.stationIds] }
+    dayCandidates.value = { ...dayCandidates.value, [dayId]: normalized }
+    return { ok: true }
+  }
+
+  async function deleteDay(dayId: string): Promise<{ ok: boolean; error?: string }> {
+    if (!auth.usingDevStub) {
+      const { error } = await supabase.from('skills_days').delete().eq('id', dayId)
+      if (error) return { ok: false, error: error.message }
+    }
+    days.value = days.value.filter((d) => d.id !== dayId)
+    const ds = { ...dayStationIds.value }
+    delete ds[dayId]
+    dayStationIds.value = ds
+    const dc = { ...dayCandidates.value }
+    delete dc[dayId]
+    dayCandidates.value = dc
+    return { ok: true }
+  }
+
+  /* ── Station (checkoff) management ────────────────────────────── */
+
+  function slugKey(title: string): string {
+    const base =
+      title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'station'
+    let key = base
+    let n = 2
+    while (allCheckoffs.value.some((c) => c.key === key)) key = `${base}_${n++}`
+    return key
+  }
+
+  async function saveCheckoff(input: {
+    id?: string
+    title: string
+    subtitle: string
+    note: string
+    sort: number
+    active: boolean
+    sections: SkillsCheckoffSection[]
+  }): Promise<{ ok: boolean; error?: string }> {
+    if (auth.usingDevStub) {
+      const id = input.id ?? `dev-co-${Date.now()}`
+      const next: SkillsCheckoff = {
+        id,
+        key: allCheckoffs.value.find((c) => c.id === id)?.key ?? slugKey(input.title),
+        title: input.title,
+        subtitle: input.subtitle,
+        note: input.note,
+        sections: input.sections,
+        sort: input.sort,
+        active: input.active,
+      }
+      allCheckoffs.value = [...allCheckoffs.value.filter((c) => c.id !== id), next].sort(
+        (a, b) => a.sort - b.sort || a.title.localeCompare(b.title),
+      )
+      return { ok: true }
+    }
+    if (input.id) {
+      const { data, error } = await supabase
+        .from('skills_checkoffs')
+        .update({
+          title: input.title,
+          subtitle: input.subtitle,
+          note: input.note,
+          sort: input.sort,
+          active: input.active,
+          sections: input.sections,
+        })
+        .eq('id', input.id)
+        .select('*')
+        .single()
+      if (error) return { ok: false, error: error.message }
+      const next = checkoffFromRow(data as unknown as CheckoffRow)
+      allCheckoffs.value = allCheckoffs.value
+        .map((c) => (c.id === next.id ? next : c))
+        .sort((a, b) => a.sort - b.sort || a.title.localeCompare(b.title))
+      return { ok: true }
+    }
+    const { data, error } = await supabase
+      .from('skills_checkoffs')
+      .insert({
+        key: slugKey(input.title),
+        title: input.title,
+        subtitle: input.subtitle,
+        note: input.note,
+        sort: input.sort,
+        active: input.active,
+        sections: input.sections,
+      })
+      .select('*')
+      .single()
+    if (error) return { ok: false, error: error.message }
+    const next = checkoffFromRow(data as unknown as CheckoffRow)
+    allCheckoffs.value = [...allCheckoffs.value, next].sort(
+      (a, b) => a.sort - b.sort || a.title.localeCompare(b.title),
+    )
+    return { ok: true }
+  }
+
+  /* Deleting a station cascades to its evaluations — the Setup panel
+     only offers it when none exist. */
+  async function deleteCheckoff(checkoffId: string): Promise<{ ok: boolean; error?: string }> {
+    if (evaluations.value.some((e) => e.checkoffId === checkoffId))
+      return { ok: false, error: 'This station has recorded check-offs — mark it inactive instead.' }
+    if (!auth.usingDevStub) {
+      const { error } = await supabase.from('skills_checkoffs').delete().eq('id', checkoffId)
+      if (error) return { ok: false, error: error.message }
+    }
+    allCheckoffs.value = allCheckoffs.value.filter((c) => c.id !== checkoffId)
+    return { ok: true }
   }
 
   /* Redo item keys still outstanding on an evaluation. */
@@ -422,15 +744,19 @@ export function useSkillsDay() {
       .single()
     if (error) return { ok: false, error: error.message }
     const next = checkoffFromRow(data as unknown as CheckoffRow)
-    checkoffs.value = checkoffs.value.map((c) => (c.id === next.id ? next : c))
+    allCheckoffs.value = allCheckoffs.value.map((c) => (c.id === next.id ? next : c))
     return { ok: true }
   }
 
   return {
     ready,
     checkoffs,
+    allCheckoffs,
     evaluations,
     candidates,
+    days,
+    dayStationIds,
+    dayCandidates,
     evaluatorIds,
     isEvaluator,
     nameFor,
@@ -438,9 +764,16 @@ export function useSkillsDay() {
     evaluationFor,
     checkoffById,
     candidateById,
+    stationsForDay,
+    candidatesForDay,
+    appliesTo,
     redoKeys,
     submitEvaluation,
     submitRecheck,
+    saveDayFull,
+    deleteDay,
+    saveCheckoff,
+    deleteCheckoff,
     addEvaluator,
     removeEvaluator,
     saveCheckoffSections,

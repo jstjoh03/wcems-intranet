@@ -1,28 +1,20 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  ClipboardCheck,
-  Check,
-  RotateCcw,
-  Download,
-  Users,
-  X,
-} from 'lucide-vue-next'
+import { ClipboardCheck, Check, RotateCcw, Download } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
-import { supabase } from '@/lib/supabase'
 import { useSkillsDay } from '@/composables/useSkillsDay'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
+import SkillsSetupPanel from '@/views/skills/SkillsSetupPanel.vue'
+import type { SkillsDaySession } from '@/types'
 
 /**
- * Skills Day home. Evaluators get two tabs:
- *  - Stations: pick a check-off, see the 8 candidates with live
- *    status, tap one to run the evaluation.
- *  - Board: candidates × check-offs grid (realtime), the second-
- *    attempt remediation queue, per-candidate packet PDFs, and the
- *    admin's extra-evaluator grant list.
- * Non-evaluators (a candidate who signs in later) see their own
- * results read-only.
+ * Skills Day home. Evaluators get the Stations and Board tabs; when
+ * Skills Days are scheduled, a day selector scopes both to exactly the
+ * stations and trainees assigned to that day. Admins get a Setup tab:
+ * create Skills Days, manage stations and their requirements, and the
+ * extra-evaluator grant list. Non-evaluators (a candidate who signs in
+ * later) see their own results read-only.
  */
 
 const router = useRouter()
@@ -31,21 +23,59 @@ const {
   ready,
   checkoffs,
   evaluations,
-  candidates,
-  evaluatorIds,
+  days,
   isEvaluator,
   nameFor,
   evaluationFor,
   redoKeys,
-  addEvaluator,
-  removeEvaluator,
+  stationsForDay,
+  candidatesForDay,
+  appliesTo,
 } = useSkillsDay()
 
-const tab = ref<'stations' | 'board'>('stations')
+const tab = ref<'stations' | 'board' | 'setup'>('stations')
 const activeCheckoffId = ref<string | null>(null)
-const activeCheckoff = computed(
-  () => checkoffs.value.find((c) => c.id === activeCheckoffId.value) ?? null,
+
+/* ── Day selection ──────────────────────────────────────────────── */
+const activeDays = computed(() => days.value.filter((d) => d.active))
+const selectedDayId = ref<string | null>(null)
+let dayDefaulted = false
+watch(
+  [ready, activeDays],
+  () => {
+    if (!ready.value || dayDefaulted) return
+    dayDefaulted = true
+    const list = activeDays.value
+    if (!list.length) return
+    const today = new Date().toLocaleDateString('en-CA')
+    const todays = list.find((d) => d.onDate === today)
+    const upcoming = list.find((d) => d.onDate > today)
+    selectedDayId.value = (todays ?? upcoming ?? list[list.length - 1]).id
+  },
+  { immediate: true },
 )
+
+function fmtDay(d: SkillsDaySession): string {
+  const date = new Date(`${d.onDate}T12:00:00`)
+  const base = date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+  return d.label ? `${base} · ${d.label}` : base
+}
+
+/* Stations and trainees scoped to the selected day (everything when
+   no day is selected). */
+const dayCheckoffs = computed(() => stationsForDay(selectedDayId.value))
+const dayCands = computed(() => candidatesForDay(selectedDayId.value))
+const activeCheckoff = computed(
+  () => dayCheckoffs.value.find((c) => c.id === activeCheckoffId.value) ?? null,
+)
+
+function candidatesAt(checkoffId: string) {
+  return dayCands.value.filter((c) => appliesTo(selectedDayId.value, checkoffId, c.id))
+}
 
 function statusFor(checkoffId: string, candidateId: string): 'pass' | 'redo' | 'open' {
   const e = evaluationFor(checkoffId, candidateId)
@@ -54,10 +84,9 @@ function statusFor(checkoffId: string, candidateId: string): 'pass' | 'redo' | '
 }
 
 function checkoffProgress(checkoffId: string): { done: number; total: number } {
-  const done = candidates.value.filter(
-    (c) => statusFor(checkoffId, c.id) === 'pass',
-  ).length
-  return { done, total: candidates.value.length }
+  const eligible = candidatesAt(checkoffId)
+  const done = eligible.filter((c) => statusFor(checkoffId, c.id) === 'pass').length
+  return { done, total: eligible.length }
 }
 
 function goEvaluate(checkoffId: string, candidateId: string) {
@@ -74,9 +103,14 @@ interface QueueEntry {
 }
 const remediationQueue = computed<QueueEntry[]>(() => {
   const out: QueueEntry[] = []
+  const rosterIds = new Set(dayCands.value.map((c) => c.id))
   for (const e of evaluations.value) {
     const keys = redoKeys(e)
     if (keys.length === 0) continue
+    /* With a day selected, only that day's trainees are in play —
+       rechecks can run at any station, so the station set isn't
+       filtered. */
+    if (selectedDayId.value && !rosterIds.has(e.candidateId)) continue
     const checkoff = checkoffs.value.find((c) => c.id === e.checkoffId)
     if (!checkoff) continue
     const labels = keys.map(
@@ -99,6 +133,8 @@ const generatingFor = ref<string | null>(null)
 async function downloadPacket(candidateId: string) {
   generatingFor.value = candidateId
   try {
+    /* Packets always cover every active station, not just the
+       selected day's. */
     const doc = await generateSkillsDayPacketPdf({
       candidateName: nameFor(candidateId),
       checkoffs: checkoffs.value,
@@ -111,35 +147,6 @@ async function downloadPacket(candidateId: string) {
     generatingFor.value = null
   }
 }
-
-/* ── Evaluator grant manager (admin) ────────────────────────────── */
-const showEvaluators = ref(false)
-const evaluatorSearch = ref('')
-const allPeople = ref<{ id: string; fullName: string }[]>([])
-async function loadPeople() {
-  if (allPeople.value.length) return
-  const { data } = await supabase
-    .from('app_users')
-    .select('id, full_name')
-    .eq('active', true)
-    .eq('account_type', 'person')
-    .order('full_name')
-  allPeople.value = (data ?? []).map((r) => ({ id: r.id, fullName: r.full_name }))
-}
-function toggleEvaluators() {
-  showEvaluators.value = !showEvaluators.value
-  if (showEvaluators.value) void loadPeople()
-}
-const evaluatorMatches = computed(() => {
-  const q = evaluatorSearch.value.trim().toLowerCase()
-  if (!q) return []
-  return allPeople.value
-    .filter(
-      (p) =>
-        p.fullName.toLowerCase().includes(q) && !evaluatorIds.value.includes(p.id),
-    )
-    .slice(0, 6)
-})
 
 /* ── My results (non-evaluator) ─────────────────────────────────── */
 const myEvaluations = computed(() =>
@@ -174,8 +181,42 @@ const myEvaluations = computed(() =>
         >
           Board
         </button>
+        <button
+          v-if="auth.isAdmin"
+          type="button"
+          class="sd__tab"
+          :class="{ 'sd__tab--on': tab === 'setup' }"
+          @click="tab = 'setup'"
+        >
+          Setup
+        </button>
       </div>
     </header>
+
+    <!-- Day selector -->
+    <div
+      v-if="ready && isEvaluator && tab !== 'setup' && activeDays.length"
+      class="sd__days"
+    >
+      <button
+        v-for="d in activeDays"
+        :key="d.id"
+        type="button"
+        class="sd__day-chip"
+        :class="{ 'sd__day-chip--on': selectedDayId === d.id }"
+        @click="selectedDayId = d.id; activeCheckoffId = null"
+      >
+        {{ fmtDay(d) }}
+      </button>
+      <button
+        type="button"
+        class="sd__day-chip"
+        :class="{ 'sd__day-chip--on': selectedDayId === null }"
+        @click="selectedDayId = null; activeCheckoffId = null"
+      >
+        All
+      </button>
+    </div>
 
     <div v-if="!ready" class="sd__empty">Loading…</div>
 
@@ -203,8 +244,13 @@ const myEvaluations = computed(() =>
     <template v-else-if="tab === 'stations'">
       <!-- Station picker -->
       <div v-if="!activeCheckoff" class="sd__stations">
+        <div v-if="dayCheckoffs.length === 0" class="sd__empty sd__empty--wide">
+          No stations scheduled for this day yet<span v-if="auth.isAdmin">
+            — add them under Setup</span
+          >.
+        </div>
         <button
-          v-for="c in checkoffs"
+          v-for="c in dayCheckoffs"
           :key="c.id"
           type="button"
           class="sd__station"
@@ -235,9 +281,13 @@ const myEvaluations = computed(() =>
           ← All stations
         </button>
         <h2 class="sd__station-head display">{{ activeCheckoff.title }}</h2>
-        <div class="sd__candidates">
+        <div v-if="candidatesAt(activeCheckoff.id).length === 0" class="sd__empty">
+          No trainees assigned to this station<span v-if="selectedDayId"> for this day</span
+          ><span v-if="auth.isAdmin"> — assign them under Setup</span>.
+        </div>
+        <div v-else class="sd__candidates">
           <button
-            v-for="cand in candidates"
+            v-for="cand in candidatesAt(activeCheckoff.id)"
             :key="cand.id"
             type="button"
             class="sd__cand"
@@ -276,21 +326,29 @@ const myEvaluations = computed(() =>
     </template>
 
     <!-- Board tab -->
-    <template v-else>
-      <div class="sd__board-wrap">
+    <template v-else-if="tab === 'board'">
+      <div v-if="dayCheckoffs.length === 0 || dayCands.length === 0" class="sd__empty">
+        Nothing on the board<span v-if="selectedDayId"> for this day</span> yet<span
+          v-if="auth.isAdmin"
+        >
+          — schedule stations and trainees under Setup</span
+        >.
+      </div>
+      <div v-else class="sd__board-wrap">
         <table class="sd__board">
           <thead>
             <tr>
               <th class="sd__board-name">Trainee</th>
-              <th v-for="c in checkoffs" :key="c.id">{{ c.title.replace('Cardiac Monitor (LP15)', 'LP15').replace('Sapphire IV Pump', 'IV Pump') }}</th>
+              <th v-for="c in dayCheckoffs" :key="c.id">{{ c.title.replace('Cardiac Monitor (LP15)', 'LP15').replace('Sapphire IV Pump', 'IV Pump') }}</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="cand in candidates" :key="cand.id">
+            <tr v-for="cand in dayCands" :key="cand.id">
               <td class="sd__board-name">{{ cand.fullName }}</td>
-              <td v-for="c in checkoffs" :key="c.id">
+              <td v-for="c in dayCheckoffs" :key="c.id">
                 <button
+                  v-if="appliesTo(selectedDayId, c.id, cand.id)"
                   type="button"
                   class="sd__tile"
                   :class="`sd__tile--${statusFor(c.id, cand.id)}`"
@@ -299,6 +357,7 @@ const myEvaluations = computed(() =>
                   <Check v-if="statusFor(c.id, cand.id) === 'pass'" :size="14" :stroke-width="2.5" />
                   <RotateCcw v-else-if="statusFor(c.id, cand.id) === 'redo'" :size="13" :stroke-width="2.5" />
                 </button>
+                <span v-else class="sd__tile sd__tile--na" title="Not assigned to this station">—</span>
               </td>
               <td>
                 <button
@@ -339,39 +398,11 @@ const myEvaluations = computed(() =>
         </button>
       </section>
 
-      <!-- Evaluator grants (admin) -->
-      <section v-if="auth.isAdmin" class="sd__grants">
-        <button type="button" class="sd__grants-toggle" @click="toggleEvaluators">
-          <Users :size="13" :stroke-width="2" />
-          Extra evaluators ({{ evaluatorIds.length }})
-        </button>
-        <div v-if="showEvaluators" class="sd__grants-body">
-          <p class="sd__grants-hint">
-            Admins, supervisors, and FTOs can already evaluate. Add anyone else
-            helping today (e.g., the trauma-station EMT).
-          </p>
-          <div v-for="id in evaluatorIds" :key="id" class="sd__grant-row">
-            {{ nameFor(id) }}
-            <button type="button" class="sd__grant-remove" @click="removeEvaluator(id)">
-              <X :size="12" :stroke-width="2.5" />
-            </button>
-          </div>
-          <input
-            v-model="evaluatorSearch"
-            class="sd__grant-search"
-            placeholder="Search a name to add…"
-          />
-          <button
-            v-for="p in evaluatorMatches"
-            :key="p.id"
-            type="button"
-            class="sd__grant-add"
-            @click="addEvaluator(p.id); evaluatorSearch = ''"
-          >
-            + {{ p.fullName }}
-          </button>
-        </div>
-      </section>
+    </template>
+
+    <!-- Setup tab (admin) -->
+    <template v-else-if="tab === 'setup' && auth.isAdmin">
+      <SkillsSetupPanel />
     </template>
   </div>
 </template>
@@ -686,79 +717,40 @@ const myEvaluations = computed(() =>
   color: var(--color-ink-soft);
 }
 
-/* Grants */
-.sd__grants {
-  margin-top: 22px;
-}
-.sd__grants-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-family: var(--font-sans);
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--color-ink-soft);
-  background: var(--color-surface-soft);
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
-}
-.sd__grants-body {
-  margin-top: 10px;
-  padding: 12px;
-  border: 1px solid var(--color-line);
-  border-radius: 12px;
-  background: var(--color-surface);
-  max-width: 380px;
-}
-.sd__grants-hint {
-  font-size: 12px;
-  color: var(--color-muted);
-  line-height: 1.45;
-  margin-bottom: 10px;
-}
-.sd__grant-row {
+/* Day selector */
+.sd__days {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-ink);
-  padding: 6px 0;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin: -6px 0 16px;
 }
-.sd__grant-remove {
-  border: none;
-  background: none;
-  color: var(--color-muted);
-  cursor: pointer;
-  padding: 4px;
-}
-.sd__grant-search {
-  width: 100%;
-  margin-top: 8px;
+.sd__day-chip {
   font-family: var(--font-sans);
-  font-size: 13px;
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
-  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-ink-soft);
   background: var(--color-surface);
-  color: var(--color-ink);
-}
-.sd__grant-add {
-  display: block;
-  width: 100%;
-  text-align: left;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  color: var(--color-brand-800);
-  background: none;
-  border: none;
-  padding: 7px 4px;
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: 7px 14px;
   cursor: pointer;
+  white-space: nowrap;
 }
-.sd__grant-add:hover {
-  background: var(--color-surface-soft);
+.sd__day-chip--on {
+  color: white;
+  background: var(--color-brand-800);
+  border-color: var(--color-brand-800);
+}
+
+.sd__tile--na {
+  background: none;
+  border-color: transparent;
+  color: var(--color-muted-soft, var(--color-muted));
+  cursor: default;
+  font-size: 13px;
+}
+.sd__empty--wide {
+  grid-column: 1 / -1;
 }
 
 /* My results */
