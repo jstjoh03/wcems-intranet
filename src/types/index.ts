@@ -191,8 +191,11 @@ export interface SkillsCheckoff {
 }
 
 /* A scheduled Skills Day session: which stations run on which date,
-   and which trainees attend (optionally scoped to specific stations —
-   an EMT cohort member may skip ALS-only stops). */
+   and which trainees attend. Everyone does every station by default —
+   EMTs included (pump/vent setup is a familiarity check-off even when
+   they don't operate it at the ALS level). Per-trainee scoping exists
+   for logistics only, e.g. a make-up day where someone owes one
+   station. */
 export interface SkillsDaySession {
   id: string
   onDate: string
