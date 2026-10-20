@@ -48,7 +48,7 @@ export interface EventCtx {
   location: string | null
 }
 
-export type AddKind = 'menu' | 'event' | 'note' | 'student' | 'seat' | 'timeoff'
+export type AddKind = 'menu' | 'event' | 'note' | 'student' | 'seat' | 'timeoff' | 'extra'
 
 /** Crew tapping their OWN shift — Aladtec's self-service trio:
  *  request time off, post a trade, or give the shift away. */
@@ -87,8 +87,8 @@ export interface AddCtx {
   dateIso: string
   kind: AddKind
   unitId: string | null // preselected unit for students
-  /** preselected member for 'timeoff' (My schedule hands the viewed
-   *  person in; the month add menu leaves it null for a picker) */
+  /** preselected member for 'timeoff' / 'extra' (My schedule hands the
+   *  viewed person in; the month add menu leaves it null for a picker) */
   userId: string | null
   /** prefilled window for 'timeoff' — the day-balance prompts hand in
    *  the unaccounted gap (Justin, 2026-09-29) */

@@ -764,6 +764,7 @@ watch(editor.eventEdit, (ev) => {
   evNotes.value = ev.notes ?? ''
   evLocation.value = ev.location ?? ''
   evArm.value = false
+  evRetimeId.value = null
   err.value = null
 })
 
@@ -832,6 +833,34 @@ async function evUnassign(entryId: string | null): Promise<void> {
   const e = await sched.assignEventSlot(entryId, null)
   busy.value = false
   if (e) err.value = e
+}
+
+/* Retime one staffing row in place (Justin, 2026-10-20 — assigned
+   event times used to be view-only). */
+const evRetimeId = ref<string | null>(null)
+const evRetimeFrom = ref('06:00')
+const evRetimeUntil = ref('18:00')
+
+function evStartRetime(row: { entryId: string | null; start: string; end: string }): void {
+  if (!row.entryId) return
+  evRetimeId.value = row.entryId
+  evRetimeFrom.value = toInput(row.start)
+  evRetimeUntil.value = toInput(row.end)
+}
+
+async function evSaveRetime(): Promise<void> {
+  const ctx = editor.eventEdit.value
+  if (!ctx || !evRetimeId.value || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.updateEntryWindow(evRetimeId.value, ctx.dateIso, evRetimeFrom.value, evRetimeUntil.value)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  evRetimeId.value = null
+  flash('Times updated.')
 }
 
 async function evRemoveRow(entryId: string | null): Promise<void> {
@@ -917,7 +946,7 @@ watch(editor.add, (a) => {
   rsEnd.value = a.dateIso
 })
 
-function pickAdd(kind: 'event' | 'note' | 'student' | 'seat' | 'timeoff'): void {
+function pickAdd(kind: 'event' | 'note' | 'student' | 'seat' | 'timeoff' | 'extra'): void {
   if (!editor.add.value) return
   if (kind === 'timeoff') {
     aoUser.value = editor.add.value.userId ?? ''
@@ -925,6 +954,7 @@ function pickAdd(kind: 'event' | 'note' | 'student' | 'seat' | 'timeoff'): void 
     aoFrom.value = '06:00'
     aoUntil.value = '06:00'
   }
+  if (kind === 'extra') initAddExtra(editor.add.value)
   editor.add.value.kind = kind
 }
 
@@ -998,6 +1028,73 @@ async function submitAssignOff(): Promise<void> {
     return
   }
   flash('Time off recorded.')
+  editor.closeAll()
+}
+
+/* ── record extra hours directly (Justin, 2026-10-20) ────────────────
+   The admin twin of the extra-hours request: no request, no approval
+   step. Reached from the month add menu and the My-schedule button,
+   with the viewed member preselected. Start and end carry their own
+   dates so overnight and multi-day windows (deployments) are explicit. */
+const axUser = ref('')
+const axDate = ref('')
+const axEndDate = ref('')
+const axFrom = ref('06:00')
+const axUntil = ref('18:00')
+const axUnit = ref('')
+const axType = ref('regular')
+const axNote = ref('')
+
+function initAddExtra(a: { dateIso: string; userId: string | null }): void {
+  axUser.value = a.userId ?? ''
+  axDate.value = a.dateIso
+  axEndDate.value = a.dateIso
+  axFrom.value = '06:00'
+  axUntil.value = '18:00'
+  axUnit.value = ''
+  axType.value = 'regular'
+  axNote.value = ''
+}
+
+watch(
+  () => editor.add.value,
+  (a) => {
+    if (a && a.kind === 'extra') initAddExtra(a)
+  },
+)
+
+/* keep the end date sensible as they type — an until at or before the
+   from crosses midnight (same rule as the request form) */
+watch([axDate, axFrom, axUntil], () => {
+  if (!axDate.value) return
+  axEndDate.value = axUntil.value <= axFrom.value ? addDaysIso(axDate.value, 1) : axDate.value
+})
+
+/** Time-type choices: the built-ins plus Deployment and any custom pay
+ *  categories from Setup. */
+const timeTypeOptions = computed(() => sched.extraTimeTypes())
+
+async function submitAddExtra(): Promise<void> {
+  const a = editor.add.value
+  if (!a || !axUser.value || busy.value) return
+  busy.value = true
+  err.value = null
+  const e = await sched.addExtraHours({
+    userId: axUser.value,
+    dateIso: axDate.value || a.dateIso,
+    endDateIso: axEndDate.value || axDate.value || a.dateIso,
+    from: axFrom.value,
+    until: axUntil.value,
+    unitId: axUnit.value || null,
+    timeType: axType.value,
+    note: axNote.value,
+  })
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Extra hours recorded.')
   editor.closeAll()
 }
 
@@ -2153,16 +2250,33 @@ async function reqCancel() {
         <template v-if="eventBox">
           <div class="em__div">staffing</div>
           <p v-if="eventBox.rows.length === 0" class="em__empty">No slots yet.</p>
-          <div v-for="row in eventBox.rows" :key="row.entryId ?? row.name" class="em__evrow">
-            <span class="em__evname" :class="{ 'em__evname--open': row.open }">
-              {{ row.open ? `${row.name} — open` : row.name }}
-            </span>
-            <span class="em__evtime">{{ row.start }} – {{ row.end }}</span>
-            <span class="em__evtools">
-              <button v-if="!row.open" class="em__mini" :disabled="busy" @click="evUnassign(row.entryId)">Unassign</button>
-              <button class="em__mini em__mini--danger" :disabled="busy" @click="evRemoveRow(row.entryId)">Remove</button>
-            </span>
-          </div>
+          <template v-for="row in eventBox.rows" :key="row.entryId ?? row.name">
+            <div class="em__evrow">
+              <span class="em__evname" :class="{ 'em__evname--open': row.open }">
+                {{ row.open ? `${row.name} — open` : row.name }}
+              </span>
+              <span class="em__evtime">{{ row.start }} – {{ row.end }}</span>
+              <span class="em__evtools">
+                <button
+                  v-if="row.entryId"
+                  class="em__mini"
+                  :disabled="busy"
+                  @click="evRetimeId === row.entryId ? (evRetimeId = null) : evStartRetime(row)"
+                >
+                  Retime
+                </button>
+                <button v-if="!row.open" class="em__mini" :disabled="busy" @click="evUnassign(row.entryId)">Unassign</button>
+                <button class="em__mini em__mini--danger" :disabled="busy" @click="evRemoveRow(row.entryId)">Remove</button>
+              </span>
+            </div>
+            <div v-if="evRetimeId && evRetimeId === row.entryId" class="em__evretime">
+              <label>From <TimeSelect24 v-model="evRetimeFrom" class="em__input em__input--time" /></label>
+              <label>Until <TimeSelect24 v-model="evRetimeUntil" class="em__input em__input--time" /></label>
+              <button class="em__mini em__mini--save" :disabled="busy" @click="evSaveRetime">
+                {{ busy ? 'Saving…' : 'Save times' }}
+              </button>
+            </div>
+          </template>
           <div class="em__evadd">
             <button class="em__btn" :disabled="busy" @click="evAddSlot('Paramedic')">+ Paramedic</button>
             <button class="em__btn" :disabled="busy" @click="evAddSlot('Attendant')">+ Attendant</button>
@@ -2192,7 +2306,56 @@ async function reqCancel() {
           <button class="em__btn" @click="pickAdd('student')">Add a student</button>
           <button class="em__btn" @click="pickAdd('seat')">Add an extra seat (3rd rider)</button>
           <button class="em__btn" @click="pickAdd('timeoff')">Record time off for a member</button>
+          <button class="em__btn" @click="pickAdd('extra')">Record extra hours for a member</button>
           <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Close</button>
+        </template>
+
+        <template v-else-if="editor.add.value.kind === 'extra'">
+          <h3 class="em__title">Record extra hours</h3>
+          <p class="em__sub">
+            Books the hours directly onto the schedule — no request, no approval step. They
+            show in the day's Extra Hours box, count toward the member's hour ledger, and
+            ride the Paycom export under the time type you pick.
+          </p>
+          <p v-if="err" class="em__error">{{ err }}</p>
+          <label class="em__field">
+            <span>Member</span>
+            <select v-model="axUser" class="em__input">
+              <option value="" disabled>— choose —</option>
+              <option v-for="p in aoPeople" :key="p.id" :value="p.id">{{ p.fullName }}</option>
+            </select>
+          </label>
+          <div class="em__times">
+            <label>Starts <input v-model="axDate" type="date" class="em__input" /></label>
+            <label>From <TimeSelect24 v-model="axFrom" class="em__input em__input--time" /></label>
+          </div>
+          <div class="em__times">
+            <label>Ends <input v-model="axEndDate" type="date" class="em__input" :min="axDate" /></label>
+            <label>Until <TimeSelect24 v-model="axUntil" class="em__input em__input--time" /></label>
+          </div>
+          <div class="em__times">
+            <label class="em__field">
+              <span>Time type</span>
+              <select v-model="axType" class="em__input">
+                <option v-for="t in timeTypeOptions" :key="t.key" :value="t.key">{{ t.label }}</option>
+              </select>
+            </label>
+            <label class="em__field">
+              <span>Unit (optional)</span>
+              <select v-model="axUnit" class="em__input">
+                <option value="">—</option>
+                <option v-for="u in sched.units.value.filter((x) => x.active)" :key="u.id" :value="u.id">{{ u.code }}</option>
+              </select>
+            </label>
+          </div>
+          <label class="em__field">
+            <span>Comment (optional)</span>
+            <input v-model="axNote" type="text" class="em__input" placeholder="e.g. Held over on a late call" />
+          </label>
+          <button class="em__btn em__btn--primary" :disabled="busy || !axUser" @click="submitAddExtra">
+            {{ busy ? 'Working…' : 'Record extra hours' }}
+          </button>
+          <button class="em__btn em__btn--ghost" @click="editor.closeAll()">Cancel</button>
         </template>
 
         <template v-else-if="editor.add.value.kind === 'timeoff'">
@@ -3344,6 +3507,34 @@ async function reqCancel() {
 
 .em__mini--danger {
   color: var(--color-danger-500);
+}
+
+.em__mini--save {
+  color: white;
+  background: var(--color-brand-800);
+  border-color: var(--color-brand-800);
+}
+
+.em__evretime {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--color-ink-soft);
+  padding: 0.35rem 0 0.45rem;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+
+.em__evretime label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-weight: 600;
+}
+
+.em__evretime .em__mini--save {
+  padding: 0.35rem 0.7rem;
 }
 
 .em__evadd {

@@ -212,7 +212,7 @@ const weeks = computed<Cell[][]>(() => {
           <button
             class="mb__daybtn"
             :title="sched.canEdit.value ? 'Add to this day — event, note, student, seat' : 'Open this day'"
-            @click="sched.canEdit.value ? editor.openAdd(c.iso) : emit('open-day', c.iso)"
+            @click="sched.canEdit.value ? editor.openAdd(c.iso, 'menu', null, props.mine ? ((props.forUser ?? sched.myUserId.value) || null) : null) : emit('open-day', c.iso)"
           >
             <span class="mb__daynum" :class="{ 'mb__daynum--me': c.worksMe }" :title="c.worksMe ? 'You work this day' : undefined">{{ c.dayNum }}</span>
           </button>

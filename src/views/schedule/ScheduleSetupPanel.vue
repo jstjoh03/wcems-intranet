@@ -580,13 +580,17 @@ async function ptSave() {
 // ── Paycom earning codes (global admins) ─────────────────────────────
 
 /* One row per earning code: pick the time category the schedule
-   supports, type the Paycom code beside it — categories are a fixed
-   dropdown so codes and pay types can't mismatch. */
+   supports, type the Paycom code beside it — the dropdown covers the
+   fixed categories plus any custom ones added below, so codes and pay
+   types can't mismatch. Custom categories (free-typed, e.g.
+   Deployment-adjacent codes the county invents later) also become
+   time-type choices on extra hours. */
 const PAY_CATEGORIES: { key: string; label: string }[] = [
   { key: 'holiday', label: 'Holiday (double time)' },
   { key: 'event', label: 'Special event (double time)' },
   { key: 'instructor', label: 'Instructor hours' },
   { key: 'meeting', label: 'Meeting hours' },
+  { key: 'deployment', label: 'Deployment' },
   { key: 'vacation', label: 'Vacation Time' },
   { key: 'sick', label: 'Sick Time' },
   { key: 'unpaid', label: 'Unpaid Time Off' },
@@ -600,9 +604,17 @@ interface PcRow {
 }
 
 const pcRows = ref<PcRow[]>([])
+const pcCustom = ref<{ key: string; label: string }[]>([])
+const pcNewName = ref('')
 const pcBusy = ref(false)
 const pcDone = ref<string | null>(null)
 const pcInit = ref(false)
+
+/** Fixed categories plus the custom ones (order: fixed first). */
+const pcAllCats = computed(() => [
+  ...PAY_CATEGORIES,
+  ...pcCustom.value.filter((c) => !PAY_CATEGORIES.some((f) => f.key === c.key)),
+])
 
 watch(
   () => sched.settings.value,
@@ -610,10 +622,16 @@ watch(
     if (pcInit.value) return
     const existing = sched.paycomCodes()
     if (Object.keys(existing).length === 0 && !sched.loaded.value) return
-    pcRows.value = PAY_CATEGORIES.filter((c) => existing[c.key]).map((c) => ({
-      key: c.key,
-      code: existing[c.key],
-    }))
+    pcCustom.value = sched.customPayCategories()
+    /* A coded key nobody defines anymore (removed custom) still gets a
+       row so the code is visible and removable. */
+    const known = new Set([...PAY_CATEGORIES, ...pcCustom.value].map((c) => c.key))
+    for (const k of Object.keys(existing)) {
+      if (!known.has(k)) pcCustom.value.push({ key: k, label: k.replace(/_/g, ' ') })
+    }
+    pcRows.value = pcAllCats.value
+      .filter((c) => existing[c.key])
+      .map((c) => ({ key: c.key, code: existing[c.key] }))
     pcInit.value = true
   },
   { immediate: true, deep: true },
@@ -621,18 +639,45 @@ watch(
 
 function pcCatOptions(row: PcRow) {
   const used = new Set(pcRows.value.filter((r) => r !== row).map((r) => r.key))
-  return PAY_CATEGORIES.filter((c) => c.key === row.key || !used.has(c.key))
+  return pcAllCats.value.filter((c) => c.key === row.key || !used.has(c.key))
 }
 
 function pcAdd() {
   const used = new Set(pcRows.value.map((r) => r.key))
-  const next = PAY_CATEGORIES.find((c) => !used.has(c.key))
+  const next = pcAllCats.value.find((c) => !used.has(c.key))
   if (!next) return
   pcRows.value = [...pcRows.value, { key: next.key, code: '' }]
 }
 
 function pcRemove(row: PcRow) {
   pcRows.value = pcRows.value.filter((r) => r !== row)
+  /* Removing a custom category's row retires the category itself —
+     it disappears from the time-type choices too (codes already saved
+     on entries keep exporting; the key simply loses its label). */
+  if (!PAY_CATEGORIES.some((c) => c.key === row.key)) {
+    pcCustom.value = pcCustom.value.filter((c) => c.key !== row.key)
+  }
+}
+
+/** Free-typed category: "Deployment Strike Team" → key
+ *  deployment_strike_team, offered in the dropdown and as an
+ *  extra-hours time type. */
+function pcAddCustom() {
+  const label = pcNewName.value.trim()
+  if (!label) return
+  const key = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  if (!key) return
+  if (pcAllCats.value.some((c) => c.key === key)) {
+    err.value = `“${label}” already exists as a category.`
+    return
+  }
+  err.value = null
+  pcCustom.value = [...pcCustom.value, { key, label }]
+  pcRows.value = [...pcRows.value, { key, code: '' }]
+  pcNewName.value = ''
 }
 
 async function pcSave() {
@@ -643,7 +688,7 @@ async function pcSave() {
   for (const r of pcRows.value) {
     if (r.code.trim()) codes[r.key] = r.code.trim()
   }
-  const e = await sched.saveSetting('paycom', { codes })
+  const e = await sched.saveSetting('paycom', { codes, custom: pcCustom.value })
   pcBusy.value = false
   if (e) {
     err.value = e
@@ -1293,11 +1338,28 @@ async function saveWarnCfg() {
 
           <button
             class="setup__btn"
-            :disabled="pcRows.length >= PAY_CATEGORIES.length"
+            :disabled="pcRows.length >= pcAllCats.length"
             @click="pcAdd"
           >
             Add a code
           </button>
+
+          <div class="setup__pcrow setup__pcrow--new">
+            <input
+              v-model="pcNewName"
+              type="text"
+              class="setup__input setup__pccat"
+              placeholder="New category name — e.g. Deployment OT"
+              @keyup.enter="pcAddCustom"
+            />
+            <button class="setup__btn" :disabled="!pcNewName.trim()" @click="pcAddCustom">
+              Add custom category
+            </button>
+          </div>
+          <p class="setup__muted">
+            Custom categories also show up as time-type choices when extra hours are
+            requested or recorded, so new pay situations don't wait on a code change here.
+          </p>
 
           <p class="setup__muted">
             Holidays run 0600 the day of until 0600 the next day (handbook 5.5). Upcoming:
@@ -1643,6 +1705,11 @@ async function saveWarnCfg() {
 .setup__pccat {
   flex: 1.4;
   min-width: 0;
+}
+
+.setup__pcrow--new {
+  margin-top: 0.7rem;
+  flex-wrap: wrap;
 }
 
 .setup__pccode {

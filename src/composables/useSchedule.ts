@@ -860,6 +860,33 @@ function seedDevStub(): void {
     effectiveFrom: '2026-01-01',
     effectiveTo: null,
   }))
+
+  /* One staffed special event (2026-10-20): lets the Manage-event
+     modal — including the per-row Retime flow — render in dev. Writes
+     still error, which exercises the modal's error line. */
+  schedEvents.value = [
+    {
+      id: 'dev-ev-1', label: 'Dev County Fair', onDate: devDay,
+      startTime: '17:00', endTime: '22:00', notes: 'Dev fixture — writes error here.',
+      location: 'Fairgrounds', doubleTime: true,
+    },
+  ]
+  entries.value = [
+    {
+      id: 'dev-e-ev1', workDate: devDay, seatId: null, userId: 'dev-p-1',
+      startAt: centralTs(devDay, '17:00'), endAt: centralTs(devDay, '22:00'),
+      kind: 'event', status: 'scheduled', offType: null, timeType: 'regular',
+      eventId: 'dev-ev-1', studentProgram: 'Paramedic', unitId: null,
+      note: 'Dev County Fair', sourceRequest: null,
+    },
+    {
+      id: 'dev-e-ev2', workDate: devDay, seatId: null, userId: null,
+      startAt: centralTs(devDay, '17:00'), endAt: centralTs(devDay, '22:00'),
+      kind: 'event', status: 'open', offType: null, timeType: 'regular',
+      eventId: 'dev-ev-1', studentProgram: 'Attendant', unitId: null,
+      note: 'Dev County Fair', sourceRequest: null,
+    },
+  ]
 }
 
 /** Default "my shift" gold + the curated highlight palette members
@@ -2442,6 +2469,37 @@ function paycomCodes(): Record<string, string> {
   return out
 }
 
+/** Custom pay categories from Setup (key + display label) — free-typed
+ *  additions beyond the fixed list, e.g. Deployment. They show up as
+ *  time-type choices on extra hours and export under their own earning
+ *  code. */
+function customPayCategories(): { key: string; label: string }[] {
+  const p = (settings.value['paycom'] ?? {}) as Record<string, unknown>
+  const raw = Array.isArray(p.custom) ? (p.custom as unknown[]) : []
+  const out: { key: string; label: string }[] = []
+  for (const r of raw) {
+    const o = r as { key?: unknown; label?: unknown }
+    if (typeof o.key === 'string' && o.key.trim() && typeof o.label === 'string' && o.label.trim())
+      out.push({ key: o.key.trim(), label: o.label.trim() })
+  }
+  return out
+}
+
+/** Time-type choices for extra hours — the built-ins plus Deployment
+ *  and any custom pay categories from Setup. One list feeds the crew
+ *  request form and the admin direct-record form. */
+function extraTimeTypes(): { key: string; label: string }[] {
+  const base = [
+    { key: 'regular', label: 'Regular' },
+    { key: 'instructor', label: 'Instructor' },
+    { key: 'meeting', label: 'Meeting' },
+    { key: 'event', label: 'Special Event' },
+    { key: 'deployment', label: 'Deployment' },
+  ]
+  const have = new Set(base.map((b) => b.key))
+  return [...base, ...customPayCategories().filter((c) => !have.has(c.key))]
+}
+
 /** Rider-seat position presets (Chief-editable in Setup). */
 function riderPositions(): string[] {
   const v = settings.value['rider_positions'] as { options?: unknown } | undefined
@@ -3699,6 +3757,43 @@ async function assignTimeOff(
   const label = OFF_LABELS[offType] ?? 'Time off'
   audit('timeoff.assign', `Recorded ${label.toLowerCase()} time off for ${who} — ${dateIso} ${from}–${until} (entered directly, no request)`, { entity: 'leave', entityId: userId })
   notify('schedule_change', { userId, summary: `${label} time off recorded for you — ${dateIso}, ${from}–${until}.` })
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Editor: record extra hours for a member directly — no request, no
+ *  approval step. Same entry shape the approval path writes, so the
+ *  boards, My schedule, hour ledgers, and the Paycom export all treat
+ *  it identically. Start and end carry their own dates so overnight
+ *  and multi-day windows (deployments) are explicit. */
+async function addExtraHours(opts: {
+  userId: string
+  dateIso: string
+  endDateIso: string
+  from: string
+  until: string
+  unitId: string | null
+  timeType: string
+  note: string
+}): Promise<string | null> {
+  const startAt = centralTs(opts.dateIso, opts.from)
+  const endAt = centralTs(opts.endDateIso, opts.until)
+  if (tsMs(endAt) <= tsMs(startAt)) return 'The end must be after the start.'
+  const ins = await supabase.from('sched_entries').insert({
+    work_date: opts.dateIso,
+    unit_id: opts.unitId,
+    user_id: opts.userId,
+    start_at: startAt,
+    end_at: endAt,
+    kind: 'extra',
+    status: 'scheduled',
+    time_type: opts.timeType,
+    note: opts.note.trim() || null,
+  })
+  if (ins.error) return ins.error.message
+  const who = displayName(opts.userId).name
+  audit('entry.extra_add', `Recorded extra hours for ${who} — ${opts.dateIso} ${opts.from}–${opts.until} (${opts.timeType}, entered directly, no request)`, { entity: 'entry' })
+  notify('schedule_change', { userId: opts.userId, summary: `Extra hours recorded for you — ${opts.dateIso}, ${opts.from}–${opts.until}.` })
   await reloadRangeIfLoaded()
   return null
 }
@@ -6589,11 +6684,14 @@ export function useSchedule() {
     addDayNote,
     deleteDayNote,
     updateDayNote,
+    addExtraHours,
     // hours engine + settings
     settings,
     warningThresholds,
     riderPositions,
     paycomCodes,
+    customPayCategories,
+    extraTimeTypes,
     hoursCheck,
     hoursCheckWindow,
     saveSetting,

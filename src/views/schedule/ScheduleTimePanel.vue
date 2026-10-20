@@ -454,8 +454,9 @@ const eventCode = computed(() => codes.value['event'] ?? '')
 
 /** Which hours-row category (if any) a segment belongs to. Regular
  *  seat punches return null. Precedence: instructor/meeting by time
- *  type, then special events (double time), then holiday work dates
- *  (double time), then time-off types. */
+ *  type, then other coded time types (deployment + custom categories
+ *  from Setup), then special events (double time), then holiday work
+ *  dates (double time), then time-off types. */
 function segCategory(s: TimeSegment): { key: string; label: string } | null {
   if (s.kind === 'timeoff') {
     const key = s.offType ?? 'other'
@@ -467,6 +468,12 @@ function segCategory(s: TimeSegment): { key: string; label: string } | null {
   // Extra hours worked AT a special event (crew picked "Special Event"
   // on the request) pay double time exactly like event staffing.
   if (s.timeType === 'event') return { key: 'event', label: 'special event' }
+  // Any other non-regular time type: deployment or a custom pay
+  // category — exports under its own earning code.
+  if (s.timeType && s.timeType !== 'regular') {
+    const custom = sched.customPayCategories().find((c) => c.key === s.timeType)
+    return { key: s.timeType, label: custom?.label.toLowerCase() ?? s.timeType.replace(/_/g, ' ') }
+  }
   if (s.kind === 'event') {
     // events marked regular pay punch like ordinary coverage (unless
     // the date itself is a holiday)
@@ -479,18 +486,19 @@ function segCategory(s: TimeSegment): { key: string; label: string } | null {
   return null
 }
 
-/** Instructor/meeting time with no earning code — it can't ride as a
- *  regular punch (double time), so it stays out of the file. (Members
- *  missing an EE code are flagged by the no-EE-code banner instead;
- *  uncoded events/holidays stay plain punches; uncoded time off gets
- *  its own banner.) */
+/** Worked time typed instructor/meeting/deployment/custom with no
+ *  earning code — it can't ride as a regular punch, so it stays out of
+ *  the file. (Members missing an EE code are flagged by the no-EE-code
+ *  banner instead; uncoded events/holidays stay plain punches; uncoded
+ *  time off gets its own banner.) */
 const manualEntries = computed(() => {
   if (preset.value !== 'period') return []
   return segs.value
     .map((s) => ({ s, cat: segCategory(s) }))
-    .filter(({ cat }) => {
-      if (!cat) return false
-      return (cat.key === 'instructor' || cat.key === 'meeting') && !codes.value[cat.key]
+    .filter(({ s, cat }) => {
+      if (!cat || codes.value[cat.key]) return false
+      if (s.kind === 'timeoff' || s.kind === 'event') return false
+      return cat.key !== 'holiday' && cat.key !== 'event'
     })
     .map(({ s, cat }) => ({
       name: sched.personById.value.get(s.userId)?.fullName ?? 'Unknown',

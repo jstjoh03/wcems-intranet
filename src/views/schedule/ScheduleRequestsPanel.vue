@@ -860,10 +860,7 @@ async function cancel(r: SchedRequest) {
             <label class="rq__field">
               <span class="rq__label">Time type</span>
               <select v-model="exTimeType" class="rq__input">
-                <option value="regular">Regular</option>
-                <option value="instructor">Instructor</option>
-                <option value="meeting">Meeting</option>
-                <option value="event">Special Event</option>
+                <option v-for="t in sched.extraTimeTypes()" :key="t.key" :value="t.key">{{ t.label }}</option>
               </select>
             </label>
           </div>

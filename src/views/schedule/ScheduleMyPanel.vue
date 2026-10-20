@@ -43,6 +43,11 @@ const editor = useScheduleEditor()
 function recordOffForViewed() {
   editor.openAdd(dateIso.value, 'timeoff', null, viewingId.value ?? null)
 }
+/* Same direct-entry idea for extra hours (Justin, 2026-10-20): the
+   member + displayed date arrive prefilled in the shared drawer. */
+function recordExtraForViewed() {
+  editor.openAdd(dateIso.value, 'extra', null, viewingId.value ?? null)
+}
 
 // ── whose calendar is displayed (default: mine) ─────────────────────
 
@@ -544,6 +549,15 @@ function pendingLine(r: SchedRequest): string {
         @click="recordOffForViewed"
       >
         Record time off
+      </button>
+
+      <button
+        v-if="sched.canEdit.value"
+        class="my__setlink"
+        title="Book extra hours for the member being viewed on the displayed date — no request needed"
+        @click="recordExtraForViewed"
+      >
+        Record extra hours
       </button>
 
       <button class="my__setlink" @click="openSettings">My settings</button>
