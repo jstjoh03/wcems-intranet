@@ -8,6 +8,7 @@ import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
 import { useExams } from '@/composables/useExams'
 import { useClinicalDocs, FOLDER_LABELS } from '@/composables/useClinicalDocs'
+import { useFtoEvalRequests } from '@/composables/useFtoEvalRequests'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
@@ -260,6 +261,14 @@ const myPhaseText = computed(() => {
 
 const clindocs = useClinicalDocs()
 const ftep = useFtep()
+const evalReqs = useFtoEvalRequests()
+
+/* An open "you owe a Trainee Evaluation of FTO" request — created
+   automatically when a protocol test is passed or the FTO changes for
+   the final evaluation. */
+const myEvalRequest = computed(() =>
+  auth.appUser?.id ? (evalReqs.pendingFor(auth.appUser.id)[0] ?? null) : null,
+)
 const exams = useExams()
 
 /** Open exam work for this candidate — released ones pulse "begin". */
@@ -601,7 +610,22 @@ async function submitSign() {
         </div>
 
         <!-- Trainee Evaluation of FTO — phase-transition feedback, CDO-only -->
-        <div v-if="myRecord.record.workingPhase || myRecord.record.pending" class="cd__ftoeval reveal" style="animation-delay: 320ms">
+        <div v-if="myEvalRequest" class="cd__ftoeval cd__ftoeval--due reveal" style="animation-delay: 320ms">
+          <div class="cd__ftoeval-copy">
+            <b>You owe a Trainee Evaluation of FTO.</b>
+            {{ myEvalRequest.ftoName ? `For FTO ${myEvalRequest.ftoName}` : 'For your FTO' }}
+            <template v-if="myEvalRequest.phaseLabel"> — {{ myEvalRequest.phaseLabel }}</template>.
+            It goes to the Clinical Development Officer only, never to your FTO.
+          </div>
+          <button
+            type="button"
+            class="btn"
+            @click="router.push({ path: '/clinical-development/fto-eval', query: { req: myEvalRequest.id } })"
+          >
+            Fill it out now
+          </button>
+        </div>
+        <div v-else-if="myRecord.record.workingPhase || myRecord.record.pending" class="cd__ftoeval reveal" style="animation-delay: 320ms">
           <div class="cd__ftoeval-copy">
             <b>Finishing a phase?</b>
             Complete your Trainee Evaluation of FTO — it goes to the Clinical Development Officer
@@ -930,6 +954,11 @@ async function submitSign() {
   border-radius: 13px;
   background: var(--color-surface);
   border: 1px solid var(--color-line);
+}
+.cd__ftoeval--due {
+  background: oklch(0.985 0.015 86.8);
+  border-color: oklch(0.85 0.07 86.8);
+  border-left: 3px solid var(--color-accent-600, oklch(0.664 0.119 86.8));
 }
 .cd__ftoeval-copy {
   flex: 1;

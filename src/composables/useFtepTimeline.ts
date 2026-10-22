@@ -1,6 +1,7 @@
 import { useSchedule, todayCentralIso, type TimeSegment } from '@/composables/useSchedule'
 import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
+import { useFtepDayOverrides } from '@/composables/useFtepDayOverrides'
 import { activeTransitionFor } from '@/constants/pipelineGates'
 import {
   FTEP_PROGRAM_PHASES,
@@ -33,7 +34,13 @@ export interface FtepDayRow {
   counts: boolean
   future: boolean
   dor: 'submitted' | 'missing' | 'upcoming'
+  /** The matching counting DOR (±1 day — 24-hr shifts), for the ledger link. */
+  dorReportId: string | null
+  dorDayNo: string | null
   phaseKey: string | null
+  /** A clinical editor corrected this date by hand (ftep_day_overrides). */
+  overridden: boolean
+  overrideReason: string | null
 }
 
 export interface FtepPhaseTimeline {
@@ -158,11 +165,27 @@ export async function buildFtepTimeline(
     return pipeline.allPeople.value.find((p) => p.userId === userId)?.record.isFto ?? false
   }
 
-  const dorDates = new Set(
+  /* Counting DORs by eval date; a shift day matches ±1 (24-hr shifts
+     often push the DOR to the next calendar day). */
+  const dorByDate = new Map(
     ftep.reports.value
-      .filter((r) => r.kind === 'dor' && r.traineeId === person.userId && r.status === 'submitted')
-      .map((r) => r.evalDate),
+      .filter(
+        (r) =>
+          r.kind === 'dor' &&
+          r.traineeId === person.userId &&
+          r.status === 'submitted' &&
+          !r.payload.excludedFromRecord,
+      )
+      .map((r) => [r.evalDate, r] as const),
   )
+  function dorNearDate(dateIso: string) {
+    return (
+      dorByDate.get(dateIso) ??
+      dorByDate.get(addDaysIso(dateIso, 1)) ??
+      dorByDate.get(addDaysIso(dateIso, -1)) ??
+      null
+    )
+  }
 
   /* One day row per work date the trainee is on a truck. */
   const byDate = new Map<string, { unitId: string; segs: TimeSegment[] }>()
@@ -182,17 +205,53 @@ export async function buildFtepTimeline(
         }
       }
       const future = dateIso > today
+      const dorReport = future ? null : dorNearDate(dateIso)
       return {
         dateIso,
         unitCode: unitById.get(d.unitId)?.code ?? '',
         ftoNames: [...ftos.values()],
         counts: ftos.size > 0,
         future,
-        dor: future ? ('upcoming' as const) : dorDates.has(dateIso) ? ('submitted' as const) : ('missing' as const),
+        dor: future ? ('upcoming' as const) : dorReport ? ('submitted' as const) : ('missing' as const),
+        dorReportId: dorReport?.id ?? null,
+        dorDayNo: dorReport?.payload.trainingDayNo ?? null,
         phaseKey: null,
+        overridden: false,
+        overrideReason: null,
       }
     })
     .sort((a, b) => a.dateIso.localeCompare(b.dateIso))
+
+  /* Hand corrections win over the schedule derivation: exclude a day
+     that shouldn't count (rode as a third) or count an edge case —
+     including a date the schedule doesn't even show (synthetic row). */
+  const dayOv = useFtepDayOverrides()
+  await dayOv.ensureLoaded()
+  for (const o of dayOv.overridesFor(person.record.id)) {
+    const row = dayRows.find((d) => d.dateIso === o.onDate)
+    if (row) {
+      if (row.future) continue
+      row.counts = o.counts
+      row.overridden = true
+      row.overrideReason = o.reason || null
+    } else if (o.onDate <= today && o.counts) {
+      const dorReport = dorNearDate(o.onDate)
+      dayRows.push({
+        dateIso: o.onDate,
+        unitCode: '',
+        ftoNames: [],
+        counts: true,
+        future: false,
+        dor: dorReport ? 'submitted' : 'missing',
+        dorReportId: dorReport?.id ?? null,
+        dorDayNo: dorReport?.payload.trainingDayNo ?? null,
+        phaseKey: null,
+        overridden: true,
+        overrideReason: o.reason || null,
+      })
+    }
+  }
+  dayRows.sort((a, b) => a.dateIso.localeCompare(b.dateIso))
 
   /* Allocate past days to the phase whose window holds them: latest
      phase started on/before the day and not completed before it. */

@@ -15,6 +15,15 @@
 //     the trainee + every FTO who has held one of their phases + prior
 //     posters, minus the author. Push + email (matrix key 'clinical',
 //     absent = ON); never SMS.
+//   { kind: 'clinical_dor_reminder', traineeId, date, phase? }  ← editor
+//     nudge for a training day missing its DOR (Justin, 2026-10-21:
+//     "remind the trainee and the FTO — give the FTO the link to start
+//     the DOR"). Trainee + current-phase FTO(s); the FTO's copy links
+//     /clinical/ftep/dor/<traineeId>. Push + email, matrix 'clinical'.
+//   { kind: 'clinical_fto_eval_request', requestId }  ← the trainee owes
+//     a Trainee Evaluation of FTO (auto on a protocol-test pass or a
+//     final-eval FTO change). Recipient = the trainee only; links the
+//     prefilled form. Push + email, matrix 'clinical'.
 //   { kind: 'shift_reminders',   dryRun? }   ← pg_cron every 15 min (also
 //     editors, for testing). System calls authenticate with the
 //     x-sync-secret header (ROSTER_SYNC_SECRET) + the anon key as the
@@ -959,6 +968,123 @@ Deno.serve(async (req: Request) => {
           ],
           sms: '',
           url: '/clinical-development',
+          channels: { sms: false },
+        },
+        caller.id,
+      )
+      return Response.json({ ok: true, delivery: d }, { headers: CORS })
+    }
+
+    // ── clinical: training day missing its DOR ────────────────────────
+    /* Editor-triggered nudge. The trainee hears "check in with your
+     * FTO"; the FTO's copy carries the start-DOR link — the CDO never
+     * writes the DOR. */
+    if (kind === 'clinical_dor_reminder') {
+      if (!isEditor(caller))
+        return Response.json({ ok: false, error: 'Not authorized' }, { status: 403, headers: CORS })
+      const traineeId = String(body.traineeId ?? '')
+      const date = String(body.date ?? '')
+      const phase = clean(String(body.phase ?? ''), 60)
+      if (!traineeId || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+        return Response.json({ ok: false, error: 'traineeId and date required' }, { status: 400, headers: CORS })
+
+      const { data: rec } = await sb
+        .from('pipeline_records')
+        .select('id')
+        .eq('user_id', traineeId)
+        .maybeSingle()
+      const traineeName = await nameOf(traineeId)
+      const dayTxt = new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', timeZone: 'America/Chicago',
+      })
+      const phaseTxt = phase ? ` (${phase})` : ''
+
+      /* Current-phase FTO(s); every phase FTO as the fallback. */
+      const ftoIds = new Set<string>()
+      if (rec?.id) {
+        const { data: phases } = await sb
+          .from('ftep_phase_progress')
+          .select('fto_user_id, started_at, completed_at')
+          .eq('record_id', rec.id)
+          .not('fto_user_id', 'is', null)
+        const current = (phases ?? []).filter((p) => p.started_at && !p.completed_at)
+        for (const p of current.length ? current : (phases ?? []))
+          if (p.fto_user_id) ftoIds.add(p.fto_user_id as string)
+      }
+      ftoIds.delete(traineeId)
+
+      const dTrainee = await deliver(
+        [traineeId],
+        'clinical',
+        {
+          title: 'FTEP — DOR outstanding',
+          body: `Your ${dayTxt} training day${phaseTxt} has no DOR on file yet — check in with your FTO so it gets written.`,
+          tag: `clin-dor-${traineeId}-${date}`,
+          subject: 'WCEMS FTEP — your training day needs its DOR',
+          emailLines: [
+            `Your <b>${esc(dayTxt)}</b> training day${esc(phaseTxt)} has no Daily Observation Report on file yet.`,
+            'Check in with your FTO so the day gets documented — days without a DOR cannot count toward your phase.',
+          ],
+          sms: '',
+          url: '/clinical-development',
+          channels: { sms: false },
+        },
+        caller.id,
+      )
+      const dFto = ftoIds.size
+        ? await deliver(
+            [...ftoIds],
+            'clinical',
+            {
+              title: `FTEP — DOR outstanding · ${traineeName}`,
+              body: `${traineeName}'s ${dayTxt} training day${phaseTxt} has no DOR yet — tap to start it.`,
+              tag: `clin-dor-fto-${traineeId}-${date}`,
+              subject: `WCEMS FTEP — ${traineeName}'s ${dayTxt} DOR is outstanding`,
+              emailLines: [
+                `<b>${esc(traineeName)}</b>'s <b>${esc(dayTxt)}</b> training day${esc(phaseTxt)} has no Daily Observation Report on file.`,
+                'Open the portal to start it — the link lands on the DOR form for this trainee.',
+              ],
+              sms: '',
+              url: `/clinical/ftep/dor/${traineeId}`,
+              channels: { sms: false },
+            },
+            caller.id,
+          )
+        : null
+      return Response.json({ ok: true, delivery: { trainee: dTrainee, fto: dFto } }, { headers: CORS })
+    }
+
+    // ── clinical: Trainee Evaluation of FTO owed ──────────────────────
+    if (kind === 'clinical_fto_eval_request') {
+      if (!isEditor(caller))
+        return Response.json({ ok: false, error: 'Not authorized' }, { status: 403, headers: CORS })
+      const requestId = String(body.requestId ?? '')
+      const { data: req, error: rErr } = await sb
+        .from('ftep_fto_eval_requests')
+        .select('id, trainee_user_id, fto_name, phase_label, status')
+        .eq('id', requestId)
+        .maybeSingle()
+      if (rErr || !req)
+        return Response.json({ ok: false, error: rErr?.message ?? 'Request not found' }, { status: 404, headers: CORS })
+      if (req.status !== 'pending')
+        return Response.json({ ok: true, delivery: null, note: 'already closed' }, { headers: CORS })
+
+      const who = req.fto_name ? `FTO ${req.fto_name}` : 'your FTO'
+      const ctx = req.phase_label ? ` — ${clean(String(req.phase_label), 120)}` : ''
+      const d = await deliver(
+        [req.trainee_user_id as string],
+        'clinical',
+        {
+          title: 'FTEP — Evaluation of FTO due',
+          body: `Please complete your Trainee Evaluation of ${who}${ctx}. It goes to Clinical only — never to the FTO.`,
+          tag: `clin-ftoeval-${req.id}`,
+          subject: 'WCEMS FTEP — your Trainee Evaluation of FTO is due',
+          emailLines: [
+            `Please complete your <b>Trainee Evaluation of FTO</b> for <b>${esc(req.fto_name || 'your FTO')}</b>${esc(ctx)}.`,
+            'It takes about three minutes, goes to the Clinical Development Officer directly, and is never shared with the FTO. Honest feedback makes the program better.',
+          ],
+          sms: '',
+          url: `/clinical-development/fto-eval?req=${req.id}`,
           channels: { sms: false },
         },
         caller.id,

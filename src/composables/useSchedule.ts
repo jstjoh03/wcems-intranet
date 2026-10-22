@@ -181,6 +181,9 @@ export const NOTIFY_TYPES: { key: string; label: string; editorOnly?: boolean; n
   { key: 'verify', label: 'Time verification — end of shift & pay period', noSms: true },
   { key: 'announcements', label: 'Announcements from the scheduler' },
   { key: 'approvals', label: 'A request needs approval', editorOnly: true },
+  /* Clinical/FTEP thread messages never text either — low-stakes
+     back-and-forth rides push + email, opt-out per person here. */
+  { key: 'clinical', label: 'Clinical — FTEP thread messages', noSms: true },
 ]
 
 export type NotifyChannel = 'push' | 'email' | 'sms'

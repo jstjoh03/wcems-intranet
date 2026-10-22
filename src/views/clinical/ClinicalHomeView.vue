@@ -8,6 +8,12 @@ import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useExams } from '@/composables/useExams'
 import { useClinicalMessages, type FtepMessage } from '@/composables/useClinicalMessages'
+import { useFtoEvalRequests } from '@/composables/useFtoEvalRequests'
+import { useClinicalAutoWires } from '@/composables/useClinicalAutoWires'
+import { activeTransitionFor } from '@/constants/pipelineGates'
+import { FTEP_PROGRAM_PHASES } from '@/constants/ftepForms'
+import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
+import { supabase } from '@/lib/supabase'
 import type { PipelinePerson } from '@/types'
 
 /**
@@ -36,6 +42,11 @@ const {
 const ftep = useFtep()
 const exams = useExams()
 const { loadRecent } = useClinicalMessages()
+const evalReqs = useFtoEvalRequests()
+
+/* Auto-wires: exam pass → FTO-eval request · Skills Day → NEOP gate —
+   they run wherever an editor is looking, and Today is that place. */
+useClinicalAutoWires()
 
 /* The queue is the clinical department's surface. Supervisors/FTOs get
    FTEP as their home; crew get My Progress on the legacy route. */
@@ -110,6 +121,63 @@ onMounted(async () => {
   recentMessages.value = (await loadRecent(7)).slice(0, 3)
 })
 
+/* FTO evaluations owed — auto-requested on protocol-test passes and
+   final-eval FTO changes; the row re-nudges everyone still pending. */
+const evalsDue = computed(() => evalReqs.pending())
+const evalNudgeBusy = ref(false)
+const evalNudged = ref(false)
+async function nudgeEvals() {
+  if (evalNudgeBusy.value || evalNudged.value) return
+  evalNudgeBusy.value = true
+  try {
+    for (const r of evalsDue.value) evalReqs.notify(r.id)
+    evalNudged.value = true
+  } finally {
+    evalNudgeBusy.value = false
+  }
+}
+
+/* Training days missing their DOR — remind the trainee AND the FTO
+   (the FTO's copy carries the start link); the CDO never writes it. */
+const missingDor = computed(() => {
+  const out: { p: PipelinePerson; phase: string; day: string }[] = []
+  for (const p of inPipeline.value) {
+    const t = activeTransitionFor(p.record)
+    const ladder =
+      (t === 'NEOP' || t === 'P1C_P1') && /emt-p|^lp$/i.test(p.record.certLevel ?? '')
+        ? FTEP_PROGRAM_PHASES.P1C_P1
+        : t === 'P1_P2'
+          ? FTEP_PROGRAM_PHASES.P1_P2
+          : []
+    if (!ladder.length) continue
+    const set = buildDorDateSet(ftep.activeDors(p.userId))
+    const rows = phasesFor(p.record.id)
+    for (const ph of ladder) {
+      const row = rows.find((r) => r.phaseKey === ph.key)
+      for (const d of missingDorDays(row, set, ph.noFto)) out.push({ p, phase: ph.label, day: d })
+    }
+  }
+  return out.sort((a, b) => a.day.localeCompare(b.day)).slice(0, 3)
+})
+const remindBusy = ref<string | null>(null)
+const reminded = ref(new Set<string>())
+async function remindDor(m: { p: PipelinePerson; phase: string; day: string }) {
+  const key = `${m.p.userId}-${m.day}`
+  if (remindBusy.value || reminded.value.has(key)) return
+  remindBusy.value = key
+  try {
+    const { error } = await supabase.functions.invoke('sched-notify', {
+      body: { kind: 'clinical_dor_reminder', traineeId: m.p.userId, date: m.day, phase: m.phase },
+    })
+    if (error) throw error
+    reminded.value = new Set([...reminded.value, key])
+  } catch (e) {
+    console.error('[today] DOR reminder failed:', e)
+  } finally {
+    remindBusy.value = null
+  }
+}
+
 function traineeNameForRecord(recordId: string): { name: string; userId: string | null } {
   const p = clinicalPeople.value.find((x) => x.record.id === recordId)
   return p ? { name: p.fullName, userId: p.userId } : { name: 'a trainee', userId: null }
@@ -121,6 +189,8 @@ const queueCount = computed(
     (unreviewed.value.length > 0 ? 1 : 0) +
     awaitingRelease.value.length +
     recentMessages.value.length +
+    (evalsDue.value.length > 0 ? 1 : 0) +
+    missingDor.value.length +
     expiredItems.value.length +
     missingItems.value.length,
 )
@@ -238,6 +308,31 @@ function fmtMsgWhen(iso: string): string {
               <span class="ch__row-what">No phase anchored — day counts and projections can't run</span>
               <span class="ch__row-st ch__warn">Set start date →</span>
             </button>
+            <div v-for="m in missingDor" :key="`${m.p.userId}-${m.day}`" class="ch__row ch__row--static">
+              <span class="ch__row-who">{{ m.p.fullName }} <small>· DOR</small></span>
+              <span class="ch__row-what">{{ fmtWhen(m.day) }} ride ({{ m.phase }}) has no DOR yet</span>
+              <button
+                type="button"
+                class="ch__row-st ch__warn ch__row-act"
+                :disabled="remindBusy === `${m.p.userId}-${m.day}` || reminded.has(`${m.p.userId}-${m.day}`)"
+                title="Push + email to both — the FTO's message carries the start link"
+                @click="remindDor(m)"
+              >{{ reminded.has(`${m.p.userId}-${m.day}`) ? 'Reminded ✓' : 'Remind FTO + trainee →' }}</button>
+            </div>
+            <div v-if="evalsDue.length" class="ch__row ch__row--static">
+              <span class="ch__row-who">FTO evaluations <small>· {{ evalsDue.length }} due</small></span>
+              <span class="ch__row-what">
+                {{ evalsDue.slice(0, 3).map((r) => personById(r.traineeUserId)?.fullName ?? 'Trainee').join(', ') }}{{ evalsDue.length > 3 ? ` +${evalsDue.length - 3}` : '' }}
+                — each owes a Trainee Evaluation of FTO
+              </span>
+              <button
+                type="button"
+                class="ch__row-st ch__warn ch__row-act"
+                :disabled="evalNudgeBusy || evalNudged"
+                title="Push + email each trainee their form link again"
+                @click="nudgeEvals"
+              >{{ evalNudged ? 'Sent ✓' : 'Send the form →' }}</button>
+            </div>
             <button
               v-if="unreviewed.length"
               type="button"
@@ -278,7 +373,7 @@ function fmtMsgWhen(iso: string): string {
               <span class="ch__row-st ch__mut">Reply →</span>
             </button>
             <div
-              v-if="!unanchored.length && !unreviewed.length && !awaitingRelease.length && !recentMessages.length"
+              v-if="!unanchored.length && !unreviewed.length && !awaitingRelease.length && !recentMessages.length && !missingDor.length && !evalsDue.length"
               class="ch__card-empty"
             >
               Nothing waiting — every trainee is anchored, reviewed, and quiet.
@@ -621,6 +716,14 @@ function fmtMsgWhen(iso: string): string {
 .ch__bad { color: oklch(0.5 0.17 25); }
 .ch__warn { color: oklch(0.5 0.12 70); }
 .ch__mut { color: var(--color-muted); }
+.ch__row--static { cursor: default; }
+.ch__row--static:hover { background: none; }
+.ch__row-act {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--font-sans); text-align: right;
+}
+.ch__row-act:hover { text-decoration: underline; text-underline-offset: 3px; }
+.ch__row-act:disabled { cursor: default; text-decoration: none; opacity: 0.75; }
 @media (max-width: 560px) {
   .ch__row { grid-template-columns: 1fr auto; }
   .ch__row-what { grid-column: 1 / -1; order: 3; }

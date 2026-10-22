@@ -6,6 +6,8 @@ import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import FtepSectionTabs from '@/components/clinical/FtepSectionTabs.vue'
 import FtepTraineeQuickview from '@/components/clinical/FtepTraineeQuickview.vue'
+import FtepTraineeCard from '@/components/clinical/FtepTraineeCard.vue'
+import AdvancementRecordDrawer from '@/components/clinical/AdvancementRecordDrawer.vue'
 import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.vue'
 import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useClinical } from '@/composables/useClinical'
@@ -14,10 +16,11 @@ import { useAuthStore } from '@/stores/auth'
 import { activeTransitionFor, gateItemsFor, petitionItemsFor } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
-import { buildFtepTimeline } from '@/composables/useFtepTimeline'
-import { useSchedule, todayCentralIso } from '@/composables/useSchedule'
+import { buildFtepTimeline, type FtepTimeline } from '@/composables/useFtepTimeline'
+import { useSchedule, todayCentralIso, type TimeSegment } from '@/composables/useSchedule'
 import { usePipeline } from '@/composables/usePipeline'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
+import { supabase } from '@/lib/supabase'
 import type { FtepReport, PipelinePerson } from '@/types'
 
 /**
@@ -133,6 +136,34 @@ async function confirmExclude(r: FtepReport) {
   }
 }
 
+/* ── Advancement Record drawer (V6 cards) ──────────────────────────── */
+const advFor = ref<PipelinePerson | null>(null)
+
+/* ── DOR reminders — the CDO never writes the DOR; the nudge goes to
+   the trainee AND the FTO, and the FTO's copy carries the start link
+   (push + email via sched-notify). ───────────────────────────────── */
+const remindBusy = ref<string | null>(null)
+const reminded = ref(new Set<string>())
+
+async function remindDor(m: { p: PipelinePerson; phase: string; day: string }) {
+  const key = `${m.p.userId}-${m.day}`
+  if (remindBusy.value || reminded.value.has(key)) return
+  remindBusy.value = key
+  try {
+    const { data, error } = await supabase.functions.invoke('sched-notify', {
+      body: { kind: 'clinical_dor_reminder', traineeId: m.p.userId, date: m.day, phase: m.phase },
+    })
+    if (error) throw error
+    if (data && data.ok === false) throw new Error(data.error ?? 'send failed')
+    reminded.value = new Set([...reminded.value, key])
+  } catch (e) {
+    console.error('[ftep] DOR reminder failed:', e)
+    alert('Could not send the reminder — check the connection and try again.')
+  } finally {
+    remindBusy.value = null
+  }
+}
+
 /* ── Trainee quickview — click the card for the planning picture ──── */
 const quickview = ref<PipelinePerson | null>(null)
 function openQuickview(p: PipelinePerson, e: MouseEvent) {
@@ -197,6 +228,47 @@ const missingDorRows = computed(() => {
   return out.sort((a, b) => a.day.localeCompare(b.day) || a.p.fullName.localeCompare(b.p.fullName))
 })
 
+/* ── Schedule-linked timelines, built once per load from one shared
+   segment fetch — the V6 trainee cards, the plan-ahead panel, and the
+   missing-DOR reminders all read from this map. Rebuilt (from the
+   cached segs) when a card corrects a day or phase rows change. */
+const timelines = ref<Record<string, FtepTimeline>>({})
+let segsCache: TimeSegment[] | null = null
+
+async function loadTimelines(refetch = false) {
+  const elig = clinicalPeople.value.filter((q) => {
+    const t = activeTransitionFor(q.record)
+    return (t === 'NEOP' || t === 'P1C_P1' || t === 'P1_P2') && !q.record.legacyTrack && hasPhaseLadder(q)
+  })
+  if (!elig.length) {
+    timelines.value = {}
+    return
+  }
+  const sched = useSchedule()
+  await sched.ensureLoaded()
+  if (!segsCache || refetch) {
+    const today = todayCentralIso()
+    const addD = (n: number) => {
+      const d = new Date(`${today}T12:00:00Z`)
+      d.setUTCDate(d.getUTCDate() + n)
+      return d.toISOString().slice(0, 10)
+    }
+    const res = await sched.fetchTimeSegments(addD(-240), addD(112))
+    if (res.error) return
+    segsCache = res.segs
+  }
+  const out: Record<string, FtepTimeline> = {}
+  for (const q of elig) {
+    try {
+      const tl = await buildFtepTimeline(q, { segs: segsCache })
+      if (tl) out[q.userId] = tl
+    } catch {
+      /* one bad record shouldn't kill the page */
+    }
+  }
+  timelines.value = out
+}
+
 /* Plan ahead — final evaluations: the last phase must run under an
    FTO the trainee has NOT had (usually a station move), so the
    projected start date surfaces here weeks out for scheduling. */
@@ -207,55 +279,43 @@ interface PlanRow {
   ftos: string[]
   testStd: string | null
 }
-const planRows = ref<PlanRow[]>([])
-
-async function loadPlan() {
-  const elig = clinicalPeople.value.filter((q) => {
-    const t = activeTransitionFor(q.record)
-    return (t === 'NEOP' || t === 'P1C_P1' || t === 'P1_P2') && !q.record.legacyTrack
-  })
-  if (!elig.length) {
-    planRows.value = []
-    return
-  }
-  const sched = useSchedule()
-  await sched.ensureLoaded()
-  const today = todayCentralIso()
-  const addD = (n: number) => {
-    const d = new Date(`${today}T12:00:00Z`)
-    d.setUTCDate(d.getUTCDate() + n)
-    return d.toISOString().slice(0, 10)
-  }
-  const res = await sched.fetchTimeSegments(addD(-240), addD(112))
-  if (res.error) return
+const planRows = computed<PlanRow[]>(() => {
   const out: PlanRow[] = []
-  for (const q of elig) {
-    try {
-      const tl = await buildFtepTimeline(q, { segs: res.segs })
-      if (!tl) continue
-      const fin = tl.phases.find((x) => x.key === tl.finalPhaseKey)
-      if (!fin || fin.status === 'complete') continue
-      out.push({
-        p: q,
-        start: fin.status === 'current' ? fin.startedAt : fin.estStdStart,
-        started: fin.status === 'current',
-        ftos: tl.ftosUsed,
-        testStd: tl.estTestStd,
-      })
-    } catch {
-      /* one bad record shouldn't kill the panel */
-    }
+  for (const q of clinicalPeople.value) {
+    const tl = timelines.value[q.userId]
+    if (!tl) continue
+    const fin = tl.phases.find((x) => x.key === tl.finalPhaseKey)
+    if (!fin || fin.status === 'complete') continue
+    out.push({
+      p: q,
+      start: fin.status === 'current' ? fin.startedAt : fin.estStdStart,
+      started: fin.status === 'current',
+      ftos: tl.ftosUsed,
+      testStd: tl.estTestStd,
+    })
   }
-  out.sort((a, b) => (a.start ?? '9999').localeCompare(b.start ?? '9999'))
-  planRows.value = out
-}
+  return out.sort((a, b) => (a.start ?? '9999').localeCompare(b.start ?? '9999'))
+})
 
 watch(
-  [ready, canEdit],
-  ([r, e]) => {
-    if (r && e) void loadPlan()
+  [ready, canViewBoard],
+  ([r, ok]) => {
+    if (r && ok) void loadTimelines()
   },
   { immediate: true },
+)
+
+/* Phase rows and report edits land through loadAll()/realtime — rebuild
+   the derived timelines (pure compute on the cached segs) when the
+   underlying state changes. */
+let rebuildTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => [clinicalPeople.value, ftep.reports.value] as const,
+  () => {
+    if (!ready.value || !canViewBoard.value) return
+    if (rebuildTimer) clearTimeout(rebuildTimer)
+    rebuildTimer = setTimeout(() => void loadTimelines(), 350)
+  },
 )
 
 /* Review queue, collapsed: a 59-row wall at the top of the page was
@@ -530,9 +590,21 @@ async function review(r: FtepReport) {
         <div v-for="m in missingDorRows" :key="`${m.p.userId}-${m.day}`" class="fh__missing-row">
           <span class="fh__missing-who">{{ m.p.fullName }}</span>
           <span class="fh__missing-meta">{{ m.phase }} · shift {{ fmt(m.day) }}</span>
-          <button type="button" class="fh__mini" @click="startReport(m.p, 'dor')">
-            <FileText :size="12" :stroke-width="2" /> New DOR
-          </button>
+          <span class="fh__missing-actions">
+            <button
+              v-if="canEdit"
+              type="button"
+              class="fh__mini"
+              :disabled="remindBusy === `${m.p.userId}-${m.day}` || reminded.has(`${m.p.userId}-${m.day}`)"
+              title="Push + email to both — the FTO's message carries the start link"
+              @click="remindDor(m)"
+            >
+              {{ reminded.has(`${m.p.userId}-${m.day}`) ? 'Reminded ✓' : (remindBusy === `${m.p.userId}-${m.day}` ? 'Sending…' : 'Remind FTO + trainee') }}
+            </button>
+            <button type="button" class="fh__mini" @click="startReport(m.p, 'dor')">
+              <FileText :size="12" :stroke-width="2" /> New DOR
+            </button>
+          </span>
         </div>
       </div>
 
@@ -558,9 +630,19 @@ async function review(r: FtepReport) {
           <span class="fh__track" :class="`fh__track--${g.key}`">{{ g.label }}</span>
           <span class="fh__track-hint">{{ g.hint }}</span>
         </div>
+        <template v-for="p in g.people" :key="p.userId">
+        <FtepTraineeCard
+          v-if="g.key === 'new' && hasPhaseLadder(p)"
+          :person="p"
+          :timeline="timelines[p.userId] ?? null"
+          :can-edit="canEdit"
+          @advance="advFor = p"
+          @quickview="quickview = p"
+          @refresh="loadTimelines()"
+          @report="(k) => startReport(p, k)"
+        />
         <div
-          v-for="p in g.people"
-          :key="p.userId"
+          v-else
           class="fh__trainee fh__trainee--clickable"
           :class="`fh__trainee--${g.key}`"
           title="Click for quick view"
@@ -655,11 +737,21 @@ async function review(r: FtepReport) {
             <ClinicalMessageThread :record-id="p.record.id" :trainee-user-id="p.userId" />
           </div>
         </div>
+        </template>
       </template>
       <div v-if="groups.length === 0" class="fh__empty">No trainees actively progressing.</div>
 
       <!-- Trainee quickview -->
       <FtepTraineeQuickview :person="quickview" @close="quickview = null" />
+
+      <!-- Phase Advancement Record -->
+      <AdvancementRecordDrawer
+        v-if="advFor"
+        :person="advFor"
+        :timeline="timelines[advFor.userId] ?? null"
+        @close="advFor = null"
+        @saved="advFor = null; void loadTimelines()"
+      />
 
       <!-- Legacy call-eval dialog -->
       <div v-if="legacyDialog" class="fh__overlay" @click.self="legacyDialog = null">
@@ -830,7 +922,7 @@ async function review(r: FtepReport) {
 }
 .fh__missing-who { font-weight: 700; color: var(--color-ink); }
 .fh__missing-meta { color: var(--color-ink-soft); font-size: 12px; }
-.fh__missing-row .fh__mini { margin-left: auto; }
+.fh__missing-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
 .fh__queue-actions { margin-left: auto; display: flex; gap: 8px; }
 .fh__triagewrap { position: relative; }
 .fh__triage {

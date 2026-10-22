@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ArrowLeft, Check } from 'lucide-vue-next'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
+import { useFtoEvalRequests } from '@/composables/useFtoEvalRequests'
 import {
   FTO_EVAL_AREAS,
   FTO_EVAL_NARRATIVES,
@@ -21,7 +22,9 @@ import {
  */
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
+const evalReqs = useFtoEvalRequests()
 
 const ftoName = ref('')
 const phase = ref('')
@@ -31,16 +34,41 @@ const signature = ref<string | null>(null)
 const submitting = ref(false)
 const submitError = ref<string | null>(null)
 const done = ref(false)
+/* The open request this submission answers (auto-created on a protocol
+   test pass or a final-eval FTO change) — closed on submit. */
+const requestId = ref<string | null>(null)
 
-/* Prefill the FTO from the trainee's own pipeline record when known. */
+/* Prefill: the linked/newest pending request first (it names the FTO
+   and the phase the evaluation covers), the record's FTO otherwise. */
 onMounted(async () => {
   if (auth.usingDevStub || !auth.appUser?.id) return
-  const { data } = await supabase
-    .from('pipeline_records')
-    .select('fto_name')
-    .eq('user_id', auth.appUser.id)
-    .maybeSingle()
-  if (data?.fto_name && !ftoName.value) ftoName.value = data.fto_name
+  const fromQuery = typeof route.query.req === 'string' ? route.query.req : null
+  const tryPrefill = () => {
+    const mine = evalReqs.pendingFor(auth.appUser!.id)
+    const req = (fromQuery ? mine.find((r) => r.id === fromQuery) : null) ?? mine[0] ?? null
+    if (!req) return false
+    requestId.value = req.id
+    if (!ftoName.value) ftoName.value = req.ftoName
+    if (!phase.value) phase.value = req.phaseLabel
+    return true
+  }
+  if (!tryPrefill()) {
+    /* requests may still be loading — retry once they land */
+    const t = setInterval(() => {
+      if (!evalReqs.ready.value) return
+      clearInterval(t)
+      tryPrefill()
+    }, 300)
+    setTimeout(() => clearInterval(t), 6000)
+  }
+  if (!ftoName.value) {
+    const { data } = await supabase
+      .from('pipeline_records')
+      .select('fto_name')
+      .eq('user_id', auth.appUser.id)
+      .maybeSingle()
+    if (data?.fto_name && !ftoName.value) ftoName.value = data.fto_name
+  }
 })
 
 function setScore(no: number, score: number) {
@@ -80,18 +108,24 @@ async function submit() {
       ]),
     ),
   }
-  const { error } = await supabase.from('ftep_fto_evals').insert({
-    trainee_id: auth.appUser.id,
-    fto_name: ftoName.value.trim(),
-    phase: phase.value.trim() || null,
-    payload,
-    signature: signature.value,
-  })
+  const { data, error } = await supabase
+    .from('ftep_fto_evals')
+    .insert({
+      trainee_id: auth.appUser.id,
+      fto_name: ftoName.value.trim(),
+      phase: phase.value.trim() || null,
+      payload,
+      signature: signature.value,
+    })
+    .select('id')
+    .single()
   submitting.value = false
   if (error) {
     submitError.value = error.message
     return
   }
+  /* Close the request that asked for this evaluation. */
+  if (requestId.value) await evalReqs.complete(requestId.value, (data?.id as string) ?? null)
   done.value = true
 }
 </script>

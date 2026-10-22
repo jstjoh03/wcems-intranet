@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Play, XCircle, ExternalLink, ClipboardCheck, Award, Download } from 'lucide-vue-next'
+import { Play, XCircle, ExternalLink, ClipboardCheck, Award, Download, HeartPulse } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
+import ClinicalCredentialChecklist from '@/components/clinical/ClinicalCredentialChecklist.vue'
+import MegacodeRunnerDrawer from '@/components/clinical/MegacodeRunnerDrawer.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useExams, type ExamAssignment } from '@/composables/useExams'
 import { useAuthStore } from '@/stores/auth'
 import { useExamCertAutoFile } from '@/composables/useExamCertAutoFile'
+import { useClinicalAutoWires } from '@/composables/useClinicalAutoWires'
+import { CREDENTIALING_CHECKLISTS } from '@/constants/credentialingChecklist'
+import { activeTransitionFor } from '@/constants/pipelineGates'
 import { supabase } from '@/lib/supabase'
 import { generateCompletedExamPdf } from '@/lib/examPrintPdf'
+import type { PipelinePerson } from '@/types'
 
 /**
  * Protocol examinations manager (/clinical/exams, editors only) — the
@@ -140,6 +146,34 @@ function fmtDate(iso: string | null): string {
    employee file, so a cert generates wherever an editor looks). */
 const { certFiled } = useExamCertAutoFile()
 
+/* Auto-wires: exam pass → FTO-eval request · Skills Day → NEOP gate. */
+useClinicalAutoWires()
+
+/* ── Credentialing checklists — one per candidate with an open
+   assignment, surfaced the moment the test is assigned so the
+   in-office paperwork gets signed while they're in the building. ── */
+const checklistPeople = computed<PipelinePerson[]>(() => {
+  const seen = new Set<string>()
+  const out: PipelinePerson[] = []
+  for (const a of openAssignments.value) {
+    if (seen.has(a.userId)) continue
+    seen.add(a.userId)
+    const p = clinicalPeople.value.find((x) => x.userId === a.userId)
+    if (!p) continue
+    const t = activeTransitionFor(p.record)
+    if (t && CREDENTIALING_CHECKLISTS[t]) out.push(p)
+  }
+  return out
+})
+
+/* ── Megacode runner ───────────────────────────────────────────────── */
+const mcOpen = ref(false)
+const mcPreselect = ref<PipelinePerson | null>(null)
+function openMegacode(p: PipelinePerson | null) {
+  mcPreselect.value = p
+  mcOpen.value = true
+}
+
 </script>
 
 <template>
@@ -154,6 +188,9 @@ const { certFiled } = useExamCertAutoFile()
           checks the protocol-test gate on their active transition automatically.
         </div>
       </div>
+      <button type="button" class="ce__btn ce__mc" @click="openMegacode(null)">
+        <HeartPulse :size="13" :stroke-width="2" /> Run a megacode
+      </button>
     </header>
 
     <div v-if="!ready || !exams.ready.value" class="ce__empty">Loading…</div>
@@ -231,6 +268,17 @@ const { certFiled } = useExamCertAutoFile()
         </div>
       </div>
 
+      <!-- Credentialing checklists — surface with the assignment -->
+      <template v-if="checklistPeople.length">
+        <div class="ce__sectitle">Credentialing checklist — surfaces with the assignment</div>
+        <ClinicalCredentialChecklist
+          v-for="p in checklistPeople"
+          :key="p.userId"
+          :person="p"
+          @megacode="openMegacode(p)"
+        />
+      </template>
+
       <!-- Results -->
       <div class="ce__sectitle">Results</div>
       <div class="ce__card">
@@ -268,6 +316,13 @@ const { certFiled } = useExamCertAutoFile()
         Candidates take released exams from <b>My Progress</b> on their dashboard; this page's
         "Open exam" button covers your own assignments (e.g. trialing a test before fielding it).
       </p>
+
+      <MegacodeRunnerDrawer
+        v-if="mcOpen"
+        :preselect="mcPreselect"
+        @close="mcOpen = false"
+        @saved="mcOpen = false"
+      />
     </template>
   </div>
 </template>
@@ -275,7 +330,8 @@ const { certFiled } = useExamCertAutoFile()
 <style scoped>
 .ce { max-width: 980px; margin: 0 auto; padding: 24px 16px 80px; }
 @media (min-width: 768px) { .ce { padding: 24px 32px 80px; } }
-.ce__head { margin-bottom: 16px; }
+.ce__head { margin-bottom: 16px; display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.ce__mc { margin-left: auto; border-color: var(--color-accent-strong, #a8842c); color: var(--color-accent-strong, #a8842c); }
 .ce__title { font-size: 28px; line-height: 1.1; color: var(--color-ink); }
 .ce__sub { margin-top: 4px; font-size: 12.5px; color: var(--color-muted); max-width: 620px; line-height: 1.5; }
 .ce__empty { padding: 28px 0; text-align: center; color: var(--color-muted); font-size: 13px; }
