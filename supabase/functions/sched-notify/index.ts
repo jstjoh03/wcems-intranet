@@ -10,6 +10,11 @@
 //   { kind: 'schedule_change',   userId, summary }
 //   { kind: 'trade_activity',    requestId, offerUserId?,
 //     event: 'offer'|'accepted'|'declined'|'direct_request'|'direct_accepted'|'direct_declined' }
+//   { kind: 'clinical_message',  messageId }  ← new post on a trainee's
+//     FTEP thread (Justin, 2026-10-22): fan-out = clinical editors +
+//     the trainee + every FTO who has held one of their phases + prior
+//     posters, minus the author. Push + email (matrix key 'clinical',
+//     absent = ON); never SMS.
 //   { kind: 'shift_reminders',   dryRun? }   ← pg_cron every 15 min (also
 //     editors, for testing). System calls authenticate with the
 //     x-sync-secret header (ROSTER_SYNC_SECRET) + the anon key as the
@@ -889,6 +894,71 @@ Deno.serve(async (req: Request) => {
           emailLines: [esc(line)],
           sms: `WCEMS: ${line}`,
           // texts are for urgent pickups — trade chatter rides push + email
+          channels: { sms: false },
+        },
+        caller.id,
+      )
+      return Response.json({ ok: true, delivery: d }, { headers: CORS })
+    }
+
+    // ── clinical: new post on a trainee's FTEP thread ─────────────────
+    /* Recipients resolved server-side: clinical editors + the trainee +
+     * every FTO who has held one of their phases + earlier posters in
+     * the thread — minus the author. RLS already proved the author may
+     * write to this thread (the row exists); editors may re-fan any
+     * message. Push + email only. */
+    if (kind === 'clinical_message') {
+      if (!caller.id)
+        return Response.json({ ok: false, error: 'User call required' }, { status: 403, headers: CORS })
+      const messageId = String(body.messageId ?? '')
+      const { data: msg, error: mErr } = await sb
+        .from('ftep_messages')
+        .select('id, record_id, author_id, body')
+        .eq('id', messageId)
+        .maybeSingle()
+      if (mErr || !msg)
+        return Response.json({ ok: false, error: mErr?.message ?? 'Message not found' }, { status: 404, headers: CORS })
+      if (msg.author_id !== caller.id && !isEditor(caller))
+        return Response.json({ ok: false, error: 'Not your message' }, { status: 403, headers: CORS })
+
+      const { data: rec } = await sb
+        .from('pipeline_records')
+        .select('user_id')
+        .eq('id', msg.record_id)
+        .maybeSingle()
+      const traineeId = ((rec?.user_id as string | undefined) ?? null)
+      const [edRes, ftoRes, prevRes] = await Promise.all([
+        sb.from('pipeline_editors').select('user_id'),
+        sb
+          .from('ftep_phase_progress')
+          .select('fto_user_id')
+          .eq('record_id', msg.record_id)
+          .not('fto_user_id', 'is', null),
+        sb.from('ftep_messages').select('author_id').eq('record_id', msg.record_id),
+      ])
+      const recipients = new Set<string>()
+      for (const e of edRes.data ?? []) recipients.add(e.user_id as string)
+      for (const f of ftoRes.data ?? []) if (f.fto_user_id) recipients.add(f.fto_user_id as string)
+      for (const p of prevRes.data ?? []) recipients.add(p.author_id as string)
+      if (traineeId) recipients.add(traineeId)
+
+      const traineeName = await nameOf(traineeId)
+      const preview = clean(msg.body, 220)
+      const d = await deliver(
+        [...recipients],
+        'clinical',
+        {
+          title: `FTEP — ${traineeName}`,
+          body: `${caller.name}: ${preview}`,
+          tag: `clin-msg-${msg.record_id}`,
+          subject: `WCEMS Clinical — new message on ${traineeName}'s training thread`,
+          emailLines: [
+            `<b>${esc(caller.name)}</b> posted on <b>${esc(traineeName)}</b>'s training thread:`,
+            esc(preview),
+            'Open the thread to reply.',
+          ],
+          sms: '',
+          url: '/clinical-development',
           channels: { sms: false },
         },
         caller.id,

@@ -28,6 +28,14 @@ export interface UpcomingItem {
   detail: string
 }
 
+export interface ComplianceItem {
+  person: PipelinePerson
+  name: string
+  state: 'missing' | 'expired' | 'soon'
+  days: number | null
+  when: string | null
+}
+
 const DAY = 86_400_000
 
 export function useClinical() {
@@ -150,6 +158,45 @@ export function useClinical() {
   const missingCertPeople = computed(() =>
     clinicalPeople.value.filter((p) => missingRequired(p).length > 0),
   )
+
+  /** One dated row per PROBLEM item across the whole roster — the
+   *  slices behind the Today cards and the class-planning clusters.
+   *  (The Board's full matrix derives its own cells; this list carries
+   *  only missing / expired / expiring-soon items.) */
+  const complianceItems = computed<ComplianceItem[]>(() => {
+    const out: ComplianceItem[] = []
+    const dayOf = (iso: string | null) =>
+      iso ? Math.ceil((new Date(`${iso}T00:00:00`).getTime() - Date.now()) / DAY) : null
+    for (const p of clinicalPeople.value) {
+      const lic = licDays(p)
+      const licExp = p.record.txLicenseExpiresAt
+      if (!licExp && !p.record.pending)
+        out.push({ person: p, name: 'TX License', state: 'missing', days: null, when: null })
+      else if (lic !== null && lic < 0)
+        out.push({ person: p, name: 'TX License', state: 'expired', days: lic, when: licExp })
+      else if (lic !== null && lic <= 90)
+        out.push({ person: p, name: 'TX License', state: 'soon', days: lic, when: licExp })
+      for (const req of requirementsFor(p)) {
+        const st = requirementStatus(req, completionsFor(p.userId), p.record)
+        if (st.state === 'due') {
+          if (!st.latest) {
+            if (!p.record.pending)
+              out.push({ person: p, name: req.name, state: 'missing', days: null, when: null })
+          } else {
+            out.push({ person: p, name: req.name, state: 'expired', days: dayOf(st.dueAt), when: st.dueAt })
+          }
+        } else if (st.state === 'expiring') {
+          out.push({ person: p, name: req.name, state: 'soon', days: dayOf(st.dueAt), when: st.dueAt })
+        }
+      }
+    }
+    return out.sort((a, b) => (a.days ?? -9999) - (b.days ?? -9999))
+  })
+
+  const fullyCurrentCount = computed(() => {
+    const flagged = new Set(complianceItems.value.map((i) => i.person.userId))
+    return clinicalPeople.value.filter((p) => !flagged.has(p.userId)).length
+  })
 
   /** Next-90-day horizon: expirations and phase targets, soonest first. */
   const comingUp = computed<UpcomingItem[]>(() => {
@@ -295,6 +342,8 @@ export function useClinical() {
     attentionPeopleCount,
     inPipeline,
     missingCertPeople,
+    complianceItems,
+    fullyCurrentCount,
     comingUp,
     statusChip,
     attentionChip,

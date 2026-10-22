@@ -185,6 +185,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/clinical/ClinicalHomeView.vue'),
   },
   {
+    path: '/clinical/board',
+    name: 'clinical-board',
+    component: () => import('@/views/clinical/ClinicalBoardView.vue'),
+  },
+  {
     path: '/clinical/people',
     name: 'clinical-people',
     component: () => import('@/views/clinical/ClinicalPeopleView.vue'),

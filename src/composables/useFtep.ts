@@ -27,10 +27,11 @@ interface ReportRow {
   reviewed_by: string | null
   reviewed_at: string | null
   updated_at: string
+  phase_key: string | null
 }
 
 const COLUMNS =
-  'id, kind, trainee_id, evaluator_id, status, eval_date, payload, trainee_signature, evaluator_signature, submitted_at, reviewed_by, reviewed_at, updated_at'
+  'id, kind, trainee_id, evaluator_id, status, eval_date, payload, trainee_signature, evaluator_signature, submitted_at, reviewed_by, reviewed_at, updated_at, phase_key'
 
 function fromRow(r: ReportRow): FtepReport {
   return {
@@ -47,6 +48,7 @@ function fromRow(r: ReportRow): FtepReport {
     reviewedBy: r.reviewed_by,
     reviewedAt: r.reviewed_at,
     updatedAt: r.updated_at,
+    phaseKey: r.phase_key ?? null,
   }
 }
 
@@ -220,6 +222,22 @@ export function useFtep() {
     evaluatorSignature: string
   }): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!isLive.value) return { ok: true }
+    /* Stamp the phase this report files under: the trainee's currently
+       open phase row. Non-fatal when none — an unanchored trainee still
+       submits, and the phase can be attributed once the phase is set. */
+    let phaseKey: string | null = null
+    const local = reports.value.find((r) => r.id === input.id)
+    if (local) {
+      const { data: pp } = await supabase
+        .from('ftep_phase_progress')
+        .select('phase_key, started_at, record:pipeline_records!inner(user_id)')
+        .eq('record.user_id', local.traineeId)
+        .not('started_at', 'is', null)
+        .is('completed_at', null)
+        .order('started_at', { ascending: false })
+        .limit(1)
+      phaseKey = (pp?.[0]?.phase_key as string | undefined) ?? null
+    }
     const { data, error } = await supabase
       .from('ftep_reports')
       .update({
@@ -229,6 +247,7 @@ export function useFtep() {
         trainee_signature: input.traineeSignature,
         evaluator_signature: input.evaluatorSignature,
         submitted_at: new Date().toISOString(),
+        ...(phaseKey ? { phase_key: phaseKey } : {}),
       })
       .eq('id', input.id)
       .select(COLUMNS)

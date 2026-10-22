@@ -36,13 +36,18 @@ interface Section {
 const sections = computed<Section[]>(() =>
   canEdit.value
     ? [
-        { label: 'Home', to: '/clinical', exact: true },
-        { label: 'Employee Files', to: '/clinical/people', exact: false },
+        { label: 'Today', to: '/clinical', exact: true },
+        { label: 'Board', to: '/clinical/board', exact: false },
         { label: 'FTEP', to: '/clinical/ftep', exact: false },
+        { label: 'People', to: '/clinical/people', exact: false },
         { label: 'Submissions', to: '/clinical/submissions', exact: false },
         { label: 'Exams', to: '/clinical/exams', exact: false },
+        { label: 'Skills', to: '/skills', exact: false },
       ]
-    : [{ label: 'FTEP', to: '/clinical/ftep', exact: false }],
+    : [
+        { label: 'FTEP', to: '/clinical/ftep', exact: false },
+        { label: 'Skills', to: '/skills', exact: false },
+      ],
 )
 
 function isOn(s: Section): boolean {

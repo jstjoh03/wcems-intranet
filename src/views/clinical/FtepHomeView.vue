@@ -6,6 +6,7 @@ import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import FtepSectionTabs from '@/components/clinical/FtepSectionTabs.vue'
 import FtepTraineeQuickview from '@/components/clinical/FtepTraineeQuickview.vue'
+import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.vue'
 import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
@@ -318,6 +319,12 @@ const needsOpen = ref<string | null>(null)
 function toggleNeeds(id: string) {
   needsOpen.value = needsOpen.value === id ? null : id
 }
+/* Per-trainee message thread (Clinical · FTO · trainee · supervisors —
+   new posts notify by push + email). */
+const msgsOpen = ref<string | null>(null)
+function toggleMsgs(id: string) {
+  msgsOpen.value = msgsOpen.value === id ? null : id
+}
 function needsFor(p: PipelinePerson) {
   const rows = gatesFor(p.record.id)
   const items = gateItemsFor(p.record, rows, gateStatsFor(p)).filter((i) => i.status !== 'complete' && i.status !== 'na')
@@ -615,6 +622,9 @@ async function review(r: FtepReport) {
               <button type="button" @click="toggleNeeds(p.userId)">
                 What's still needed
               </button>
+              <button type="button" @click="toggleMsgs(p.userId)">
+                Messages &amp; questions
+              </button>
               <button v-if="canEdit" type="button" @click="router.push(`/clinical/people/${p.userId}`)">
                 Open credentialing file
               </button>
@@ -639,6 +649,10 @@ async function review(r: FtepReport) {
             <div v-else class="fh__needs-row fh__needs-row--done">
               <Check :size="13" :stroke-width="2.5" /> All tracked requirements complete.
             </div>
+          </div>
+          <div v-if="msgsOpen === p.userId" class="fh__needs" @click.stop>
+            <div class="fh__needs-hd">Messages — Clinical · FTO · trainee</div>
+            <ClinicalMessageThread :record-id="p.record.id" :trainee-user-id="p.userId" />
           </div>
         </div>
       </template>

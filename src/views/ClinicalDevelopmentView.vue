@@ -11,6 +11,7 @@ import { useClinicalDocs, FOLDER_LABELS } from '@/composables/useClinicalDocs'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
+import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.vue'
 import type { FtepReport } from '@/types'
 import {
   activeTransitionFor,
@@ -583,6 +584,14 @@ async function submitSign() {
           </button>
           <div v-if="myFtepReports.length === 0" class="cd__myempty">
             No submitted evaluations yet — DORs and ICRs your FTO submits will appear here.
+          </div>
+        </div>
+
+        <!-- Messages — questions to Clinical / the FTO, answered in one place -->
+        <div class="cd__mycard reveal" style="animation-delay: 230ms">
+          <div class="cd__mycard-hd">Messages</div>
+          <div style="padding: 4px 16px 14px">
+            <ClinicalMessageThread :record-id="myRecord.record.id" :trainee-user-id="myRecord.userId" />
           </div>
         </div>
 

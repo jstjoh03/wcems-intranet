@@ -7,6 +7,7 @@ import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import FtepScheduleTimeline from '@/components/clinical/FtepScheduleTimeline.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
 import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
+import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.vue'
 import { useExamCertAutoFile } from '@/composables/useExamCertAutoFile'
 import { useClinical } from '@/composables/useClinical'
 import { useClinicalDocs, FOLDER_LABELS, type ClinicalDocFolder } from '@/composables/useClinicalDocs'
@@ -874,6 +875,18 @@ function fmtDateTime(iso: string): string {
 
         <div :style="isCredentialed ? 'order: 1' : ''">
           <PipelinePersonDetail :person="person" />
+        </div>
+
+        <div class="cf__card" style="order: 4">
+          <div class="cf__card-hd">
+            Messages
+            <span style="margin-left:auto;font-size:11.5px;color:var(--color-muted);font-weight:600">
+              Clinical · FTO · trainee · supervisors — new posts notify by push + email
+            </span>
+          </div>
+          <div style="padding: 4px 16px 14px">
+            <ClinicalMessageThread :record-id="person.record.id" :trainee-user-id="person.userId" />
+          </div>
         </div>
       </section>
 

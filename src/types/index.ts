@@ -523,6 +523,9 @@ export interface FtepReport {
   reviewedBy: string | null
   reviewedAt: string | null
   updatedAt: string
+  /** Stamped at submit from the trainee's open phase — "this DOR
+   *  belongs to the Partner Phase" without date guessing. */
+  phaseKey: string | null
 }
 
 export interface PipelinePerson {
