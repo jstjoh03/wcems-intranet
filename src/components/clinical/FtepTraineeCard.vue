@@ -125,9 +125,10 @@ const daysCell = computed(() => {
     return { v: '—', sub: 'no phase in progress', warn: true }
   }
   const std = cur.standard
+  const src = tl.impliedStart ? 'since enrollment — set phase dates to refine' : 'from the schedule'
   return {
     v: std ? `${cur.actual} of ${std.std}` : String(cur.actual),
-    sub: std ? `min ${std.min} · max ${std.max} · from the schedule` : 'from the schedule',
+    sub: std ? `min ${std.min} · max ${std.max} · ${src}` : src,
     warn: false,
   }
 })
@@ -471,7 +472,7 @@ const menuOpen = ref(false)
                   </span>
                 </template>
                 <template v-else-if="d.counts">
-                  <span class="tc__ok">✓ counted</span>
+                  <span class="tc__ok tc__okrow"><Check :size="12" :stroke-width="2.5" /> counted</span>
                   <template v-if="d.overridden"><span class="tc__mut" :title="d.overrideReason ?? ''"> · corrected</span>
                     <button v-if="canEdit" type="button" class="tc__lnk tc__lnk--mut" :disabled="ovBusy" @click="undoOverride(d)">undo</button>
                   </template>
@@ -543,10 +544,11 @@ const menuOpen = ref(false)
 .tc {
   background: var(--color-surface);
   border: 1px solid var(--color-line);
-  border-left: 3px solid oklch(0.55 0.07 260);
+  border-left: 3px solid var(--color-brand-800);
   border-radius: 14px;
   padding: 14px 18px 12px;
   margin-bottom: 12px;
+  box-shadow: 0 1px 2px oklch(0.2 0.03 260 / 0.05), 0 6px 18px oklch(0.2 0.03 260 / 0.06);
 }
 .tc__hd { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
 .tc__id { min-width: 200px; display: flex; flex-direction: column; gap: 3px; flex: 1; }
@@ -559,8 +561,10 @@ const menuOpen = ref(false)
 .tc__sub { font-size: 11.5px; color: var(--color-muted); }
 .tc__track {
   width: fit-content; font-size: 10px; font-weight: 800; letter-spacing: 0.06em;
-  text-transform: uppercase; border-radius: 5px; padding: 2px 7px;
-  background: oklch(0.93 0.02 260); color: oklch(0.35 0.07 260);
+  text-transform: uppercase; border-radius: 5px; padding: 2.5px 8px;
+  background: linear-gradient(180deg, var(--color-brand-700), var(--color-brand-800));
+  color: #fff;
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.12), 0 1px 2px oklch(0.2 0.03 260 / 0.2);
 }
 .tc__phasebox { margin-left: auto; text-align: right; display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
 .tc__phase { font-size: 19px; color: var(--color-ink); line-height: 1.1; }
@@ -602,15 +606,19 @@ const menuOpen = ref(false)
 
 .tc__rail {
   display: flex; height: 16px; border-radius: 5px; overflow: hidden;
-  margin: 12px 0 0; border: 1px solid var(--color-line);
+  margin: 12px 0 0; border: 1px solid oklch(0.82 0.015 255);
+  box-shadow: inset 0 1px 3px oklch(0.2 0.03 260 / 0.1);
 }
 .tc__rb { display: block; height: 100%; }
-.tc__rb--done { background: oklch(0.62 0.12 150); }
-.tc__rb--cur {
-  background: repeating-linear-gradient(45deg, oklch(0.734 0.114 86.8), oklch(0.734 0.114 86.8) 6px, oklch(0.814 0.104 86.8) 6px, oklch(0.814 0.104 86.8) 12px);
-  box-shadow: inset 0 0 0 2px oklch(0.584 0.109 86.8);
+.tc__rb--done {
+  background: linear-gradient(180deg, oklch(0.6 0.14 150), oklch(0.52 0.13 150));
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.2);
 }
-.tc__rb--rest { background: oklch(0.94 0.008 255); }
+.tc__rb--cur {
+  background: repeating-linear-gradient(45deg, oklch(0.734 0.114 86.8), oklch(0.734 0.114 86.8) 6px, oklch(0.8 0.108 86.8) 6px, oklch(0.8 0.108 86.8) 12px);
+  box-shadow: inset 0 0 0 2px oklch(0.55 0.11 86.8);
+}
+.tc__rb--rest { background: oklch(0.9 0.012 255); }
 .tc__raillbls { display: flex; margin-top: 3px; }
 .tc__raillbls > span {
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
@@ -633,13 +641,14 @@ const menuOpen = ref(false)
 .tc__stat--btn { background: none; border-top: 0; border-bottom: 0; border-left: 0; font-family: inherit; cursor: pointer; }
 .tc__stat--btn:hover { background: oklch(0.97 0.008 255); }
 .tc__stat-l { font-size: 9.5px; font-weight: 800; letter-spacing: 0.09em; text-transform: uppercase; color: var(--color-muted); }
-.tc__stat-n { font-size: 21px; line-height: 1.2; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.tc__stat-n { font-size: 21px; line-height: 1.2; color: var(--color-brand-950, var(--color-ink)); font-variant-numeric: tabular-nums; }
 .tc__stat-s {
   font-size: 10.5px; color: var(--color-muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tc__ok { color: var(--color-success-500); }
-.tc__warn { color: oklch(0.55 0.13 60); }
+.tc__okrow { display: inline-flex; align-items: center; gap: 4px; }
+.tc__warn { color: oklch(0.5 0.14 50); }
 .tc__mut { color: var(--color-muted-soft); }
 
 .tc__dayline {

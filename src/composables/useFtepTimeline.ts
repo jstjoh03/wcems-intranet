@@ -69,6 +69,9 @@ export interface FtepGateChip {
 export interface FtepTimeline {
   transition: 'P1C_P1' | 'P1_P2'
   accelerated: boolean
+  /** No phase row carried a date — the first field phase was anchored
+   *  from the record's enrollment (working start) as a fallback. */
+  impliedStart: boolean
   phases: FtepPhaseTimeline[]
   /** Next scheduled qualifying days (with FTO) on the calendar. */
   upcoming: FtepDayRow[]
@@ -121,10 +124,25 @@ export async function buildFtepTimeline(
   /* A phase's window opens at its recorded start OR its first planned
      day - the stepper often carries scheduled days before anyone sets
      a start date. */
-  const effStart = (key: string): string | null => {
+  const effStartRaw = (key: string): string | null => {
     const r = rows.get(key)
     return r?.startedAt ?? r?.scheduledDays[0] ?? null
   }
+  /* Enrolled on the record but no phase row anchored — the file says
+     "working P2" while the ladder sat untouched (Brianna, 2026-10-22):
+     fall back to the record's working start as the FIRST field phase's
+     anchor so days count and projections run. A real date set on the
+     stepper or the Advancement drawer replaces it the moment it lands.
+     NEOP-mapped records are excluded — academy week is not phase 1. */
+  const firstFieldKey = programPhases[0]!.key
+  const syntheticStart =
+    raw !== 'NEOP' &&
+    person.record.workingStartedAt &&
+    !programPhases.some((p) => effStartRaw(p.key))
+      ? person.record.workingStartedAt
+      : null
+  const effStart = (key: string): string | null =>
+    effStartRaw(key) ?? (key === firstFieldKey ? syntheticStart : null)
   const starts = programPhases
     .map((p) => effStart(p.key))
     .filter((s): s is string => !!s)
@@ -379,6 +397,7 @@ export async function buildFtepTimeline(
   return {
     transition,
     accelerated,
+    impliedStart: syntheticStart !== null,
     phases,
     ftosUsed,
     finalPhaseKey: programPhases[programPhases.length - 1]!.key,

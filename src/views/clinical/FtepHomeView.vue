@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronDown, Download, FileText, Check, AlertTriangle } from 'lucide-vue-next'
+import { ChevronDown, Download, FileText, Check, Inbox, FileWarning, CalendarClock } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import FtepSectionTabs from '@/components/clinical/FtepSectionTabs.vue'
@@ -318,10 +318,17 @@ watch(
   },
 )
 
-/* Review queue, collapsed: a 59-row wall at the top of the page was
-   "sore on the eyes" (Justin, 2026-09-21). Summary bar first; expand
-   to per-trainee groups, one trainee's rows at a time. */
-const queueOpenAll = ref(false)
+/* The page opens on an iOS-style badge strip, never a wall of words
+   (Justin, 2026-10-22: "the first thing I see is a bunch of words...
+   think iOS banner showing outstanding numbers"). Each squircle gets
+   a count badge; its list opens one tap away, one panel at a time. */
+const openPanel = ref<'' | 'queue' | 'missing' | 'plan'>('')
+function togglePanel(p: 'queue' | 'missing' | 'plan') {
+  openPanel.value = openPanel.value === p ? '' : p
+}
+function badge(n: number): string {
+  return n > 99 ? '99+' : String(n)
+}
 const queueTrainee = ref<string | null>(null)
 const queueGroups = computed(() => {
   const m = new Map<string, { traineeId: string; name: string; rows: FtepReport[] }>()
@@ -503,15 +510,61 @@ async function review(r: FtepReport) {
     <div v-if="!ready || !ftep.ready.value" class="fh__empty">Loading…</div>
 
     <template v-else>
-      <!-- CDO queue -->
-      <div v-if="canEdit && ftep.unreviewed.value.length" class="fh__queue">
-        <button type="button" class="fh__queue-hd fh__queue-hd--toggle" @click="queueOpenAll = !queueOpenAll">
-          <AlertTriangle :size="15" :stroke-width="2" />
-          {{ queueStats.total }} report{{ queueStats.total === 1 ? '' : 's' }} awaiting review
-          <span class="fh__queue-sub">{{ queueStats.dors }} DOR{{ queueStats.dors === 1 ? '' : 's' }} · {{ queueStats.icrs }} ICR{{ queueStats.icrs === 1 ? '' : 's' }} · oldest {{ fmt(queueStats.oldest) }}</span>
-          <ChevronDown class="fh__queue-chev" :class="{ 'fh__queue-chev--open': queueOpenAll }" :size="16" :stroke-width="2" />
+      <!-- Status strip — iOS-badge glance; the lists live one tap away -->
+      <div class="fh__strip">
+        <button
+          v-if="canEdit"
+          type="button"
+          class="fh__app"
+          :class="{ 'fh__app--on': openPanel === 'queue' }"
+          @click="togglePanel('queue')"
+        >
+          <span class="fh__appshape">
+            <Inbox :size="23" :stroke-width="1.9" />
+            <span v-if="queueStats.total" class="fh__appbadge">{{ badge(queueStats.total) }}</span>
+          </span>
+          <span class="fh__applabel">Review queue</span>
         </button>
-        <template v-if="queueOpenAll">
+        <button
+          type="button"
+          class="fh__app"
+          :class="{ 'fh__app--on': openPanel === 'missing' }"
+          @click="togglePanel('missing')"
+        >
+          <span class="fh__appshape">
+            <FileWarning :size="23" :stroke-width="1.9" />
+            <span v-if="missingDorRows.length" class="fh__appbadge">{{ badge(missingDorRows.length) }}</span>
+          </span>
+          <span class="fh__applabel">Missing DORs</span>
+        </button>
+        <button
+          v-if="canEdit"
+          type="button"
+          class="fh__app"
+          :class="{ 'fh__app--on': openPanel === 'plan' }"
+          @click="togglePanel('plan')"
+        >
+          <span class="fh__appshape">
+            <CalendarClock :size="23" :stroke-width="1.9" />
+            <span v-if="planRows.length" class="fh__appbadge fh__appbadge--gold">{{ badge(planRows.length) }}</span>
+          </span>
+          <span class="fh__applabel">Final evals</span>
+        </button>
+      </div>
+
+      <!-- Review queue -->
+      <section v-if="openPanel === 'queue' && canEdit" class="fh__panel fh__panel--navy">
+        <div class="fh__panel-hd">
+          <Inbox :size="15" :stroke-width="2" />
+          Awaiting review
+          <span class="fh__panel-sub">
+            {{ queueStats.dors }} DOR{{ queueStats.dors === 1 ? '' : 's' }} ·
+            {{ queueStats.icrs }} ICR{{ queueStats.icrs === 1 ? '' : 's' }}<template v-if="queueStats.oldest"> · oldest {{ fmt(queueStats.oldest) }}</template>
+          </span>
+        </div>
+        <div v-if="!ftep.unreviewed.value.length" class="fh__panel-empty">
+          <Check :size="14" :stroke-width="2.5" /> Nothing waiting — the queue is clear.
+        </div>
         <div v-for="g in queueGroups" :key="g.traineeId" class="fh__qgroup">
         <button type="button" class="fh__qgroup-hd" @click="queueTrainee = queueTrainee === g.traineeId ? null : g.traineeId">
           <span class="fh__qgroup-name">{{ g.name }}</span>
@@ -576,16 +629,18 @@ async function review(r: FtepReport) {
         </div>
         </template>
         </div>
-        </template>
-      </div>
+      </section>
 
       <!-- Missing DORs — scheduled shift days past their grace window
            with no DOR on file (±1 day counts: 24-hr shifts). -->
-      <div v-if="missingDorRows.length" class="fh__missing-card">
-        <div class="fh__missing-hd">
-          <AlertTriangle :size="15" :stroke-width="2" />
-          {{ missingDorRows.length }} training day{{ missingDorRows.length === 1 ? '' : 's' }} missing a DOR
-          <span class="fh__missing-hint">a DOR dated within a day of the shift counts</span>
+      <section v-else-if="openPanel === 'missing'" class="fh__panel fh__panel--red">
+        <div class="fh__panel-hd">
+          <FileWarning :size="15" :stroke-width="2" />
+          Training days missing a DOR
+          <span class="fh__panel-sub">a DOR dated within a day of the shift counts</span>
+        </div>
+        <div v-if="!missingDorRows.length" class="fh__panel-empty">
+          <Check :size="14" :stroke-width="2.5" /> Every training day has its DOR.
         </div>
         <div v-for="m in missingDorRows" :key="`${m.p.userId}-${m.day}`" class="fh__missing-row">
           <span class="fh__missing-who">{{ m.p.fullName }}</span>
@@ -599,20 +654,25 @@ async function review(r: FtepReport) {
               title="Push + email to both — the FTO's message carries the start link"
               @click="remindDor(m)"
             >
-              {{ reminded.has(`${m.p.userId}-${m.day}`) ? 'Reminded ✓' : (remindBusy === `${m.p.userId}-${m.day}` ? 'Sending…' : 'Remind FTO + trainee') }}
+              <template v-if="reminded.has(`${m.p.userId}-${m.day}`)"><Check :size="12" :stroke-width="2.5" /> Reminded</template>
+              <template v-else>{{ remindBusy === `${m.p.userId}-${m.day}` ? 'Sending…' : 'Remind FTO + trainee' }}</template>
             </button>
             <button type="button" class="fh__mini" @click="startReport(m.p, 'dor')">
               <FileText :size="12" :stroke-width="2" /> New DOR
             </button>
           </span>
         </div>
-      </div>
+      </section>
 
       <!-- Final evaluations to plan — different FTO required -->
-      <div v-if="canEdit && planRows.length" class="fh__plan-card">
-        <div class="fh__plan-hd">
+      <section v-else-if="openPanel === 'plan' && canEdit" class="fh__panel fh__panel--gold">
+        <div class="fh__panel-hd">
+          <CalendarClock :size="15" :stroke-width="2" />
           Plan ahead — final evaluations
-          <span class="fh__missing-hint">needs a DIFFERENT FTO (usually a station move) — line the pairing up with scheduling early</span>
+          <span class="fh__panel-sub">needs a DIFFERENT FTO (usually a station move) — line the pairing up with scheduling early</span>
+        </div>
+        <div v-if="!planRows.length" class="fh__panel-empty">
+          <Check :size="14" :stroke-width="2.5" /> No final evaluations on the horizon.
         </div>
         <div v-for="r in planRows" :key="r.p.userId" class="fh__missing-row">
           <span class="fh__missing-who">{{ r.p.fullName }}</span>
@@ -622,7 +682,7 @@ async function review(r: FtepReport) {
             · FTOs used: {{ r.ftos.length ? r.ftos.join(', ') : 'none yet' }}
           </span>
         </div>
-      </div>
+      </section>
 
       <!-- Trainees, grouped by track -->
       <template v-for="g in groups" :key="g.key">
@@ -801,47 +861,130 @@ async function review(r: FtepReport) {
   display: inline-flex; align-items: center;
   border-radius: 999px; padding: 4px 12px;
   font-size: 10.5px; font-weight: 800; letter-spacing: 0.07em;
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.12), 0 1px 2px oklch(0.2 0.03 260 / 0.2);
 }
-.fh__track--new { background: oklch(0.93 0.02 260); color: oklch(0.35 0.07 260); }
-.fh__track--legacy { background: oklch(0.96 0.05 80); color: oklch(0.45 0.1 75); }
-.fh__track--rideup { background: oklch(0.95 0.06 90); color: var(--color-accent-strong, #a8842c); border: 1px solid oklch(0.85 0.07 90); }
-.fh__track--aemt { background: var(--color-surface-soft); color: var(--color-muted); }
+.fh__track--new { background: linear-gradient(180deg, var(--color-brand-700), var(--color-brand-800)); color: #fff; }
+.fh__track--legacy { background: linear-gradient(180deg, oklch(0.52 0.1 70), oklch(0.44 0.09 70)); color: #fff; }
+.fh__track--rideup { background: linear-gradient(180deg, oklch(0.78 0.11 86.8), oklch(0.664 0.119 86.8)); color: var(--color-brand-950, oklch(0.16 0.07 250)); }
+.fh__track--aemt { background: linear-gradient(180deg, oklch(0.48 0.02 260), oklch(0.4 0.02 260)); color: #fff; }
 .fh__track-hint { font-weight: 500; letter-spacing: 0.01em; text-transform: none; font-size: 11px; color: var(--color-muted); }
-.fh__trainee--legacy { border-left: 3px solid oklch(0.75 0.09 80); }
-.fh__trainee--rideup { border-left: 3px solid var(--color-accent-strong, #a8842c); }
-.fh__trainee--new { border-left: 3px solid oklch(0.55 0.07 260); }
-.fh__trainee--aemt { border-left: 3px solid var(--color-line); }
+.fh__trainee--legacy { border-left: 3px solid oklch(0.48 0.09 70); }
+.fh__trainee--rideup { border-left: 3px solid var(--color-accent-600, oklch(0.664 0.119 86.8)); }
+.fh__trainee--new { border-left: 3px solid var(--color-brand-800); }
+.fh__trainee--aemt { border-left: 3px solid oklch(0.44 0.02 260); }
 
-.fh__queue {
-  background: oklch(0.97 0.03 80); border: 1px solid oklch(0.86 0.06 80);
-  border-radius: 14px; padding: 4px 0 6px; margin-bottom: 6px;
+/* ── Status strip — iOS app-badge register (squircle recipe lifted
+   from the dashboard's FeaturedQuickLinks, the treatment Justin
+   actually likes: layered navy gradient, specular top edge, gold
+   hover glow, saturated count badges — never pastel tint cards). ── */
+.fh__strip { display: flex; gap: 22px; margin: 2px 0 18px; }
+.fh__app {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font-family: var(--font-sans);
 }
-.fh__queue-hd {
-  display: flex; align-items: center; gap: 9px;
-  padding: 11px 16px 8px; font-size: 13px; font-weight: 700; color: oklch(0.42 0.09 75);
+.fh__appshape {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px;
+  background: linear-gradient(145deg, oklch(0.22 0.1 250) 0%, oklch(0.14 0.06 250) 100%);
+  border: 1px solid oklch(0.45 0.1 250 / 0.32);
+  border-radius: 16px;
+  color: oklch(0.96 0.005 250);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.06),
+    0 1px 1px oklch(0 0 0 / 0.35),
+    0 6px 14px oklch(0 0 0 / 0.22),
+    0 0 22px oklch(0.35 0.14 250 / 0.18);
+  transition:
+    transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 220ms ease;
+}
+.fh__appshape::before {
+  content: '';
+  position: absolute; top: 0; left: 14%; right: 14%; height: 1px;
+  background: linear-gradient(90deg, transparent 0%, oklch(1 0 0 / 0.18) 50%, transparent 100%);
+  pointer-events: none; border-radius: 1px;
+}
+.fh__appshape svg { filter: drop-shadow(0 1px 1px oklch(0 0 0 / 0.5)); }
+.fh__app:hover .fh__appshape {
+  border-color: oklch(0.734 0.114 86.8 / 0.45);
+  transform: translateY(-2px) scale(1.04);
+  color: var(--color-accent-500, oklch(0.734 0.114 86.8));
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.1),
+    0 2px 2px oklch(0 0 0 / 0.4),
+    0 14px 28px oklch(0 0 0 / 0.32),
+    0 0 30px oklch(0.734 0.114 86.8 / 0.22);
+}
+.fh__app:active .fh__appshape {
+  transform: translateY(-1px) scale(1);
+  transition-duration: 80ms;
+}
+.fh__app--on .fh__appshape {
+  border-color: oklch(0.734 0.114 86.8 / 0.55);
+  color: var(--color-accent-500, oklch(0.734 0.114 86.8));
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.1),
+    0 0 0 2px oklch(0.734 0.114 86.8 / 0.4),
+    0 6px 14px oklch(0 0 0 / 0.22),
+    0 0 26px oklch(0.734 0.114 86.8 / 0.25);
+}
+.fh__appbadge {
+  position: absolute; top: -7px; right: -9px;
+  min-width: 21px; height: 21px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: linear-gradient(180deg, oklch(0.62 0.22 27), oklch(0.53 0.21 27));
+  color: #fff; font-size: 11.5px; font-weight: 800; letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums; line-height: 1;
+  box-shadow: 0 2px 6px oklch(0.4 0.18 27 / 0.45), inset 0 1px 0 oklch(1 0 0 / 0.22);
+}
+.fh__appbadge--gold {
+  background: linear-gradient(180deg, oklch(0.78 0.11 86.8), oklch(0.664 0.119 86.8));
+  color: var(--color-brand-950, oklch(0.16 0.07 250));
+  box-shadow: 0 2px 6px oklch(0.55 0.1 86.8 / 0.45), inset 0 1px 0 oklch(1 0 0 / 0.35);
+}
+.fh__applabel {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.03em;
+  color: var(--color-ink-soft);
+}
+.fh__app--on .fh__applabel { color: var(--color-ink); }
+
+/* ── Tap-open panels — white surface, deep seams, never pastel ───── */
+.fh__panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  padding: 4px 0 6px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 2px oklch(0.2 0.03 260 / 0.05), 0 6px 18px oklch(0.2 0.03 260 / 0.06);
+}
+.fh__panel--navy { border-left: 3px solid var(--color-brand-800); }
+.fh__panel--red { border-left: 3px solid oklch(0.5 0.19 27); }
+.fh__panel--gold { border-left: 3px solid var(--color-accent-600, oklch(0.664 0.119 86.8)); }
+.fh__panel-hd {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  padding: 12px 16px 9px; font-size: 13.5px; font-weight: 700; color: var(--color-ink);
+}
+.fh__panel--navy .fh__panel-hd svg { color: var(--color-brand-700); }
+.fh__panel--red .fh__panel-hd svg { color: oklch(0.5 0.19 27); }
+.fh__panel--gold .fh__panel-hd svg { color: var(--color-accent-strong, #a8842c); }
+.fh__panel-sub { font-weight: 500; font-size: 11.5px; color: var(--color-muted); }
+.fh__panel-empty {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 16px 10px; font-size: 12.5px; font-weight: 600;
+  color: var(--color-success-500);
 }
 .fh__queue-row {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 8px 16px; border-top: 1px solid oklch(0.92 0.04 80); font-size: 13px;
+  padding: 8px 16px; border-top: 1px solid var(--color-line-soft); font-size: 13px;
 }
 .fh__queue-who { font-weight: 700; color: var(--color-ink); }
 .fh__queue-meta { color: var(--color-ink-soft); font-size: 12px; }
 .fh__nrt-flag { color: oklch(0.45 0.15 30); }
-.fh__queue-hd--toggle {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-  padding: 0;
-}
-
-.fh__queue-sub {
-  font-weight: 500;
-  color: var(--color-muted);
-  font-size: 12px;
-}
 
 .fh__queue-chev {
   margin-left: auto;
@@ -856,8 +999,6 @@ async function review(r: FtepReport) {
 
 .fh__qgroup {
   border-top: 1px solid var(--color-line-soft);
-  margin-top: 6px;
-  padding-top: 4px;
 }
 
 .fh__qgroup-hd {
@@ -872,9 +1013,10 @@ async function review(r: FtepReport) {
   font-size: 13px;
   color: var(--color-ink);
   cursor: pointer;
-  padding: 4px 0;
+  padding: 8px 16px;
   text-align: left;
 }
+.fh__qgroup-hd:hover { background: var(--color-surface-soft); }
 
 .fh__qgroup-n {
   font-size: 11px;
@@ -885,40 +1027,9 @@ async function review(r: FtepReport) {
   padding: 1px 8px;
 }
 
-.fh__plan-card {
-  border: 1px solid oklch(0.85 0.07 86.8);
-  border-left: 3px solid var(--color-accent-600);
-  background: oklch(0.99 0.008 86.8);
-  border-radius: 10px;
-  padding: 10px 14px;
-  margin-bottom: 14px;
-}
-
-.fh__plan-hd {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  flex-wrap: wrap;
-  font-weight: 700;
-  font-size: 13.5px;
-  color: var(--color-ink);
-  margin-bottom: 4px;
-}
-
-.fh__missing-card {
-  background: oklch(0.975 0.03 60); border: 1px solid oklch(0.87 0.06 60);
-  border-radius: 14px; padding: 4px 0 6px; margin-bottom: 10px;
-}
-.fh__missing-hd {
-  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
-  padding: 11px 16px 8px; font-size: 13px; font-weight: 700; color: oklch(0.45 0.12 50);
-}
-.fh__missing-hint {
-  font-weight: 500; font-size: 11px; color: oklch(0.55 0.08 55);
-}
 .fh__missing-row {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 8px 16px; border-top: 1px solid oklch(0.93 0.04 60); font-size: 13px;
+  padding: 8px 16px; border-top: 1px solid var(--color-line-soft); font-size: 13px;
 }
 .fh__missing-who { font-weight: 700; color: var(--color-ink); }
 .fh__missing-meta { color: var(--color-ink-soft); font-size: 12px; }
