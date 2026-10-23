@@ -311,13 +311,19 @@ export function hasSystemAccess(certLevel: string | null): boolean {
   return /emt-p|^lp$/i.test(certLevel.trim())
 }
 
-/** Live progress counts computed from ftep_reports — callers pass them
- *  so count-based metric gates self-complete instead of waiting on a
+/** Live progress stats computed from ftep_reports — callers pass them
+ *  so computed metric gates self-complete instead of waiting on a
  *  manual check-off (Perry hit 15/10 call evals while the gate still
- *  read "10 required"). */
+ *  read "10 required"; Zachariah sat at 0 of 11 with 26 ICRs filed
+ *  because an UNTRACKED counter gate never self-completed either —
+ *  2026-10-22). */
 export interface GateStats {
   callEvals?: number
   scoredIcrs?: number
+  /** Final-four DOR average over the credential-scoped window (null
+   *  until the window is full) + categories below 3 inside it. */
+  dorAvg?: number | null
+  dorBelowThree?: number
 }
 
 export function gateItemsFor(
@@ -360,6 +366,10 @@ export function gateItemsForTransition(
   const items: GateItem[] = def.gates.map((g) => {
     const row = byKey.get(g.key)
     let status: GateItem['status'] = row ? row.status : 'untracked'
+    /* Computed gates self-complete whether a row exists or not —
+       'untracked' only means nobody hand-ticked it, and the whole
+       point is that nobody should have to (Justin, 2026-10-22). */
+    const open = status === 'pending' || status === 'untracked'
     /* The rideout count self-completes at the 4-rideout target —
        typing "4" into Edit record checks the gate off without a
        second tap (Justin, 2026-08-24). */
@@ -375,10 +385,17 @@ export function gateItemsForTransition(
       if (n && parseInt(n[0], 10) >= 2) status = 'complete'
     }
     /* Call-eval / ICR gates self-complete from the live report counts. */
-    if (g.key === 'call_evals' && status === 'pending' && (stats?.callEvals ?? 0) >= 10)
+    if (g.key === 'call_evals' && open && (stats?.callEvals ?? 0) >= 10)
       status = 'complete'
-    if (g.key === 'scored_icrs' && status === 'pending' && (stats?.scoredIcrs ?? 0) >= 10)
+    if (g.key === 'scored_icrs' && open && (stats?.scoredIcrs ?? 0) >= 10)
       status = 'complete'
+    /* The DOR average self-completes once the credential-scoped final
+       four meet the floor with no category below 3 (Guide standard):
+       P1C→P1 floor 3.5 · P1→P2 floor 4.0. */
+    if (g.key === 'dor_avg' && open && stats?.dorAvg != null) {
+      const floor = transition === 'P1_P2' ? 4.0 : 3.5
+      if (stats.dorAvg >= floor && (stats.dorBelowThree ?? 0) === 0) status = 'complete'
+    }
     return {
       key: g.key,
       label: g.label,
@@ -391,7 +408,9 @@ export function gateItemsForTransition(
           ? `${stats.callEvals}/10`
           : g.key === 'scored_icrs' && stats?.scoredIcrs != null
             ? `${stats.scoredIcrs}/10`
-            : null),
+            : g.key === 'dor_avg' && stats?.dorAvg != null
+              ? `avg ${stats.dorAvg.toFixed(2)}`
+              : null),
       completedAt: row?.completedAt ?? null,
       completedByName: row?.completedByName ?? null,
     }

@@ -700,6 +700,7 @@ async function review(r: FtepReport) {
           @quickview="quickview = p"
           @refresh="loadTimelines()"
           @report="(k) => startReport(p, k)"
+          @credential="router.push(`/clinical/people/${p.userId}`)"
         />
         <div
           v-else

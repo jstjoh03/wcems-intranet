@@ -72,6 +72,8 @@ export interface FtepTimeline {
   /** No phase row carried a date — the first field phase was anchored
    *  from the record's enrollment (working start) as a fallback. */
   impliedStart: boolean
+  /** The program's start — earliest phase anchor, enrollment fallback. */
+  programStartedAt: string | null
   phases: FtepPhaseTimeline[]
   /** Next scheduled qualifying days (with FTO) on the calendar. */
   upcoming: FtepDayRow[]
@@ -387,17 +389,30 @@ export async function buildFtepTimeline(
     complete: gateRows.some((g) => g.gateKey === key && g.status === 'complete'),
   }))
 
+  /* FTOs used are CREDENTIAL-scoped (Justin, 2026-10-22): once someone
+     credentials as P1 and starts toward P2, only FTOs from THAT
+     program count against the different-FTO rule — so the day-log
+     side only counts days allocated to this transition's phases. */
   const ftosUsed = [
     ...new Set([
       ...programPhases.map((p) => rows.get(p.key)?.ftoName).filter((n): n is string => !!n),
-      ...dayRows.filter((d) => !d.future && d.counts).flatMap((d) => d.ftoNames),
+      ...dayRows.filter((d) => !d.future && d.counts && d.phaseKey).flatMap((d) => d.ftoNames),
     ]),
   ]
+
+  /* The program's anchor — the earliest phase start (synthetic
+     enrollment fallback included), for the card header. */
+  const phaseStarts = programPhases
+    .map((p) => effStart(p.key))
+    .filter((s): s is string => !!s)
+    .sort()
+  const programStartedAt = phaseStarts[0] ?? person.record.workingStartedAt ?? null
 
   return {
     transition,
     accelerated,
     impliedStart: syntheticStart !== null,
+    programStartedAt,
     phases,
     ftosUsed,
     finalPhaseKey: programPhases[programPhases.length - 1]!.key,

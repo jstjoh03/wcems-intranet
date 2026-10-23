@@ -371,6 +371,8 @@ function recordPatch(input: SaveRecordInput): Record<string, unknown> {
     level: 'level',
     isFto: 'is_fto',
     ftoName: 'fto_name',
+    txLicenseNumber: 'tx_license_number',
+    txLicenseExpiresAt: 'tx_license_expires_at',
     txJurisprudenceAt: 'tx_jurisprudence_at',
     bloodbornePathogenAt: 'bloodborne_pathogen_at',
     opIqAccess: 'op_iq_access',

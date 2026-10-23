@@ -34,6 +34,8 @@ const emit = defineEmits<{
   quickview: []
   refresh: []
   report: [kind: 'dor' | 'icr']
+  /** Program phases complete — move to the test/checklist/credential step. */
+  credential: []
 }>()
 
 const router = useRouter()
@@ -92,10 +94,12 @@ const rail = computed(() => {
   })
 })
 
+const toLabel = computed(() => TRANSITIONS[props.timeline?.transition ?? 'P1C_P1']?.toLabel ?? '')
+
 const phaseHeadline = computed(() => {
   const tl = props.timeline
   if (!tl) return { name: track.value?.label ?? 'FTEP', count: '' }
-  if (allComplete.value) return { name: 'Program complete', count: '' }
+  if (allComplete.value) return { name: 'Ready to credential', count: `as ${toLabel.value}` }
   const cur = currentPhase.value
   if (!cur) {
     const next = tl.phases.find((p) => p.status === 'upcoming')
@@ -103,6 +107,19 @@ const phaseHeadline = computed(() => {
   }
   const idx = tl.phases.findIndex((p) => p.key === cur.key)
   return { name: cur.label, count: `${idx + 1} of ${tl.phases.length}` }
+})
+
+/** Header dates — the program anchor + where testing lands, always in
+ *  view next to the credential they're working toward. */
+const headDates = computed(() => {
+  const tl = props.timeline
+  if (!tl) return ''
+  const bits: string[] = []
+  if (tl.programStartedAt)
+    bits.push(`started ${fmt(tl.programStartedAt)}${tl.impliedStart ? ' (enrollment)' : ''}`)
+  if (allComplete.value) bits.push('ready to test now')
+  else if (tl.estTestStd) bits.push(`ready to test ≈ ${fmt(tl.estTestStd)}`)
+  return bits.join(' · ')
 })
 
 /* ── Stat cells ─────────────────────────────────────────────────────── */
@@ -337,7 +354,10 @@ const menuOpen = ref(false)
         >{{ person.fullName }}</button>
         <span v-else class="tc__name">{{ person.fullName }}</span>
         <span class="tc__sub">{{ person.record.certLevel }}<template v-if="person.record.ftoName"> · FTO {{ person.record.ftoName }}</template></span>
-        <span class="tc__track">{{ timeline?.transition === 'P1_P2' ? (timeline.accelerated ? 'P1 → P2 · accelerated' : 'P1 → P2 · 6-month cap') : 'P1C → P1 · 90-day cap' }}</span>
+        <span class="tc__trackline">
+          <span class="tc__track">{{ timeline?.transition === 'P1_P2' ? (timeline.accelerated ? 'P1 → P2 · accelerated' : 'P1 → P2 · 6-month cap') : 'P1C → P1 · 90-day cap' }}</span>
+          <span v-if="headDates" class="tc__dates">{{ headDates }}</span>
+        </span>
       </div>
       <div class="tc__phasebox">
         <div class="tc__phase display">
@@ -377,6 +397,12 @@ const menuOpen = ref(false)
               ? 'Close Final Evaluation'
               : `Advance to ${timeline.phases[timeline.phases.findIndex(p => p.key === currentPhase!.key) + 1]?.label ?? 'next phase'}` }}
           </button>
+          <button
+            v-else-if="canEdit && timeline && allComplete"
+            type="button"
+            class="tc__go"
+            @click="emit('credential')"
+          >Start credentialing — test &amp; checklist</button>
           <button
             v-else-if="canEdit && timeline?.unanchored"
             type="button"
@@ -559,12 +585,17 @@ const menuOpen = ref(false)
 }
 .tc__name--link:hover { color: var(--color-brand-600); text-decoration: underline; text-underline-offset: 3px; }
 .tc__sub { font-size: 11.5px; color: var(--color-muted); }
+.tc__trackline { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tc__track {
   width: fit-content; font-size: 10px; font-weight: 800; letter-spacing: 0.06em;
   text-transform: uppercase; border-radius: 5px; padding: 2.5px 8px;
   background: linear-gradient(180deg, var(--color-brand-700), var(--color-brand-800));
   color: #fff;
   box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.12), 0 1px 2px oklch(0.2 0.03 260 / 0.2);
+}
+.tc__dates {
+  font-size: 11.5px; font-weight: 650; color: var(--color-ink-soft);
+  font-variant-numeric: tabular-nums;
 }
 .tc__phasebox { margin-left: auto; text-align: right; display: flex; flex-direction: column; gap: 7px; align-items: flex-end; }
 .tc__phase { font-size: 19px; color: var(--color-ink); line-height: 1.1; }
@@ -678,6 +709,10 @@ const menuOpen = ref(false)
 .tc__days tr:last-child td { border-bottom: 0; }
 .tc__dd { font-variant-numeric: tabular-nums; color: var(--color-ink); font-weight: 650; width: 60px; }
 .tc__dright { text-align: right; font-weight: 650; font-size: 11.5px; }
+/* Status text and its action link share the cell — keep daylight
+   between them ("countedexclude", Justin 2026-10-22). */
+.tc__dright .tc__lnk { margin-left: 10px; }
+.tc__dright .tc__ovform .tc__lnk { margin-left: 0; }
 .tc__mutrow td { color: var(--color-muted-soft); }
 .tc__uprow td { background: oklch(0.985 0.012 86.8); }
 .tc__upnote { color: oklch(0.55 0.13 60); }

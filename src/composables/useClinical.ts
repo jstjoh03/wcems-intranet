@@ -265,16 +265,55 @@ export function useClinical() {
    *  portal existed and typed into Edit record (e.g. Dodd's 4). Views
    *  max() this with submitted rideout DORs so manual credit checks
    *  the requirement off without fabricating report rows. */
-  /** Live report counts for count-based gates (call evals / ICRs) so
-   *  gateItemsFor can self-complete them. */
+  /** Live report stats for computed gates (call evals / ICRs / the DOR
+   *  final-four average) so gateItemsFor can self-complete them —
+   *  Zachariah sat at "0 of 11" with 26 ICRs filed because untracked
+   *  counter gates waited for a hand tick (Justin, 2026-10-22).
+   *  The DOR window is credential-scoped: a P1 working toward P2 is
+   *  measured on DORs from THAT program, never leftover P1C ones. */
   function gateStatsFor(p: PipelinePerson) {
     const ftep = useFtep()
     const track = ftepTrackFor(p)
     if (!track) return {}
     if (track.key === 'legacy')
       return { callEvals: ftep.icrCount(p.userId, track.legacyPhase) }
-    if (track.icrTarget) return { scoredIcrs: ftep.icrCount(p.userId) }
-    return {}
+    if (!track.dorTracked) return {}
+
+    const t = activeTransitionFor(p.record)
+    const window = track.dorWindow
+    let dors = ftep
+      .submittedFor(p.userId, 'dor')
+      .filter((r) => !r.payload.excludedFromRecord)
+    if (t === 'P1_P2') {
+      const keys = new Set(['phase5', 'phase6', 'phase7'])
+      const since = p.record.workingStartedAt
+      dors = dors.filter((r) =>
+        r.phaseKey ? keys.has(r.phaseKey) : since ? r.evalDate >= since : false,
+      )
+    }
+    const finalFour = dors
+      .sort((a, b) => b.evalDate.localeCompare(a.evalDate))
+      .slice(0, window)
+    let dorAvg: number | null = null
+    let dorBelowThree = 0
+    if (finalFour.length >= window) {
+      const avgs = finalFour
+        .map((r) => r.payload.average)
+        .filter((x): x is number => typeof x === 'number')
+      dorAvg = avgs.length
+        ? Math.round((avgs.reduce((a, b) => a + b, 0) / avgs.length) * 100) / 100
+        : null
+      for (const r of finalFour) {
+        for (const rating of Object.values(r.payload.ratings ?? {})) {
+          if (typeof rating.score === 'number' && rating.score < 3) dorBelowThree++
+        }
+      }
+    }
+    return {
+      ...(track.icrTarget ? { scoredIcrs: ftep.icrCount(p.userId) } : {}),
+      dorAvg,
+      dorBelowThree,
+    }
   }
 
   /** Same, but for a SPECIFIC transition — used by the credentialing
