@@ -161,7 +161,10 @@ const myEvaluations = computed(() =>
         <ClipboardCheck :size="22" :stroke-width="1.85" style="color: var(--color-brand-600)" />
         <div>
           <h1 class="display sd__title">NEOP Skills Day</h1>
-          <div class="sd__meta">Competency check-offs · signed at the station</div>
+          <div class="sd__meta">
+            Competency check-offs · signed at the station ·
+            <RouterLink to="/skills/protocol-updates" class="sd__protolink">2026 protocol skills verification</RouterLink>
+          </div>
         </div>
       </div>
       <div v-if="isEvaluator" class="sd__tabs">
@@ -431,6 +434,13 @@ const myEvaluations = computed(() =>
   line-height: 1.15;
   color: var(--color-ink);
 }
+.sd__protolink {
+  color: var(--color-brand-600);
+  font-weight: 650;
+  text-decoration: underline dotted var(--color-line);
+  text-underline-offset: 3px;
+}
+.sd__protolink:hover { color: var(--color-ink); }
 .sd__meta {
   margin-top: 3px;
   font-size: 12.5px;

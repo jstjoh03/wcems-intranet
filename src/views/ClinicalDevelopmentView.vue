@@ -9,6 +9,7 @@ import { useFtep } from '@/composables/useFtep'
 import { useExams } from '@/composables/useExams'
 import { useClinicalDocs, FOLDER_LABELS } from '@/composables/useClinicalDocs'
 import { useFtoEvalRequests } from '@/composables/useFtoEvalRequests'
+import { useProtocolSkills } from '@/composables/useProtocolSkills'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
@@ -269,6 +270,18 @@ const evalReqs = useFtoEvalRequests()
 const myEvalRequest = computed(() =>
   auth.appUser?.id ? (evalReqs.pendingFor(auth.appUser.id)[0] ?? null) : null,
 )
+
+/* Protocol-update skills still owed at my level (2026 campaign). */
+const protoSkills = useProtocolSkills()
+const myProtoSkills = computed(() => {
+  if (!myRecord.value || !protoSkills.activeCampaign.value) return null
+  const skills = protoSkills.skillsForLevel(myRecord.value.record.certLevel)
+  if (!skills.length) return null
+  const pending = skills.filter(
+    (k) => protoSkills.verificationFor(myRecord.value!.userId, k.id)?.overall !== 'pass',
+  )
+  return { total: skills.length, pending }
+})
 const exams = useExams()
 
 /** Open exam work for this candidate — released ones pulse "begin". */
@@ -607,6 +620,19 @@ async function submitSign() {
         <!-- Program resources — trainee-audience library docs -->
         <div class="cd__mycard-wrap reveal" style="animation-delay: 260ms">
           <FtepResourcesCard title="Program resources" />
+        </div>
+
+        <!-- 2026 protocol skills still owed at my level -->
+        <div v-if="myProtoSkills && myProtoSkills.pending.length" class="cd__ftoeval cd__ftoeval--due reveal" style="animation-delay: 300ms">
+          <div class="cd__ftoeval-copy">
+            <b>2026 Protocol Update — skills verification.</b>
+            {{ myProtoSkills.total - myProtoSkills.pending.length }} of {{ myProtoSkills.total }} verified ·
+            still owed: {{ myProtoSkills.pending.map((k) => k.title).join(', ') }}.
+            Any FTO or supervisor signs these off with you.
+          </div>
+          <button type="button" class="btn" @click="router.push('/skills/protocol-updates')">
+            See my skills
+          </button>
         </div>
 
         <!-- Trainee Evaluation of FTO — phase-transition feedback, CDO-only -->

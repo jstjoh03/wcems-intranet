@@ -257,6 +257,14 @@ const routes: RouteRecordRaw[] = [
     name: 'skills-day',
     component: () => import('@/views/SkillsDayView.vue'),
   },
+  /* Protocol-update skills verification: campaign board + check-off
+     runner for every credentialed employee (static segment — must
+     outrank /skills/:checkoffId/:candidateId). */
+  {
+    path: '/skills/protocol-updates',
+    name: 'protocol-skills',
+    component: () => import('@/views/skills/ProtocolSkillsView.vue'),
+  },
   {
     path: '/skills/:checkoffId/:candidateId',
     name: 'skills-evaluate',
