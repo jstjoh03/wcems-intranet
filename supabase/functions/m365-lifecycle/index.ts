@@ -27,8 +27,11 @@
 //
 // Modes: header `x-sync-secret` required for POST. POST {} dry-run;
 // POST {"apply":true} executes; {"kit":"Last, First"} rebuilds a welcome
-// kit; {"relicense":["Last, First",…]} tops up missing standard licenses.
-// Undo links are self-authenticating (HMAC).
+// kit; {"relicense":["Last, First",…]} tops up missing standard licenses;
+// {"contacts":true} surveys the GAL contact tab for every active account
+// (+ "apply":true fills the gaps — job title, department, office
+// phone/fax/address/city/state; city+state drive the all-company dynamic
+// group). Undo links are self-authenticating (HMAC).
 
 // @ts-expect-error npm specifier resolved by the edge runtime
 import { PDFDocument, StandardFonts, rgb } from 'npm:pdf-lib@1.17.1'
@@ -54,6 +57,39 @@ const MAX_SEPARATIONS_PER_RUN = 3
 // Welcome kit: per-hire folder in the Admin Staff site's Documents library
 const NEW_HIRES_FOLDER = 'New Hires'
 const TEMPLATE_FILE = 'Onboarding Checklist Template.xlsx'
+
+/* GAL contact tab. City + State feed the all-company dynamic group, so
+   every employee account must carry them — stamped at create, backfilled
+   by contacts mode, CLEARED at separation (drops them off the list).
+   Mobile is never written: personal numbers stay out of the GAL. */
+const ORG_CONTACT = {
+  businessPhones: ['979-826-6063'],
+  faxNumber: '979-270-7170',
+  streetAddress: '1134 Austin St',
+  city: 'Hempstead',
+  state: 'TX',
+  postalCode: '77445',
+  country: 'United States',
+}
+// List CertLevel → GAL job title ("Attendant | …"); unknown certs leave
+// jobTitle alone so custom titles (CDO, Community Paramedic…) survive.
+const CERT_TITLES: Record<string, string> = {
+  'EMT-B': 'EMT', 'ADV EMT': 'Advanced EMT', 'EMT-P': 'Paramedic', 'LP': 'Licensed Paramedic',
+}
+function titleFor(cert?: string | null): string | null {
+  const t = CERT_TITLES[String(cert ?? '').trim().toUpperCase()]
+  return t ? `Attendant | ${t}` : null
+}
+function deptFor(category?: string | null): string | null {
+  // HR's Category vocabulary: FT, PT, Vol, Admin, BOD, S1, S2, Doc —
+  // only field-staff categories get a stamped department; the rest keep
+  // whatever Justin writes by hand.
+  const c = String(category ?? '').trim().toLowerCase().replace('-', ' ')
+  if (c === 'ft' || c === 'full time') return 'Field Staff | Full Time'
+  if (c === 'pt' || c === 'part time') return 'Field Staff | Part Time'
+  if (c === 'vol' || c === 'volunteer') return 'Field Staff | Volunteer'
+  return null
+}
 
 async function token(clientId: string, secret: string): Promise<string> {
   const body = new URLSearchParams({
@@ -404,7 +440,7 @@ Deno.serve(async (req: Request) => {
       const ctx = await listCtx(await siteToken())
       await setFields(ctx, data.i, { [ctx.K('Status')]: 'Active', [ctx.K('M365State')]: `re-enabled ${new Date().toISOString().slice(0, 16)}Z via undo` })
       const life2 = await lifeToken()
-      await sendMail(life2, `Restored: ${user.displayName}`, `<p><b>${user.displayName}</b> was restored via the undo link. Account re-enabled, standard licenses re-added, roster status set back to Active.</p>`)
+      await sendMail(life2, `Restored: ${user.displayName}`, `<p><b>${user.displayName}</b> was restored via the undo link. Account re-enabled, standard licenses re-added, roster status set back to Active.</p><p>Note: run the contacts backfill (or re-enter city/state on the contact tab) so they rejoin the all-company mailing list.</p>`)
       return new Response(`<h2>${user.displayName} restored.</h2><p>Account re-enabled and roster status set back to Active. A confirmation email was sent.</p>`, { headers: { 'Content-Type': 'text/html' } })
     } catch (err) {
       return new Response(`<h2>Restore failed</h2><p>${(err as Error).message}</p>`, { status: 500, headers: { 'Content-Type': 'text/html' } })
@@ -461,6 +497,67 @@ Deno.serve(async (req: Request) => {
         { headers: { 'Content-Type': 'application/json' } })
     } catch (err) {
       return new Response(JSON.stringify({ ok: false, kit: body.kit, error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    }
+  }
+
+  // ── Contacts mode: stamp the GAL contact tab from the roster ────────
+  // POST {"contacts": true}                → dry-run: current vs planned, every active account
+  // POST {"contacts": true, "apply": true} → PATCH the planned fills
+  // Fill-only-when-EMPTY across the board: custom job titles (CDO,
+  // Community Paramedic, …) and hand-entered values are never touched.
+  // Mobile phone is never written. City+State feed the all-company
+  // dynamic group, so this is also the backfill for that list.
+  if (body?.contacts === true) {
+    try {
+      const [sTok, life] = await Promise.all([siteToken(), lifeToken()])
+      const ctx = await listCtx(sTok)
+      const people: Array<{ title: string; norm: string; cert: string; category: string }> = []
+      let nx: string | undefined = `https://graph.microsoft.com/v1.0/sites/${ctx.site.id}/lists/${ctx.listId}/items?expand=fields&$top=200`
+      while (nx) {
+        const data = await g(sTok, 'GET', nx)
+        for (const it of data.value ?? []) {
+          const f = it.fields ?? {}
+          const t = f[ctx.K('Title')]
+          if (!t || !String(t).includes(',')) continue
+          if ((String(f[ctx.K('Status')] ?? 'Active') || 'Active') === 'Separated') continue
+          people.push({
+            title: String(t), norm: norm(String(t)),
+            cert: String(f[ctx.K('CertLevel')] ?? ''), category: String(f[ctx.K('Category')] ?? ''),
+          })
+        }
+        nx = data['@odata.nextLink']
+      }
+      const out: Array<Record<string, unknown>> = []
+      let noAccount = 0, untouched = 0
+      for (const p of people) {
+        const upn = workEmail(p.norm)
+        const u = await g(life, 'GET',
+          `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=id,jobTitle,department,businessPhones,faxNumber,streetAddress,city,state,postalCode,country`)
+        if (u.__notFound) { noAccount++; continue }
+        const set: Record<string, unknown> = {}
+        if (!u.jobTitle && titleFor(p.cert)) set.jobTitle = titleFor(p.cert)
+        if (!u.department && deptFor(p.category)) set.department = deptFor(p.category)
+        if (!(u.businessPhones ?? []).length) set.businessPhones = ORG_CONTACT.businessPhones
+        if (!u.faxNumber) set.faxNumber = ORG_CONTACT.faxNumber
+        if (!u.streetAddress) set.streetAddress = ORG_CONTACT.streetAddress
+        if (!u.city) set.city = ORG_CONTACT.city
+        if (!u.state) set.state = ORG_CONTACT.state
+        if (!u.postalCode) set.postalCode = ORG_CONTACT.postalCode
+        if (!u.country) set.country = ORG_CONTACT.country
+        if (!Object.keys(set).length) { untouched++; continue }
+        if (apply) await g(life, 'PATCH', `https://graph.microsoft.com/v1.0/users/${u.id}`, set)
+        out.push({
+          name: p.title, upn,
+          current: { jobTitle: u.jobTitle ?? null, department: u.department ?? null, city: u.city ?? null },
+          [apply ? 'set' : 'wouldSet']: set,
+        })
+      }
+      return new Response(JSON.stringify({
+        ok: true, applied: apply, activePeople: people.length,
+        alreadyComplete: untouched, noAccount, changed: out.length, details: out,
+      }, null, 2), { headers: { 'Content-Type': 'application/json' } })
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
     }
   }
 
@@ -548,7 +645,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // Read the List
-    interface Row { id: string; title: string; norm: string; status: string; provision: string; state: string }
+    interface Row { id: string; title: string; norm: string; status: string; provision: string; state: string; cert: string; category: string }
     const rows: Row[] = []
     let next: string | undefined = `https://graph.microsoft.com/v1.0/sites/${ctx.site.id}/lists/${ctx.listId}/items?expand=fields&$top=200`
     while (next) {
@@ -562,6 +659,8 @@ Deno.serve(async (req: Request) => {
           status: String(f[ctx.K('Status')] ?? 'Active') || 'Active',
           provision: String(f[ctx.K('ProvisionM365')] ?? ''),
           state: String(f[ctx.K('M365State')] ?? ''),
+          cert: String(f[ctx.K('CertLevel')] ?? ''),
+          category: String(f[ctx.K('Category')] ?? ''),
         })
       }
       next = data['@odata.nextLink']
@@ -599,7 +698,8 @@ Deno.serve(async (req: Request) => {
           report.actions.push(`no account: ${upn}`)
           continue
         }
-        await g(life, 'PATCH', `https://graph.microsoft.com/v1.0/users/${user.id}`, { accountEnabled: false })
+        // clearing city/state drops them off the all-company dynamic list
+        await g(life, 'PATCH', `https://graph.microsoft.com/v1.0/users/${user.id}`, { accountEnabled: false, city: null, state: null })
         try { await g(life, 'POST', `https://graph.microsoft.com/v1.0/users/${user.id}/revokeSignInSessions`, {}) } catch (_) { /* non-fatal */ }
         const remove = (user.assignedLicenses ?? []).map((l: any) => l.skuId)
         if (remove.length) {
@@ -629,6 +729,10 @@ Deno.serve(async (req: Request) => {
           accountEnabled: true, displayName: display, givenName: given, surname,
           mailNickname: upn.split('@')[0], userPrincipalName: upn, usageLocation: 'US',
           passwordProfile: { password: pwd, forceChangePasswordNextSignIn: true },
+          // GAL contact tab: city+state put them on the all-company dynamic list
+          ...ORG_CONTACT,
+          ...(titleFor(r.cert) ? { jobTitle: titleFor(r.cert) } : {}),
+          ...(deptFor(r.category) ? { department: deptFor(r.category) } : {}),
         })
         /* One SKU per call: assignLicense is all-or-nothing, so bundling
            Business Basic with an exhausted F3 pool would leave the hire
