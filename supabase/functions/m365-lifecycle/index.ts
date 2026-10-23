@@ -26,7 +26,9 @@
 // a corrupted HR sheet cascading through excel-to-list).
 //
 // Modes: header `x-sync-secret` required for POST. POST {} dry-run;
-// POST {"apply":true} executes. Undo links are self-authenticating (HMAC).
+// POST {"apply":true} executes; {"kit":"Last, First"} rebuilds a welcome
+// kit; {"relicense":["Last, First",…]} tops up missing standard licenses.
+// Undo links are self-authenticating (HMAC).
 
 // @ts-expect-error npm specifier resolved by the edge runtime
 import { PDFDocument, StandardFonts, rgb } from 'npm:pdf-lib@1.17.1'
@@ -395,9 +397,9 @@ Deno.serve(async (req: Request) => {
       if (user.__notFound) return new Response('<h2>Account not found.</h2>', { status: 404, headers: { 'Content-Type': 'text/html' } })
       await g(life, 'PATCH', `https://graph.microsoft.com/v1.0/users/${user.id}`, { accountEnabled: true })
       const skus = await g(life, 'GET', 'https://graph.microsoft.com/v1.0/subscribedSkus')
-      const add = (skus.value ?? []).filter((s: any) => LICENSE_SKUS.includes(s.skuPartNumber)).map((s: any) => ({ skuId: s.skuId }))
-      if (add.length) {
-        try { await g(life, 'POST', `https://graph.microsoft.com/v1.0/users/${user.id}/assignLicense`, { addLicenses: add, removeLicenses: [] }) } catch (_) { /* license pool may be empty */ }
+      // one SKU per call — a bundled assign fails entirely when one pool is empty
+      for (const s of (skus.value ?? []).filter((x: any) => LICENSE_SKUS.includes(x.skuPartNumber))) {
+        try { await g(life, 'POST', `https://graph.microsoft.com/v1.0/users/${user.id}/assignLicense`, { addLicenses: [{ skuId: (s as any).skuId }], removeLicenses: [] }) } catch (_) { /* license pool may be empty */ }
       }
       const ctx = await listCtx(await siteToken())
       await setFields(ctx, data.i, { [ctx.K('Status')]: 'Active', [ctx.K('M365State')]: `re-enabled ${new Date().toISOString().slice(0, 16)}Z via undo` })
@@ -459,6 +461,52 @@ Deno.serve(async (req: Request) => {
         { headers: { 'Content-Type': 'application/json' } })
     } catch (err) {
       return new Response(JSON.stringify({ ok: false, kit: body.kit, error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    }
+  }
+
+  // ── Relicense mode: ensure standard SKUs + groups on EXISTING accounts
+  // POST {"relicense": ["Last, First", ...]} — for hires created while a
+  // license pool was empty, or whose create run died partway (their
+  // receipt email carries the warning — or never arrived). Adds whatever
+  // LICENSE_SKUS each account is missing (one SKU per call) and re-adds
+  // the standard GROUPS (already-a-member errors are ignored).
+  if (Array.isArray(body?.relicense) && body.relicense.length) {
+    try {
+      const life = await lifeToken()
+      const skus = await g(life, 'GET', 'https://graph.microsoft.com/v1.0/subscribedSkus')
+      const have = (skus.value ?? []).filter((x: any) => LICENSE_SKUS.includes(x.skuPartNumber))
+      const grp: Array<{ name: string; id?: string }> = []
+      for (const name of GROUPS) {
+        const r = await g(life, 'GET', `https://graph.microsoft.com/v1.0/groups?$filter=displayName eq '${name.replace(/'/g, "''")}'&$select=id`)
+        grp.push({ name, id: r.value?.[0]?.id })
+      }
+      const out: Array<Record<string, unknown>> = []
+      for (const nameRaw of body.relicense) {
+        const upn = workEmail(norm(String(nameRaw)))
+        const user = await g(life, 'GET', `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(upn)}?$select=id,displayName,assignedLicenses`)
+        if (user.__notFound) { out.push({ name: nameRaw, upn, error: 'no account' }); continue }
+        const owned = new Set((user.assignedLicenses ?? []).map((l: any) => l.skuId))
+        const added: string[] = [], failed: string[] = []
+        for (const s of have) {
+          if (owned.has(s.skuId)) continue
+          try {
+            await g(life, 'POST', `https://graph.microsoft.com/v1.0/users/${user.id}/assignLicense`, { addLicenses: [{ skuId: s.skuId }], removeLicenses: [] })
+            added.push(s.skuPartNumber)
+          } catch (e) { failed.push(`${s.skuPartNumber}: ${(e as Error).message.slice(0, 120)}`) }
+        }
+        const groupsAdded: string[] = []
+        for (const gr of grp) {
+          if (!gr.id) continue
+          try {
+            await g(life, 'POST', `https://graph.microsoft.com/v1.0/groups/${gr.id}/members/$ref`, { '@odata.id': `https://graph.microsoft.com/v1.0/directoryObjects/${user.id}` })
+            groupsAdded.push(gr.name)
+          } catch (_) { /* already a member */ }
+        }
+        out.push({ name: nameRaw, upn, added, failed, groupsAdded })
+      }
+      return new Response(JSON.stringify({ ok: true, relicense: out }, null, 2), { headers: { 'Content-Type': 'application/json' } })
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
     }
   }
 
@@ -582,11 +630,17 @@ Deno.serve(async (req: Request) => {
           mailNickname: upn.split('@')[0], userPrincipalName: upn, usageLocation: 'US',
           passwordProfile: { password: pwd, forceChangePasswordNextSignIn: true },
         })
-        const add = resolvedSkus.filter((s: any) => s.skuId).map((s: any) => ({ skuId: s.skuId }))
+        /* One SKU per call: assignLicense is all-or-nothing, so bundling
+           Business Basic with an exhausted F3 pool would leave the hire
+           with no licenses at all (3 F3 left vs 10 hires, 2026-10-23). */
         const failures: string[] = []
-        if (add.length) {
-          try { await g(life, 'POST', `https://graph.microsoft.com/v1.0/users/${created.id}/assignLicense`, { addLicenses: add, removeLicenses: [] }) }
-          catch (e) { failures.push(`license assignment: ${(e as Error).message}`) }
+        const licensed: string[] = []
+        for (const s of resolvedSkus as any[]) {
+          if (!s.skuId) continue
+          try {
+            await g(life, 'POST', `https://graph.microsoft.com/v1.0/users/${created.id}/assignLicense`, { addLicenses: [{ skuId: s.skuId }], removeLicenses: [] })
+            licensed.push(s.part === 'O365_BUSINESS_ESSENTIALS' ? 'Business Basic' : s.part === 'SPE_F1' ? 'F3' : s.part)
+          } catch (e) { failures.push(`license ${s.part}: ${(e as Error).message}`) }
         }
         for (const gr of groupIds) {
           if (!gr.id) { failures.push(`group not found: ${gr.name}`); continue }
@@ -602,7 +656,7 @@ Deno.serve(async (req: Request) => {
         await sendMail(life, `New account: ${display}`,
           `<p><b>${display}</b> — Microsoft 365 account created.</p>
            <ul><li>Sign-in: <b>${upn}</b></li><li>Temporary password: <b>${pwd}</b> (must be changed at first sign-in)</li>
-           <li>Licenses: Business Basic + F3</li><li>Groups: ${GROUPS.join(', ')}</li>
+           <li>Licenses: ${licensed.length ? licensed.join(' + ') : '<span style="color:#a00">NONE — license pool exhausted</span>'}</li><li>Groups: ${GROUPS.join(', ')}</li>
            ${kit?.folderUrl ? `<li>New-hire folder (welcome sheet + onboarding checklist): <a href="${kit.folderUrl}">New Hires / ${kit.folderName}</a></li>` : ''}</ul>
            ${kit ? '<p>The print-ready welcome sheet is attached — hand it out on day 1.</p>' : ''}
            ${failures.length ? `<p style="color:#a00"><b>Warnings:</b> ${failures.join('; ')}</p>` : ''}

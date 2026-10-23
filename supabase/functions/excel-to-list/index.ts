@@ -1,7 +1,7 @@
 // supabase/functions/excel-to-list/index.ts
 //
 // Stage 1 of the edit-once chain: reads HR's Master Roster workbook
-// (AdminStaff site › Documents › Admin › Master Roster 102225.xlsx,
+// (AdminStaff site › Documents › Admin › newest "Master Roster*.xlsx",
 // Active sheet) via the Graph workbook API — NO Excel Table required,
 // HR's file is never modified — and upserts identity columns into the
 // WCEMS Roster List. Stage 2 (roster-sync, hourly at :05) then fans the
@@ -39,7 +39,13 @@ const HOLD_CREATES = new Set([
 
 const SP_HOST = 'wcvems.sharepoint.com'
 const SP_SITE_PATH = '/sites/AdminStaff'
-const XLSX_PATH = '/Admin/Master Roster 102225.xlsx'
+/* HR saves the roster as a date-stamped copy ("Master Roster MMDDYY").
+   Hardcoding one filename died silently when the 102225 file was
+   replaced — new hires stopped provisioning and nobody was told
+   (2026-10-23). Resolve it by pattern instead: the newest-modified
+   "Master Roster*.xlsx" in /Admin wins, whatever HR calls it. */
+const XLSX_FOLDER = '/Admin'
+const XLSX_PATTERN = /^master roster.*\.xlsx$/i
 const SHEET = 'Active'
 const LIST_NAME = 'WCEMS Roster'
 
@@ -108,8 +114,15 @@ Deno.serve(async (req: Request) => {
     const site = await g(token, 'GET', `https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE_PATH}`)
 
     // ── Read HR's workbook (no table needed, file untouched) ───────────
-    const item = await g(token, 'GET',
-      `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/root:${encodeURI(XLSX_PATH)}`)
+    const kids = await g(token, 'GET',
+      `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/root:${encodeURI(XLSX_FOLDER)}:/children?$select=id,name,lastModifiedDateTime,file&$top=200`)
+    const books = (kids.value ?? [])
+      .filter((c: any) => c.file && XLSX_PATTERN.test(String(c.name)))
+      .sort((a: any, b: any) => String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)))
+    if (!books.length) {
+      throw new Error(`no "Master Roster*.xlsx" found in ${XLSX_FOLDER} — HR may have renamed or moved the workbook`)
+    }
+    const item = books[0]
     const used = await g(token, 'GET',
       `https://graph.microsoft.com/v1.0/sites/${site.id}/drive/items/${item.id}/workbook/worksheets('${SHEET}')/usedRange?$select=values`)
     const rows: unknown[][] = used.values ?? []
@@ -291,7 +304,8 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(JSON.stringify({
-      ok: true, applied: apply, excelPeople: excel.length, listPeople: listRows.length,
+      ok: true, applied: apply, sourceWorkbook: item.name,
+      excelPeople: excel.length, listPeople: listRows.length,
       updates: updates.map((u) => ({ name: u.name, fields: Object.keys(u.set) })),
       creates: toCreate.map((c) => c.name),
       heldPendingClearance: held.map((c) => c.name),
@@ -299,6 +313,54 @@ Deno.serve(async (req: Request) => {
       separationHalt: separationHalt ? `${autoSeparate.length} pending separations exceeds guard of 3 — none applied: ${autoSeparate.map((r) => r.name).join(', ')}` : null,
     }, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } })
   } catch (err) {
+    await alertFailure((err as Error).message)
     return new Response(JSON.stringify({ ok: false, error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 })
+
+/* A silent 404 ate two weeks of onboarding — on failure, email the
+   office crew once a day (the :00 run inside the 07:00 Central hour;
+   every response still carries the error for manual runs). Alerting
+   must never mask the original error, so everything is best-effort. */
+async function alertFailure(message: string) {
+  try {
+    const now = new Date()
+    const hour = Number(
+      new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/Chicago' }).format(now),
+    )
+    if (hour !== 7 || now.getUTCMinutes() >= 5) return
+    const body = new URLSearchParams({
+      client_id: env.get('LIFECYCLE_CLIENT_ID')!,
+      client_secret: env.get('LIFECYCLE_CLIENT_SECRET')!,
+      scope: 'https://graph.microsoft.com/.default',
+      grant_type: 'client_credentials',
+    })
+    const tokRes = await fetch(
+      `https://login.microsoftonline.com/${env.get('GRAPH_TENANT_ID')}/oauth2/v2.0/token`,
+      { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() },
+    )
+    if (!tokRes.ok) return
+    const tok = (await tokRes.json()).access_token
+    await fetch('https://graph.microsoft.com/v1.0/users/office@wallercountyems.com/sendMail', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: {
+          subject: 'ALERT: roster sync (Excel to List) is failing',
+          body: {
+            contentType: 'HTML',
+            content: `<p>The Master Roster sync has been failing — <b>new hires are NOT being provisioned</b> until this is fixed.</p><p><b>Error:</b> ${message}</p><p>Usual cause: the Master Roster workbook was renamed or moved out of AdminStaff › Documents › Admin. The sync looks for the newest "Master Roster*.xlsx" there.</p>`,
+          },
+          toRecipients: [
+            'justin.stjohn@wallercountyems.com',
+            'rhonda.becvar@wallercountyems.com',
+            'tori.bell@wallercountyems.com',
+          ].map((a) => ({ emailAddress: { address: a } })),
+        },
+        saveToSentItems: false,
+      }),
+    })
+  } catch (_) {
+    /* never mask the original failure */
+  }
+}
