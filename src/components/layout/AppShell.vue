@@ -23,6 +23,14 @@ const navOpen = ref(false)
    already handles section nav there. */
 const route = useRoute()
 const schedApp = computed(() => route.path.startsWith('/schedule'))
+/* Clinical Development runs the same way (Justin, 2026-10-23) — its own
+   navy app bar with an Employee Portal exit. Only the redesigned
+   /clinical section: the legacy /clinical-development crew page keeps
+   the portal chrome. */
+const clinicalApp = computed(
+  () => route.path === '/clinical' || route.path.startsWith('/clinical/'),
+)
+const moduleApp = computed(() => schedApp.value || clinicalApp.value)
 </script>
 
 <template>
@@ -32,7 +40,7 @@ const schedApp = computed(() => route.path.startsWith('/schedule'))
     <!-- Desktop chrome (portal mockup v2): utility bar + masthead + nav.
          Mobile keeps the compact topbar + drawer — crews are phone-first,
          the professional-website reading is for desktop. -->
-    <div v-if="!schedApp" class="hidden lg:block">
+    <div v-if="!moduleApp" class="hidden lg:block">
       <UtilityBar />
       <PortalMasthead />
     </div>

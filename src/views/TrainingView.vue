@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import SkillsChooserDialog from '@/components/SkillsChooserDialog.vue'
 import {
   GraduationCap,
   RefreshCw,
@@ -24,6 +25,8 @@ const { events, loading, lastFetchedAt, errorMessage, refresh } = useTraining()
 const auth = useAuthStore()
 const { isFto, isEditor } = useClinicalAccess()
 const showSkillsDay = computed(() => auth.isSupervisor || isFto.value || isEditor.value)
+/* Two skills boards exist now — ask which one (NEOP vs protocol updates). */
+const skillsChooser = ref(false)
 
 function freshnessLabel(d: Date | null): string {
   if (!d) return ''
@@ -116,13 +119,14 @@ function fillColor(filled: number, total: number) {
       </p>
     </header>
 
-    <RouterLink v-if="showSkillsDay" to="/skills" class="training__skillsday">
+    <button v-if="showSkillsDay" type="button" class="training__skillsday" @click="skillsChooser = true">
       <span class="training__skillsday-body">
-        <b>Skills Day</b>
-        <span>Evaluation stations — check-offs, live board, recheck queue, and trainee packets.</span>
+        <b>Skills</b>
+        <span>NEOP Skills Day stations, or the 2026 protocol-update verification board.</span>
       </span>
       <span class="training__skillsday-go">Open →</span>
-    </RouterLink>
+    </button>
+    <SkillsChooserDialog v-if="skillsChooser" @close="skillsChooser = false" />
 
     <div v-if="errorMessage" class="training__empty">
       <GraduationCap :size="22" :stroke-width="1.5" class="training__empty-icon" />
@@ -264,12 +268,16 @@ function fillColor(filled: number, total: number) {
   display: flex;
   align-items: center;
   gap: 14px;
+  width: 100%;
   margin-bottom: 18px;
   padding: 13px 18px;
   border-radius: 13px;
   background: var(--color-brand-950);
   color: #fff;
   text-decoration: none;
+  text-align: left;
+  font-family: var(--font-sans);
+  cursor: pointer;
   border: 1px solid var(--color-brand-800);
   box-shadow: var(--shadow-sm);
 }

@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import { Play, XCircle, ExternalLink, ClipboardCheck, Award, Download, HeartPulse } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import ClinicalCredentialChecklist from '@/components/clinical/ClinicalCredentialChecklist.vue'
-import MegacodeRunnerDrawer from '@/components/clinical/MegacodeRunnerDrawer.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useExams, type ExamAssignment } from '@/composables/useExams'
 import { useAuthStore } from '@/stores/auth'
@@ -166,12 +165,9 @@ const checklistPeople = computed<PipelinePerson[]>(() => {
   return out
 })
 
-/* ── Megacode runner ───────────────────────────────────────────────── */
-const mcOpen = ref(false)
-const mcPreselect = ref<PipelinePerson | null>(null)
+/* ── Megacode runner — full page, laid out like the paper form ─────── */
 function openMegacode(p: PipelinePerson | null) {
-  mcPreselect.value = p
-  mcOpen.value = true
+  void router.push(p ? `/clinical/megacode/${p.userId}` : '/clinical/megacode')
 }
 
 </script>
@@ -317,12 +313,6 @@ function openMegacode(p: PipelinePerson | null) {
         "Open exam" button covers your own assignments (e.g. trialing a test before fielding it).
       </p>
 
-      <MegacodeRunnerDrawer
-        v-if="mcOpen"
-        :preselect="mcPreselect"
-        @close="mcOpen = false"
-        @saved="mcOpen = false"
-      />
     </template>
   </div>
 </template>

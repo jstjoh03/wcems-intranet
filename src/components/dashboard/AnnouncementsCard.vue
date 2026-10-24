@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, watch, onMounted, onBeforeUnmount } from 'vue'
 import {
   Plus,
   Edit2,
@@ -12,6 +12,10 @@ import {
   Link2,
   List,
   Eye,
+  ChevronLeft,
+  ChevronRight,
+  Pause,
+  Play,
 } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import AppChip from '@/components/primitives/AppChip.vue'
@@ -462,6 +466,65 @@ function closeLightbox() {
   lightboxUrl.value = null
 }
 
+/* ── Carousel ──
+   Several announcements can run at once (Christmas party + protocol
+   updates, Justin 2026-10-23) — the card rotates them like a front-page
+   hero instead of stacking. Auto-advances every 8 s; hover pauses it,
+   any manual move (arrows, dots, swipe) stops the auto-rotation so a
+   reader is never yanked off a slide; the play/pause control brings it
+   back. Reduced-motion users never auto-rotate. */
+const slideIdx = ref(0)
+const autoOn = ref(
+  typeof window === 'undefined' || !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+)
+const hoverPaused = ref(false)
+let rotateTimer: ReturnType<typeof setInterval> | null = null
+
+const slideCount = computed(() => visibleAnnouncements.value.length)
+
+function goSlide(i: number, manual = false) {
+  const n = slideCount.value
+  if (n === 0) return
+  slideIdx.value = ((i % n) + n) % n
+  if (manual) autoOn.value = false
+}
+function nextSlide(manual = false) {
+  goSlide(slideIdx.value + 1, manual)
+}
+function prevSlide(manual = false) {
+  goSlide(slideIdx.value - 1, manual)
+}
+
+watch(slideCount, (n) => {
+  if (slideIdx.value > n - 1) slideIdx.value = Math.max(0, n - 1)
+})
+
+onMounted(() => {
+  rotateTimer = setInterval(() => {
+    if (!autoOn.value || hoverPaused.value || document.hidden) return
+    if (slideCount.value > 1 && !composing.value && !detailId.value && !lightboxUrl.value) {
+      nextSlide()
+    }
+  }, 8000)
+})
+onBeforeUnmount(() => {
+  if (rotateTimer) clearInterval(rotateTimer)
+})
+
+/* Swipe (phones + iPads). */
+let touchX: number | null = null
+function onTouchStart(e: TouchEvent) {
+  touchX = e.touches[0]?.clientX ?? null
+}
+function onTouchEnd(e: TouchEvent) {
+  if (touchX == null) return
+  const dx = (e.changedTouches[0]?.clientX ?? touchX) - touchX
+  touchX = null
+  if (Math.abs(dx) < 42) return
+  if (dx < 0) nextSlide(true)
+  else prevSlide(true)
+}
+
 const submitLabel = computed(() => {
   if (submitting.value) return 'Saving…'
   return draft.value.id ? 'Update' : 'Publish'
@@ -695,101 +758,142 @@ const submitLabel = computed(() => {
       Nothing posted — crews won't see this section until you post.
     </p>
 
-    <!-- List -->
-    <div v-else-if="visibleAnnouncements.length > 0" class="space-y-3">
-      <article
-        v-for="(a, i) in visibleAnnouncements"
-        :key="a.id"
-        class="announcements-card__row"
-        :class="{
-          'announcements-card__row--last': i === visibleAnnouncements.length - 1,
-          'announcements-card__row--archived': !a.active,
-        }"
-      >
-        <div class="flex items-center gap-2 mb-1.5 flex-wrap">
-          <AppChip variant="brand">{{ a.tag }}</AppChip>
-          <span
-            v-if="!a.active"
-            class="announcements-card__archived-tag"
-            aria-label="Archived"
+    <!-- Carousel — one front-page slide at a time, auto-rotating -->
+    <div
+      v-else-if="visibleAnnouncements.length > 0"
+      class="ancar"
+      @mouseenter="hoverPaused = true"
+      @mouseleave="hoverPaused = false"
+    >
+      <div class="ancar__viewport" @touchstart.passive="onTouchStart" @touchend.passive="onTouchEnd">
+        <div class="ancar__track" :style="{ transform: `translateX(-${slideIdx * 100}%)` }">
+          <article
+            v-for="a in visibleAnnouncements"
+            :key="a.id"
+            class="ancar__slide"
+            :class="{ 'announcements-card__row--archived': !a.active, 'ancar__slide--noimg': !a.imageUrl }"
           >
-            Archived
-          </span>
-          <span class="font-mono text-[10.5px]" style="color: var(--color-muted)">
-            {{ a.date }}
-          </span>
-          <span class="ml-auto flex items-center gap-2">
             <button
-              v-if="auth.isAdmin"
-              class="announcements-card__edit"
-              aria-label="Edit"
-              @click="startEdit(a.id)"
+              v-if="a.imageUrl"
+              type="button"
+              class="ancar__media"
+              :aria-label="`Open ${a.title} image`"
+              @click="openLightbox(a.imageUrl)"
             >
-              <Edit2 :size="11" />
+              <img
+                :src="a.imageUrl"
+                :alt="`${a.title} image`"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+              />
             </button>
-            <button
-              v-if="auth.isAdmin && a.active"
-              class="announcements-card__edit"
-              aria-label="Archive"
-              title="Archive"
-              @click="archiveAnnouncement(a.id)"
-            >
-              <Archive :size="11" />
-            </button>
-            <button
-              v-if="auth.isAdmin && !a.active"
-              class="announcements-card__edit"
-              aria-label="Restore"
-              title="Restore"
-              @click="restoreAnnouncement(a.id)"
-            >
-              <ArchiveRestore :size="11" />
-            </button>
-            <button
-              v-if="auth.isAdmin"
-              class="announcements-card__edit"
-              aria-label="Delete"
-              @click="removeAnnouncement(a.id, a.title)"
-            >
-              <X :size="11" />
-            </button>
-          </span>
+            <div class="ancar__content">
+              <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+                <AppChip variant="brand">{{ a.tag }}</AppChip>
+                <span
+                  v-if="!a.active"
+                  class="announcements-card__archived-tag"
+                  aria-label="Archived"
+                >
+                  Archived
+                </span>
+                <span class="font-mono text-[10.5px]" style="color: var(--color-muted)">
+                  {{ a.date }}
+                </span>
+                <span class="ml-auto flex items-center gap-2">
+                  <button
+                    v-if="auth.isAdmin"
+                    class="announcements-card__edit"
+                    aria-label="Edit"
+                    @click="startEdit(a.id)"
+                  >
+                    <Edit2 :size="11" />
+                  </button>
+                  <button
+                    v-if="auth.isAdmin && a.active"
+                    class="announcements-card__edit"
+                    aria-label="Archive"
+                    title="Archive"
+                    @click="archiveAnnouncement(a.id)"
+                  >
+                    <Archive :size="11" />
+                  </button>
+                  <button
+                    v-if="auth.isAdmin && !a.active"
+                    class="announcements-card__edit"
+                    aria-label="Restore"
+                    title="Restore"
+                    @click="restoreAnnouncement(a.id)"
+                  >
+                    <ArchiveRestore :size="11" />
+                  </button>
+                  <button
+                    v-if="auth.isAdmin"
+                    class="announcements-card__edit"
+                    aria-label="Delete"
+                    @click="removeAnnouncement(a.id, a.title)"
+                  >
+                    <X :size="11" />
+                  </button>
+                </span>
+              </div>
+              <h4 class="announcements-card__title display">{{ a.title }}</h4>
+              <!-- Short bodies render rich (links stay tappable);
+                   truncated ones fall back to a plain snippet — the
+                   full-story modal carries the links. -->
+              <div
+                v-if="a.body && !isTruncated(a)"
+                class="announcements-card__body announcements-card__rich ancar__body"
+                v-html="renderRichText(a.body)"
+              />
+              <p v-else-if="a.body" class="announcements-card__body ancar__body">{{ snippetFor(a) }}</p>
+              <button
+                v-if="isTruncated(a) || a.allowComments"
+                type="button"
+                class="announcements-card__story-link"
+                @click="detailId = a.id"
+              >
+                {{ storyLinkLabel(a) }}
+              </button>
+              <div class="announcements-card__by">— {{ a.authorName }}</div>
+            </div>
+          </article>
         </div>
-        <h4 class="announcements-card__title display">{{ a.title }}</h4>
-        <button
-          v-if="a.imageUrl"
-          type="button"
-          class="announcements-card__image-btn"
-          :aria-label="`Open ${a.title} image`"
-          @click="openLightbox(a.imageUrl)"
-        >
-          <img
-            :src="a.imageUrl"
-            :alt="`${a.title} image`"
-            class="announcements-card__image"
-            loading="lazy"
-            referrerpolicy="no-referrer"
+
+        <template v-if="slideCount > 1">
+          <button type="button" class="ancar__arrow ancar__arrow--l" aria-label="Previous announcement" @click="prevSlide(true)">
+            <ChevronLeft :size="17" :stroke-width="2.25" />
+          </button>
+          <button type="button" class="ancar__arrow ancar__arrow--r" aria-label="Next announcement" @click="nextSlide(true)">
+            <ChevronRight :size="17" :stroke-width="2.25" />
+          </button>
+        </template>
+      </div>
+
+      <div v-if="slideCount > 1" class="ancar__bar">
+        <div class="ancar__dots" role="tablist" aria-label="Announcements">
+          <button
+            v-for="(a, i) in visibleAnnouncements"
+            :key="a.id"
+            type="button"
+            class="ancar__dot"
+            :class="{ 'ancar__dot--on': i === slideIdx }"
+            :aria-label="`Show: ${a.title}`"
+            @click="goSlide(i, true)"
           />
-        </button>
-        <!-- Short bodies render rich in-card (links stay tappable even
-             when no story link appears); truncated ones fall back to a
-             plain snippet — the full-story modal carries the links. -->
-        <div
-          v-if="a.body && !isTruncated(a)"
-          class="announcements-card__body announcements-card__rich"
-          v-html="renderRichText(a.body)"
-        />
-        <p v-else-if="a.body" class="announcements-card__body">{{ snippetFor(a) }}</p>
+        </div>
         <button
-          v-if="isTruncated(a) || a.allowComments"
           type="button"
-          class="announcements-card__story-link"
-          @click="detailId = a.id"
+          class="ancar__play"
+          :aria-label="autoOn ? 'Pause the rotation' : 'Resume the rotation'"
+          :title="autoOn ? 'Pause' : 'Auto-rotate'"
+          @click="autoOn = !autoOn"
         >
-          {{ storyLinkLabel(a) }}
+          <Pause v-if="autoOn" :size="12" :stroke-width="2.25" />
+          <Play v-else :size="12" :stroke-width="2.25" />
         </button>
-        <div class="announcements-card__by">— {{ a.authorName }}</div>
-      </article>
+        <span class="ancar__count font-mono">{{ slideIdx + 1 }} / {{ slideCount }}</span>
+      </div>
     </div>
 
     <!-- Lightbox — full-size image overlay. Clicking the backdrop or
@@ -875,6 +979,147 @@ const submitLabel = computed(() => {
 
 .announcements-card__row--archived {
   opacity: 0.6;
+}
+
+/* ── Carousel ── */
+.ancar__viewport {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+}
+.ancar__track {
+  display: flex;
+  align-items: stretch;
+  transition: transform 420ms cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ancar__track { transition: none; }
+}
+.ancar__slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  background: var(--color-surface);
+}
+@media (min-width: 640px) {
+  .ancar__slide { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; }
+  .ancar__slide--noimg { grid-template-columns: 1fr; }
+}
+.ancar__media {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 10px;
+  cursor: zoom-in;
+  border-radius: 12px;
+  min-height: 190px;
+  max-height: 240px;
+  background:
+    radial-gradient(120% 120% at 20% 0%, oklch(0.3 0.08 255 / 0.9), transparent 55%),
+    linear-gradient(150deg, var(--color-brand-900), var(--color-brand-950));
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.1);
+}
+.ancar__media img {
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 7px;
+  box-shadow: 0 10px 30px oklch(0.1 0.04 260 / 0.45);
+}
+@media (min-width: 640px) {
+  .ancar__media { min-height: 230px; max-height: 300px; }
+  .ancar__media img { max-height: 280px; }
+}
+.ancar__content {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 2px 2px 6px;
+}
+/* Text-only slides read as a centered statement instead of top-left
+   copy floating over the empty height the image slides set. */
+.ancar__slide--noimg .ancar__content { justify-content: center; }
+@media (min-width: 640px) {
+  /* keep the body clear of the overlaid arrows */
+  .ancar__content { padding-right: 36px; }
+  .ancar__slide--noimg .ancar__content { padding-left: 36px; }
+}
+.ancar__body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.ancar__arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--color-line);
+  background: oklch(1 0 0 / 0.92);
+  color: var(--color-brand-900);
+  cursor: pointer;
+  box-shadow: 0 4px 14px oklch(0.2 0.03 260 / 0.18);
+  transition: background 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.ancar__arrow:hover { background: #fff; transform: translateY(-50%) scale(1.06); }
+.ancar__arrow--l { left: 8px; }
+.ancar__arrow--r { right: 8px; }
+@media (max-width: 639px) {
+  /* Phones swipe; the arrows just cover the flyer */
+  .ancar__arrow { display: none; }
+}
+.ancar__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.ancar__dots { display: flex; align-items: center; gap: 7px; margin: 0 auto; }
+.ancar__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background: var(--color-line);
+  transition: background 150ms var(--ease-out), width 220ms var(--ease-out);
+}
+.ancar__dot:hover { background: var(--color-muted-soft); }
+.ancar__dot--on {
+  width: 22px;
+  background: linear-gradient(90deg, oklch(0.78 0.11 86.8), oklch(0.664 0.119 86.8));
+}
+.ancar__play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.ancar__play:hover { color: var(--color-ink); border-color: var(--color-muted-soft); }
+.ancar__count {
+  font-size: 10px;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
 }
 .announcements-card__archived-tag {
   font-family: var(--font-mono);

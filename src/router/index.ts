@@ -232,6 +232,12 @@ const routes: RouteRecordRaw[] = [
     name: 'clinical-exams',
     component: () => import('@/views/clinical/ClinicalExamsView.vue'),
   },
+  /* Megacode evaluation — full page, laid out like the paper form. */
+  {
+    path: '/clinical/megacode/:userId?',
+    name: 'clinical-megacode',
+    component: () => import('@/views/clinical/MegacodeRunView.vue'),
+  },
   /* Trainee-facing: Trainee Evaluation of FTO (goes to the CDO only). */
   {
     path: '/clinical-development/fto-eval',
@@ -264,6 +270,12 @@ const routes: RouteRecordRaw[] = [
     path: '/skills/protocol-updates',
     name: 'protocol-skills',
     component: () => import('@/views/skills/ProtocolSkillsView.vue'),
+  },
+  /* Full-page check-off, laid out like the paper verification form. */
+  {
+    path: '/skills/protocol-updates/run/:checkoffId/:userId',
+    name: 'protocol-skill-run',
+    component: () => import('@/views/skills/ProtocolSkillRunView.vue'),
   },
   {
     path: '/skills/:checkoffId/:candidateId',

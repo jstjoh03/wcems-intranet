@@ -147,6 +147,54 @@ export function useAnnouncements() {
     subscribeRealtime()
   }
 
+  /* Dev stub: seed a few announcements so the dashboard carousel is
+     demoable offline (one with an image, two text-only). */
+  if (!isLive && !loadStarted) {
+    loadStarted = true
+    const now = new Date().toISOString()
+    announcements.value = [
+      {
+        id: 'dev-ann-1',
+        date: formatDateLabel(now),
+        tag: 'Event',
+        title: "Just Kidding… We've Made a Few Christmas Party Changes!",
+        body: 'The date and time are staying the same, but this year\'s party moves to Fife Realty in Hempstead. Santa will be joining us — bring the kids for pictures. Food, family, Christmas cheer, and 30 wonderful years of Waller County EMS. We can\'t wait to celebrate with our WCEMS family!',
+        imageUrl: '/wcems-patch.png',
+        authorName: 'April Mancini',
+        publishedAt: now,
+        active: true,
+        allowComments: true,
+        commentNotifyUserIds: [],
+      },
+      {
+        id: 'dev-ann-2',
+        date: formatDateLabel(now),
+        tag: 'Protocol',
+        title: '2026 Protocol Updates — video + skills verification',
+        body: 'Dr. Buzzard\'s update video is live under Required Training. Watch it, then catch an evaluator on shift for your level\'s skills check-offs. The updated protocols are NOT in effect until Clinical Development announces go-live.',
+        imageUrl: null,
+        authorName: 'Justin St. John',
+        publishedAt: now,
+        active: true,
+        allowComments: false,
+        commentNotifyUserIds: [],
+      },
+      {
+        id: 'dev-ann-3',
+        date: formatDateLabel(now),
+        tag: 'Operations',
+        title: 'Station 243 Mallard Crossing opens next month',
+        body: 'Crew assignments post to the scheduler next week.',
+        imageUrl: null,
+        authorName: 'Rhonda Getschman',
+        publishedAt: now,
+        active: true,
+        allowComments: false,
+        commentNotifyUserIds: [],
+      },
+    ]
+  }
+
   onBeforeUnmount(() => {
     /* Module-level singleton — nothing to tear down per-consumer. */
   })

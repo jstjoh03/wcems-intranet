@@ -6,7 +6,6 @@ import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import FtepTraineeCard from '@/components/clinical/FtepTraineeCard.vue'
 import FtepTraineeQuickview from '@/components/clinical/FtepTraineeQuickview.vue'
 import AdvancementRecordDrawer from '@/components/clinical/AdvancementRecordDrawer.vue'
-import MegacodeRunnerDrawer from '@/components/clinical/MegacodeRunnerDrawer.vue'
 import ClinicalCredentialChecklist from '@/components/clinical/ClinicalCredentialChecklist.vue'
 import ClinicalRecordDrawer, { type DrawerTarget } from '@/components/clinical/ClinicalRecordDrawer.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
@@ -376,7 +375,6 @@ watch(person, () => void buildTl(), { immediate: true })
 
 const quickview = ref<PipelinePerson | null>(null)
 const advOpen = ref(false)
-const mcOpen = ref(false)
 
 /** "Start credentialing" from the embedded card — the checklist and
  *  exam assignment are right on this page; bring them into view. */
@@ -854,7 +852,7 @@ function fmtDateTime(iso: string): string {
             </div>
 
             <!-- Credentialing checklist (surfaces for transitions that have one) -->
-            <ClinicalCredentialChecklist v-if="canEdit" :person="person" @megacode="mcOpen = true" />
+            <ClinicalCredentialChecklist v-if="canEdit" :person="person" @megacode="router.push(`/clinical/megacode/${person.userId}`)" />
 
             <!-- Advancement Records -->
             <div v-if="advRows.length" class="cf__panel cf__panel--pad">
@@ -1073,12 +1071,6 @@ function fmtDateTime(iso: string): string {
         :timeline="tl"
         @close="advOpen = false"
         @saved="advOpen = false; void buildTl()"
-      />
-      <MegacodeRunnerDrawer
-        v-if="mcOpen"
-        :preselect="person"
-        @close="mcOpen = false"
-        @saved="mcOpen = false"
       />
       <FtepTraineeQuickview :person="quickview" @close="quickview = null" />
       <PipelinePersonModal v-if="editingLive" :person="editingLive" @close="editing = false" />

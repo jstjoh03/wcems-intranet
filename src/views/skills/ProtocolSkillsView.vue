@@ -2,16 +2,12 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Check, Download, FileText, Plus, X, AlertTriangle } from 'lucide-vue-next'
-import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useClinical } from '@/composables/useClinical'
-import { useClinicalDocs } from '@/composables/useClinicalDocs'
-import { useClinicalEvents } from '@/composables/useClinicalEvents'
 import { useSkillsDay } from '@/composables/useSkillsDay'
 import {
   useProtocolSkills,
   type ProtocolSkillCheckoff,
-  type ProtocolSkillVerification,
 } from '@/composables/useProtocolSkills'
 import {
   generateProtocolSkillBlankPdf,
@@ -37,8 +33,6 @@ const auth = useAuthStore()
 const { ready: clinReady, clinicalPeople, canEdit, personById } = useClinical()
 const skillsDay = useSkillsDay()
 const ps = useProtocolSkills()
-const clindocs = useClinicalDocs()
-const events = useClinicalEvents()
 
 const isEvaluator = skillsDay.isEvaluator
 const ready = computed(() => clinReady.value && ps.ready.value)
@@ -137,106 +131,11 @@ function shortTitle(t: string): string {
     .replace('Standalone CPAP', 'CPAP')
 }
 
-/* ── Runner ─────────────────────────────────────────────────────────── */
-
-const run = ref<{ person: PipelinePerson; checkoff: ProtocolSkillCheckoff } | null>(null)
-const runChecks = ref<Record<string, boolean>>({})
-const runDate = ref('')
-const runNote = ref('')
-const empSig = ref<string | null>(null)
-const evalSig = ref<string | null>(null)
-const runBusy = ref(false)
-const runError = ref<string | null>(null)
+/* ── Runner — a full page laid out like the paper form ──────────────── */
 
 function openRun(person: PipelinePerson, checkoff: ProtocolSkillCheckoff) {
   if (!isEvaluator.value) return
-  run.value = { person, checkoff }
-  runChecks.value = {}
-  runDate.value = new Date().toISOString().slice(0, 10)
-  runNote.value = ''
-  empSig.value = null
-  evalSig.value = null
-  runError.value = null
-}
-
-const runItems = computed(() => run.value?.checkoff.sections.flatMap((s) => s.items) ?? [])
-const runAllChecked = computed(
-  () => runItems.value.length > 0 && runItems.value.every((i) => runChecks.value[i.key]),
-)
-const runOverall = computed<'pass' | 'remediation'>(() => (runAllChecked.value ? 'pass' : 'remediation'))
-
-const runBlockers = computed<string[]>(() => {
-  const out: string[] = []
-  if (!runAllChecked.value && !runNote.value.trim())
-    out.push('Unchecked criteria save as REMEDIATION — add a note saying what to work on, or check everything off.')
-  if (!empSig.value) out.push('Employee signature required.')
-  if (!evalSig.value) out.push('Evaluator signature required.')
-  return out
-})
-
-async function saveRun() {
-  const r = run.value
-  if (!r || runBusy.value || runBlockers.value.length) return
-  runBusy.value = true
-  runError.value = null
-  try {
-    const items: ProtocolSkillVerification['items'] = {}
-    for (const s of r.checkoff.sections) {
-      for (const i of s.items) {
-        items[i.key] = { result: runChecks.value[i.key] ? 'pass' : 'redo', label: i.label }
-      }
-    }
-    const res = await ps.submitVerification({
-      checkoffId: r.checkoff.id,
-      userId: r.person.userId,
-      evalDate: runDate.value,
-      items,
-      overall: runOverall.value,
-      candidateSignature: empSig.value,
-      evaluatorSignature: evalSig.value,
-      note: runNote.value.trim() || null,
-    })
-    if (!res.ok) throw new Error(res.error)
-
-    /* File the signed PDF + timeline entry when this session may —
-       clinical editors only; a field FTO's record still lives in the
-       table and can be filed from here later. */
-    if (canEdit.value) {
-      try {
-        const v = ps.verifications.value.find((x) => x.id === res.id)
-        if (v) {
-          const doc = await generateProtocolSkillVerificationPdf({
-            campaignTitle: ps.activeCampaign.value?.title ?? 'Protocol skills verification',
-            checkoff: r.checkoff,
-            verification: v,
-            candidateName: r.person.fullName,
-            evaluatorName: auth.appUser?.fullName ?? 'Evaluator',
-          })
-          const safe = r.person.fullName.replace(/\s+/g, '_').replace(/[^\w-]/g, '')
-          const blob = doc.output('blob') as Blob
-          await clindocs.upload({
-            userId: r.person.userId,
-            folder: 'generated',
-            file: new File([blob], `WCEMS_Protocol_Skill_${r.checkoff.key}_${safe}_${runDate.value}.pdf`, { type: 'application/pdf' }),
-            employeeVisible: true,
-            note: `${r.checkoff.title} · ${runOverall.value === 'pass' ? 'verified' : 'remediation'}`,
-          })
-          await events.log(
-            r.person.userId,
-            'protocol_skill',
-            `${r.checkoff.title} — ${runOverall.value === 'pass' ? 'verified' : 'remediation required'} (2026 protocol update)`,
-          )
-        }
-      } catch (e) {
-        console.error('[protocol-skills] filing failed:', e)
-      }
-    }
-    run.value = null
-  } catch (e) {
-    runError.value = (e as Error).message
-  } finally {
-    runBusy.value = false
-  }
+  void router.push(`/skills/protocol-updates/run/${checkoff.id}/${person.userId}`)
 }
 
 /* ── PDFs ───────────────────────────────────────────────────────────── */
@@ -555,65 +454,6 @@ async function setDue(ev: Event) {
           </div>
         </div>
       </template>
-
-      <!-- ── Runner drawer ── -->
-      <div v-if="run" class="pv__scrim" @click.self="run = null">
-        <aside class="pv__drawer">
-          <div class="pv__dr-hd">
-            <div>
-              <div class="pv__dr-t display">{{ run.checkoff.title }}</div>
-              <div class="pv__dr-s">{{ run.person.fullName }} · {{ run.person.record.certLevel }} · evaluator: {{ auth.appUser?.fullName }}</div>
-            </div>
-            <button type="button" class="pv__dr-x" @click="run = null"><X :size="17" :stroke-width="2" /></button>
-          </div>
-          <div class="pv__dr-bd">
-            <p v-if="run.checkoff.subtitle" class="pv__dr-sub">{{ run.checkoff.subtitle }}</p>
-            <p v-if="run.checkoff.note" class="pv__note">{{ run.checkoff.note }}</p>
-            <template v-for="s in run.checkoff.sections" :key="s.title">
-              <div class="pv__dr-sect">{{ s.title }}</div>
-              <label v-for="i in s.items" :key="i.key" class="pv__check">
-                <input v-model="runChecks[i.key]" type="checkbox" />
-                <span :class="{ 'pv__done': runChecks[i.key] }">{{ i.label }}</span>
-              </label>
-            </template>
-
-            <div class="pv__scorebar" :class="runAllChecked ? 'pv__scorebar--ok' : 'pv__scorebar--warn'">
-              <component :is="runAllChecked ? Check : AlertTriangle" :size="14" :stroke-width="2.5" />
-              {{ runAllChecked ? 'All criteria met — saves as VERIFIED' : 'Unchecked criteria save as REMEDIATION' }}
-            </div>
-
-            <label class="pv__fld">Date
-              <input v-model="runDate" type="date" />
-            </label>
-            <label class="pv__fld">Note{{ runAllChecked ? ' (optional)' : ' — what to work on' }}
-              <input v-model="runNote" type="text" maxlength="300" />
-            </label>
-
-            <div class="pv__dr-sect">Signatures</div>
-            <div class="pv__sig">
-              <div class="pv__sig-l">Employee — {{ run.person.fullName }}</div>
-              <SignaturePad :height="84" @change="(d: string) => (empSig = d)" />
-            </div>
-            <div class="pv__sig">
-              <div class="pv__sig-l">Evaluator — {{ auth.appUser?.fullName }}</div>
-              <SignaturePad :height="84" @change="(d: string) => (evalSig = d)" />
-            </div>
-
-            <div v-if="runBlockers.length" class="pv__blockers">
-              <div v-for="b in runBlockers" :key="b" class="pv__blocker">
-                <AlertTriangle :size="12" :stroke-width="2" /> {{ b }}
-              </div>
-            </div>
-            <div v-if="runError" class="pv__error">{{ runError }}</div>
-          </div>
-          <div class="pv__dr-ft">
-            <button type="button" class="pv__go" :disabled="runBusy || runBlockers.length > 0" @click="saveRun">
-              {{ runBusy ? 'Filing…' : runAllChecked ? 'Sign & verify' : 'Sign — remediation' }}
-            </button>
-            <button type="button" class="pv__lnk pv__lnk--mut" @click="run = null">Cancel</button>
-          </div>
-        </aside>
-      </div>
 
       <!-- ── Catalog edit dialog ── -->
       <div v-if="editOpen && canEdit" class="pv__scrim" @click.self="editOpen = false">
