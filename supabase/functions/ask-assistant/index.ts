@@ -34,6 +34,7 @@
 import Anthropic from 'npm:@anthropic-ai/sdk@1.3.0'
 // @ts-expect-error esm.sh URL resolved at runtime
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { KB_RAW } from './kb-content.ts'
 
 // @ts-expect-error Deno global available in Edge Runtime
 const env = Deno.env
@@ -63,10 +64,12 @@ function json(body: unknown, status = 200, extra: Record<string, string> = {}): 
 }
 
 /* ── Knowledge base ──────────────────────────────────────────────────
-   Explicit manifest (the Edge bundle has no directory listing) in a
-   deterministic order so the concatenation — and therefore the prompt
-   cache — is byte-stable. Adding an article = add the file AND list it
-   here, then redeploy. */
+   The kb/*.md files are the source of truth, but the deployed bundle
+   can't read static files at runtime, so scripts/build-assistant-kb.mjs
+   bakes them into ./kb-content.ts (imported above) in THIS manifest's
+   order — deterministic order keeps the prompt cache byte-stable.
+   Adding an article = add the md file, list it here, re-run the script,
+   redeploy. */
 const KB_FILES = [
   // Getting around
   'getting-around/dashboard.md',
@@ -152,17 +155,18 @@ function parseArticle(raw: string, file: string): Article {
   }
 }
 
-/* Loaded once per isolate; both prompt variants derive from it. */
-let kbPromise: Promise<Article[]> | null = null
-function loadKb(): Promise<Article[]> {
-  kbPromise ??= Promise.all(
-    KB_FILES.map(async (f) => {
-      // @ts-expect-error Deno global available in Edge Runtime
-      const raw = await Deno.readTextFile(new URL(`./kb/${f}`, import.meta.url))
+/* Parsed once per isolate; both prompt variants derive from it. */
+let kbCache: Article[] | null = null
+function loadKb(): Article[] {
+  if (!kbCache) {
+    const byFile = new Map(KB_RAW.map((e) => [e.file, e.raw]))
+    kbCache = KB_FILES.map((f) => {
+      const raw = byFile.get(f)
+      if (!raw) throw new Error(`KB article ${f} missing from kb-content.ts — re-run scripts/build-assistant-kb.mjs`)
       return parseArticle(raw, f)
-    }),
-  )
-  return kbPromise
+    })
+  }
+  return kbCache
 }
 
 const RULES = `You are the WCEMS intranet assistant ("Ask WCEMS") for Waller County EMS employees. The employee portal is a web app (PWA) at employee.wallercountyems.com.
@@ -292,7 +296,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Prompt ───────────────────────────────────────────────────────
-    const articles = await loadKb()
+    const articles = loadKb()
     const isAdminVariant = me.role === 'admin' || me.role === 'supervisor'
     const system = [
       {

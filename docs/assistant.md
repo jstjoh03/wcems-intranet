@@ -58,15 +58,22 @@ before writing. Include the deep link path(s) the assistant should cite.
 
 1. Add/edit the `.md` file under `kb/`.
 2. If it's a **new** file, add its path to the `KB_FILES` manifest near the
-   top of `index.ts` (the Edge bundle can't list directories, and the fixed
-   order keeps the prompt cache stable).
-3. Redeploy the function — **that's what ships KB changes**:
+   top of `index.ts` (the fixed order keeps the prompt cache stable).
+3. Regenerate the baked KB module — the deployed bundle can't read files at
+   runtime, so the markdown is compiled into `kb-content.ts`:
+
+   ```bash
+   node scripts/build-assistant-kb.mjs
+   ```
+
+4. Redeploy the function — **that's what ships KB changes**:
 
    ```bash
    npx supabase functions deploy ask-assistant
    ```
 
-   No frontend build or migration needed for KB-only edits.
+   No frontend build or migration needed for KB-only edits. Never edit
+   `kb-content.ts` by hand — it's generated.
 
 ### Writing guidelines
 
@@ -107,7 +114,9 @@ There's also a quiet "Suggest a feature" link in the panel footer.
 - Deploy **with JWT verification on** (users call it with their session
   token): `npx supabase functions deploy ask-assistant` — do **not** pass
   `--no-verify-jwt`. If deploying through the Supabase MCP tool, pass
-  `verify_jwt: true` and include every `kb/*.md` file in the files list.
+  `verify_jwt: true` with two files: `index.ts` and the generated
+  `kb-content.ts` (the raw `kb/*.md` files don't need to ship — they're
+  baked in).
 - Costs are logged per exchange; a belt-and-braces monthly spend limit can
   be set at console.anthropic.com.
 
