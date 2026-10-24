@@ -29,6 +29,7 @@ import {
   IdCard,
   ExternalLink,
   Boxes,
+  MessageCircleQuestion,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
@@ -137,6 +138,7 @@ const adminPages: NavItem[] = [
   { label: 'Kudos', to: '/admin/kudos', icon: Heart },
   { label: 'Badge Maker', to: '/admin/badge-maker', icon: IdCard },
   { label: 'Usage', to: '/admin/usage', icon: Activity },
+  { label: 'Assistant', to: '/admin/assistant', icon: MessageCircleQuestion },
   /* MD-session tool, hosted as a Claude artifact — private to the CDO's
      account; other admins need it shared before the link opens. */
   { label: 'Protocol Review Wizard', url: 'https://claude.ai/code/artifact/9b248f36-5169-40b1-a6ee-ae9bb34ab7da', icon: ExternalLink },

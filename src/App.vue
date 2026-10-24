@@ -2,9 +2,12 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import AppShell from '@/components/layout/AppShell.vue'
+import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+import { useAuthStore } from '@/stores/auth'
 import { useUsageTracking } from '@/composables/useUsageTracking'
 
 const route = useRoute()
+const auth = useAuthStore()
 
 // Fire-and-forget engagement tracking — logs route changes so the
 // /admin/usage page can show real weekly-active + top-route data.
@@ -15,6 +18,13 @@ useUsageTracking()
    outside the chrome — no topbar, drawer, footer, or dock. */
 const useShell = computed(
   () => route.meta.public !== true && route.meta.chromeless !== true,
+)
+
+/* Ask WCEMS rides OUTSIDE the shell so it's on every authenticated
+   route, chromeless protocols pages included — but never on /signin or
+   the anonymous student pages (register/checkin/eval/quiz). */
+const showAssistant = computed(
+  () => route.meta.public !== true && auth.isAuthenticated,
 )
 </script>
 
@@ -31,4 +41,6 @@ const useShell = computed(
       <component :is="Component" />
     </Transition>
   </RouterView>
+
+  <AssistantPanel v-if="showAssistant" />
 </template>
