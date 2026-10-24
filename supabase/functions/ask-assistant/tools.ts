@@ -1,12 +1,18 @@
-// Live-lookup tools for the Ask WCEMS assistant (Phase 3 of the handoff).
+// Live-lookup tools for the Ask WCEMS assistant.
 //
 // Every tool runs its queries through the CALLER's Supabase client, so
 // RLS applies exactly as it does in the app — the assistant can never
 // show someone data the portal itself wouldn't. Door/gate codes are
 // structurally excluded: no tool selects those columns.
 //
-// Results are compact JSON strings for the model; truncated hard so a
-// big roster can't blow the token budget.
+// SCHEDULE DERIVATION (fixed 2026-10-24 after the Erica Torr miss):
+// sched_entries holds only DEVIATIONS — pickups, trades, time off,
+// events, students, retimed seats. The regular crew comes from the
+// rotation template: per-unit platoon pattern (or the agency 48/96
+// default) + effective-dated seat assignments, with entry overrides
+// replacing a seat's day and time off carved out of occupants'
+// windows. buildDay() below is a faithful port of dayModel() in
+// src/composables/useSchedule.ts — change them together.
 
 interface SupabaseLike {
   from: (table: string) => any
@@ -48,24 +54,311 @@ function dutyDayISO(): string {
   return centralHour() < 6 ? addDaysISO(today, -1) : today
 }
 
-/** B,B,C,C,A,A rotation anchored Monday 2026-04-06 = B Day 1. */
-const ROT_SEQ = ['B', 'B', 'C', 'C', 'A', 'A'] as const
-function platoonFor(iso: string): { shift: string; day: 1 | 2 } {
-  const days = Math.round((Date.parse(`${iso}T12:00:00Z`) - Date.parse('2026-04-06T12:00:00Z')) / 86400000)
-  const idx = ((days % 6) + 6) % 6
-  return { shift: ROT_SEQ[idx], day: (idx % 2 === 0 ? 1 : 2) as 1 | 2 }
+function daysBetweenIso(aIso: string, bIso: string): number {
+  return Math.round((Date.parse(`${bIso}T12:00:00Z`) - Date.parse(`${aIso}T12:00:00Z`)) / 86400000)
 }
 
-function hhmm(ts: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(ts))
+/** B,B,C,C,A,A agency rotation anchored Monday 2026-04-06 = B Day 1. */
+const ROT_ANCHOR = '2026-04-06'
+const ROT_SEQ = ['B', 'B', 'C', 'C', 'A', 'A'] as const
+type Platoon = 'A' | 'B' | 'C'
+
+function platoonFor(iso: string): Platoon {
+  const d = daysBetweenIso(ROT_ANCHOR, iso)
+  return ROT_SEQ[((d % 6) + 6) % 6] as Platoon
+}
+
+function rotationDay(iso: string): 1 | 2 {
+  const d = daysBetweenIso(ROT_ANCHOR, iso)
+  return ((((d % 6) + 6) % 6) % 2 === 0 ? 1 : 2) as 1 | 2
+}
+
+/** Which platoon works THIS UNIT on this date — the unit's own repeating
+ *  pattern when it has one (null = unit not staffed that day), else the
+ *  agency default. Mirrors unitPlatoonFor in useSchedule.ts. */
+function unitPlatoonFor(unit: Unit, iso: string): Platoon | null {
+  if (!unit.rotation_pattern || unit.rotation_pattern.length === 0) return platoonFor(iso)
+  const anchor = unit.rotation_anchor ?? ROT_ANCHOR
+  const len = unit.rotation_pattern.length
+  const d = daysBetweenIso(anchor, iso)
+  const tok = String(unit.rotation_pattern[((d % len) + len) % len] ?? '').toUpperCase()
+  return tok === 'A' || tok === 'B' || tok === 'C' ? (tok as Platoon) : null
+}
+
+const hhmmFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Chicago',
+  hour: 'numeric',
+  minute: '2-digit',
+})
+function hhmm(ms: number): string {
+  return hhmmFmt.format(new Date(ms))
+}
+
+/** Central UTC offset ("-05:00") on a given date — DST-correct per day. */
+const offsetCache = new Map<string, string>()
+function centralOffset(iso: string): string {
+  let o = offsetCache.get(iso)
+  if (!o) {
+    const part = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago',
+      timeZoneName: 'longOffset',
+    })
+      .formatToParts(new Date(`${iso}T12:00:00Z`))
+      .find((p) => p.type === 'timeZoneName')?.value
+    o = (part ?? 'GMT-06:00').replace('GMT', '') || '-06:00'
+    offsetCache.set(iso, o)
+  }
+  return o
+}
+
+/** ms timestamp for HH:mm Central on a date (next day when addDay). */
+function tsFor(iso: string, hm: string, addDay = false): number {
+  const day = addDay ? addDaysISO(iso, 1) : iso
+  return Date.parse(`${day}T${hm}:00${centralOffset(day)}`)
 }
 
 function j(v: unknown): string {
   return JSON.stringify(v)
+}
+
+/* ── Schedule core (units / seats / rotation template / names) ─────── */
+
+interface Unit {
+  id: string
+  code: string
+  label: string
+  sort_order: number
+  rotation_pattern: string[] | null
+  rotation_anchor: string | null
+  shift_start: string | null
+  shift_end: string | null
+}
+interface Seat {
+  id: string
+  unit_id: string
+  label: string
+  sort_order: number
+}
+interface RotAssign {
+  seat_id: string
+  user_id: string | null
+  platoon: string
+  effective_from: string
+  effective_to: string | null
+}
+interface Entry {
+  work_date: string
+  kind: string
+  status: string
+  off_type: string | null
+  start_at: string
+  end_at: string
+  user_id: string | null
+  seat_id: string | null
+  unit_id: string | null
+  event_id: string | null
+}
+
+interface SchedCore {
+  units: Unit[]
+  seats: Seat[]
+  rotation: RotAssign[]
+}
+
+async function loadSchedCore(ctx: ToolCtx): Promise<SchedCore> {
+  const [u, s, r] = await Promise.all([
+    ctx.user
+      .from('sched_units')
+      .select('id, code, label, sort_order, rotation_pattern, rotation_anchor, shift_start, shift_end')
+      .eq('active', true)
+      .order('sort_order', { ascending: true }),
+    ctx.user.from('sched_seats').select('id, unit_id, label, sort_order').eq('active', true),
+    ctx.user
+      .from('sched_rotation_assignments')
+      .select('seat_id, user_id, platoon, effective_from, effective_to'),
+  ])
+  if (u.error) throw new Error(u.error.message)
+  if (s.error) throw new Error(s.error.message)
+  if (r.error) throw new Error(r.error.message)
+  return { units: (u.data ?? []) as Unit[], seats: (s.data ?? []) as Seat[], rotation: (r.data ?? []) as RotAssign[] }
+}
+
+async function fetchEntries(ctx: ToolCtx, from: string, to: string): Promise<Entry[]> {
+  const { data, error } = await ctx.user
+    .from('sched_entries')
+    .select('work_date, kind, status, off_type, start_at, end_at, user_id, seat_id, unit_id, event_id')
+    .gte('work_date', from)
+    .lte('work_date', to)
+    .limit(2000)
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Entry[]
+}
+
+async function namesFor(ctx: ToolCtx, ids: Iterable<string>): Promise<Map<string, string>> {
+  const list = [...new Set(ids)].filter(Boolean)
+  if (!list.length) return new Map()
+  const { data, error } = await ctx.user.from('app_users').select('id, full_name').in('id', list)
+  if (error) throw new Error(error.message)
+  return new Map(((data ?? []) as { id: string; full_name: string }[]).map((r) => [r.id, r.full_name]))
+}
+
+/** Latest effective-dated assignment for a seat+platoon on a date. */
+function rotationOccupant(rotation: RotAssign[], seatId: string, platoon: Platoon, iso: string): string | null {
+  let best: RotAssign | null = null
+  for (const a of rotation) {
+    if (a.seat_id !== seatId || a.platoon !== platoon) continue
+    if (a.effective_from > iso) continue
+    if (a.effective_to !== null && a.effective_to < iso) continue
+    if (best === null || a.effective_from > best.effective_from) best = a
+  }
+  return best?.user_id ?? null
+}
+
+const MIN_SEG_MS = 60_000 // ignore sub-minute slivers (matches the app)
+
+const KIND_LABEL: Record<string, string> = {
+  rotation: 'rotation',
+  pickup: 'pickup',
+  trade: 'trade',
+  giveaway_cover: 'covering a giveaway',
+  extra: 'extra hours',
+  event: 'event',
+  student: 'student rider',
+  timeoff: 'time off',
+}
+
+interface DayRow {
+  userId: string | null
+  unit: string
+  seat: string
+  s: number
+  e: number
+  kind: string
+  open: boolean
+}
+
+interface DayModel {
+  date: string
+  rotation: { shift: Platoon; day: 1 | 2 }
+  staffed: DayRow[]
+  open: DayRow[]
+  off: { userId: string; type: string; s: number; e: number }[]
+  extras: Entry[] // events / students / extra-hours (not seat-derived)
+}
+
+/** Faithful port of dayModel(): rotation base per unit pattern, entry
+ *  overrides replace a seat's day, occupants' time off carved to OPEN. */
+function buildDay(iso: string, core: SchedCore, entries: Entry[]): DayModel {
+  const dayEntries = entries.filter((e) => e.work_date === iso)
+  const staffed: DayRow[] = []
+  const open: DayRow[] = []
+
+  const offWindows = new Map<string, { s: number; e: number }[]>()
+  const off: DayModel['off'] = []
+  for (const e of dayEntries) {
+    if (e.kind !== 'timeoff' || !e.user_id) continue
+    const w = { s: Date.parse(e.start_at), e: Date.parse(e.end_at) }
+    const l = offWindows.get(e.user_id) ?? []
+    l.push(w)
+    offWindows.set(e.user_id, l)
+    off.push({ userId: e.user_id, type: e.off_type ?? 'time off', ...w })
+  }
+
+  for (const unit of core.units) {
+    const unitPlatoon = unitPlatoonFor(unit, iso)
+    const unitSeats = core.seats
+      .filter((s) => s.unit_id === unit.id)
+      .sort((a, b) => a.sort_order - b.sort_order)
+    for (const seat of unitSeats) {
+      const overrides = dayEntries
+        .filter((e) => e.seat_id === seat.id && e.kind !== 'timeoff' && e.status !== 'off')
+        .sort((a, b) => a.start_at.localeCompare(b.start_at))
+
+      let raw: { userId: string | null; s: number; e: number; kind: string; open: boolean }[]
+      if (overrides.length > 0) {
+        raw = overrides.map((e) => ({
+          userId: e.user_id,
+          s: Date.parse(e.start_at),
+          e: Date.parse(e.end_at),
+          kind: e.kind,
+          open: e.user_id === null && e.status === 'open',
+        }))
+      } else if (unitPlatoon === null) {
+        raw = [] // unit not staffed this day under its own pattern
+      } else {
+        const occupant = rotationOccupant(core.rotation, seat.id, unitPlatoon, iso)
+        const sHm = unit.shift_start ? unit.shift_start.slice(0, 5) : '06:00'
+        const eHm = unit.shift_end ? unit.shift_end.slice(0, 5) : '06:00'
+        const s = tsFor(iso, sHm)
+        const e = tsFor(iso, eHm, eHm <= sHm)
+        raw = [{ userId: occupant, s, e, kind: 'rotation', open: occupant === null }]
+      }
+
+      /* Carve occupied windows against the occupant's time off — the
+         overlap renders as an OPEN row, like the board. */
+      for (const r of raw) {
+        const target = { unit: unit.label || unit.code, seat: seat.label }
+        const offs = r.userId && !r.open ? (offWindows.get(r.userId) ?? []) : []
+        if (!offs.length) {
+          ;(r.open ? open : staffed).push({ ...r, ...target })
+          continue
+        }
+        let pieces = [{ s: r.s, e: r.e }]
+        const opens: { s: number; e: number }[] = []
+        for (const o of offs) {
+          const next: { s: number; e: number }[] = []
+          for (const p of pieces) {
+            const os = Math.max(p.s, o.s)
+            const oe = Math.min(p.e, o.e)
+            if (oe - os < MIN_SEG_MS) {
+              next.push(p)
+              continue
+            }
+            if (os - p.s >= MIN_SEG_MS) next.push({ s: p.s, e: os })
+            if (p.e - oe >= MIN_SEG_MS) next.push({ s: oe, e: p.e })
+            opens.push({ s: os, e: oe })
+          }
+          pieces = next
+        }
+        for (const p of pieces) staffed.push({ ...r, s: p.s, e: p.e, ...target })
+        for (const o of opens)
+          open.push({ userId: null, s: o.s, e: o.e, kind: 'rotation', open: true, ...target })
+      }
+    }
+  }
+
+  const extras = dayEntries.filter(
+    (e) => (e.kind === 'event' || e.kind === 'student' || e.kind === 'extra') && !e.seat_id,
+  )
+  return { date: iso, rotation: { shift: platoonFor(iso), day: rotationDay(iso) }, staffed, open, off, extras }
+}
+
+function rowOut(r: DayRow, names: Map<string, string>) {
+  return {
+    unit: r.unit,
+    seat: r.seat,
+    name: r.userId ? (names.get(r.userId) ?? 'unknown') : null,
+    times: `${hhmm(r.s)}–${hhmm(r.e)}`,
+    ...(r.kind !== 'rotation' ? { via: KIND_LABEL[r.kind] ?? r.kind } : {}),
+  }
+}
+
+function extraOut(e: Entry, names: Map<string, string>, unitLabel: (id: string | null) => string | null) {
+  return {
+    kind: KIND_LABEL[e.kind] ?? e.kind,
+    name: e.user_id ? (names.get(e.user_id) ?? 'unknown') : null,
+    open: e.status === 'open',
+    unit: unitLabel(e.unit_id),
+    times: `${hhmm(Date.parse(e.start_at))}–${hhmm(Date.parse(e.end_at))}`,
+  }
+}
+
+function collectDayIds(d: DayModel): string[] {
+  return [
+    ...d.staffed.map((r) => r.userId),
+    ...d.off.map((o) => o.userId),
+    ...d.extras.map((e) => e.user_id),
+  ].filter((x): x is string => !!x)
 }
 
 /* ── Tool definitions (static — part of the cached prompt prefix) ──── */
@@ -74,7 +367,7 @@ export const TOOL_DEFS = [
   {
     name: 'who_is_on_duty',
     description:
-      'The live schedule for one duty day: on-duty platoon, every staffed seat by unit with times, open seats, approved time off, extra hours, and special-event assignments. Defaults to the CURRENT duty day (before 0600 Central that is yesterday\'s work date — shifts run 0600 to 0600). Use for "who is working", "who is on shift", "is the county covered".',
+      'The live roster for one duty day, derived exactly like the schedule board: rotation seats per unit (with trades, pickups, and time off applied), open seats, time off, events, and student riders. Defaults to the CURRENT duty day (before 0600 Central that is yesterday\'s work date — shifts run 0600 to 0600). Use for "who is working", "who is on shift", "who is the supervisor today".',
     input_schema: {
       type: 'object',
       properties: {
@@ -86,12 +379,12 @@ export const TOOL_DEFS = [
   {
     name: 'person_schedule',
     description:
-      'One person\'s schedule entries for the next N days (default 14): working days with unit and times, time off, events. Use for "is NAME working today/tomorrow", "when does NAME work next". Matches the name loosely; returns candidates if ambiguous.',
+      'One person\'s schedule for the next N days (default 14), rotation seats included: which days they work, unit, seat, times, plus any time off. Use for "is NAME working today/tomorrow", "when does NAME work next". Matches the name loosely; returns candidates if ambiguous.',
     input_schema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Full or partial name of the employee' },
-        days_ahead: { type: 'number', description: 'How many days ahead to look (default 14, max 45)' },
+        days_ahead: { type: 'number', description: 'How many days ahead to look (default 14, max 30)' },
       },
       required: ['name'],
       additionalProperties: false,
@@ -100,11 +393,11 @@ export const TOOL_DEFS = [
   {
     name: 'my_schedule',
     description:
-      "The ASKER's own upcoming schedule for the next N days (default 14): working days, unit, times, approved time off, events. Use for \"when do I work next\", \"am I on this weekend\".",
+      "The ASKER's own upcoming schedule for the next N days (default 14), rotation seats included: working days, unit, times, approved time off. Use for \"when do I work next\", \"am I on this weekend\".",
     input_schema: {
       type: 'object',
       properties: {
-        days_ahead: { type: 'number', description: 'How many days ahead (default 14, max 45)' },
+        days_ahead: { type: 'number', description: 'How many days ahead (default 14, max 30)' },
       },
       additionalProperties: false,
     },
@@ -124,11 +417,11 @@ export const TOOL_DEFS = [
   {
     name: 'open_shifts',
     description:
-      'Open (unfilled) seats on the schedule for the next N days (default 14) — date, unit, seat, times. Use for "any open shifts", "what can I pick up".',
+      'Open (unfilled) seats on the schedule for the next N days (default 14), vacant rotation seats and time-off gaps included — date, unit, seat, times. Use for "any open shifts", "what can I pick up".',
     input_schema: {
       type: 'object',
       properties: {
-        days_ahead: { type: 'number', description: 'How many days ahead (default 14, max 60)' },
+        days_ahead: { type: 'number', description: 'How many days ahead (default 14, max 30)' },
       },
       additionalProperties: false,
     },
@@ -171,7 +464,7 @@ export const TOOL_DEFS = [
   {
     name: 'find_hospitals',
     description:
-      'The live hospital directory: trauma level, stroke level, PCI, pediatric, maternal/NICU, address, notes. Never includes door codes. Omit query to get the full list (sorted by trauma level); the asker can filter from it.',
+      'The live hospital directory: trauma level, stroke level, PCI, pediatric, maternal/NICU, address, notes. Never includes door codes. Omit query to get the full list; the asker can filter from it.',
     input_schema: {
       type: 'object',
       properties: { query: { type: 'string', description: 'Optional name fragment to narrow the list' } },
@@ -214,52 +507,6 @@ export const TOOL_DEFS = [
 
 /* ── Executors ─────────────────────────────────────────────────────── */
 
-const KIND_LABEL: Record<string, string> = {
-  rotation: 'rotation',
-  pickup: 'pickup',
-  trade: 'trade',
-  giveaway_cover: 'covering a giveaway',
-  extra: 'extra hours',
-  event: 'event',
-  student: 'student rider',
-  timeoff: 'time off',
-}
-
-async function entriesBetween(ctx: ToolCtx, from: string, to: string, userId?: string) {
-  let q = ctx.user
-    .from('sched_entries')
-    .select(
-      'work_date, kind, status, off_type, start_at, end_at, user_id, event_id, note, app_users(full_name), sched_units(code, label), sched_seats(label, sched_units(code, label))',
-    )
-    .gte('work_date', from)
-    .lte('work_date', to)
-    .order('work_date', { ascending: true })
-    .limit(400)
-  if (userId) q = q.eq('user_id', userId)
-  const { data, error } = await q
-  if (error) throw new Error(error.message)
-  return (data ?? []) as Record<string, any>[]
-}
-
-function entryLine(e: Record<string, any>): Record<string, unknown> {
-  /* Most entries carry their unit through the seat; the entry's own
-     unit_id is only set for unit-level rows (students, notes). */
-  const seatUnit = e.sched_seats?.sched_units
-  const unit =
-    e.sched_units?.label || e.sched_units?.code || seatUnit?.label || seatUnit?.code || null
-  const base: Record<string, unknown> = {
-    date: e.work_date,
-    kind: KIND_LABEL[e.kind] ?? e.kind,
-    unit,
-    seat: e.sched_seats?.label ?? null,
-    times: `${hhmm(e.start_at)}–${hhmm(e.end_at)}`,
-  }
-  if (e.status === 'open') base.open = true
-  if (e.kind === 'timeoff') base.off_type = e.off_type ?? 'time off'
-  if (e.app_users?.full_name) base.name = e.app_users.full_name
-  return base
-}
-
 async function resolvePeople(ctx: ToolCtx, name: string) {
   const { data, error } = await ctx.user
     .from('app_users')
@@ -272,51 +519,84 @@ async function resolvePeople(ctx: ToolCtx, name: string) {
   return (data ?? []) as { id: string; full_name: string }[]
 }
 
+/** Shared engine for person_schedule / my_schedule. */
+async function scheduleFor(ctx: ToolCtx, personId: string, days: number) {
+  const from = dutyDayISO()
+  const to = addDaysISO(from, days)
+  const [core, entries] = await Promise.all([loadSchedCore(ctx), fetchEntries(ctx, from, to)])
+  const working: Record<string, unknown>[] = []
+  const offs: Record<string, unknown>[] = []
+  let onDutyToday = false
+  for (let i = 0; i <= days; i++) {
+    const iso = addDaysISO(from, i)
+    const day = buildDay(iso, core, entries)
+    for (const r of day.staffed) {
+      if (r.userId !== personId) continue
+      working.push({
+        date: iso,
+        unit: r.unit,
+        seat: r.seat,
+        times: `${hhmm(r.s)}–${hhmm(r.e)}`,
+        ...(r.kind !== 'rotation' ? { via: KIND_LABEL[r.kind] ?? r.kind } : {}),
+      })
+      if (iso === from) onDutyToday = true
+    }
+    for (const e of day.extras) {
+      if (e.user_id !== personId) continue
+      working.push({
+        date: iso,
+        unit: null,
+        seat: null,
+        times: `${hhmm(Date.parse(e.start_at))}–${hhmm(Date.parse(e.end_at))}`,
+        via: KIND_LABEL[e.kind] ?? e.kind,
+      })
+      if (iso === from) onDutyToday = true
+    }
+    for (const o of day.off) {
+      if (o.userId !== personId) continue
+      offs.push({ date: iso, type: o.type, times: `${hhmm(o.s)}–${hhmm(o.e)}` })
+    }
+  }
+  return { window: `${from} → ${to}`, duty_day: from, working, time_off: offs, on_duty_today: onDutyToday }
+}
+
 type Executor = (input: Record<string, any>, ctx: ToolCtx) => Promise<string>
 
 const executors: Record<string, Executor> = {
   async who_is_on_duty(input, ctx) {
     const date = typeof input.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.date) ? input.date : dutyDayISO()
-    const rows = await entriesBetween(ctx, date, date)
-    const rot = platoonFor(date)
-    const staffed = rows.filter((e) => e.status === 'scheduled' && e.kind !== 'timeoff' && e.kind !== 'event')
-    const open = rows.filter((e) => e.status === 'open')
-    const off = rows.filter((e) => e.kind === 'timeoff')
-    const events = rows.filter((e) => e.kind === 'event' && e.status !== 'open')
+    const [core, entries] = await Promise.all([loadSchedCore(ctx), fetchEntries(ctx, date, date)])
+    const day = buildDay(date, core, entries)
+    const names = await namesFor(ctx, collectDayIds(day))
+    const unitLabel = (id: string | null) => {
+      const u = id ? core.units.find((x) => x.id === id) : null
+      return u ? u.label || u.code : null
+    }
     return j({
       duty_day: date,
-      rotation: `${rot.shift} Shift, Day ${rot.day} (0600–0600 Central)`,
-      staffed: staffed.map(entryLine),
-      open_seats: open.map(entryLine),
-      time_off: off.map((e) => ({ name: e.app_users?.full_name ?? 'unknown', type: e.off_type ?? 'time off' })),
-      event_assignments: events.map(entryLine),
-      note: 'This is the live board — trades and time off are already applied.',
+      rotation: `${day.rotation.shift} Shift, Day ${day.rotation.day} (0600–0600 Central)`,
+      staffed: day.staffed.map((r) => rowOut(r, names)),
+      open_seats: day.open.map((r) => rowOut(r, names)),
+      time_off: day.off.map((o) => ({ name: names.get(o.userId) ?? 'unknown', type: o.type })),
+      events_and_riders: day.extras.map((e) => extraOut(e, names, unitLabel)),
     })
   },
 
   async person_schedule(input, ctx) {
-    const days = Math.min(Math.max(Number(input.days_ahead) || 14, 1), 45)
+    const days = Math.min(Math.max(Number(input.days_ahead) || 14, 1), 30)
     const people = await resolvePeople(ctx, String(input.name ?? ''))
     if (!people.length) return j({ error: 'no_match', note: 'No active employee matches that name.' })
     if (people.length > 1) {
       return j({ ambiguous: people.map((p) => p.full_name), note: 'Ask which person they mean, or retry with a fuller name.' })
     }
     const p = people[0]
-    const from = dutyDayISO()
-    const rows = await entriesBetween(ctx, from, addDaysISO(from, days), p.id)
-    return j({
-      person: p.full_name,
-      window: `${from} → ${addDaysISO(from, days)}`,
-      entries: rows.map(entryLine),
-      on_duty_now: rows.some((e) => e.work_date === dutyDayISO() && e.status === 'scheduled' && e.kind !== 'timeoff'),
-    })
+    const result = await scheduleFor(ctx, p.id, days)
+    return j({ person: p.full_name, ...result })
   },
 
   async my_schedule(input, ctx) {
-    const days = Math.min(Math.max(Number(input.days_ahead) || 14, 1), 45)
-    const from = dutyDayISO()
-    const rows = await entriesBetween(ctx, from, addDaysISO(from, days), ctx.userId)
-    return j({ window: `${from} → ${addDaysISO(from, days)}`, entries: rows.map(entryLine) })
+    const days = Math.min(Math.max(Number(input.days_ahead) || 14, 1), 30)
+    return j(await scheduleFor(ctx, ctx.userId, days))
   },
 
   async my_leave_balances(_input, ctx) {
@@ -350,11 +630,28 @@ const executors: Record<string, Executor> = {
   },
 
   async open_shifts(input, ctx) {
-    const days = Math.min(Math.max(Number(input.days_ahead) || 14, 1), 60)
+    const days = Math.min(Math.max(Number(input.days_ahead) || 14, 1), 30)
     const from = dutyDayISO()
-    const rows = await entriesBetween(ctx, from, addDaysISO(from, days))
-    const open = rows.filter((e) => e.status === 'open')
-    return j({ window: `${from} → ${addDaysISO(from, days)}`, open_seats: open.map(entryLine) })
+    const to = addDaysISO(from, days)
+    const [core, entries] = await Promise.all([loadSchedCore(ctx), fetchEntries(ctx, from, to)])
+    const out: Record<string, unknown>[] = []
+    for (let i = 0; i <= days && out.length < 40; i++) {
+      const iso = addDaysISO(from, i)
+      const day = buildDay(iso, core, entries)
+      for (const r of day.open) {
+        out.push({ date: iso, unit: r.unit, seat: r.seat, times: `${hhmm(r.s)}–${hhmm(r.e)}` })
+      }
+      for (const e of day.extras) {
+        if (e.status !== 'open') continue
+        out.push({
+          date: iso,
+          unit: null,
+          seat: KIND_LABEL[e.kind] ?? e.kind,
+          times: `${hhmm(Date.parse(e.start_at))}–${hhmm(Date.parse(e.end_at))}`,
+        })
+      }
+    }
+    return j({ window: `${from} → ${to}`, open_seats: out.slice(0, 40) })
   },
 
   async upcoming_events(input, ctx) {
@@ -370,7 +667,7 @@ const executors: Record<string, Executor> = {
     if (error) throw new Error(error.message)
     const events = (data ?? []) as Record<string, any>[]
     const ids = events.map((e) => e.id)
-    let filled: Record<string, number> = {}
+    const filled: Record<string, number> = {}
     if (ids.length) {
       const { data: ent } = await ctx.user
         .from('sched_entries')
@@ -393,7 +690,6 @@ const executors: Record<string, Executor> = {
   },
 
   async my_outstanding_items(_input, ctx) {
-    // Caller profile for audience matching
     const { data: meRow, error: meErr } = await ctx.user
       .from('app_users')
       .select('role, shift, employment_type')
@@ -403,7 +699,6 @@ const executors: Record<string, Executor> = {
     const me = meRow ?? { role: ctx.role, shift: null, employment_type: null }
     const hit = (arr: string[] | null, v: string | null) => !arr?.length || (v != null && arr.includes(v))
 
-    // Required training
     const [{ data: rts, error: e1 }, { data: comps, error: e2 }, { data: ovr, error: e3 }] = await Promise.all([
       ctx.user
         .from('required_trainings')
@@ -426,7 +721,7 @@ const executors: Record<string, Executor> = {
         const o = ovrMap.get(t.id)
         if (o === false) return false
         if (o === true) return !done.has(t.id)
-        if (t.audience_event_label) return false // event-scoped: reminders handle those crews
+        if (t.audience_event_label) return false
         return (
           hit(t.audience_roles, me.role) &&
           hit(t.audience_shifts, me.shift) &&
@@ -436,7 +731,6 @@ const executors: Record<string, Executor> = {
       })
       .map((t) => ({ title: t.title, due: t.required_by ?? 'no deadline' }))
 
-    // Policies (stale acknowledgement = outstanding again)
     const [{ data: pols, error: e4 }, { data: acks, error: e5 }, { data: povr, error: e6 }] = await Promise.all([
       ctx.user
         .from('policies')
@@ -533,7 +827,7 @@ const executors: Record<string, Executor> = {
         nicu: r.nicu_level ?? null,
         address: r.address,
       })),
-      note: 'Door codes are on each hospital card in the app (/hospitals), never through the assistant.',
+      note: 'Door codes live on each hospital card in the app (/hospitals), never through the assistant.',
     })
   },
 
