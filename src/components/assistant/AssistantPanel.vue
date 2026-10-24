@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Sparkles,
   CheckCircle2,
+  ChevronRight,
 } from 'lucide-vue-next'
 import { useAssistant, type AssistantMessage } from '@/composables/useAssistant'
 
@@ -213,9 +214,11 @@ async function sendSuggestion() {
       <div class="asst__backdrop" @click="close" />
       <section ref="panelEl" class="asst__panel" @keydown="onKeydown">
         <header class="asst__head">
+          <img src="/wcems-patch.png" alt="" class="asst__crest" />
           <div class="asst__head-text">
+            <span class="asst__eyebrow">Waller County EMS</span>
             <h2 class="asst__title display">Ask WCEMS</h2>
-            <p class="asst__sub">AI assistant — answers from WCEMS docs; not medical direction</p>
+            <p class="asst__sub">Answers from WCEMS docs &amp; live portal data · not medical direction</p>
           </div>
           <div class="asst__head-actions">
             <button
@@ -239,8 +242,8 @@ async function sendSuggestion() {
           <div v-if="showIntro" class="asst__intro">
             <div class="asst__intro-icon"><Sparkles :size="20" :stroke-width="1.85" /></div>
             <p class="asst__intro-lead">
-              Ask how to do anything in the portal — scheduling, training, policies, equipment —
-              and I'll point you to the right page.
+              Ask anything about the portal — who's working, your balances, how a feature works —
+              and I'll answer from the live schedule and WCEMS docs.
             </p>
             <div class="asst__chips">
               <button
@@ -250,7 +253,8 @@ async function sendSuggestion() {
                 class="asst__chip"
                 @click="send(chip)"
               >
-                {{ chip }}
+                <span>{{ chip }}</span>
+                <ChevronRight :size="15" :stroke-width="2" class="asst__chip-chev" />
               </button>
             </div>
           </div>
@@ -261,17 +265,22 @@ async function sendSuggestion() {
               <div class="asst__bubble asst__bubble--user">{{ m.content }}</div>
             </div>
             <div v-else class="asst__msg asst__msg--bot">
-              <div
-                class="asst__bubble asst__bubble--bot"
-                :class="{ 'asst__bubble--error': m.error }"
-              >
+              <div class="asst__bot-row">
+                <span class="asst__glyph" aria-hidden="true">
+                  <Sparkles :size="12" :stroke-width="2.2" />
+                </span>
                 <div
-                  v-if="m.content"
-                  class="asst__md"
-                  v-html="md(m.content)"
-                />
-                <div v-else-if="typing && idx === messages.length - 1" class="asst__typing" aria-label="Thinking">
-                  <span /><span /><span />
+                  class="asst__bubble asst__bubble--bot"
+                  :class="{ 'asst__bubble--error': m.error }"
+                >
+                  <div
+                    v-if="m.content"
+                    class="asst__md"
+                    v-html="md(m.content)"
+                  />
+                  <div v-else-if="typing && idx === messages.length - 1" class="asst__typing" aria-label="Thinking">
+                    <span /><span /><span />
+                  </div>
                 </div>
               </div>
 
@@ -386,11 +395,11 @@ async function sendSuggestion() {
   bottom: 16px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px 10px 11px;
+  gap: 9px;
+  padding: 10px 15px 10px 11px;
   border-radius: 999px;
   border: 1px solid var(--color-brand-700);
-  background: var(--color-brand-600);
+  background: linear-gradient(160deg, var(--color-brand-600), var(--color-brand-800, oklch(0.26 0.07 255)));
   color: white;
   font-family: var(--font-sans);
   font-size: 13px;
@@ -398,25 +407,31 @@ async function sendSuggestion() {
   letter-spacing: 0.01em;
   cursor: pointer;
   box-shadow:
-    0 1px 2px oklch(0.18 0.015 260 / 0.16),
-    0 8px 24px oklch(0.18 0.015 260 / 0.2);
+    0 1px 2px oklch(0.18 0.015 260 / 0.18),
+    0 10px 28px oklch(0.18 0.015 260 / 0.24),
+    inset 0 1px 0 oklch(1 0 0 / 0.08);
   transition:
     transform 200ms var(--ease-out),
-    background 200ms var(--ease-out);
+    box-shadow 200ms var(--ease-out);
 }
 .asst-fab:hover {
-  background: var(--color-brand-700);
   transform: translateY(-2px);
+  box-shadow:
+    0 1px 2px oklch(0.18 0.015 260 / 0.2),
+    0 14px 34px oklch(0.18 0.015 260 / 0.3),
+    0 0 0 3px oklch(0.734 0.114 86.8 / 0.28),
+    inset 0 1px 0 oklch(1 0 0 / 0.08);
 }
 .asst-fab__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
   background: var(--color-accent-500);
   color: var(--color-brand-900, oklch(0.2 0.05 250));
+  box-shadow: inset 0 -1px 0 oklch(0 0 0 / 0.12);
 }
 /* Phones: the quick-links dock pill is bottom-centered and wide, so the
    trigger goes icon-only (a compact circle in the corner clears it). */
@@ -463,14 +478,20 @@ async function sendSuggestion() {
   flex-direction: column;
   background: var(--color-canvas);
   animation: asst-up 220ms var(--ease-out) both;
+  overflow: hidden;
 }
+/* Desktop: a floating sheet, like the module app bars — not a flat
+   full-height drawer. */
 @media (min-width: 768px) {
   .asst__panel {
-    inset: 0 0 0 auto;
-    width: 420px;
+    inset: 12px 12px 12px auto;
+    width: 432px;
     max-width: 92vw;
-    border-left: 1px solid var(--color-line);
-    box-shadow: -24px 0 60px oklch(0.18 0.015 260 / 0.18);
+    border-radius: 18px;
+    border: 1px solid oklch(0.3 0.06 255 / 0.35);
+    box-shadow:
+      0 2px 6px oklch(0.18 0.015 260 / 0.16),
+      -24px 18px 70px oklch(0.18 0.015 260 / 0.32);
     animation: asst-in 220ms var(--ease-out) both;
   }
 }
@@ -493,32 +514,67 @@ async function sendSuggestion() {
   }
 }
 
-/* ── Header ───────────────────────────────────────────────────────── */
+/* ── Header — masthead treatment: deep navy, crest, gold rule ─────── */
 .asst__head {
+  position: relative;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
   gap: 12px;
-  padding: 14px 16px 12px;
-  background: var(--color-brand-600);
+  padding: 16px 16px 14px;
+  background:
+    radial-gradient(120% 160% at 85% -40%, oklch(0.734 0.114 86.8 / 0.22), transparent 55%),
+    linear-gradient(165deg, var(--color-brand-800, oklch(0.26 0.07 255)), var(--color-brand-900, oklch(0.2 0.05 250)));
   color: white;
+}
+.asst__head::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--color-accent-500), oklch(0.734 0.114 86.8 / 0.15));
+}
+.asst__crest {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  object-fit: contain;
+  background: oklch(1 0 0 / 0.06);
+  padding: 3px;
+  box-shadow: 0 0 0 1.5px oklch(0.734 0.114 86.8 / 0.55);
+}
+.asst__head-text {
+  min-width: 0;
+  flex: 1;
+}
+.asst__eyebrow {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-accent-500);
 }
 .asst__title {
-  font-size: 22px;
-  line-height: 1.1;
+  font-size: 24px;
+  line-height: 1.05;
   letter-spacing: 0.005em;
   color: white;
+  margin-top: 1px;
 }
 .asst__sub {
-  margin-top: 3px;
-  font-size: 11.5px;
+  margin-top: 4px;
+  font-size: 11px;
   line-height: 1.35;
-  color: oklch(0.86 0.025 86.8);
+  color: oklch(0.82 0.03 86.8 / 0.85);
 }
 .asst__head-actions {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  align-self: flex-start;
 }
 .asst__iconbtn {
   width: 32px;
@@ -529,7 +585,7 @@ async function sendSuggestion() {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: oklch(0.9 0.02 86.8);
+  color: oklch(0.88 0.02 86.8 / 0.8);
   cursor: pointer;
   transition: background 120ms var(--ease-out);
 }
@@ -542,27 +598,40 @@ async function sendSuggestion() {
 .asst__scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 16px 8px;
+  padding: 18px 16px 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.65 0.02 260 / 0.4) transparent;
+}
+.asst__scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.asst__scroll::-webkit-scrollbar-thumb {
+  background: oklch(0.65 0.02 260 / 0.35);
+  border-radius: 999px;
 }
 
+/* ── Intro ────────────────────────────────────────────────────────── */
 .asst__intro {
   margin: auto 0;
   text-align: center;
-  padding: 24px 8px;
+  padding: 20px 8px;
 }
 .asst__intro-icon {
-  width: 46px;
-  height: 46px;
+  width: 50px;
+  height: 50px;
   margin: 0 auto 12px;
-  border-radius: 13px;
+  border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-brand-50);
-  color: var(--color-brand-600);
+  background: linear-gradient(160deg, var(--color-brand-600), var(--color-brand-800, oklch(0.26 0.07 255)));
+  color: var(--color-accent-500);
+  box-shadow:
+    0 8px 20px oklch(0.18 0.015 260 / 0.22),
+    0 0 0 1.5px oklch(0.734 0.114 86.8 / 0.4);
 }
 .asst__intro-lead {
   font-size: 13.5px;
@@ -572,26 +641,46 @@ async function sendSuggestion() {
   margin: 0 auto;
 }
 .asst__chips {
-  margin-top: 16px;
+  margin-top: 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
   align-items: stretch;
 }
 .asst__chip {
-  padding: 9px 12px;
-  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 11px;
   border: 1px solid var(--color-line);
   background: var(--color-surface);
   color: var(--color-ink);
   font-size: 13px;
+  font-weight: 500;
   text-align: left;
   cursor: pointer;
-  transition: border-color 120ms var(--ease-out), background 120ms var(--ease-out);
+  box-shadow: 0 1px 2px oklch(0.18 0.015 260 / 0.05);
+  transition:
+    border-color 140ms var(--ease-out),
+    transform 140ms var(--ease-out),
+    box-shadow 140ms var(--ease-out);
+}
+.asst__chip-chev {
+  flex-shrink: 0;
+  color: var(--color-accent-600, var(--color-accent-500));
+  opacity: 0.55;
+  transition: transform 140ms var(--ease-out), opacity 140ms var(--ease-out);
 }
 .asst__chip:hover {
-  border-color: var(--color-accent-500);
-  background: var(--color-surface-soft);
+  border-color: oklch(0.734 0.114 86.8 / 0.6);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px oklch(0.18 0.015 260 / 0.1);
+}
+.asst__chip:hover .asst__chip-chev {
+  transform: translateX(2px);
+  opacity: 1;
 }
 
 /* ── Messages ─────────────────────────────────────────────────────── */
@@ -605,26 +694,47 @@ async function sendSuggestion() {
 .asst__msg--bot {
   align-items: stretch;
 }
+.asst__bot-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.asst__glyph {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--color-brand-900, oklch(0.2 0.05 250));
+  color: var(--color-accent-500);
+  box-shadow: 0 0 0 1px oklch(0.734 0.114 86.8 / 0.35);
+}
 .asst__bubble {
-  max-width: 88%;
   border-radius: 14px;
-  padding: 9px 13px;
+  padding: 10px 13px;
   font-size: 13.5px;
-  line-height: 1.55;
+  line-height: 1.58;
 }
 .asst__bubble--user {
-  background: var(--color-brand-600);
+  max-width: 88%;
+  background: linear-gradient(160deg, var(--color-brand-600), var(--color-brand-800, oklch(0.26 0.07 255)));
   color: white;
   border-bottom-right-radius: 5px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  box-shadow: 0 2px 8px oklch(0.18 0.015 260 / 0.18);
 }
 .asst__bubble--bot {
-  max-width: 100%;
+  flex: 1;
+  min-width: 0;
   background: var(--color-surface);
-  border: 1px solid var(--color-line);
+  border: 1px solid oklch(0.88 0.01 260 / 0.8);
   color: var(--color-ink);
-  border-bottom-left-radius: 5px;
+  border-top-left-radius: 5px;
+  box-shadow: 0 1px 3px oklch(0.18 0.015 260 / 0.06);
 }
 .asst__bubble--error {
   background: var(--color-surface-soft);
@@ -648,8 +758,8 @@ async function sendSuggestion() {
   gap: 3px;
 }
 .asst__md :deep(li)::marker {
-  color: var(--color-muted);
-  font-weight: 600;
+  color: var(--color-accent-600, var(--color-accent-500));
+  font-weight: 650;
 }
 .asst__md :deep(a) {
   color: var(--color-brand-600);
@@ -676,6 +786,25 @@ async function sendSuggestion() {
   font-weight: 700;
   margin: 10px 0 4px;
 }
+.asst__md :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 8px;
+  font-size: 12.5px;
+}
+.asst__md :deep(th),
+.asst__md :deep(td) {
+  border-bottom: 1px solid var(--color-line);
+  padding: 4px 8px 4px 0;
+  text-align: left;
+}
+.asst__md :deep(th) {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
 
 /* Typing dots */
 .asst__typing {
@@ -687,7 +816,7 @@ async function sendSuggestion() {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: var(--color-muted);
+  background: var(--color-accent-500);
   animation: asst-dot 1.1s ease-in-out infinite;
 }
 .asst__typing span:nth-child(2) {
@@ -703,15 +832,16 @@ async function sendSuggestion() {
 
 /* ── Feature-request card ─────────────────────────────────────────── */
 .asst__req {
-  margin-top: 8px;
+  margin: 8px 0 0 30px;
   border: 1px solid var(--color-line);
   border-left: 3px solid var(--color-accent-500);
-  border-radius: 10px;
+  border-radius: 11px;
   background: var(--color-surface-soft);
-  padding: 10px 12px;
+  padding: 11px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  box-shadow: 0 1px 3px oklch(0.18 0.015 260 / 0.05);
 }
 .asst__req--footer {
   margin: 0 0 10px;
@@ -746,13 +876,17 @@ async function sendSuggestion() {
   gap: 8px;
 }
 .asst__req-done {
-  margin-top: 8px;
+  margin: 8px 0 0 30px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--color-success-600, oklch(0.5 0.14 150));
+}
+.asst__req--footer .asst__req-done {
+  margin-left: 0;
+  margin-top: 0;
 }
 .asst__btn {
   border-radius: 8px;
@@ -788,7 +922,7 @@ async function sendSuggestion() {
 .asst__foot {
   border-top: 1px solid var(--color-line);
   background: var(--color-surface);
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding: 11px 12px calc(11px + env(safe-area-inset-bottom, 0px));
 }
 .asst__composer {
   display: flex;
@@ -798,44 +932,50 @@ async function sendSuggestion() {
 .asst__input {
   flex: 1;
   resize: none;
-  min-height: 40px;
+  min-height: 42px;
   max-height: 120px;
   border: 1px solid var(--color-line);
-  border-radius: 11px;
+  border-radius: 12px;
   background: var(--color-canvas);
-  padding: 10px 12px;
+  padding: 11px 13px;
   font-family: var(--font-sans);
   font-size: 13.5px;
   line-height: 1.4;
   color: var(--color-ink);
+  box-shadow: inset 0 1px 2px oklch(0.18 0.015 260 / 0.04);
+  transition: border-color 120ms var(--ease-out);
 }
 .asst__input:focus {
   outline: 2px solid var(--color-accent-500);
   outline-offset: -1px;
 }
 .asst__send {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 11px;
-  background: var(--color-brand-600);
-  color: white;
+  border-radius: 12px;
+  background: var(--color-accent-500);
+  color: var(--color-brand-900, oklch(0.2 0.05 250));
   cursor: pointer;
-  transition: background 120ms var(--ease-out);
+  box-shadow:
+    0 1px 2px oklch(0.18 0.015 260 / 0.14),
+    inset 0 -1px 0 oklch(0 0 0 / 0.1);
+  transition: transform 140ms var(--ease-out), filter 140ms var(--ease-out);
 }
 .asst__send:hover:not(:disabled) {
-  background: var(--color-brand-700);
+  transform: translateY(-1px);
+  filter: brightness(1.05);
 }
 .asst__send:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: default;
 }
 .asst__suggest {
-  margin-top: 8px;
+  margin-top: 9px;
   background: transparent;
   border: none;
   padding: 0;

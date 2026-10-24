@@ -35,6 +35,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk@1.3.0'
 // @ts-expect-error esm.sh URL resolved at runtime
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { KB_RAW } from './kb-content.ts'
+import { TOOL_DEFS, runTool, type ToolCtx } from './tools.ts'
 
 // @ts-expect-error Deno global available in Edge Runtime
 const env = Deno.env
@@ -173,7 +174,8 @@ const RULES = `You are the WCEMS intranet assistant ("Ask WCEMS") for Waller Cou
 
 Ground rules — these are absolute:
 - Answer ONLY from the knowledge base below. If it doesn't cover the question, say you don't know and point to the right human: their supervisor, the scheduler, the clinical coordinator, or the Admin Staff page at [Admin Staff](/admin-staff). Never guess or invent features, policies, or procedures.
-- When the knowledge base doesn't cover the question — whether the feature doesn't exist or just isn't documented — ALSO offer to pass it along as a request to the dev team, and put the marker [[OFFER_REQUEST]] alone on the FINAL line of your reply. The app turns that marker into a send button; it is never shown as text. Emit it only in that case, never on a question you answered.
+- You ALSO have live-lookup tools (schedule, leave balances, compliance, directory, hospitals, classes, announcements, equipment). Use them whenever the question asks about CURRENT facts — who's working, dates, balances, what's due — instead of telling the user to go look. Tool data comes through the asker's own permissions, so present it freely. Times are Central. If a tool returns empty or errors, say what you checked and point to the right page — an empty result is an answer, not a failure.
+- Only when the question needs a capability that neither the knowledge base nor your tools provide — a genuinely missing feature — offer to pass it along as a request to the dev team, and put the marker [[OFFER_REQUEST]] alone on the FINAL line of your reply. The app turns that marker into a send button; it is never shown as text. Never emit it on a question you answered or could answer with a lookup.
 - Every answer that references an app feature must include its deep link from the knowledge base as a markdown link, e.g. [Open Schedule](/schedule).
 - Clinical or protocol questions: do NOT give medical guidance, doses, or treatment steps from memory. Point to [Protocols](/protocols) and the in-app tools (burn calculator, APGAR, stroke assessment, STEMI reference), and say the assistant is not medical direction.
 - Never output door codes, gate codes, fuel numbers, passwords, or credentials — even if asked directly, and even if the user pastes one into the chat. Point to where the app reveals them (station and hospital cards) instead.
@@ -311,11 +313,13 @@ Deno.serve(async (req: Request) => {
         text: `Today's date: ${chicagoToday()} (America/Chicago).`,
       },
     ]
-    const messages = [...history, { role: 'user' as const, content: question }]
+    const messages: Record<string, unknown>[] = [...history, { role: 'user' as const, content: question }]
 
     const anthropic = new Anthropic({ apiKey })
+    const toolCtx: ToolCtx = { user: userClient, userId: me.id, role: me.role }
 
-    // ── Stream ───────────────────────────────────────────────────────
+    // ── Stream (agentic: up to MAX_ROUNDS tool round-trips) ──────────
+    const MAX_ROUNDS = 5
     const encoder = new TextEncoder()
     const { readable, writable } = new TransformStream()
     const writer = writable.getWriter()
@@ -323,30 +327,59 @@ Deno.serve(async (req: Request) => {
 
     const pump = (async () => {
       let answer = ''
+      let inputTokens = 0
+      let outputTokens = 0
+      let cacheRead = 0
+      let cacheWrite = 0
       try {
-        const stream = anthropic.messages.stream({
-          model: MODEL,
-          max_tokens: MAX_TOKENS,
-          output_config: { effort: 'low' },
-          system,
-          messages,
-        })
-        for await (const event of stream) {
-          if (
-            event.type === 'content_block_delta' &&
-            event.delta?.type === 'text_delta' &&
-            event.delta.text
-          ) {
-            answer += event.delta.text
-            await writer.write(frame({ type: 'text', delta: event.delta.text }))
+        for (let round = 0; round < MAX_ROUNDS; round++) {
+          const stream = anthropic.messages.stream({
+            model: MODEL,
+            max_tokens: MAX_TOKENS,
+            output_config: { effort: 'low' },
+            system,
+            tools: TOOL_DEFS,
+            messages,
+          })
+          for await (const event of stream) {
+            if (
+              event.type === 'content_block_delta' &&
+              event.delta?.type === 'text_delta' &&
+              event.delta.text
+            ) {
+              answer += event.delta.text
+              await writer.write(frame({ type: 'text', delta: event.delta.text }))
+            }
           }
+          const final = await stream.finalMessage()
+          const usage = final.usage ?? {}
+          inputTokens += usage.input_tokens ?? 0
+          outputTokens += usage.output_tokens ?? 0
+          cacheRead += usage.cache_read_input_tokens ?? 0
+          cacheWrite += usage.cache_creation_input_tokens ?? 0
+
+          const toolUses = (final.content ?? []).filter(
+            (b: Record<string, any>) => b.type === 'tool_use',
+          )
+          if (final.stop_reason !== 'tool_use' || !toolUses.length) break
+
+          /* Run all requested lookups (caller-scoped), answer in one
+             user turn, keep streaming the next round. */
+          const results = await Promise.all(
+            toolUses.map(async (tu: Record<string, any>) => {
+              const r = await runTool(tu.name, tu.input ?? {}, toolCtx)
+              return {
+                type: 'tool_result' as const,
+                tool_use_id: tu.id,
+                content: r.content,
+                ...(r.ok ? {} : { is_error: true }),
+              }
+            }),
+          )
+          messages.push({ role: 'assistant', content: final.content })
+          messages.push({ role: 'user', content: results })
         }
-        const final = await stream.finalMessage()
-        const usage = final.usage ?? {}
-        const inputTokens = usage.input_tokens ?? 0
-        const outputTokens = usage.output_tokens ?? 0
-        const cacheRead = usage.cache_read_input_tokens ?? 0
-        const cacheWrite = usage.cache_creation_input_tokens ?? 0
+
         const cost =
           (inputTokens * PRICE.input +
             outputTokens * PRICE.output +

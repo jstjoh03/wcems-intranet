@@ -90,11 +90,12 @@ export function useAssistant() {
 
   const starterChips = computed(() => {
     const chips = [
+      "Who's on duty today?",
+      "What's my leave balance?",
       'How do I request a day off?',
-      'How do shift trades work?',
-      'Where do I upload a CE certificate?',
     ]
     if (auth.isAdmin) chips.push('How do I publish a new policy version?')
+    else chips.push('How do shift trades work?')
     return chips
   })
 
