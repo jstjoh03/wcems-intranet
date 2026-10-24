@@ -1004,7 +1004,7 @@ const submitLabel = computed(() => {
   background: var(--color-surface);
 }
 @media (min-width: 640px) {
-  .ancar__slide { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 20px; }
+  .ancar__slide { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
   .ancar__slide--noimg { grid-template-columns: 1fr; }
 }
 .ancar__media {
@@ -1013,11 +1013,11 @@ const submitLabel = computed(() => {
   align-items: center;
   justify-content: center;
   border: 0;
-  padding: 10px;
+  padding: 8px;
   cursor: zoom-in;
   border-radius: 12px;
-  min-height: 190px;
-  max-height: 240px;
+  min-height: 200px;
+  max-height: 260px;
   background:
     radial-gradient(120% 120% at 20% 0%, oklch(0.3 0.08 255 / 0.9), transparent 55%),
     linear-gradient(150deg, var(--color-brand-900), var(--color-brand-950));
@@ -1025,14 +1025,13 @@ const submitLabel = computed(() => {
 }
 .ancar__media img {
   max-width: 100%;
-  max-height: 220px;
+  max-height: 100%;
   object-fit: contain;
   border-radius: 7px;
   box-shadow: 0 10px 30px oklch(0.1 0.04 260 / 0.45);
 }
 @media (min-width: 640px) {
-  .ancar__media { min-height: 230px; max-height: 300px; }
-  .ancar__media img { max-height: 280px; }
+  .ancar__media { min-height: 260px; max-height: 360px; }
 }
 .ancar__content {
   min-width: 0;
