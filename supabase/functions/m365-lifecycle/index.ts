@@ -31,7 +31,9 @@
 // {"contacts":true} surveys the GAL contact tab for every active account
 // (+ "apply":true fills the gaps — job title, department, office
 // phone/fax/address/city/state; city+state drive the all-company dynamic
-// group). Undo links are self-authenticating (HMAC).
+// group); {"assignments":true} (+ "apply") syncs job titles to clinical
+// development (operating credential) and the Office field to the roster's
+// station/shift — run daily by cron. Undo links are self-authenticating.
 
 // @ts-expect-error npm specifier resolved by the edge runtime
 import { PDFDocument, StandardFonts, rgb } from 'npm:pdf-lib@1.17.1'
@@ -71,14 +73,61 @@ const ORG_CONTACT = {
   postalCode: '77445',
   country: 'United States',
 }
-// List CertLevel → GAL job title ("Attendant | …"); unknown certs leave
-// jobTitle alone so custom titles (CDO, Community Paramedic…) survive.
+// List CertLevel → GAL job title; unknown certs leave jobTitle alone so
+// custom titles (CDO, Community Paramedic…) survive. BLS titles are
+// static "Attendant | …"; medics carry their operating credential as the
+// suffix — new hires start as P1C and the assignments sync advances the
+// suffix as clinical development promotes them.
 const CERT_TITLES: Record<string, string> = {
-  'EMT-B': 'EMT', 'ADV EMT': 'Advanced EMT', 'EMT-P': 'Paramedic', 'LP': 'Licensed Paramedic',
+  'EMT-B': 'EMT', 'ADV EMT': 'Adv EMT', 'EMT-P': 'Paramedic', 'LP': 'Licensed Paramedic',
 }
+const MEDIC_CERTS = new Set(['EMT-P', 'LP'])
 function titleFor(cert?: string | null): string | null {
-  const t = CERT_TITLES[String(cert ?? '').trim().toUpperCase()]
-  return t ? `Attendant | ${t}` : null
+  const key = String(cert ?? '').trim().toUpperCase()
+  const t = CERT_TITLES[key]
+  if (!t) return null
+  // every hire starts in field training: medics as P1 candidates, BLS in FTR
+  return MEDIC_CERTS.has(key) ? `${t} | P1C` : `FTR | ${t}`
+}
+/* Titles the automation is allowed to REPLACE: only the rank-and-file
+   vocabulary it manages (Justin's own GAL conventions, surveyed
+   2026-10-23). Anything else ("Field Supervisor | …", "Assistant Chief
+   | …", "Clinical Development Officer | …") is hand-made and
+   permanently off-limits. */
+const MANAGED_TITLE = /^(Attendant \| (EMT|EMT-B|Adv EMT|Advanced EMT|Paramedic|Licensed Paramedic)|FTR \| (EMT|EMT-B|Adv EMT|Advanced EMT|Paramedic|Licensed Paramedic)|FTO \| (Paramedic|Licensed Paramedic)|(Paramedic|Licensed Paramedic) \| (NEOP|FTR|P1C|P1|P2|P3|FTO))$/
+const MANAGED_OFFICE = /^[ABC] Shift \| .+$/
+/** Title for a medic from their pipeline row. FTOs read "FTO | «cert»";
+ *  everyone else carries their operating credential: working NEOP/FTR/P1
+ *  → still a P1 candidate; working P2 → credentialed P1; working P3 /
+ *  cleared P2/FinalRelease → P2. */
+function medicTitle(certTitle: string, p: { working_phase: string | null; cleared_phase: string | null; is_fto: boolean | null; pending: boolean | null } | undefined): string {
+  if (p?.is_fto) return `FTO | ${certTitle}`
+  let suffix = 'P1C'
+  const w = p?.working_phase
+  const c = p?.cleared_phase
+  if (w === 'P2') suffix = 'P1'
+  else if (w === 'P3') suffix = 'P2'
+  else if (w === 'NEOP' || w === 'FTR' || w === 'P1') suffix = 'P1C'
+  else if (c === 'FinalRelease' || c === 'P2') suffix = 'P2'
+  else if (c === 'P1') suffix = 'P1'
+  return `${certTitle} | ${suffix}`
+}
+/** Title for BLS (EMT / Adv EMT): "FTR | «cert»" until Final Release,
+ *  then "Attendant | «cert»". */
+function blsTitle(certTitle: string, p: { cleared_phase: string | null } | undefined): string {
+  return p?.cleared_phase === 'FinalRelease' ? `Attendant | ${certTitle}` : `FTR | ${certTitle}`
+}
+// "Medic 221" → "M221"; stations like S201/S202/EMS Admin pass through
+function shortStation(station: string): string {
+  return station.replace(/^Medic\s+/i, 'M')
+}
+// Supabase PostgREST reader (service role; env vars are auto-injected)
+async function sb(path: string): Promise<any[]> {
+  const res = await fetch(`${env.get('SUPABASE_URL')}/rest/v1/${path}`, {
+    headers: { apikey: env.get('SUPABASE_SERVICE_ROLE_KEY')!, Authorization: `Bearer ${env.get('SUPABASE_SERVICE_ROLE_KEY')!}` },
+  })
+  if (!res.ok) throw new Error(`supabase ${res.status} ${path.split('?')[0]}: ${(await res.text()).slice(0, 200)}`)
+  return await res.json()
 }
 function deptFor(category?: string | null): string | null {
   // HR's Category vocabulary: FT, PT, Vol, Admin, BOD, S1, S2, Doc —
@@ -555,6 +604,78 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({
         ok: true, applied: apply, activePeople: people.length,
         alreadyComplete: untouched, noAccount, changed: out.length, details: out,
+      }, null, 2), { headers: { 'Content-Type': 'application/json' } })
+    } catch (err) {
+      return new Response(JSON.stringify({ ok: false, error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    }
+  }
+
+  // ── Assignments mode: sync titles + office from the live systems ────
+  // POST {"assignments": true}                → dry-run: current vs proposed
+  // POST {"assignments": true, "apply": true} → PATCH the differences
+  // jobTitle: medics carry their operating credential ("Paramedic |
+  // P1C/P1/P2", FTOs "FTO | Paramedic") computed from clinical
+  // development (pipeline_records); BLS reads "FTR | EMT" until Final
+  // Release, then "Attendant | EMT". officeLocation: "«shift» Shift |
+  // «M-station»" (e.g. "B Shift | M221") from the intranet roster
+  // (app_users). Both OVERWRITE stale values — but only values the
+  // automation itself owns (MANAGED_TITLE / MANAGED_OFFICE patterns or
+  // empty); hand-entered text is reported, never touched. Run daily by
+  // cron so promotions and crew moves land in the GAL by themselves.
+  if (body?.assignments === true) {
+    try {
+      const life = await lifeToken()
+      const users = await sb('app_users?select=id,full_name,email,shift,station&active=is.true&account_type=eq.person')
+      const pipes = await sb('pipeline_records?select=user_id,cert_level,working_phase,cleared_phase,is_fto,pending,in_p3_process,clinical_excluded')
+      const pipeByUser = new Map(pipes.map((p: any) => [p.user_id, p]))
+      const stations = new Set<string>()
+      for (const u of users as any[]) {
+        const s = String(u.station ?? '').trim()
+        if (s) { stations.add(s); stations.add(shortStation(s)) }
+      }
+      const out: Array<Record<string, unknown>> = []
+      let inSync = 0, noAccount = 0
+      for (const au of users) {
+        const email = String(au.email ?? '').trim().toLowerCase()
+        if (!email.endsWith(`@${WORK_DOMAIN}`)) { noAccount++; continue }
+        const u = await g(life, 'GET', `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(email)}?$select=id,jobTitle,officeLocation`)
+        if (u.__notFound) { noAccount++; continue }
+        const p = pipeByUser.get(au.id)
+        const set: Record<string, unknown> = {}
+        const skipped: string[] = []
+        // title — pipeline-derived; medics carry the operating credential
+        const cert = String(p?.cert_level ?? '').trim().toUpperCase()
+        const certTitle = CERT_TITLES[cert]
+        if (certTitle && !(p?.clinical_excluded)) {
+          const want = MEDIC_CERTS.has(cert) ? medicTitle(certTitle, p) : blsTitle(certTitle, p)
+          const cur = String(u.jobTitle ?? '').trim()
+          if (cur !== want) {
+            if (!cur || MANAGED_TITLE.test(cur)) set.jobTitle = want
+            else skipped.push(`title is hand-made: "${cur}"`)
+          }
+        }
+        // office — "«shift» Shift | «M-station»" from the intranet roster
+        const station = String(au.station ?? '').trim()
+        const shift = String(au.shift ?? '').trim().toUpperCase()
+        const wantOffice = station ? (shift ? `${shift} Shift | ${shortStation(station)}` : shortStation(station)) : null
+        if (wantOffice) {
+          const cur = String(u.officeLocation ?? '').trim()
+          if (cur !== wantOffice) {
+            if (!cur || MANAGED_OFFICE.test(cur) || stations.has(cur)) set.officeLocation = wantOffice
+            else skipped.push(`office is hand-made: "${cur}"`)
+          }
+        }
+        if (!Object.keys(set).length && !skipped.length) { inSync++; continue }
+        if (apply && Object.keys(set).length) await g(life, 'PATCH', `https://graph.microsoft.com/v1.0/users/${u.id}`, set)
+        out.push({
+          name: au.full_name, upn: email,
+          current: { jobTitle: u.jobTitle ?? null, officeLocation: u.officeLocation ?? null },
+          ...(Object.keys(set).length ? { [apply ? 'set' : 'wouldSet']: set } : {}),
+          ...(skipped.length ? { skipped } : {}),
+        })
+      }
+      return new Response(JSON.stringify({
+        ok: true, applied: apply, people: users.length, inSync, noAccount, flagged: out.length, details: out,
       }, null, 2), { headers: { 'Content-Type': 'application/json' } })
     } catch (err) {
       return new Response(JSON.stringify({ ok: false, error: (err as Error).message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
