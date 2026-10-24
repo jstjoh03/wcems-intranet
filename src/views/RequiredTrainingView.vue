@@ -15,6 +15,7 @@ interface RowVM {
   title: string
   description: string
   requiredBy: string | null
+  thumbnailUrl: string | null
   status: 'complete' | 'in_progress' | 'not_started' | 'overdue'
   statusLabel: string
   completedAt: string | null
@@ -73,6 +74,7 @@ const rows = computed<RowVM[]>(() =>
       title: t.title,
       description: t.description,
       requiredBy: t.requiredBy,
+      thumbnailUrl: t.thumbnailUrl,
       status,
       statusLabel,
       completedAt: completion?.completedAt ?? null,
@@ -117,6 +119,7 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
             class="rt-row-link"
           >
             <AppCard class="rt-row" :class="`rt-row--${r.status}`">
+              <img v-if="r.thumbnailUrl" :src="r.thumbnailUrl" alt="" class="rt-row__thumb" loading="lazy" />
               <div class="rt-row__main">
                 <div class="rt-row__head">
                   <span class="rt-row__title display">{{ r.title }}</span>
@@ -148,6 +151,7 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
               class="rt-row-link"
             >
               <AppCard class="rt-row rt-row--complete">
+                <img v-if="r.thumbnailUrl" :src="r.thumbnailUrl" alt="" class="rt-row__thumb" loading="lazy" />
                 <div class="rt-row__main">
                   <div class="rt-row__head">
                     <span class="rt-row__title display">{{ r.title }}</span>
@@ -229,6 +233,21 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
   gap: 12px;
   padding: 14px 16px !important;
   transition: border-color 120ms var(--ease-out);
+}
+.rt-row__thumb {
+  width: 76px;
+  height: 52px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--color-line);
+  background: var(--color-brand-950);
+}
+@media (max-width: 420px) {
+  .rt-row__thumb {
+    width: 56px;
+    height: 44px;
+  }
 }
 .rt-row:hover {
   border-color: var(--color-muted-soft);

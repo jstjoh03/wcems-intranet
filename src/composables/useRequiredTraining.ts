@@ -36,6 +36,7 @@ interface TrainingRow {
   attestation_statement: string
   quiz: unknown | null
   show_in_library: boolean
+  thumbnail_url: string | null
   active: boolean
   created_by: string | null
   created_at: string
@@ -77,6 +78,7 @@ function trainingFromRow(r: TrainingRow): RequiredTraining {
     attestationStatement: r.attestation_statement,
     quiz: r.quiz,
     showInLibrary: r.show_in_library,
+    thumbnailUrl: r.thumbnail_url ?? null,
     active: r.active,
     createdBy: r.created_by,
     createdAt: r.created_at,
@@ -171,7 +173,7 @@ async function loadEventRosters(list: RequiredTraining[]): Promise<void> {
 }
 
 const TRAINING_COLUMNS =
-  'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, audience_employment_types, audience_event_label, audience_event_from, audience_event_to, attestation_statement, quiz, show_in_library, active, created_by, created_at, updated_at'
+  'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, audience_employment_types, audience_event_label, audience_event_from, audience_event_to, attestation_statement, quiz, show_in_library, thumbnail_url, active, created_by, created_at, updated_at'
 
 const COMPLETION_COLUMNS =
   'id, required_training_id, user_id, started_at, completed_at, signature_data, signed_method, marked_by, marked_note, quiz_score, attestation_signed, certificate_storage_path, created_at, updated_at'
@@ -226,6 +228,7 @@ export interface SaveTrainingInput {
   audienceEventTo: string | null
   attestationStatement: string
   showInLibrary: boolean
+  thumbnailUrl: string | null
   active: boolean
 }
 
@@ -509,6 +512,7 @@ export function useRequiredTraining() {
       audience_event_to: input.audienceEventTo,
       attestation_statement: input.attestationStatement,
       show_in_library: input.showInLibrary,
+      thumbnail_url: input.thumbnailUrl,
       active: input.active,
     }
     if (input.id) {

@@ -366,6 +366,16 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
 
     <template v-else>
       <header class="rtd__header">
+        <!-- Hero image only when there's no inline player to be the
+             visual (external courses) — video modules show it on the
+             list card and in the library instead. -->
+        <img
+          v-if="training.thumbnailUrl && isExternal"
+          :src="training.thumbnailUrl"
+          alt=""
+          class="rtd__hero"
+          loading="lazy"
+        />
         <div class="flex items-center gap-2">
           <ShieldCheck :size="22" :stroke-width="1.85" style="color: var(--color-brand-600)" />
           <h1 class="display rtd__title">{{ training.title }}</h1>
@@ -589,6 +599,15 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
 }
 .rtd__header {
   margin-bottom: 16px;
+}
+.rtd__hero {
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid var(--color-line);
+  margin-bottom: 14px;
+  box-shadow: 0 8px 24px oklch(0.2 0.03 260 / 0.1);
 }
 .rtd__title {
   font-size: 24px;

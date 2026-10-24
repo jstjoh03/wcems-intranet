@@ -37,8 +37,8 @@ function audienceMatches(t: RequiredTraining): boolean {
 }
 
 function requiredAsRecording(t: RequiredTraining): TrainingRecording {
-  let thumb: string | null = null
-  if (t.videoSource === 'youtube') thumb = youTubeThumbnailUrl(t.videoRef)
+  let thumb: string | null = t.thumbnailUrl
+  if (!thumb && t.videoSource === 'youtube') thumb = youTubeThumbnailUrl(t.videoRef)
   return {
     id: `req-${t.id}`,
     title: t.title,

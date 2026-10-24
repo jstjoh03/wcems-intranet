@@ -11,6 +11,7 @@ import {
   X,
   Users,
   ChevronRight,
+  Upload,
 } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
@@ -38,6 +39,7 @@ interface Draft {
   audienceEventTo: string
   attestationStatement: string
   showInLibrary: boolean
+  thumbnailUrl: string | null
   active: boolean
 }
 
@@ -68,6 +70,7 @@ function blankDraft(): Draft {
     audienceEventTo: '',
     attestationStatement: DEFAULT_ATTESTATION,
     showInLibrary: true,
+    thumbnailUrl: null,
     active: true,
   }
 }
@@ -166,9 +169,49 @@ function startEdit(t: RequiredTraining) {
       t.attestationStatement ||
       (t.videoSource === 'external' ? DEFAULT_ATTESTATION_EXTERNAL : DEFAULT_ATTESTATION),
     showInLibrary: t.showInLibrary,
+    thumbnailUrl: t.thumbnailUrl,
     active: t.active,
   }
   error.value = null
+}
+
+/* ── Thumbnail upload (same bucket + caps as recording thumbnails) ── */
+const THUMB_MAX_BYTES = 5 * 1024 * 1024
+const uploadingThumb = ref(false)
+
+async function onThumbPicked(event: Event) {
+  const d = draft.value
+  if (!d) return
+  error.value = null
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    error.value = 'Please choose an image file.'
+    input.value = ''
+    return
+  }
+  if (file.size > THUMB_MAX_BYTES) {
+    error.value = 'Image is too large (max 5 MB).'
+    input.value = ''
+    return
+  }
+  uploadingThumb.value = true
+  try {
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+    const key = `required-${crypto.randomUUID()}.${ext}`
+    const { error: upErr } = await supabase.storage
+      .from('training-recording-thumbnails')
+      .upload(key, file, { cacheControl: '31536000', upsert: false, contentType: file.type })
+    if (upErr) throw upErr
+    const { data } = supabase.storage.from('training-recording-thumbnails').getPublicUrl(key)
+    d.thumbnailUrl = data.publicUrl
+  } catch (err) {
+    error.value = `Image upload failed: ${(err as Error).message}`
+  } finally {
+    uploadingThumb.value = false
+    input.value = ''
+  }
 }
 
 /* Switching to/from the external source swaps the suggested
@@ -231,6 +274,7 @@ async function onSave() {
     audienceEventTo: eventMode && d.audienceEventTo ? d.audienceEventTo : null,
     attestationStatement: d.attestationStatement.trim(),
     showInLibrary: d.showInLibrary,
+    thumbnailUrl: d.thumbnailUrl,
     active: d.active,
   })
   saving.value = false
@@ -507,6 +551,36 @@ const orderedTrainings = computed(() =>
           </div>
 
           <div class="mrt-form__row">
+            <div class="mrt-form__field">
+              <span class="mrt-form__label">Thumbnail image</span>
+              <div class="mrt-thumb">
+                <div v-if="draft.thumbnailUrl" class="mrt-thumb__preview-wrap">
+                  <img :src="draft.thumbnailUrl" alt="Module thumbnail preview" class="mrt-thumb__preview" />
+                  <button
+                    type="button"
+                    class="mrt-thumb__remove"
+                    aria-label="Remove thumbnail"
+                    @click="draft.thumbnailUrl = null"
+                  >
+                    <X :size="13" :stroke-width="2.25" />
+                  </button>
+                </div>
+                <label class="mrt-thumb__pick">
+                  <input type="file" accept="image/*" :disabled="uploadingThumb" @change="onThumbPicked" />
+                  <Upload :size="12" :stroke-width="2" />
+                  <span v-if="uploadingThumb">Uploading…</span>
+                  <span v-else-if="draft.thumbnailUrl">Replace image</span>
+                  <span v-else>Upload an image (optional)</span>
+                </label>
+              </div>
+              <span class="mrt-form__hint">
+                Shown on the crew's training card and the module page — a flyer or title slide
+                works well. Max 5 MB.
+              </span>
+            </div>
+          </div>
+
+          <div class="mrt-form__row">
             <label class="mrt-form__check">
               <input v-model="draft.showInLibrary" type="checkbox" />
               <span>
@@ -536,7 +610,7 @@ const orderedTrainings = computed(() =>
             <button type="button" class="btn btn-ghost" @click="cancel">
               <X :size="14" :stroke-width="2" /> Cancel
             </button>
-            <button type="submit" class="btn btn-primary" :disabled="saving">
+            <button type="submit" class="btn btn-primary" :disabled="saving || uploadingThumb">
               <Save :size="14" :stroke-width="2" />
               {{ saving ? 'Saving…' : (draft.id ? 'Update' : 'Create') }}
             </button>
@@ -697,6 +771,63 @@ const orderedTrainings = computed(() =>
 .mrt-form__hint {
   font-size: 11px;
   color: var(--color-muted);
+}
+.mrt-thumb {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.mrt-thumb__preview-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.mrt-thumb__preview {
+  max-width: 220px;
+  max-height: 124px;
+  border-radius: 9px;
+  border: 1px solid var(--color-line);
+  object-fit: cover;
+  box-shadow: 0 4px 14px oklch(0.2 0.03 260 / 0.12);
+}
+.mrt-thumb__remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px oklch(0.2 0.03 260 / 0.18);
+}
+.mrt-thumb__remove:hover {
+  color: var(--color-danger-500);
+}
+.mrt-thumb__pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--color-ink-soft);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-line);
+  border-radius: 8px;
+  padding: 8px 13px;
+  cursor: pointer;
+}
+.mrt-thumb__pick:hover {
+  border-color: var(--color-accent-strong, #a8842c);
+  color: var(--color-ink);
+}
+.mrt-thumb__pick input {
+  display: none;
 }
 .mrt-form__input {
   font-family: var(--font-sans);
