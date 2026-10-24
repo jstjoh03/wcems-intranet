@@ -76,8 +76,6 @@ interface ListPerson {
   status: string
   ftpt: string | null
   certLevel: string | null
-  shift: string | null
-  station: string | null
   mobile: string | null
   txLicenseNumber: string | null
   txLicenseExp: string | null
@@ -97,11 +95,25 @@ function norm(name: string): string {
   return ALIASES[s] ?? s
 }
 
-/* HR's sheet says FT/PT; the apps store full_time/part_time. */
+/* HR's sheet says FT/PT; the apps store full_time/part_time. Anything
+   else (Vol, Admin, S1…) maps to null — never pass an unknown value
+   through, app_users has a CHECK on employment_type. */
 function normType(v: string | null): string | null {
   if (!v) return null
   const t = v.trim().toUpperCase()
-  return t === 'FT' ? 'full_time' : t === 'PT' ? 'part_time' : v
+  if (t === 'FT' || t === 'FULL TIME' || t === 'FULL-TIME') return 'full_time'
+  if (t === 'PT' || t === 'PART TIME' || t === 'PART-TIME') return 'part_time'
+  return null
+}
+
+/* Employment type: Category is what excel-to-list actually syncs from
+   HR's workbook (FT/PT/Vol/Admin/…), so it wins when it maps; the
+   legacy hand-filled FTPT column covers people whose Category isn't an
+   employment basis. (Before 2026-10-24 this read only FTPT, which
+   nothing fills for new hires — every new hire silently defaulted to
+   full_time; caught on Xavier Castro, hired PT.) */
+function empType(category: string, ftpt: string | null): string | null {
+  return normType(category) ?? normType(ftpt)
 }
 
 function workEmail(normName: string): string {
@@ -178,8 +190,6 @@ async function fetchListPeople(token: string): Promise<ListPerson[]> {
         status: (pick(f, 'Status') ?? 'Active').trim() || 'Active',
         ftpt: pick(f, 'FTPT'),
         certLevel: pick(f, 'CertLevel'),
-        shift: pick(f, 'Shift'),
-        station: pick(f, 'Station'),
         mobile: pick(f, 'Mobile'),
         txLicenseNumber: pick(f, 'TXLicenseNumber'),
         txLicenseExp: pick(f, 'TXLicenseExp'),
@@ -272,7 +282,7 @@ Deno.serve(async (req: Request) => {
         seenNorms.add(n)
         intranet.matched++
         const patch: Record<string, unknown> = {}
-        const t = normType(match.ftpt)
+        const t = empType(match.category, match.ftpt)
         if (t && u.employment_type !== t) patch.employment_type = t
         /* Fuel # + DOB: HR data fills gaps but never overwrites a value
            someone corrected in-app. */
@@ -300,9 +310,12 @@ Deno.serve(async (req: Request) => {
         /* app_users.employment_type is NOT NULL; HR often hasn't filled
            FT/PT for brand-new hires yet. Default full_time — the sync
            corrects it automatically once her sheet has the value. */
-        employment_type: normType(p.ftpt) ?? 'full_time',
-        shift: p.shift ?? null,
-        station: p.station ?? null,
+        employment_type: empType(p.category, p.ftpt) ?? 'full_time',
+        /* shift/station are schedule-derived (app_users_sync_shifts,
+           2026-10-24) — seeding them from the List would plant values
+           the sync can't tell apart from hand-set ones. */
+        shift: null,
+        station: null,
         phone: p.mobile ?? null,
         fuel_number: p.fuelNumber ?? null,
         date_of_birth: p.dob ? p.dob.slice(0, 10) : null,
@@ -404,7 +417,7 @@ Deno.serve(async (req: Request) => {
         if (match) {
           uniSeen.add(n)
           plan.matched++
-          const t = normType(match.ftpt)
+          const t = empType(match.category, match.ftpt)
           if (t && e.employee_type !== t) {
             plan.updates.push({ id: e.id, name: e.name, employee_type: t, was: e.employee_type })
           }
@@ -417,7 +430,7 @@ Deno.serve(async (req: Request) => {
         const display = p.name.includes(',')
           ? `${p.name.split(',')[1].trim()} ${p.name.split(',')[0].trim()}`
           : p.name
-        plan.inserts.push({ name: display, email: workEmail(p.norm), employee_type: normType(p.ftpt) ?? 'full_time', active: true })
+        plan.inserts.push({ name: display, email: workEmail(p.norm), employee_type: empType(p.category, p.ftpt) ?? 'full_time', active: true })
       }
 
       if (apply) {
