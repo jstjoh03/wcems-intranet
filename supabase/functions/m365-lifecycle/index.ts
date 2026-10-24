@@ -94,7 +94,7 @@ function titleFor(cert?: string | null): string | null {
    2026-10-23). Anything else ("Field Supervisor | …", "Assistant Chief
    | …", "Clinical Development Officer | …") is hand-made and
    permanently off-limits. */
-const MANAGED_TITLE = /^(Attendant \| (EMT|EMT-B|Adv EMT|Advanced EMT|Paramedic|Licensed Paramedic)|FTR \| (EMT|EMT-B|Adv EMT|Advanced EMT|Paramedic|Licensed Paramedic)|FTO \| (Paramedic|Licensed Paramedic)|(Paramedic|Licensed Paramedic) \| (NEOP|FTR|P1C|P1|P2|P3|FTO))$/
+const MANAGED_TITLE = /^(Attendant \| (EMT|EMT-B|Adv EMT|Advanced EMT|Paramedic|Licensed Paramedic)|FTR \| (EMT|EMT-B|Adv EMT|Advanced EMT|Paramedic|Licensed Paramedic)|FTO \| (EMT|EMT-B|Adv EMT|Advanced EMT|Paramedic|Licensed Paramedic)|(Paramedic|Licensed Paramedic) \| (NEOP|FTR|P1C|P1|P2|P3|FTO))$/
 const MANAGED_OFFICE = /^[ABC] Shift \| .+$/
 /** Title for a medic from their pipeline row. FTOs read "FTO | «cert»";
  *  everyone else carries their operating credential: working NEOP/FTR/P1
@@ -112,9 +112,10 @@ function medicTitle(certTitle: string, p: { working_phase: string | null; cleare
   else if (c === 'P1') suffix = 'P1'
   return `${certTitle} | ${suffix}`
 }
-/** Title for BLS (EMT / Adv EMT): "FTR | «cert»" until Final Release,
- *  then "Attendant | «cert»". */
-function blsTitle(certTitle: string, p: { cleared_phase: string | null } | undefined): string {
+/** Title for BLS (EMT / Adv EMT): FTOs read "FTO | «cert»"; otherwise
+ *  "FTR | «cert»" until Final Release, then "Attendant | «cert»". */
+function blsTitle(certTitle: string, p: { cleared_phase: string | null; is_fto: boolean | null } | undefined): string {
+  if (p?.is_fto) return `FTO | ${certTitle}`
   return p?.cleared_phase === 'FinalRelease' ? `Attendant | ${certTitle}` : `FTR | ${certTitle}`
 }
 // "Medic 221" → "M221"; stations like S201/S202/EMS Admin pass through
