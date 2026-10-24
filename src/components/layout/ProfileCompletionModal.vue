@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Sparkles, Camera, MapPin, Clock, Check, X } from 'lucide-vue-next'
+import { Sparkles, Camera, Check, X } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -45,12 +45,9 @@ onMounted(() => {
 const u = computed(() => auth.appUser)
 
 const hasPhoto = computed(() => !!u.value?.photoUrl)
-const hasStation = computed(() => !!u.value?.station)
-/* Shift only applies to field staff — office/admin staff (station
-   "EMS Admin") don't ride a rotation, so never require one of them. */
-const isOfficeStaff = computed(() => /admin/i.test(u.value?.station ?? ''))
-const hasShift = computed(() => isOfficeStaff.value || !!u.value?.shift)
-const isIncomplete = computed(() => !hasPhoto.value || !hasStation.value || !hasShift.value)
+/* Station + shift are schedule-derived since 2026-10-24 (the rotation
+   seat sets both), so the photo is the only thing left to nudge for. */
+const isIncomplete = computed(() => !hasPhoto.value)
 
 const firstName = computed(() => u.value?.firstName?.trim() || 'there')
 
@@ -69,11 +66,6 @@ const visible = computed(
 
 const items = computed(() => [
   { key: 'photo', label: 'Add a profile photo', sub: 'So teammates recognize you', done: hasPhoto.value, icon: Camera },
-  { key: 'station', label: 'Set your station', sub: 'Surfaces the right building info', done: hasStation.value, icon: MapPin },
-  /* Field staff only — office staff don't ride a shift rotation. */
-  ...(isOfficeStaff.value
-    ? []
-    : [{ key: 'shift', label: 'Set your shift', sub: 'A, B, or C', done: hasShift.value, icon: Clock }]),
 ])
 
 function completeProfile() {
@@ -119,8 +111,8 @@ async function dontShowAgain() {
 
           <h2 id="pcm-title" class="pcm__title display">Welcome, {{ firstName }}!</h2>
           <p class="pcm__sub">
-            Take a minute to finish your profile so teammates can recognize you and you get
-            the right info for your station and shift.
+            Take a minute to add a profile photo so teammates can recognize you — your
+            station and shift fill in automatically from the schedule.
           </p>
 
           <ul class="pcm__list">

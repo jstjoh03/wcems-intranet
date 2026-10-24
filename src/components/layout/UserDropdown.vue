@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { ChevronDown, LogOut, Eye, EyeOff, Copy, Check, User as UserIcon } from 'lucide-vue-next'
 import { useCodeReveal } from '@/composables/useCodeReveal'
 import Avatar from '@/components/primitives/Avatar.vue'
-import { useStationOptions } from '@/composables/useStationOptions'
-import type { ShiftLetter } from '@/types'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -31,48 +29,9 @@ const triggerLabel = computed(() =>
   isKiosk.value ? fullName.value || 'Station kiosk' : firstName.value,
 )
 
-/* Station list = static extras (S201/S202/EMS Admin) + active medic
-   units from the stations table via useStationOptions. Admin adds a
-   new station on /admin/stations → it shows up here automatically. */
-const { options: stationOptions } = useStationOptions()
-const SHIFT_OPTIONS: ShiftLetter[] = ['A', 'B', 'C']
-
-/* Local refs synced to the auth store. We `watch` rather than computed
-   so binding to a <select> via v-model works (computed is read-only). */
-const stationLocal = ref(auth.appUser?.station ?? '')
-const shiftLocal = ref<ShiftLetter | ''>(auth.appUser?.shift ?? '')
-watch(
-  () => auth.appUser?.station,
-  (v) => (stationLocal.value = v ?? ''),
-)
-watch(
-  () => auth.appUser?.shift,
-  (v) => (shiftLocal.value = v ?? ''),
-)
-
-const stationError = ref<string | null>(null)
-const shiftError = ref<string | null>(null)
-
-async function saveStation() {
-  stationError.value = null
-  try {
-    await auth.updateOwnStation(stationLocal.value || null)
-  } catch (err) {
-    stationError.value = (err as Error).message
-    /* Roll the dropdown back to the last-saved value. */
-    stationLocal.value = auth.appUser?.station ?? ''
-  }
-}
-
-async function saveShift() {
-  shiftError.value = null
-  try {
-    await auth.updateOwnShift(shiftLocal.value || null)
-  } catch (err) {
-    shiftError.value = (err as Error).message
-    shiftLocal.value = auth.appUser?.shift ?? ''
-  }
-}
+/* Station + shift became schedule-derived on 2026-10-24 — the rotation
+   seat sets both, so the quick-edit selects are gone and the values
+   render straight from the auth store. */
 
 function close() {
   open.value = false
@@ -195,34 +154,16 @@ function openProfile() {
         <template v-else>
         <div class="user-dropdown__divider" />
 
-        <!-- Shift / Station — both editable from a closed dropdown of
-             valid values so entries stay uniform across the crew. -->
+        <!-- Shift / Station — schedule-derived (2026-10-24): the
+             rotation seat sets both, so they read-only here. -->
         <div class="user-dropdown__stats">
           <div class="user-dropdown__stat">
             <div class="user-dropdown__stat-label">Shift</div>
-            <select
-              v-model="shiftLocal"
-              class="user-dropdown__stat-select"
-              aria-label="Edit shift"
-              @change="saveShift"
-            >
-              <option value="">—</option>
-              <option v-for="s in SHIFT_OPTIONS" :key="s" :value="s">{{ s }}</option>
-            </select>
-            <div v-if="shiftError" class="user-dropdown__stat-error">{{ shiftError }}</div>
+            <div class="user-dropdown__stat-value">{{ auth.appUser?.shift ?? '—' }}</div>
           </div>
           <div class="user-dropdown__stat">
             <div class="user-dropdown__stat-label">Station</div>
-            <select
-              v-model="stationLocal"
-              class="user-dropdown__stat-select"
-              aria-label="Edit station"
-              @change="saveStation"
-            >
-              <option value="">— set</option>
-              <option v-for="s in stationOptions" :key="s" :value="s">{{ s }}</option>
-            </select>
-            <div v-if="stationError" class="user-dropdown__stat-error">{{ stationError }}</div>
+            <div class="user-dropdown__stat-value">{{ auth.appUser?.station ?? '—' }}</div>
           </div>
         </div>
 

@@ -7,8 +7,6 @@ import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import Avatar from '@/components/primitives/Avatar.vue'
 import { supabase } from '@/lib/supabase'
 import { formatPhoneInput } from '@/utils/phone'
-import { useStationOptions } from '@/composables/useStationOptions'
-import type { ShiftLetter } from '@/types'
 import { usePushNotifications } from '@/composables/usePushNotifications'
 import { useScheduleAccess } from '@/composables/useScheduleAccess'
 
@@ -57,17 +55,11 @@ async function togglePush(event: Event) {
 
 const open = ref(false)
 
-/* Station list = static extras (S201/S202/EMS Admin) + active medic
-   units from the stations table via useStationOptions. Shared with
-   the user-dropdown quick-edit selects via the same composable. */
-const { options: stationOptions } = useStationOptions()
-const SHIFT_OPTIONS: ShiftLetter[] = ['A', 'B', 'C']
-
 /* Local state mirrors the auth store. Watchers keep these in sync when
    the store changes from elsewhere (admin edits, refresh after self-edit,
-   another tab). Saving an editable field writes through to the store. */
-const stationLocal = ref(auth.appUser?.station ?? '')
-const shiftLocal = ref<ShiftLetter | ''>(auth.appUser?.shift ?? '')
+   another tab). Saving an editable field writes through to the store.
+   Station + shift are schedule-derived (2026-10-24) and render read-only
+   straight from the store. */
 const phoneLocal = ref(auth.appUser?.phone ?? '')
 const showBirthdayLocal = ref(auth.appUser?.showBirthday ?? true)
 const inDirectoryLocal = ref(auth.appUser?.inDirectory ?? true)
@@ -75,14 +67,6 @@ const inDirectoryLocal = ref(auth.appUser?.inDirectory ?? true)
 const phoneError = ref<string | null>(null)
 const fieldError = ref<string | null>(null)
 
-watch(
-  () => auth.appUser?.station,
-  (v) => (stationLocal.value = v ?? ''),
-)
-watch(
-  () => auth.appUser?.shift,
-  (v) => (shiftLocal.value = v ?? ''),
-)
 watch(
   () => auth.appUser?.phone,
   (v) => (phoneLocal.value = v ?? ''),
@@ -218,26 +202,6 @@ watch(open, (next) => {
   document.body.style.overflow = next ? 'hidden' : ''
 })
 
-async function saveStation() {
-  fieldError.value = null
-  try {
-    await auth.updateOwnStation(stationLocal.value || null)
-  } catch (err) {
-    fieldError.value = (err as Error).message
-    stationLocal.value = auth.appUser?.station ?? ''
-  }
-}
-
-async function saveShift() {
-  fieldError.value = null
-  try {
-    await auth.updateOwnShift(shiftLocal.value || null)
-  } catch (err) {
-    fieldError.value = (err as Error).message
-    shiftLocal.value = auth.appUser?.shift ?? ''
-  }
-}
-
 async function savePhone() {
   phoneError.value = null
   fieldError.value = null
@@ -360,24 +324,22 @@ async function signOut() {
         </div>
       </header>
 
+      <!-- Station + shift come from the live schedule (rotation seat)
+           since 2026-10-24 — read-only here so nobody edits a value the
+           sync overwrites. Admin-staff stations are set by admins. -->
       <section class="upm__section">
         <Eyebrow>Work</Eyebrow>
         <div class="upm__grid">
-          <label class="upm__field">
+          <div class="upm__field">
             <span class="upm__label">Station</span>
-            <select v-model="stationLocal" class="upm__input" @change="saveStation">
-              <option value="">— None —</option>
-              <option v-for="s in stationOptions" :key="s" :value="s">{{ s }}</option>
-            </select>
-          </label>
-          <label class="upm__field">
+            <span class="upm__ro">{{ auth.appUser?.station ?? '—' }}</span>
+          </div>
+          <div class="upm__field">
             <span class="upm__label">Shift</span>
-            <select v-model="shiftLocal" class="upm__input" @change="saveShift">
-              <option value="">— None —</option>
-              <option v-for="s in SHIFT_OPTIONS" :key="s" :value="s">{{ s }}</option>
-            </select>
-          </label>
+            <span class="upm__ro">{{ auth.appUser?.shift ?? '—' }}</span>
+          </div>
         </div>
+        <span class="upm__hint">Assigned automatically from the schedule's rotation — a seat change updates this on its own.</span>
       </section>
 
       <section class="upm__section">
@@ -678,6 +640,12 @@ async function signOut() {
 .upm__input:focus {
   border-color: var(--color-brand-600);
   background: var(--color-surface);
+}
+.upm__ro {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--color-ink);
+  padding: 9px 2px;
 }
 .upm__hint {
   font-size: 11px;
