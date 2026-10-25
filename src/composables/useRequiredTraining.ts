@@ -56,6 +56,8 @@ interface CompletionRow {
   quiz_score: number | null
   attestation_signed: boolean
   certificate_storage_path: string | null
+  watch_seconds: number | null
+  video_completed_at: string | null
   created_at: string
   updated_at: string
 }
@@ -100,6 +102,8 @@ function completionFromRow(r: CompletionRow): RequiredTrainingCompletion {
     quizScore: r.quiz_score,
     attestationSigned: r.attestation_signed,
     certificateStoragePath: r.certificate_storage_path,
+    watchSeconds: Number(r.watch_seconds ?? 0),
+    videoCompletedAt: r.video_completed_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
@@ -176,7 +180,7 @@ const TRAINING_COLUMNS =
   'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, audience_employment_types, audience_event_label, audience_event_from, audience_event_to, attestation_statement, quiz, show_in_library, thumbnail_url, active, created_by, created_at, updated_at'
 
 const COMPLETION_COLUMNS =
-  'id, required_training_id, user_id, started_at, completed_at, signature_data, signed_method, marked_by, marked_note, quiz_score, attestation_signed, certificate_storage_path, created_at, updated_at'
+  'id, required_training_id, user_id, started_at, completed_at, signature_data, signed_method, marked_by, marked_note, quiz_score, attestation_signed, certificate_storage_path, watch_seconds, video_completed_at, created_at, updated_at'
 
 const OVERRIDE_COLUMNS = 'id, required_training_id, user_id, included'
 
@@ -406,6 +410,68 @@ export function useRequiredTraining() {
     completions.value = [...completions.value, completionFromRow(data as CompletionRow)]
   }
 
+  /* Cross-device watch progress (Justin, 2026-10-24): the completion
+     row created at first play carries the furthest-watched position and
+     when the video finished, so a video watched to the end on a laptop
+     unlocks the attestation on a phone. The view throttles calls;
+     localStorage remains the per-second cache on each device. The
+     plain-progress update is guarded with lt(watch_seconds) so a device
+     holding a stale cache can never regress a further-along server
+     value. */
+  async function saveWatchProgress(
+    trainingId: string,
+    seconds: number,
+    videoCompleted = false,
+  ): Promise<void> {
+    if (auth.usingDevStub) return
+    const uid = auth.appUser?.id
+    if (!uid) return
+    const secs = Math.max(0, Math.round(seconds))
+    const existing = completionFor(trainingId)
+    if (existing) {
+      if (!videoCompleted && secs <= existing.watchSeconds) return
+      if (videoCompleted && existing.videoCompletedAt && secs <= existing.watchSeconds) return
+      let q = supabase
+        .from('required_training_completions')
+        .update({
+          watch_seconds: secs,
+          ...(videoCompleted && !existing.videoCompletedAt
+            ? { video_completed_at: new Date().toISOString() }
+            : {}),
+        })
+        .eq('id', existing.id)
+      if (!videoCompleted) q = q.lt('watch_seconds', secs)
+      const { data, error } = await q.select(COMPLETION_COLUMNS).maybeSingle()
+      if (error) {
+        console.warn('[required-training] saveWatchProgress:', error.message)
+        return
+      }
+      if (data) {
+        const row = completionFromRow(data as CompletionRow)
+        completions.value = [...completions.value.filter((c) => c.id !== row.id), row]
+      }
+      return
+    }
+    const { data, error } = await supabase
+      .from('required_training_completions')
+      .insert({
+        required_training_id: trainingId,
+        user_id: uid,
+        signed_method: 'self',
+        attestation_signed: false,
+        watch_seconds: secs,
+        ...(videoCompleted ? { video_completed_at: new Date().toISOString() } : {}),
+      })
+      .select(COMPLETION_COLUMNS)
+      .single()
+    if (error) {
+      // 23505 = raced markStarted; the next throttled call lands as an update.
+      if (error.code !== '23505') console.warn('[required-training] saveWatchProgress:', error.message)
+      return
+    }
+    completions.value = [...completions.value, completionFromRow(data as CompletionRow)]
+  }
+
   /* Self-attest: flip the existing (or insert + flip) completion row
      to attestation_signed=true with the signature data url. */
   async function submitAttestation(
@@ -431,6 +497,8 @@ export function useRequiredTraining() {
             quizScore: null,
             attestationSigned: true,
             certificateStoragePath: null,
+            watchSeconds: 0,
+            videoCompletedAt: null,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           }
@@ -569,6 +637,7 @@ export function useRequiredTraining() {
     completionsFor,
     trainingById,
     markStarted,
+    saveWatchProgress,
     submitAttestation,
     adminMarkComplete,
     saveTraining,

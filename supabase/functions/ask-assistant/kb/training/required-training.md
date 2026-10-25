@@ -17,7 +17,7 @@ route: /training/required
 
 Worth knowing:
 
-- Watch progress is saved per device — if you switch phones mid-video, it starts over, so finish on one device.
+- Watch progress follows you across devices — start on one device and the video resumes at your furthest point on another, and a video watched to the end unlocks the attestation everywhere (so you can watch on a laptop and sign on your phone).
 - After you've completed a module you can re-watch and scrub freely.
 - Who gets assigned what is set by admins (by role/shift/employment type, or tied to a scheduled event — event crews get push reminders).
 - If an admin marked you complete (e.g., you attended a live session), it shows in Completed without a video step.

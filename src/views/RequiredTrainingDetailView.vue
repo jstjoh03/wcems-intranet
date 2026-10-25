@@ -19,6 +19,7 @@ const {
   completionFor,
   isComplete,
   markStarted,
+  saveWatchProgress,
   submitAttestation,
 } = useRequiredTraining()
 
@@ -50,13 +51,42 @@ function saveProgress(secs: number) {
     /* quota */
   }
 }
+/* Furthest watched = the better of this device's cache and the server
+   row, so progress follows the person across devices (Justin,
+   2026-10-24: "watched to 100% on my laptop, want to sign on my
+   phone"). */
 function loadSavedProgress(): number {
+  let local = 0
   try {
     const v = localStorage.getItem(progressKey.value)
-    return v ? parseFloat(v) : 0
+    local = v ? parseFloat(v) : 0
   } catch {
-    return 0
+    local = 0
   }
+  return Math.max(local, completionFor(trainingId.value)?.watchSeconds ?? 0)
+}
+
+/* Server pushes are throttled to every ~20s of NEW progress; flush
+   points (pause, tab hidden, leaving the page, video end) force the
+   current furthest point up so the next device resumes there. */
+let lastPushed = 0
+function pushProgress(opts: { force?: boolean; completed?: boolean } = {}) {
+  const completed = opts.completed === true
+  const secs = Math.round(
+    completed && videoDuration.value ? videoDuration.value : maxWatched.value,
+  )
+  if (!completed) {
+    if (secs <= lastPushed) return
+    if (!opts.force && secs - lastPushed < 20) return
+  }
+  lastPushed = Math.max(lastPushed, secs)
+  void saveWatchProgress(trainingId.value, secs, completed)
+}
+function flushProgress() {
+  pushProgress({ force: true })
+}
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') flushProgress()
 }
 
 /* ── Direct / Cloudflare Stream MP4 handlers ─────────────────────── */
@@ -76,14 +106,16 @@ function onTimeUpdate() {
   if (cur > maxWatched.value) {
     maxWatched.value = cur
     saveProgress(cur)
+    pushProgress()
   }
 }
 
 function onSeeking() {
   if (!videoEl.value) return
-  /* Already-completed users can scrub freely — they've earned a
-     re-watch without the anti-skip leash. */
-  if (alreadyComplete.value) return
+  /* Already-completed users (signed, or finished the video on any
+     device) can scrub freely — they've earned a re-watch without the
+     anti-skip leash. */
+  if (alreadyComplete.value || videoComplete.value) return
   if (videoEl.value.currentTime > maxWatched.value + 2) {
     videoEl.value.currentTime = maxWatched.value
   }
@@ -91,6 +123,7 @@ function onSeeking() {
 
 function onEnded() {
   videoComplete.value = true
+  pushProgress({ completed: true })
   /* Clear saved progress — they finished. */
   try {
     localStorage.removeItem(progressKey.value)
@@ -111,6 +144,7 @@ function onPlay() {
    because YT's player has its own scrubber, but it logs progress. */
 let ytPlayer: { getCurrentTime: () => number; seekTo: (s: number) => void; getDuration: () => number; getPlayerState: () => number } | null = null
 let ytPoll: number | null = null
+let ytResumed = false
 function loadYouTubeAPI(): Promise<void> {
   return new Promise((resolve) => {
     type YTGlobal = Window & { YT?: { Player: new (...args: unknown[]) => unknown }; onYouTubeIframeAPIReady?: () => void }
@@ -152,6 +186,19 @@ async function initYouTube(videoIdOrUrl: string) {
           startedFired = true
           void markStarted(trainingId.value)
         }
+        /* Resume on first play — seekTo before playback is unreliable
+           on the YT player, so jump once playback actually starts. */
+        if (e.data === 1 && !ytResumed && ytPlayer) {
+          ytResumed = true
+          const saved = loadSavedProgress()
+          const dur = ytPlayer.getDuration()
+          if (saved > 4 && (!dur || saved < dur - 3) && ytPlayer.getCurrentTime() < saved - 2) {
+            maxWatched.value = Math.max(maxWatched.value, saved)
+            ytPlayer.seekTo(saved)
+          }
+        }
+        // 2 = paused — flush the furthest point to the server.
+        if (e.data === 2) flushProgress()
       },
     },
   }) as typeof ytPlayer
@@ -161,14 +208,16 @@ async function initYouTube(videoIdOrUrl: string) {
     const dur = ytPlayer.getDuration()
     if (dur && !videoDuration.value) videoDuration.value = dur
     /* Free scrubbing on re-watch — same rule as the MP4 path. */
-    if (!alreadyComplete.value && cur > maxWatched.value + 2) {
+    if (!alreadyComplete.value && !videoComplete.value && cur > maxWatched.value + 2) {
       ytPlayer.seekTo(maxWatched.value)
     } else if (cur > maxWatched.value) {
       maxWatched.value = cur
       saveProgress(cur)
+      pushProgress()
     }
     if (dur && cur >= dur - 1.5 && !videoComplete.value) {
       videoComplete.value = true
+      pushProgress({ completed: true })
       try {
         localStorage.removeItem(progressKey.value)
       } catch {
@@ -204,6 +253,21 @@ watch(
     if (isComplete(t.id)) {
       videoComplete.value = true
     }
+    const server = completionFor(t.id)
+    /* Finished the video on ANOTHER device → the attestation unlocks
+       here too, no rewatch (Justin, 2026-10-24). */
+    if (server?.videoCompletedAt) {
+      videoComplete.value = true
+    }
+    /* Carry the server's furthest point into this device's state so
+       the anti-skip leash and resume both honor it. */
+    if (server && server.watchSeconds > maxWatched.value) {
+      maxWatched.value = server.watchSeconds
+      lastPushed = Math.max(lastPushed, Math.round(server.watchSeconds))
+      if (videoEl.value && videoEl.value.paused && videoEl.value.currentTime < server.watchSeconds - 3) {
+        videoEl.value.currentTime = server.watchSeconds
+      }
+    }
     /* External course: the gate is "opened the course at least once" —
        a completion row (started or signed) proves a prior open, so
        returning users aren't re-locked on another device. */
@@ -218,6 +282,7 @@ watch(
 )
 
 onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange)
   // Defer YT init slightly so the iframe ref is bound.
   setTimeout(async () => {
     if (training.value?.videoSource === 'youtube') {
@@ -244,6 +309,8 @@ function onOpenCourse() {
 
 onBeforeUnmount(() => {
   if (ytPoll) window.clearInterval(ytPoll)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  flushProgress()
 })
 
 /* ── Attestation + submit ────────────────────────────────────────── */
@@ -475,6 +542,7 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
             @seeking="onSeeking"
             @ended="onEnded"
             @play="onPlay"
+            @pause="flushProgress"
           />
           <div v-else class="rtd__yt-wrap">
             <div ref="youtubeIframe" class="rtd__yt-iframe" />

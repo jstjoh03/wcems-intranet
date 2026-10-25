@@ -114,6 +114,12 @@ export interface RequiredTrainingCompletion {
   quizScore: number | null
   attestationSigned: boolean
   certificateStoragePath: string | null
+  /** Furthest point watched (seconds) — synced so progress follows the
+   *  person across devices, not the browser. */
+  watchSeconds: number
+  /** Set when the video has been watched to the end — unlocks the
+   *  attestation on any device. */
+  videoCompletedAt: string | null
   createdAt: string
   updatedAt: string
 }
