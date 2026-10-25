@@ -22,9 +22,12 @@ const useShell = computed(
 
 /* Ask WCEMS rides OUTSIDE the shell so it's on every authenticated
    route, chromeless protocols pages included — but never on /signin or
-   the anonymous student pages (register/checkin/eval/quiz). */
+   the anonymous student pages (register/checkin/eval/quiz).
+   TEMPORARILY admin-only (Justin, 2026-10-24): pulled from production
+   while the Scout mascot rebrand is decided — crew shouldn't learn a
+   UI that may change. Restore by dropping the isAdmin check. */
 const showAssistant = computed(
-  () => route.meta.public !== true && auth.isAuthenticated,
+  () => route.meta.public !== true && auth.isAuthenticated && auth.isAdmin,
 )
 </script>
 

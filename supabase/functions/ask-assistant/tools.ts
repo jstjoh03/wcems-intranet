@@ -121,6 +121,24 @@ function j(v: unknown): string {
   return JSON.stringify(v)
 }
 
+/* ── Protocols project access ────────────────────────────────────────
+   The protocol book content (protocols/protocol_steps/medication_
+   details) lives in its own Supabase project — carried over when the
+   standalone protocols PWA was absorbed (src/lib/supabaseProtocols.ts).
+   Its publishable key ships in the portal's public JS bundle, so
+   embedding it here reveals nothing new; tables are open-read to anon
+   by design. Move these if the content ever consolidates. */
+const PROTO_URL = 'https://ycahnwxzfyjfrgdavril.supabase.co'
+const PROTO_KEY = 'sb_publishable_duljrqQ6P3BAqkvyusibXg_Lzdxor89'
+
+async function protoGet(path: string): Promise<Record<string, any>[]> {
+  const res = await fetch(`${PROTO_URL}/rest/v1/${path}`, {
+    headers: { apikey: PROTO_KEY, Authorization: `Bearer ${PROTO_KEY}` },
+  })
+  if (!res.ok) throw new Error(`protocols ${res.status}`)
+  return (await res.json()) as Record<string, any>[]
+}
+
 /* ── Schedule core (units / seats / rotation template / names) ─────── */
 
 interface Unit {
@@ -500,6 +518,28 @@ export const TOOL_DEFS = [
       type: 'object',
       properties: { query: { type: 'string', description: 'Tag number or item name fragment' } },
       required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'protocol_lookup',
+    description:
+      'The live WCEMS protocol book. Finds one protocol or procedure by number ("2.11") or name/keyword ("anaphylaxis", "behavioral emergency") and returns its VERBATIM text: inclusion criteria (adult + pediatric), notes, and the treatment steps for every certification tier, exactly as signed. Use whenever someone asks what a protocol says, allows, or requires. Quote the returned text word-for-word with the protocol number and name — never paraphrase it into advice.',
+    input_schema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Protocol number or name/keyword' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'medication_reference',
+    description:
+      "The WCEMS drug reference from the protocol app: a medication's verbatim indications, contraindications, side effects, dosage & routes, notes, and minimum certification level. Use for drug or dose questions; quote the dosage text exactly as returned.",
+    input_schema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'Medication name, e.g. "epinephrine", "fentanyl"' } },
+      required: ['name'],
       additionalProperties: false,
     },
   },
@@ -912,6 +952,64 @@ const executors: Record<string, Executor> = {
       })
     }
     return j({ matches: out, note: 'Full custody detail is on the Equipment board (/equipment).' })
+  },
+
+  async protocol_lookup(input, _ctx) {
+    const q = String(input.query ?? '').trim().replace(/[(),]/g, ' ').trim()
+    if (!q) return j({ error: 'empty_query' })
+    const e = encodeURIComponent
+    // Exact number first, then number/name/full-text contains.
+    let rows = await protoGet(`protocols?select=id,number,name,category&number=eq.${e(q)}`)
+    if (!rows.length) {
+      rows = await protoGet(
+        `protocols?select=id,number,name,category&or=(number.ilike.*${e(q)}*,name.ilike.*${e(q)}*,search_text.ilike.*${e(q)}*)&order=number&limit=6`,
+      )
+    }
+    if (!rows.length) {
+      return j({ matches: [], note: 'No protocol matches that — suggest browsing or searching in /protocols.' })
+    }
+    if (rows.length > 1) {
+      return j({
+        ambiguous: rows.map((r) => ({ number: r.number, name: r.name, category: r.category })),
+        note: 'Several protocols match — pick the right one and call protocol_lookup again with its exact number.',
+      })
+    }
+    const p = rows[0]
+    const [fullRows, steps] = await Promise.all([
+      protoGet(`protocols?select=number,name,category,criteria_adult,criteria_pediatric,notes&id=eq.${e(p.id)}`),
+      protoGet(`protocol_steps?select=patient_type,tier,steps,medical_control&protocol_id=eq.${e(p.id)}&order=patient_type,tier`),
+    ])
+    const full = fullRows[0] ?? p
+    const out = JSON.stringify({
+      reference: `Protocol ${full.number} — ${full.name}`,
+      category: full.category,
+      link: `/protocols/protocol/${p.id}`,
+      criteria_adult: full.criteria_adult,
+      criteria_pediatric: full.criteria_pediatric,
+      notes: full.notes || null,
+      treatment: steps,
+      note: 'This is the signed protocol text — quote it VERBATIM with the reference.',
+    })
+    return out.length > 9500
+      ? out.slice(0, 9500) + ' …TRUNCATED — quote what fits and point to the full protocol page.'
+      : out
+  },
+
+  async medication_reference(input, _ctx) {
+    const q = String(input.name ?? '').trim().replace(/[(),]/g, ' ').trim()
+    if (!q) return j({ error: 'empty_query' })
+    const e = encodeURIComponent
+    const rows = await protoGet(
+      `medication_details?select=name,alt_name,type,indications,contraindications,side_effects,dosage_routes,notes,min_certification&or=(name.ilike.*${e(q)}*,alt_name.ilike.*${e(q)}*)&order=sort_order&limit=4`,
+    )
+    if (!rows.length) {
+      return j({ matches: [], note: 'No medication matches in the drug reference — point to /protocols → More → Medications.' })
+    }
+    return j({
+      medications: rows,
+      link: '/protocols',
+      note: 'This is the protocol drug reference — quote dosage text verbatim; it is not medical direction.',
+    })
   },
 }
 

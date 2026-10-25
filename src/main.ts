@@ -4,6 +4,7 @@ import App from './App.vue'
 import { router } from './router'
 import { useAuthStore } from './stores/auth'
 import { installSwUpdateManager } from './lib/swUpdates'
+import { installPushNav } from './lib/pushNav'
 import './assets/main.css'
 import './assets/protocols-theme.css'
 
@@ -22,6 +23,7 @@ async function bootstrap() {
 
   app.use(router)
   installSwUpdateManager(router)
+  installPushNav(router)
   app.mount('#app')
 }
 

@@ -206,6 +206,13 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/clinical/ClinicalFileView.vue'),
   },
   {
+    /* Push/email landing for FTEP message threads — one link fanned to
+       every recipient; the view redirects per role. */
+    path: '/clinical/thread/:recordId',
+    name: 'clinical-thread',
+    component: () => import('@/views/clinical/ClinicalThreadRedirectView.vue'),
+  },
+  {
     path: '/clinical/ftep',
     name: 'clinical-ftep',
     component: () => import('@/views/clinical/FtepHomeView.vue'),

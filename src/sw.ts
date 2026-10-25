@@ -67,6 +67,16 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options))
 })
 
+/* Deep-link strategy (keep in step with src/lib/pushNav.ts): iOS
+ * standalone PWAs ignore WindowClient.navigate() and have been known to
+ * drop the path on openWindow — a tapped push just focused the app
+ * wherever it last sat (Justin's FTEP message push, 2026-10-24). So:
+ * stash the target in a cache FIRST (the page consumes it on boot),
+ * then ask a focused client's router to navigate via postMessage, and
+ * only fall back to navigate() when no page answers. */
+const NAV_CACHE = 'wcems-push-nav'
+const NAV_PENDING = '/__pending-push-nav'
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   const targetUrl =
@@ -74,6 +84,18 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     (async () => {
+      try {
+        const cache = await caches.open(NAV_CACHE)
+        await cache.put(
+          NAV_PENDING,
+          new Response(JSON.stringify({ url: targetUrl, t: Date.now() }), {
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        )
+      } catch {
+        /* cache unavailable — the warm/openWindow paths still try */
+      }
+
       const allClients = await self.clients.matchAll({
         type: 'window',
         includeUncontrolled: true,
@@ -82,19 +104,35 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of allClients) {
         if ('focus' in client) {
           await client.focus()
-          // Navigate the focused client if it isn't already on the
-          // target route. `navigate` exists on WindowClient only.
-          if ('navigate' in client && client.url.indexOf(targetUrl) === -1) {
+          // Hand the route to the page's router (works where
+          // client.navigate() doesn't); a page too old to answer gets
+          // the old navigate() attempt instead.
+          const answered = await new Promise<boolean>((resolve) => {
+            const channel = new MessageChannel()
+            const timer = setTimeout(() => resolve(false), 450)
+            channel.port1.onmessage = () => {
+              clearTimeout(timer)
+              resolve(true)
+            }
+            try {
+              client.postMessage({ type: 'push-nav', url: targetUrl }, [channel.port2])
+            } catch {
+              clearTimeout(timer)
+              resolve(false)
+            }
+          })
+          if (!answered && 'navigate' in client && client.url.indexOf(targetUrl) === -1) {
             try {
               await (client as WindowClient).navigate(targetUrl)
             } catch {
-              /* Cross-origin navigates fail silently — acceptable. */
+              /* iOS: navigate unsupported — the cached target covers the next boot. */
             }
           }
           return
         }
       }
-      // No open tab — open a fresh one.
+      // No open tab — open a fresh one (the cached target backstops iOS
+      // dropping the path).
       await self.clients.openWindow(targetUrl)
     })(),
   )

@@ -71,7 +71,8 @@
 //   push  — web-push over the portal's existing VAPID keys +
 //           push_subscriptions rows (per-user).
 //   email — Graph app-only Mail.Send from schedule@wallercountyems.com
-//           (same LIFECYCLE app registration as the birthday digest).
+//           (clinical kinds from clinical@wallercountyems.com; same
+//           LIFECYCLE app registration as the birthday digest).
 //   sms   — Twilio REST. Secrets: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
 //           and TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM (E.164).
 //           When unset, SMS is skipped and reported — push/email still go.
@@ -100,6 +101,11 @@ const PORTAL = 'https://employee.wallercountyems.com'
  * see where the message came from; the LIFECYCLE app's tenant-wide
  * Mail.Send covers it like any mailbox. */
 const SENDER = 'schedule@wallercountyems.com'
+/* Clinical/FTEP mail must not arrive "from scheduling" (Justin,
+ * 2026-10-24). Needs the shared mailbox to exist; until it does,
+ * sendMail falls back to the scheduling mailbox instead of dropping
+ * the email. */
+const SENDER_CLINICAL = 'clinical@wallercountyems.com'
 
 const VAPID_PUBLIC_KEY = env.get('VAPID_PUBLIC_KEY') ?? ''
 const VAPID_PRIVATE_KEY = env.get('VAPID_PRIVATE_KEY') ?? ''
@@ -199,8 +205,8 @@ async function graphToken(): Promise<string> {
   return (await res.json()).access_token
 }
 
-async function sendMail(tok: string, to: string, subject: string, html: string): Promise<void> {
-  const res = await fetch(`https://graph.microsoft.com/v1.0/users/${SENDER}/sendMail`, {
+async function sendMail(tok: string, to: string, subject: string, html: string, from = SENDER): Promise<void> {
+  const res = await fetch(`https://graph.microsoft.com/v1.0/users/${from}/sendMail`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -212,7 +218,15 @@ async function sendMail(tok: string, to: string, subject: string, html: string):
       saveToSentItems: true,
     }),
   })
-  if (!res.ok) throw new Error(`Graph ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  if (!res.ok) {
+    const txt = (await res.text()).slice(0, 200)
+    // The clinical mailbox may not be provisioned yet — deliver from
+    // the scheduling mailbox rather than drop the email.
+    if (from !== SENDER && (res.status === 404 || txt.includes('ErrorInvalidUser') || txt.includes('MailboxNotEnabledForRESTAPI'))) {
+      return sendMail(tok, to, subject, html, SENDER)
+    }
+    throw new Error(`Graph ${res.status}: ${txt}`)
+  }
 }
 
 /* Every outbound text carries opt-out language — CTIA best practice,
@@ -238,22 +252,41 @@ async function sendSms(to: string, body: string): Promise<void> {
 
 /* The button carries the SAME deep link as the push (verify/attest/
    sign-off drawers, day boards) — a hardcoded /schedule dumped attest
-   clicks on the month view (Justin, 2026-09-28). */
-function schedEmail(firstName: string, lines: string[], url?: string): string {
+   clicks on the month view (Justin, 2026-09-28). Clinical kinds get
+   their own masthead + sender so FTEP mail doesn't read as scheduling
+   traffic (Justin, 2026-10-24). */
+const EMAIL_BRANDS = {
+  sched: {
+    eyebrow: 'SCHEDULING',
+    button: 'Open the schedule',
+    fallback: '/schedule',
+    footer: 'Manage which messages you receive under My schedule → My settings on the portal.',
+  },
+  clinical: {
+    eyebrow: 'CLINICAL DEVELOPMENT',
+    button: 'Open in the portal',
+    fallback: '/clinical-development',
+    footer: 'You receive these updates because you are part of this training thread.',
+  },
+} as const
+type EmailBrand = keyof typeof EMAIL_BRANDS
+
+function notifyEmail(firstName: string, lines: string[], url: string | undefined, brand: EmailBrand): string {
+  const b = EMAIL_BRANDS[brand]
   const paras = lines.map((l) => `<p style="margin:0 0 10px;">${l}</p>`).join('\n    ')
-  const href = `${PORTAL}${url && url.startsWith('/') ? url : '/schedule'}`
+  const href = `${PORTAL}${url && url.startsWith('/') ? url : b.fallback}`
   return `
   <div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.55;color:#273142;max-width:640px;">
     <div style="border-bottom:3px solid #182644;padding-bottom:10px;margin-bottom:16px;">
       <div style="font-size:17px;font-weight:700;color:#182644;letter-spacing:0.04em;">WALLER COUNTY EMS</div>
-      <div style="font-size:11px;letter-spacing:0.14em;color:#a8842c;font-weight:600;">SCHEDULING</div>
+      <div style="font-size:11px;letter-spacing:0.14em;color:#a8842c;font-weight:600;">${b.eyebrow}</div>
     </div>
     <p>Hi ${esc(firstName)},</p>
     ${paras}
     <p style="margin:16px 0 0;">
-      <a href="${href}" style="display:inline-block;background:#182644;color:#ffffff;text-decoration:none;font-weight:600;padding:9px 18px;border-radius:8px;">Open the schedule</a>
+      <a href="${href}" style="display:inline-block;background:#182644;color:#ffffff;text-decoration:none;font-weight:600;padding:9px 18px;border-radius:8px;">${b.button}</a>
     </p>
-    <p style="margin-top:18px;color:#8a8f99;font-size:12px;">Manage which messages you receive under My schedule → My settings on the portal.</p>
+    <p style="margin-top:18px;color:#8a8f99;font-size:12px;">${b.footer}</p>
   </div>`
 }
 
@@ -284,6 +317,7 @@ async function deliver(
     sms: string
     url?: string
     channels?: { push?: boolean; email?: boolean; sms?: boolean }
+    brand?: EmailBrand
   },
   exclude: string | null,
 ): Promise<Delivery> {
@@ -348,7 +382,9 @@ async function deliver(
         for (const u of emailTo) {
           const first = (u.full_name ?? '').split(' ')[0] || 'there'
           try {
-            await sendMail(tok, u.email as string, m.subject, schedEmail(first, m.emailLines, m.url))
+            const brand = m.brand ?? 'sched'
+            const from = brand === 'clinical' ? SENDER_CLINICAL : SENDER
+            await sendMail(tok, u.email as string, m.subject, notifyEmail(first, m.emailLines, m.url, brand), from)
             out.email++
           } catch (e) {
             out.errors.push(`email ${u.full_name}: ${(e as Error).message}`)
@@ -967,8 +1003,13 @@ Deno.serve(async (req: Request) => {
             'Open the thread to reply.',
           ],
           sms: '',
-          url: '/clinical-development',
+          /* Role-aware redirect: editors land on the employee file,
+             the trainee on My Progress, FTOs on FTEP — all at the
+             Messages thread (a flat /clinical-development dumped
+             editors on the wrong page, Justin 2026-10-24). */
+          url: `/clinical/thread/${msg.record_id}`,
           channels: { sms: false },
+          brand: 'clinical',
         },
         caller.id,
       )
@@ -1028,6 +1069,7 @@ Deno.serve(async (req: Request) => {
           sms: '',
           url: '/clinical-development',
           channels: { sms: false },
+          brand: 'clinical',
         },
         caller.id,
       )
@@ -1047,6 +1089,7 @@ Deno.serve(async (req: Request) => {
               sms: '',
               url: `/clinical/ftep/dor/${traineeId}`,
               channels: { sms: false },
+              brand: 'clinical',
             },
             caller.id,
           )
@@ -1086,6 +1129,7 @@ Deno.serve(async (req: Request) => {
           sms: '',
           url: `/clinical-development/fto-eval?req=${req.id}`,
           channels: { sms: false },
+          brand: 'clinical',
         },
         caller.id,
       )
