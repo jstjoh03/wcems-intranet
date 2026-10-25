@@ -15,4 +15,4 @@ route: /admin/required-training
 
 **The roster** (per module): completion %, filters, a per-person **Required?** override (force-include or exclude anyone), **Mark complete** with a note ("Attended A-shift Teams session…"), **Export sign-off sheet (PDF)** with everyone's signature images, and **CSV**.
 
-The anti-skip video player, attestation signature, and auto-downloaded certificates are built in — see the crew-facing required training article for the completion flow.
+The anti-skip video player, attestation signature, and auto-downloaded certificates are built in — see the crew-facing required training article for the completion flow. **Watch progress and video-finished status sync across devices** (added 2026-10-24): the completion row carries watch_seconds + video_completed_at, so crews can watch at the station and sign on their phone.

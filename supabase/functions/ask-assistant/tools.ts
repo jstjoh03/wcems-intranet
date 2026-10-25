@@ -524,7 +524,7 @@ export const TOOL_DEFS = [
   {
     name: 'protocol_lookup',
     description:
-      'The live WCEMS protocol book. Finds one protocol or procedure by number ("2.11") or name/keyword ("anaphylaxis", "behavioral emergency") and returns its VERBATIM text: inclusion criteria (adult + pediatric), notes, and the treatment steps for every certification tier, exactly as signed. Use whenever someone asks what a protocol says, allows, or requires. Quote the returned text word-for-word with the protocol number and name — never paraphrase it into advice.',
+      'The live WCEMS protocol book. Finds one protocol or procedure by number ("2.11", "1.03") or name/keyword ("anaphylaxis", "RSI", "airway") and returns its VERBATIM text: inclusion criteria (adult + pediatric), notes, tiered treatment steps, and — for 1.x procedures — the full procedure_text body. Use whenever someone asks what a protocol says, allows, or requires. Quote the returned text word-for-word with the protocol number and name — never paraphrase it into advice.',
     input_schema: {
       type: 'object',
       properties: { query: { type: 'string', description: 'Protocol number or name/keyword' } },
@@ -955,7 +955,9 @@ const executors: Record<string, Executor> = {
   },
 
   async protocol_lookup(input, _ctx) {
-    const q = String(input.query ?? '').trim().replace(/[(),]/g, ' ').trim()
+    // Keep word chars, whitespace, dots (protocol numbers) and hyphens —
+    // "RSI/DSI" must not carry its slash into the ilike pattern.
+    const q = String(input.query ?? '').trim().replace(/[^\w\s.\-]/g, ' ').replace(/\s+/g, ' ').trim()
     if (!q) return j({ error: 'empty_query' })
     const e = encodeURIComponent
     // Exact number first, then number/name/full-text contains.
@@ -976,10 +978,17 @@ const executors: Record<string, Executor> = {
     }
     const p = rows[0]
     const [fullRows, steps] = await Promise.all([
-      protoGet(`protocols?select=number,name,category,criteria_adult,criteria_pediatric,notes&id=eq.${e(p.id)}`),
+      protoGet(`protocols?select=number,name,category,criteria_adult,criteria_pediatric,notes,content&id=eq.${e(p.id)}`),
       protoGet(`protocol_steps?select=patient_type,tier,steps,medical_control&protocol_id=eq.${e(p.id)}&order=patient_type,tier`),
     ])
     const full = fullRows[0] ?? p
+    /* 2.x protocols carry criteria + tiered steps; 1.x PROCEDURES carry
+       their whole text in `content` (Justin's RSI/DSI miss, 2026-10-25).
+       Return whichever exists, verbatim. */
+    const rawContent = String(full.content ?? '').trim()
+    const content = rawContent
+      ? rawContent.slice(0, 9000) + (rawContent.length > 9000 ? ' …TRUNCATED — point to the protocol page for the rest.' : '')
+      : null
     const out = JSON.stringify({
       reference: `Protocol ${full.number} — ${full.name}`,
       category: full.category,
@@ -987,11 +996,12 @@ const executors: Record<string, Executor> = {
       criteria_adult: full.criteria_adult,
       criteria_pediatric: full.criteria_pediatric,
       notes: full.notes || null,
+      procedure_text: content,
       treatment: steps,
       note: 'This is the signed protocol text — quote it VERBATIM with the reference.',
     })
-    return out.length > 9500
-      ? out.slice(0, 9500) + ' …TRUNCATED — quote what fits and point to the full protocol page.'
+    return out.length > 13000
+      ? out.slice(0, 13000) + ' …TRUNCATED — quote what fits and point to the full protocol page.'
       : out
   },
 
