@@ -454,6 +454,17 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/training/views/QrDisplayView.vue'),
     meta: { public: true },
   },
+  // Dev-only harness for the Scout mascot stage — never registered in builds.
+  ...(import.meta.env.DEV
+    ? [
+        {
+          path: '/dev/scout',
+          name: 'dev-scout',
+          component: () => import('@/views/dev/ScoutStageDevView.vue'),
+          meta: { public: true },
+        },
+      ]
+    : []),
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',

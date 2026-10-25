@@ -3,7 +3,7 @@ import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { marked } from 'marked'
 import {
-  MessageCircleQuestion,
+  Dog,
   X,
   Send,
   RotateCcw,
@@ -12,6 +12,7 @@ import {
   ChevronRight,
 } from 'lucide-vue-next'
 import { useAssistant, type AssistantMessage } from '@/composables/useAssistant'
+import ScoutStage from './ScoutStage.vue'
 
 /**
  * Ask WCEMS — floating trigger + chat panel.
@@ -98,6 +99,21 @@ const typing = computed(() => {
   if (!sending.value) return false
   const last = messages.value[messages.value.length - 1]
   return last?.role === 'assistant' && last.content === ''
+})
+
+/* ── Scout's mood (drives the mascot stage) ────────────────────────── */
+
+const stageEl = ref<InstanceType<typeof ScoutStage> | null>(null)
+
+const scoutMood = computed<'idle' | 'thinking' | 'found' | 'stumped'>(() => {
+  if (sending.value) return 'thinking'
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m?.role !== 'assistant') continue
+    if (!m.content) return 'idle'
+    return m.error || m.offerRequest ? 'stumped' : 'found'
+  }
+  return 'idle'
 })
 
 function scrollToEnd() {
@@ -202,23 +218,23 @@ async function sendSuggestion() {
     v-if="!open"
     type="button"
     class="asst-fab"
-    aria-label="Ask WCEMS — AI assistant"
+    aria-label="Ask Scout — AI assistant"
     @click="openPanel"
   >
-    <span class="asst-fab__icon"><MessageCircleQuestion :size="19" :stroke-width="2" /></span>
-    <span class="asst-fab__label">Ask WCEMS</span>
+    <span class="asst-fab__icon"><Dog :size="19" :stroke-width="2" /></span>
+    <span class="asst-fab__label">Ask Scout</span>
   </button>
 
   <Teleport to="body">
-    <div v-if="open" class="asst" role="dialog" aria-modal="true" aria-label="Ask WCEMS assistant">
+    <div v-if="open" class="asst" role="dialog" aria-modal="true" aria-label="Scout — Ask WCEMS assistant">
       <div class="asst__backdrop" @click="close" />
       <section ref="panelEl" class="asst__panel" @keydown="onKeydown">
         <header class="asst__head">
           <img src="/wcems-patch.png" alt="" class="asst__crest" />
           <div class="asst__head-text">
             <span class="asst__eyebrow">Waller County EMS</span>
-            <h2 class="asst__title display">Ask WCEMS</h2>
-            <p class="asst__sub">Answers from WCEMS docs &amp; live portal data · not medical direction</p>
+            <h2 class="asst__title display">Scout</h2>
+            <p class="asst__sub">Ask WCEMS — answers from docs &amp; live portal data · not medical direction</p>
           </div>
           <div class="asst__head-actions">
             <button
@@ -237,13 +253,15 @@ async function sendSuggestion() {
           </div>
         </header>
 
+        <ScoutStage ref="stageEl" :mood="scoutMood" />
+
         <div ref="scrollEl" class="asst__scroll" @click="onBodyClick">
           <!-- Empty state: intro + starter chips -->
           <div v-if="showIntro" class="asst__intro">
             <div class="asst__intro-icon"><Sparkles :size="20" :stroke-width="1.85" /></div>
             <p class="asst__intro-lead">
-              Ask anything about the portal — who's working, your balances, how a feature works —
-              and I'll answer from the live schedule and WCEMS docs.
+              I'm Scout. Ask anything about the portal — who's working, your balances, how a
+              feature works — and I'll answer from the live schedule and WCEMS docs.
             </p>
             <div class="asst__chips">
               <button
@@ -358,9 +376,10 @@ async function sendSuggestion() {
               class="asst__input"
               rows="1"
               maxlength="1500"
-              placeholder="Ask a question…"
+              placeholder="Ask Scout a question…"
               :disabled="sending"
               @keydown="onComposerKeydown"
+              @focus="stageEl?.wake()"
             />
             <button
               type="button"
