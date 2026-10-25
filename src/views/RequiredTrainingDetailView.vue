@@ -19,6 +19,7 @@ const {
   completionFor,
   isComplete,
   markStarted,
+  refreshCompletion,
   saveWatchProgress,
   submitAttestation,
 } = useRequiredTraining()
@@ -85,8 +86,27 @@ function pushProgress(opts: { force?: boolean; completed?: boolean } = {}) {
 function flushProgress() {
   pushProgress({ force: true })
 }
+
+/* Pull the server's view of this row — another device may have pushed
+   further progress or finished the video since this page loaded. */
+async function syncFromServer() {
+  const t = training.value
+  if (!t) return
+  await refreshCompletion(t.id)
+  const server = completionFor(t.id)
+  if (server?.videoCompletedAt || isComplete(t.id)) videoComplete.value = true
+  if (server && server.watchSeconds > maxWatched.value) {
+    maxWatched.value = server.watchSeconds
+    lastPushed = Math.max(lastPushed, Math.round(server.watchSeconds))
+    if (videoEl.value && videoEl.value.paused && videoEl.value.currentTime < server.watchSeconds - 3) {
+      videoEl.value.currentTime = server.watchSeconds
+    }
+  }
+}
+
 function onVisibilityChange() {
   if (document.visibilityState === 'hidden') flushProgress()
+  else void syncFromServer()
 }
 
 /* ── Direct / Cloudflare Stream MP4 handlers ─────────────────────── */
@@ -253,21 +273,10 @@ watch(
     if (isComplete(t.id)) {
       videoComplete.value = true
     }
-    const server = completionFor(t.id)
-    /* Finished the video on ANOTHER device → the attestation unlocks
-       here too, no rewatch (Justin, 2026-10-24). */
-    if (server?.videoCompletedAt) {
-      videoComplete.value = true
-    }
-    /* Carry the server's furthest point into this device's state so
-       the anti-skip leash and resume both honor it. */
-    if (server && server.watchSeconds > maxWatched.value) {
-      maxWatched.value = server.watchSeconds
-      lastPushed = Math.max(lastPushed, Math.round(server.watchSeconds))
-      if (videoEl.value && videoEl.value.paused && videoEl.value.currentTime < server.watchSeconds - 3) {
-        videoEl.value.currentTime = server.watchSeconds
-      }
-    }
+    /* Fresh row from the server: finished the video on ANOTHER device →
+       the attestation unlocks here too, no rewatch, and the furthest
+       point feeds the anti-skip leash + resume (Justin, 2026-10-24). */
+    await syncFromServer()
     /* External course: the gate is "opened the course at least once" —
        a completion row (started or signed) proves a prior open, so
        returning users aren't re-locked on another device. */
@@ -283,8 +292,11 @@ watch(
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
-  // Defer YT init slightly so the iframe ref is bound.
+  // Defer YT init slightly so the iframe ref is bound. This path (not
+  // the training watcher) covers SPA navigation from the list, where
+  // `training` is already resolved at mount and the watcher never fires.
   setTimeout(async () => {
+    if (training.value) await syncFromServer()
     if (training.value?.videoSource === 'youtube') {
       await initYouTube(training.value.videoRef)
     }

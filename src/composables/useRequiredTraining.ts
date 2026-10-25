@@ -410,6 +410,25 @@ export function useRequiredTraining() {
     completions.value = [...completions.value, completionFromRow(data as CompletionRow)]
   }
 
+  /* The singleton cache has no realtime feed — a phone that was already
+     open while the laptop finished the video would never learn about it
+     (Justin, 2026-10-25). The module view refreshes its own row from the
+     server on mount and whenever the tab comes back to the foreground. */
+  async function refreshCompletion(trainingId: string): Promise<void> {
+    if (auth.usingDevStub) return
+    const uid = auth.appUser?.id
+    if (!uid) return
+    const { data, error } = await supabase
+      .from('required_training_completions')
+      .select(COMPLETION_COLUMNS)
+      .eq('required_training_id', trainingId)
+      .eq('user_id', uid)
+      .maybeSingle()
+    if (error || !data) return
+    const row = completionFromRow(data as CompletionRow)
+    completions.value = [...completions.value.filter((c) => c.id !== row.id), row]
+  }
+
   /* Cross-device watch progress (Justin, 2026-10-24): the completion
      row created at first play carries the furthest-watched position and
      when the video finished, so a video watched to the end on a laptop
@@ -637,6 +656,7 @@ export function useRequiredTraining() {
     completionsFor,
     trainingById,
     markStarted,
+    refreshCompletion,
     saveWatchProgress,
     submitAttestation,
     adminMarkComplete,
