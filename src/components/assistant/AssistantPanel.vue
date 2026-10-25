@@ -12,7 +12,6 @@ import {
   ChevronRight,
 } from 'lucide-vue-next'
 import { useAssistant, type AssistantMessage } from '@/composables/useAssistant'
-import ScoutStage from './ScoutStage.vue'
 
 /**
  * Ask WCEMS — floating trigger + chat panel.
@@ -99,21 +98,6 @@ const typing = computed(() => {
   if (!sending.value) return false
   const last = messages.value[messages.value.length - 1]
   return last?.role === 'assistant' && last.content === ''
-})
-
-/* ── Scout's mood (drives the mascot stage) ────────────────────────── */
-
-const stageEl = ref<InstanceType<typeof ScoutStage> | null>(null)
-
-const scoutMood = computed<'idle' | 'thinking' | 'found' | 'stumped'>(() => {
-  if (sending.value) return 'thinking'
-  for (let i = messages.value.length - 1; i >= 0; i--) {
-    const m = messages.value[i]
-    if (m?.role !== 'assistant') continue
-    if (!m.content) return 'idle'
-    return m.error || m.offerRequest ? 'stumped' : 'found'
-  }
-  return 'idle'
 })
 
 function scrollToEnd() {
@@ -253,8 +237,6 @@ async function sendSuggestion() {
           </div>
         </header>
 
-        <ScoutStage ref="stageEl" :mood="scoutMood" />
-
         <div ref="scrollEl" class="asst__scroll" @click="onBodyClick">
           <!-- Empty state: intro + starter chips -->
           <div v-if="showIntro" class="asst__intro">
@@ -379,7 +361,6 @@ async function sendSuggestion() {
               placeholder="Ask Scout a question…"
               :disabled="sending"
               @keydown="onComposerKeydown"
-              @focus="stageEl?.wake()"
             />
             <button
               type="button"

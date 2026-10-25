@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { defineAsyncComponent } from 'vue'
 import AppShell from '@/components/layout/AppShell.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
+
+/* Dev-only dynamic import: the dead branch is dropped at build time, so
+   the mascot (and its chunk) never reaches a production bundle. */
+const ScoutMascot = import.meta.env.DEV
+  ? defineAsyncComponent(() => import('@/components/assistant/ScoutMascot.vue'))
+  : null
 import { useAuthStore } from '@/stores/auth'
 import { useUsageTracking } from '@/composables/useUsageTracking'
 
@@ -46,4 +53,8 @@ const showAssistant = computed(
   </RouterView>
 
   <AssistantPanel v-if="showAssistant" />
+  <!-- Scout mascot: DEV ONLY while the character is tuned (Justin,
+       2026-10-25) — never ships to production, admins included, until
+       he signs off. Iterate at /dev/scout or any authed dev route. -->
+  <component :is="ScoutMascot" v-if="ScoutMascot && showAssistant" />
 </template>
