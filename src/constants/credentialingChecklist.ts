@@ -19,7 +19,16 @@ export interface ChecklistItemDef {
   label: string
   kind: 'manual' | 'auto'
   /** What the auto state reads. */
-  auto?: 'workbook' | 'p2_workbook' | 'protocol_exam' | 'mega_code' | 'op_iq' | 'rec_letters' | 'fto_eval'
+  auto?:
+    | 'workbook'
+    | 'p2_workbook'
+    | 'protocol_exam'
+    | 'protocol_test'
+    | 'call_evals'
+    | 'mega_code'
+    | 'op_iq'
+    | 'rec_letters'
+    | 'fto_eval'
   hint?: string
   /** Row affordance: opens the megacode runner. */
   action?: 'megacode'
@@ -76,6 +85,105 @@ export const CREDENTIALING_CHECKLISTS: Partial<Record<PipelineTransition, Checkl
       label: 'Protocol test — assigned in the portal, release when seated',
       kind: 'auto',
       auto: 'protocol_exam',
+    },
+    {
+      key: 'mega_code',
+      label: 'Megacode — examiner runs it digitally, both sign',
+      kind: 'auto',
+      auto: 'mega_code',
+      action: 'megacode',
+    },
+    {
+      key: 'chk_cs_policy',
+      label: 'Controlled substance policy — printed, read, acknowledgement signed',
+      kind: 'manual',
+    },
+    {
+      key: 'rec_letters',
+      label: 'Letters of recommendation — 2 from FTOs or supervisors',
+      kind: 'auto',
+      auto: 'rec_letters',
+      hint: 'in-charge credential requirement',
+    },
+    {
+      key: 'fto_eval',
+      label: 'Trainee Evaluation of FTO — sent automatically with the passed protocol test',
+      kind: 'auto',
+      auto: 'fto_eval',
+    },
+    {
+      key: 'chk_file_copies',
+      label: 'File copies in the employee file: signed docs · megacode eval · protocol test cert · letters · Lexipol transcript',
+      kind: 'manual',
+    },
+  ],
+
+  /* Legacy-track medics (hired under the old FTEP) run the same in-office
+     credentialing — only the field-work gate and the gate KEYS differ
+     (call_evals instead of a workbook, protocol_test instead of
+     protocol_exam). Without these entries their clinical file showed no
+     checklist at all, so there was no megacode button for them
+     (Crystal Dinh, 2026-10-26). */
+  P1_LEGACY: [
+    {
+      key: 'chk_lexipol',
+      label: 'Lexipol transcript verified — 100% on the FTEP-required assignments',
+      kind: 'manual',
+    },
+    {
+      key: 'call_evals',
+      label: 'Call evaluations — 10 complete, narrative format',
+      kind: 'auto',
+      auto: 'call_evals',
+    },
+    {
+      key: 'protocol_test',
+      label: 'Protocol test — assigned in the portal, release when seated',
+      kind: 'auto',
+      auto: 'protocol_test',
+    },
+    {
+      key: 'mega_code',
+      label: 'Megacode — examiner runs it digitally, both sign',
+      kind: 'auto',
+      auto: 'mega_code',
+      action: 'megacode',
+    },
+    {
+      key: 'chk_cs_policy',
+      label: 'Controlled substance policy — printed, read, acknowledgement signed',
+      kind: 'manual',
+    },
+    { key: 'op_iq', label: 'Operative IQ access granted', kind: 'auto', auto: 'op_iq' },
+    {
+      key: 'fto_eval',
+      label: 'Trainee Evaluation of FTO — sent automatically with the passed protocol test',
+      kind: 'auto',
+      auto: 'fto_eval',
+    },
+    {
+      key: 'chk_file_copies',
+      label: 'File copies in the employee file: signed docs · megacode eval · protocol test cert · Lexipol transcript',
+      kind: 'manual',
+    },
+  ],
+  P1_P2_LEGACY: [
+    {
+      key: 'chk_lexipol',
+      label: 'Lexipol transcript verified — 100% on the FTEP-required assignments',
+      kind: 'manual',
+    },
+    {
+      key: 'call_evals',
+      label: 'Call evaluations — 10 complete, narrative format',
+      kind: 'auto',
+      auto: 'call_evals',
+    },
+    {
+      key: 'protocol_test',
+      label: 'Protocol test — assigned in the portal, release when seated',
+      kind: 'auto',
+      auto: 'protocol_test',
     },
     {
       key: 'mega_code',

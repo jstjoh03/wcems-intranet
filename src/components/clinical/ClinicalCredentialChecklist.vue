@@ -55,6 +55,8 @@ const rows = computed<RowState[]>(() => {
       case 'workbook':
       case 'p2_workbook':
       case 'protocol_exam':
+      case 'protocol_test':
+      case 'call_evals':
       case 'mega_code': {
         const row = byKey.get(def.key)
         const done = row?.status === 'complete' || row?.status === 'na'
