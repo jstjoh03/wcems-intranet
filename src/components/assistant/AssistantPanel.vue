@@ -387,6 +387,15 @@ async function sendSuggestion() {
 </template>
 
 <style scoped>
+/* Never on paper: fixed elements print onto every page (badges, print
+   cards, packets), so the trigger and panel are screen-only. */
+@media print {
+  .asst-fab,
+  .asst {
+    display: none !important;
+  }
+}
+
 /* ── Floating trigger ─────────────────────────────────────────────── */
 .asst-fab {
   position: fixed;
