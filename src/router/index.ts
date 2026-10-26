@@ -251,6 +251,18 @@ const routes: RouteRecordRaw[] = [
     name: 'clinical-megacode',
     component: () => import('@/views/clinical/MegacodeRunView.vue'),
   },
+  /* Clinical conversation — staff documentation page (editors + supervisors). */
+  {
+    path: '/clinical/conversation/:id',
+    name: 'clinical-conversation',
+    component: () => import('@/views/clinical/ClinicalConversationView.vue'),
+  },
+  /* The employee's own view of a conversation documented with them. */
+  {
+    path: '/clinical-development/conversation/:id',
+    name: 'my-clinical-conversation',
+    component: () => import('@/views/clinical/MyClinicalConversationView.vue'),
+  },
   /* Trainee-facing: Trainee Evaluation of FTO (goes to the CDO only). */
   {
     path: '/clinical-development/fto-eval',

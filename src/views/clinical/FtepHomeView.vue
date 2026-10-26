@@ -505,6 +505,14 @@ async function review(r: FtepReport) {
         <h1 class="display fh__title">Field Training &amp; Evaluation</h1>
         <div class="fh__sub">DORs and ICRs file straight into the trainee's record — drafts save to the server, resume from any device</div>
       </div>
+      <button
+        v-if="auth.isSupervisor || auth.isAdmin"
+        type="button"
+        class="fh__convbtn"
+        @click="router.push('/clinical/conversation/new')"
+      >
+        Log a clinical conversation
+      </button>
     </header>
 
     <div v-if="!ready || !ftep.ready.value" class="fh__empty">Loading…</div>
@@ -848,7 +856,19 @@ async function review(r: FtepReport) {
 <style scoped>
 .fh { max-width: 980px; margin: 0 auto; padding: 24px 16px 80px; }
 @media (min-width: 768px) { .fh { padding: 24px 32px 80px; } }
-.fh__head { margin-bottom: 18px; }
+.fh__head { margin-bottom: 18px; display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.fh__convbtn {
+  flex-shrink: 0;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface);
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+.fh__convbtn:hover { border-color: var(--color-accent-500); }
 .fh__title { font-size: 30px; line-height: 1.1; color: var(--color-ink); }
 .fh__sub { margin-top: 4px; font-size: 12.5px; color: var(--color-muted); }
 .fh__empty { padding: 28px 0; text-align: center; color: var(--color-muted); font-size: 13px; }

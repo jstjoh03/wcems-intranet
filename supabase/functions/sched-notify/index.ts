@@ -1016,6 +1016,56 @@ Deno.serve(async (req: Request) => {
       return Response.json({ ok: true, delivery: d }, { headers: CORS })
     }
 
+    // ── clinical: conversation documented with an employee ───────────
+    /* Staff (clinical editors + supervisors — RLS proved the insert)
+     * documented a clinical conversation. One recipient: the employee,
+     * invited to read it and add their own comments/signature. Not
+     * disciplinary, and the copy says so. */
+    if (kind === 'clinical_conversation') {
+      if (!caller.id)
+        return Response.json({ ok: false, error: 'User call required' }, { status: 403, headers: CORS })
+      const conversationId = String(body.conversationId ?? '')
+      const { data: conv, error: cvErr } = await sb
+        .from('clinical_conversations')
+        .select('id, user_id, created_by, require_signatures')
+        .eq('id', conversationId)
+        .maybeSingle()
+      if (cvErr || !conv)
+        return Response.json({ ok: false, error: cvErr?.message ?? 'Conversation not found' }, { status: 404, headers: CORS })
+      const { data: ed } = await sb
+        .from('pipeline_editors')
+        .select('user_id')
+        .eq('user_id', caller.id)
+        .maybeSingle()
+      if (conv.created_by !== caller.id && !ed)
+        return Response.json({ ok: false, error: 'Not your record' }, { status: 403, headers: CORS })
+
+      const signLine = conv.require_signatures
+        ? ' A signature is requested — you can sign right from the page.'
+        : ''
+      const d = await deliver(
+        [conv.user_id as string],
+        'clinical',
+        {
+          title: 'Clinical conversation documented',
+          body: `${caller.name} documented a clinical conversation with you — open it to read and add your comments.`,
+          tag: `clin-conv-${conv.id}`,
+          subject: 'WCEMS Clinical — a conversation was documented',
+          emailLines: [
+            `<b>${esc(caller.name)}</b> documented a clinical conversation with you.`,
+            'This records that the conversation took place — it is not disciplinary.',
+            `Open it to read the summary and add your own comments.${signLine}`,
+          ],
+          sms: '',
+          url: `/clinical-development/conversation/${conv.id}`,
+          channels: { sms: false },
+          brand: 'clinical',
+        },
+        caller.id,
+      )
+      return Response.json({ ok: true, delivery: d }, { headers: CORS })
+    }
+
     // ── clinical: training day missing its DOR ────────────────────────
     /* Editor-triggered nudge. The trainee hears "check in with your
      * FTO"; the FTO's copy carries the start-DOR link — the CDO never

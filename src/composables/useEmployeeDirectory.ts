@@ -108,6 +108,25 @@ export function useEmployeeDirectory() {
     loadStarted = true
     void loadDirectory()
   }
+  /* Dev stub: mirror the pipeline's seeded people so pickers (megacode,
+     clinical conversations) have someone to choose. */
+  if (!isLive && entries.value.length === 0) {
+    entries.value = [
+      { id: 'dev-1', fullName: 'Thomas Kim', firstName: 'Thomas', lastName: 'Kim' },
+      { id: 'dev-2', fullName: 'Brianna Smith', firstName: 'Brianna', lastName: 'Smith' },
+      { id: 'dev-3', fullName: 'Jordan Reyes', firstName: 'Jordan', lastName: 'Reyes' },
+    ].map((p) => ({
+      ...p,
+      title: null,
+      role: 'crew' as const,
+      shift: null,
+      station: null,
+      email: `${p.firstName.toLowerCase()}@example.com`,
+      phone: null,
+      photoUrl: null,
+      initials: computeInitials(p.fullName),
+    }))
+  }
 
   async function refresh() {
     if (!isLive) return

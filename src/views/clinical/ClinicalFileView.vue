@@ -22,6 +22,7 @@ import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import { generateCompletedExamPdf } from '@/lib/examPrintPdf'
 import { supabase } from '@/lib/supabase'
 import { useSkillsDay } from '@/composables/useSkillsDay'
+import { useClinicalConversations } from '@/composables/useClinicalConversations'
 import { usePipeline } from '@/composables/usePipeline'
 import { requirementStatus, activeTransitionFor, jurisprudenceStatus, ENROLLMENT_TRACKS } from '@/constants/pipelineGates'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
@@ -372,6 +373,22 @@ async function buildTl() {
   }
 }
 watch(person, () => void buildTl(), { immediate: true })
+
+/* ── Clinical conversations — documentation log for this employee ──── */
+const convs = useClinicalConversations()
+const myConversations = computed(() => (person.value ? convs.listFor(person.value.userId) : []))
+watch(
+  person,
+  (p) => {
+    if (p) void convs.loadFor(p.userId)
+  },
+  { immediate: true },
+)
+function conversationSigState(c: (typeof myConversations.value)[number]): string {
+  if (!c.requireSignatures) return ''
+  const signed = c.participants.filter((p) => p.signatureData).length
+  return `${signed}/${c.participants.length} signed`
+}
 
 const quickview = ref<PipelinePerson | null>(null)
 const advOpen = ref(false)
@@ -952,6 +969,39 @@ function fmtDateTime(iso: string): string {
                   <Plus :size="12" :stroke-width="2.5" /> Assign
                 </button>
                 <span v-if="examError" class="cf__st--bad">{{ examError }}</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- Clinical conversations -->
+          <template v-if="canEdit">
+            <div class="cf__sectitle">
+              Clinical conversations
+              <button
+                type="button"
+                class="cf__lnk"
+                style="margin-left: auto"
+                @click="router.push(`/clinical/conversation/new?user=${person.userId}`)"
+              >Log conversation</button>
+            </div>
+            <div class="cf__panel cf__panel--pad">
+              <div v-for="c in myConversations" :key="c.id" class="cf__roll">
+                <span class="cf__fdot" :class="c.response ? 'cf__fdot--ok' : 'cf__fdot--soon'"></span>
+                {{ fmt(c.occurredAt.slice(0, 10)) }}
+                <template v-if="c.callType"> · {{ c.callType }}</template>
+                <template v-if="c.incidentNumber"> · #{{ c.incidentNumber }}</template>
+                <span class="cf__roll-meta">
+                  by {{ c.createdByName || '—' }}
+                  <template v-if="c.requireSignatures"> · {{ conversationSigState(c) }}</template>
+                  · {{ c.response ? 'employee commented' : 'no employee comments yet' }}
+                </span>
+                <span class="cf__roll-actions">
+                  <button type="button" class="cf__mini" @click="router.push(`/clinical/conversation/${c.id}`)">Open</button>
+                </span>
+              </div>
+              <div v-if="myConversations.length === 0" class="cf__quiet">
+                Nothing documented yet — conversations logged here notify the employee and give
+                them space to add their own comments. Not disciplinary.
               </div>
             </div>
           </template>

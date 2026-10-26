@@ -10,6 +10,10 @@ import { useExams } from '@/composables/useExams'
 import { useClinicalDocs, FOLDER_LABELS } from '@/composables/useClinicalDocs'
 import { useFtoEvalRequests } from '@/composables/useFtoEvalRequests'
 import { useProtocolSkills } from '@/composables/useProtocolSkills'
+import {
+  useClinicalConversations,
+  type ClinicalConversation,
+} from '@/composables/useClinicalConversations'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
@@ -300,6 +304,23 @@ const myFtepReports = computed(() =>
     ? ftep.submittedFor(myRecord.value.userId).sort((a, b) => b.evalDate.localeCompare(a.evalDate))
     : [],
 )
+
+/* ── Clinical conversations documented with this employee ──────────── */
+const convs = useClinicalConversations()
+const myConversations = ref<ClinicalConversation[]>([])
+watch(
+  () => auth.appUser?.id,
+  async (id) => {
+    if (id) myConversations.value = await convs.listMine()
+  },
+  { immediate: true },
+)
+function conversationNeedsMe(c: ClinicalConversation): string {
+  const mine = c.participants.find((p) => p.isEmployee)
+  if (c.requireSignatures && mine && !mine.signatureData) return 'Needs your signature'
+  if (!c.response) return 'Add your comments'
+  return ''
+}
 
 /* Evaluator names — crew's pipeline load holds only their own row, so
    look the names up from the directory. */
@@ -607,6 +628,25 @@ async function submitSign() {
           <div v-if="myFtepReports.length === 0" class="cd__myempty">
             No submitted evaluations yet — DORs and ICRs your FTO submits will appear here.
           </div>
+        </div>
+
+        <!-- Clinical conversations documented with this employee -->
+        <div v-if="myConversations.length" class="cd__mycard reveal" style="animation-delay: 215ms">
+          <div class="cd__mycard-hd">Clinical conversations</div>
+          <button
+            v-for="c in myConversations"
+            :key="c.id"
+            type="button"
+            class="cd__myrow"
+            @click="router.push(`/clinical-development/conversation/${c.id}`)"
+          >
+            <FileText :size="14" :stroke-width="1.9" class="cd__myrow-ic" />
+            <span class="cd__myrow-name">
+              {{ fmtDate(c.occurredAt.slice(0, 10)) }}<template v-if="c.callType"> · {{ c.callType }}</template>
+            </span>
+            <span class="cd__myrow-meta">with {{ c.createdByName || 'Clinical' }} · tap to read &amp; respond</span>
+            <span v-if="conversationNeedsMe(c)" class="cd__signchip">{{ conversationNeedsMe(c) }}</span>
+          </button>
         </div>
 
         <!-- Messages — questions to Clinical / the FTO, answered in one place -->
