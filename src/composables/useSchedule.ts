@@ -2361,7 +2361,55 @@ async function fetchTimeSegments(
       })
     }
   }
-  return { segs, error: null }
+  return { segs: subtractTimeOff(segs), error: null }
+}
+
+/**
+ * Time off follows the person (system-wide rule): approved off windows
+ * are SUBTRACTED from that member's worked segments, so the timecard,
+ * the hours report, and the Paycom export all show exactly the amounts
+ * that get paid — the off hours ride only on their own coded time-off
+ * lines. Without this, a vacation day over a still-scheduled pickup
+ * exported BOTH a full worked punch and the vacation punch for the same
+ * clock window (HR's duplicate-entries find, 2026-10-26: Friedel 10/17
+ * + 10/18, Parlor 10/19).
+ */
+function subtractTimeOff(segs: TimeSegment[]): TimeSegment[] {
+  const offByUser = new Map<string, { s: number; e: number }[]>()
+  for (const seg of segs) {
+    if (seg.kind !== 'timeoff') continue
+    const l = offByUser.get(seg.userId) ?? []
+    l.push({ s: seg.startMs, e: seg.endMs })
+    offByUser.set(seg.userId, l)
+  }
+  if (offByUser.size === 0) return segs
+  const out: TimeSegment[] = []
+  for (const seg of segs) {
+    const offs = seg.kind === 'timeoff' ? [] : (offByUser.get(seg.userId) ?? [])
+    if (offs.length === 0) {
+      out.push(seg)
+      continue
+    }
+    let pieces = [{ s: seg.startMs, e: seg.endMs }]
+    for (const o of offs) {
+      const next: { s: number; e: number }[] = []
+      for (const p of pieces) {
+        const os = Math.max(p.s, o.s)
+        const oe = Math.min(p.e, o.e)
+        if (oe - os < MIN_SEG_MS) {
+          next.push(p)
+          continue
+        }
+        if (os - p.s >= MIN_SEG_MS) next.push({ s: p.s, e: os })
+        if (p.e - oe >= MIN_SEG_MS) next.push({ s: oe, e: p.e })
+      }
+      pieces = next
+    }
+    for (const p of pieces) {
+      out.push({ ...seg, startMs: p.s, endMs: p.e, hours: (p.e - p.s) / 3_600_000 })
+    }
+  }
+  return out
 }
 
 function openSeatsFor(dateIso: string): OpenSeatInfo[] {
