@@ -259,6 +259,7 @@ const STATUS_LABELS: Record<string, string> = {
   approved: 'Approved',
   denied: 'Denied',
   cancelled: 'Cancelled',
+  handled: 'Closed — handled by hand',
 }
 
 function requestLine(r: SchedRequest): string {
@@ -493,7 +494,7 @@ async function saveEditTimes(r: SchedRequest) {
 
 const decided = computed(() =>
   sched.requests.value
-    .filter((r) => r.status === 'approved' || r.status === 'denied' || r.status === 'cancelled')
+    .filter((r) => r.status === 'approved' || r.status === 'denied' || r.status === 'cancelled' || r.status === 'handled')
     .slice()
     .sort((a, b) =>
       String(b.decidedAt ?? b.createdAt ?? '').localeCompare(String(a.decidedAt ?? a.createdAt ?? '')),
@@ -1657,6 +1658,11 @@ async function cancel(r: SchedRequest) {
   color: var(--color-success-500);
 }
 
+.rq__status[data-status='handled'] {
+  background: var(--color-surface-soft);
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+}
 .rq__status[data-status='denied'] {
   color: var(--color-danger-500);
 }

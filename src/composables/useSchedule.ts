@@ -90,7 +90,7 @@ export interface SchedEntry {
 export interface SchedRequest {
   id: string
   type: 'pickup' | 'trade' | 'giveaway' | 'time_off' | 'extra_hours' | 'discrepancy'
-  status: 'pending' | 'partner_accepted' | 'approved' | 'denied' | 'cancelled'
+  status: 'pending' | 'partner_accepted' | 'approved' | 'denied' | 'cancelled' | 'handled'
   requesterId: string
   counterpartyId: string | null
   entryId: string | null
@@ -5459,7 +5459,10 @@ async function decideRequest(
   const upd = await supabase
     .from('sched_requests')
     .update({
-      status: approve ? 'approved' : 'denied',
+      /* "Already handled" is NOT an approval (Riann's false 'approved'
+         push, Justin 2026-10-27): its own terminal status keeps the
+         queue clean without claiming the requester got the shift. */
+      status: approve ? (alreadyHandled ? 'handled' : 'approved') : 'denied',
       decided_by: me,
       decided_at: new Date().toISOString(),
       decision_note: note || (alreadyHandled ? 'Already handled — the schedule was updated directly.' : null),

@@ -833,10 +833,39 @@ Deno.serve(async (req: Request) => {
       const rows = await loadRequests([String(body.requestId ?? '')])
       const r = rows[0]
       if (!r) return Response.json({ ok: false, error: 'Request not found' }, { status: 404, headers: CORS })
+      const targets = [r.requester_id, r.counterparty_id].filter((x): x is string => !!x)
+
+      /* "Already handled" is a queue close, NOT an approval — the old
+       * shared APPROVED copy told Riann she had a shift she was never
+       * given (Justin, 2026-10-27). Its notification says exactly what
+       * happened and points at the day board for the truth. */
+      if (r.status === 'handled') {
+        const line = `${reqLine(r)}: closed — the schedule was already updated by hand. This is NOT an approval; check the day board for the final schedule.`
+        const d = await deliver(
+          targets,
+          'request_decision',
+          {
+            title: 'Request closed — not an approval',
+            body: line,
+            tag: `sched-req-${r.id}`,
+            subject: 'WCEMS Scheduling — request closed (schedule updated by hand)',
+            emailLines: [
+              esc(`${reqLine(r)}: closed by the scheduler.`),
+              'The schedule for this day was already updated by hand, so this request was closed without scheduling anything. <b>This is not an approval.</b>',
+              'Open the day board to see the final schedule — if you believe you should be on it, reach out to the scheduler.',
+            ],
+            sms: '',
+            url: r.work_date ? `/schedule?d=${r.work_date}&v=day` : undefined,
+            channels: { sms: false },
+          },
+          caller.id,
+        )
+        return Response.json({ ok: true, delivery: d }, { headers: CORS })
+      }
+
       const verdict = r.status === 'approved' ? 'APPROVED' : r.status === 'denied' ? 'DENIED' : r.status
       const note = r.decision_note ? ` Note: ${clean(r.decision_note, 160)}` : ''
       const line = `${reqLine(r)}: ${verdict}.${note}`
-      const targets = [r.requester_id, r.counterparty_id].filter((x): x is string => !!x)
       const d = await deliver(
         targets,
         'request_decision',
