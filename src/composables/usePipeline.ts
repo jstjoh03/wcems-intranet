@@ -514,13 +514,22 @@ export function usePipeline() {
   async function promote(person: PipelinePerson) {
     const r = person.record
     if (!r.workingPhase) return
+    const cleared = r.workingPhase === 'FinalRelease' ? 'FinalRelease' : r.workingPhase
+    /* The credential level rides along with the cleared rung — promote
+     * used to leave it behind, so Thomas Kim cleared P2 while his file
+     * kept saying P1 (Justin, 2026-10-27). FinalRelease is a status,
+     * not a rung, and hand-set labels (P4 / FTO) are never clobbered. */
+    const LEVEL_FOR_PHASE: Record<string, string> = { NEOP: 'P1C', FTR: 'P1C', P1: 'P1', P2: 'P2', P3: 'P3' }
+    const nextLevel = LEVEL_FOR_PHASE[cleared]
+    const levelIsRung = !r.level || ['P1C', 'P1', 'P2', 'P3'].includes(r.level)
     await saveRecord({
       userId: person.userId,
-      clearedPhase: r.workingPhase === 'FinalRelease' ? 'FinalRelease' : r.workingPhase,
+      clearedPhase: cleared,
       workingPhase: null,
       workingStartedAt: null,
       workingTargetAt: null,
       pending: false,
+      ...(nextLevel && levelIsRung ? { level: nextLevel } : {}),
     })
   }
 
