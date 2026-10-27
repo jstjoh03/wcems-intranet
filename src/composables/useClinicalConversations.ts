@@ -38,6 +38,8 @@ export interface ClinicalConversation {
   requireSignatures: boolean
   response: string | null
   responseAt: string | null
+  /** Stamped on the employee's first open (also by respond/sign). */
+  viewedAt: string | null
   createdAt: string
   participants: ConversationParticipant[]
 }
@@ -69,6 +71,7 @@ interface ConvRow {
   require_signatures: boolean
   response: string | null
   response_at: string | null
+  viewed_at: string | null
   created_at: string
   clinical_conversation_participants: PartRow[]
 }
@@ -84,7 +87,7 @@ interface PartRow {
 
 const SELECT =
   'id, user_id, created_by, created_by_name, occurred_at, location, incident_number, ' +
-  'call_type, call_details, discussion, require_signatures, response, response_at, created_at, ' +
+  'call_type, call_details, discussion, require_signatures, response, response_at, viewed_at, created_at, ' +
   'clinical_conversation_participants ( id, user_id, display_name, is_employee, signature_data, signed_at )'
 
 function fromRow(r: ConvRow): ClinicalConversation {
@@ -102,6 +105,7 @@ function fromRow(r: ConvRow): ClinicalConversation {
     requireSignatures: r.require_signatures,
     response: r.response,
     responseAt: r.response_at,
+    viewedAt: r.viewed_at,
     createdAt: r.created_at,
     participants: (r.clinical_conversation_participants ?? [])
       .map((p) => ({
@@ -188,6 +192,7 @@ export function useClinicalConversations() {
           requireSignatures: draft.requireSignatures,
           response: null,
           responseAt: null,
+          viewedAt: null,
           createdAt: new Date().toISOString(),
           participants: draft.participants.map((p, i) => ({
             id: `stub-p-${i}`,
@@ -240,84 +245,28 @@ export function useClinicalConversations() {
     return { id: convId, error: null }
   }
 
-  /** Staff edit of the record fields (not participants). */
-  async function update(
-    id: string,
-    patch: Omit<ConversationDraft, 'participants' | 'userId'>,
-  ): Promise<string | null> {
-    if (auth.usingDevStub) {
-      stubStore.value = stubStore.value.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              occurredAt: patch.occurredAt,
-              location: patch.location,
-              incidentNumber: patch.incidentNumber,
-              callType: patch.callType,
-              callDetails: patch.callDetails,
-              discussion: patch.discussion,
-              requireSignatures: patch.requireSignatures,
-            }
-          : c,
-      )
-      return null
-    }
-    const { error } = await supabase
-      .from('clinical_conversations')
-      .update({
-        occurred_at: patch.occurredAt,
-        location: patch.location.trim(),
-        incident_number: patch.incidentNumber.trim(),
-        call_type: patch.callType.trim(),
-        call_details: patch.callDetails.trim(),
-        discussion: patch.discussion.trim(),
-        require_signatures: patch.requireSignatures,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-    if (error) return error.message
-    await get(id)
-    return null
-  }
 
-  /** Staff: replace the unsigned attendee list (signed rows are kept). */
-  async function setParticipants(
-    id: string,
-    participants: ConversationDraft['participants'],
-    keepIds: string[],
-  ): Promise<string | null> {
-    if (auth.usingDevStub) return null
-    const del = await supabase
-      .from('clinical_conversation_participants')
-      .delete()
-      .eq('conversation_id', id)
-      .is('signature_data', null)
-      .not('id', 'in', `(${['00000000-0000-0000-0000-000000000000', ...keepIds].join(',')})`)
-    if (del.error) return del.error.message
-    if (participants.length) {
-      const ins = await supabase.from('clinical_conversation_participants').insert(
-        participants.map((p) => ({
-          conversation_id: id,
-          user_id: p.userId,
-          display_name: p.displayName,
-          is_employee: p.isEmployee,
-        })),
-      )
-      if (ins.error) return ins.error.message
-    }
-    await get(id)
-    return null
-  }
-
-  /** Staff device: capture a signature straight onto a participant row. */
+  /** Staff device: capture a signature straight onto a participant row.
+   *  Signature-only SECURITY DEFINER RPC — the record itself is
+   *  immutable once submitted, so there is no direct UPDATE path. */
   async function signParticipant(participantId: string, dataUrl: string): Promise<string | null> {
     if (auth.usingDevStub) return null
-    const { error } = await supabase
-      .from('clinical_conversation_participants')
-      .update({ signature_data: dataUrl, signed_at: new Date().toISOString() })
-      .eq('id', participantId)
-      .is('signature_data', null)
+    const { error } = await supabase.rpc('clinical_conversation_sign_row', {
+      p_participant: participantId,
+      p_signature: dataUrl,
+    })
     return error?.message ?? null
+  }
+
+  /** The employee's first open stamps viewed_at — after that the author
+   *  can no longer delete the record. */
+  async function markViewed(conversationId: string): Promise<void> {
+    if (auth.usingDevStub) return
+    await supabase
+      .rpc('clinical_conversation_mark_viewed', { p_conversation: conversationId })
+      .then(({ error }) => {
+        if (error) console.warn('[conversations] mark viewed failed:', error.message)
+      })
   }
 
   /** The employee's own feedback box. */
@@ -378,9 +327,8 @@ export function useClinicalConversations() {
     loadFor,
     get,
     create,
-    update,
-    setParticipants,
     signParticipant,
+    markViewed,
     respond,
     signMine,
     listMine,

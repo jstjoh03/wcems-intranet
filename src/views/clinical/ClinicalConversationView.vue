@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Check, FileDown, Plus, Trash2, X } from 'lucide-vue-next'
+import { Check, Eye, FileDown, Lock, Plus, Trash2, X } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -14,12 +14,14 @@ import {
 import { generateClinicalConversationPdf } from '@/lib/clinicalConversationPdf'
 
 /**
- * Clinical conversation — staff form + record page (paper-form style,
- * like the megacode). Clinical editors and supervisors document that a
- * conversation took place: incident, call type/details, discussion,
- * when/where, who was present, optional signatures. Saving notifies the
- * employee (push + email) and the record surfaces on their clinical
- * file and their My Progress page, where they can respond and sign.
+ * Clinical conversation — staff page. The form exists only for NEW
+ * records: once submitted a conversation is a locked record (Justin,
+ * 2026-10-27 — "I should not be able to go into Heather's notes and
+ * edit them"), rendered read-only for everyone with two live paths
+ * left open server-side: collecting signatures and the employee's
+ * response. The author alone may delete, and only while the employee
+ * hasn't viewed, responded, or signed; fixing a mistake is delete +
+ * re-document. RLS enforces all of this — the UI just tells the truth.
  */
 
 const route = useRoute()
@@ -33,6 +35,7 @@ const canLog = computed(() => isEditor.value || auth.isSupervisor || auth.isAdmi
 
 const recordId = ref(String(route.params.id ?? 'new'))
 const existing = ref<ClinicalConversation | null>(null)
+const locked = computed(() => !!existing.value)
 const ready = ref(false)
 const busy = ref(false)
 const error = ref('')
@@ -40,7 +43,7 @@ const savedFlash = ref(false)
 const deleteArm = ref(false)
 const pdfBusy = ref(false)
 
-/* ── form state ── */
+/* ── form state (new records only) ── */
 const employeeId = ref(String(route.query.user ?? ''))
 const occurredLocal = ref(toLocalInput(new Date()))
 const location = ref('')
@@ -49,7 +52,6 @@ const callType = ref('')
 const callDetails = ref('')
 const discussion = ref('')
 const requireSignatures = ref(false)
-/* attendees beyond the employee: staff picks + free-text externals */
 const present = ref<{ userId: string | null; displayName: string }[]>([])
 const addStaffId = ref('')
 const addExternal = ref('')
@@ -67,6 +69,21 @@ const employeeName = computed(
     existing.value?.participants.find((p) => p.isEmployee)?.displayName ??
     directory.entries.value.find((e) => e.id === employeeId.value)?.fullName ??
     '',
+)
+
+/* The author may delete only while the employee hasn't seen, responded,
+ * or signed — mirrored from the RLS delete policy so the button tells
+ * the truth. */
+const employeeSigned = computed(() =>
+  (existing.value?.participants ?? []).some((p) => p.isEmployee && p.signatureData),
+)
+const canDelete = computed(
+  () =>
+    !!existing.value &&
+    existing.value.createdBy === auth.appUser?.id &&
+    !existing.value.viewedAt &&
+    !existing.value.response &&
+    !employeeSigned.value,
 )
 
 function toLocalInput(d: Date): string {
@@ -139,10 +156,15 @@ const valid = computed(
 )
 
 async function save() {
-  if (!valid.value || busy.value) return
+  if (locked.value || !valid.value || busy.value) return
   busy.value = true
   error.value = ''
-  const base = {
+  const participants = [
+    { userId: employeeId.value, displayName: employeeName.value, isEmployee: true },
+    ...present.value.map((p) => ({ ...p, isEmployee: false })),
+  ]
+  const { id, error: e } = await convs.create({
+    userId: employeeId.value,
     occurredAt: localToIso(occurredLocal.value),
     location: location.value,
     incidentNumber: incidentNumber.value,
@@ -150,51 +172,21 @@ async function save() {
     callDetails: callDetails.value,
     discussion: discussion.value,
     requireSignatures: requireSignatures.value,
+    participants,
+  })
+  busy.value = false
+  if (e || !id) {
+    error.value = e ?? 'Save failed.'
+    return
   }
-  if (recordId.value === 'new') {
-    const participants = [
-      { userId: employeeId.value, displayName: employeeName.value, isEmployee: true },
-      ...present.value.map((p) => ({ ...p, isEmployee: false })),
-    ]
-    const { id, error: e } = await convs.create({ userId: employeeId.value, ...base, participants })
-    busy.value = false
-    if (e || !id) {
-      error.value = e ?? 'Save failed.'
-      return
-    }
-    recordId.value = id
-    await router.replace(`/clinical/conversation/${id}`)
-    existing.value = await convs.get(id)
-    flash()
-  } else {
-    const e = await convs.update(recordId.value, base)
-    if (!e && existing.value) {
-      /* sync unsigned attendee rows with the edited list */
-      const kept = existing.value.participants.filter((p) => p.signatureData || p.isEmployee)
-      const keptStaffIds = new Set(kept.filter((p) => !p.isEmployee).map((p) => p.userId))
-      const fresh = present.value.filter((p) => !p.userId || !keptStaffIds.has(p.userId))
-      await convs.setParticipants(
-        recordId.value,
-        fresh.map((p) => ({ ...p, isEmployee: false })),
-        kept.map((p) => p.id),
-      )
-    }
-    existing.value = await convs.get(recordId.value)
-    busy.value = false
-    if (e) {
-      error.value = e
-      return
-    }
-    flash()
-  }
-}
-
-function flash() {
+  recordId.value = id
+  await router.replace(`/clinical/conversation/${id}`)
+  existing.value = await convs.get(id)
   savedFlash.value = true
-  setTimeout(() => (savedFlash.value = false), 2600)
+  setTimeout(() => (savedFlash.value = false), 3200)
 }
 
-/* ── in-person signatures (on this device, after save) ── */
+/* ── in-person signatures (on this device, after submit) ── */
 const sigDraft = ref<Record<string, string>>({})
 const sigBusy = ref('')
 
@@ -225,6 +217,7 @@ async function downloadPdf() {
 }
 
 async function doDelete() {
+  if (!canDelete.value) return
   if (!deleteArm.value) {
     deleteArm.value = true
     setTimeout(() => (deleteArm.value = false), 3200)
@@ -271,7 +264,7 @@ const fmtDateTime = (iso: string) =>
           <FileDown :size="13" :stroke-width="2" /> {{ pdfBusy ? 'Building…' : 'PDF' }}
         </button>
         <button
-          v-if="existing"
+          v-if="canDelete"
           type="button"
           class="cv__btn cv__btn--danger"
           @click="doDelete"
@@ -283,8 +276,26 @@ const fmtDateTime = (iso: string) =>
 
     <div v-if="!ready" class="cv__empty">Loading…</div>
     <template v-else>
-      <div v-if="savedFlash" class="cv__saved"><Check :size="14" :stroke-width="2.5" /> Saved — the employee has been notified.</div>
+      <div v-if="savedFlash" class="cv__saved">
+        <Check :size="14" :stroke-width="2.5" /> Submitted — the employee has been notified. The
+        record is now locked.
+      </div>
       <div v-if="error" class="cv__error">{{ error }}</div>
+
+      <div v-if="locked && existing" class="cv__lockbar">
+        <Lock :size="13" :stroke-width="2" />
+        <span>
+          Submitted record — read-only. Documented by <b>{{ existing.createdByName || '—' }}</b> ·
+          {{ fmtDateTime(existing.createdAt) }}.
+          <template v-if="canDelete"> Deletable until the employee opens it.</template>
+          <template v-else-if="existing.createdBy === auth.appUser?.id">
+            The employee has {{ existing.viewedAt ? 'opened' : existing.response ? 'responded to' : 'signed' }} it — it can no longer be deleted.
+          </template>
+        </span>
+        <span v-if="existing.viewedAt" class="cv__viewed">
+          <Eye :size="12" :stroke-width="2" /> Viewed by employee {{ fmtDateTime(existing.viewedAt) }}
+        </span>
+      </div>
 
       <div class="cv__grid">
         <!-- Who / when / where -->
@@ -293,26 +304,26 @@ const fmtDateTime = (iso: string) =>
           <div class="cv__fields">
             <label class="cv__fld cv__fld--wide">
               <span>Employee</span>
-              <select v-model="employeeId" :disabled="recordId !== 'new'">
+              <select v-model="employeeId" :disabled="locked">
                 <option value="" disabled>Select the employee…</option>
                 <option v-for="p in employees" :key="p.id" :value="p.id">{{ p.fullName }}</option>
               </select>
             </label>
             <label class="cv__fld">
               <span>Date &amp; time it took place</span>
-              <input v-model="occurredLocal" type="datetime-local" />
+              <input v-model="occurredLocal" type="datetime-local" :disabled="locked" />
             </label>
             <label class="cv__fld">
               <span>Where it took place</span>
-              <input v-model="location" type="text" placeholder="Station 201 office, phone call…" />
+              <input v-model="location" type="text" placeholder="Station 201 office, phone call…" :disabled="locked" />
             </label>
             <label class="cv__fld">
               <span>Incident number</span>
-              <input v-model="incidentNumber" type="text" placeholder="2026-012345" />
+              <input v-model="incidentNumber" type="text" placeholder="2026-012345" :disabled="locked" />
             </label>
             <label class="cv__fld">
               <span>Call type</span>
-              <input v-model="callType" type="text" placeholder="Cardiac arrest, MVC, refusal…" />
+              <input v-model="callType" type="text" placeholder="Cardiac arrest, MVC, refusal…" :disabled="locked" />
             </label>
           </div>
         </section>
@@ -325,6 +336,7 @@ const fmtDateTime = (iso: string) =>
             class="cv__area"
             rows="4"
             placeholder="Brief summary of the call this conversation is about."
+            :disabled="locked"
           />
           <div class="cv__cardtitle" style="margin-top: 14px">What the discussion entailed</div>
           <textarea
@@ -332,6 +344,7 @@ const fmtDateTime = (iso: string) =>
             class="cv__area"
             rows="6"
             placeholder="What was discussed, teaching points, resources shared, follow-up agreed on."
+            :disabled="locked"
           />
         </section>
 
@@ -342,12 +355,12 @@ const fmtDateTime = (iso: string) =>
             <span class="cv__chip cv__chip--emp">{{ employeeName || 'Employee' }} <i>employee</i></span>
             <span v-for="(p, i) in present" :key="`${p.userId ?? p.displayName}-${i}`" class="cv__chip">
               {{ p.displayName }}
-              <button type="button" class="cv__chip-x" aria-label="Remove" @click="removePresent(i)">
+              <button v-if="!locked" type="button" class="cv__chip-x" aria-label="Remove" @click="removePresent(i)">
                 <X :size="11" :stroke-width="2.5" />
               </button>
             </span>
           </div>
-          <div class="cv__addrow">
+          <div v-if="!locked" class="cv__addrow">
             <select v-model="addStaffId" @change="addStaff">
               <option value="" disabled>Add staff present…</option>
               <option v-for="p in people" :key="p.id" :value="p.id">{{ p.fullName }}</option>
@@ -366,14 +379,14 @@ const fmtDateTime = (iso: string) =>
           </div>
 
           <label class="cv__sigtoggle">
-            <input v-model="requireSignatures" type="checkbox" />
+            <input v-model="requireSignatures" type="checkbox" :disabled="locked" />
             <span><b>Require signatures</b> — everyone present and the employee get a signature box.</span>
           </label>
 
           <template v-if="requireSignatures">
             <div v-if="!existing" class="cv__quiet">
-              Save the conversation first — the signature boxes appear here right after, so it can
-              be passed around the room.
+              Submit the conversation first — the signature boxes appear here right after, so it
+              can be passed around the room.
             </div>
             <div v-else class="cv__sigs">
               <div v-for="p in existing.participants" :key="p.id" class="cv__sig">
@@ -414,8 +427,14 @@ const fmtDateTime = (iso: string) =>
         </section>
 
         <div class="cv__savebar">
-          <button type="button" class="cv__btn cv__btn--primary" :disabled="!valid || busy" @click="save">
-            {{ busy ? 'Saving…' : recordId === 'new' ? 'Save conversation' : 'Save changes' }}
+          <button
+            v-if="!locked"
+            type="button"
+            class="cv__btn cv__btn--primary"
+            :disabled="!valid || busy"
+            @click="save"
+          >
+            {{ busy ? 'Submitting…' : 'Submit conversation' }}
           </button>
           <button
             v-if="existing"
@@ -425,7 +444,11 @@ const fmtDateTime = (iso: string) =>
           >
             Open clinical file
           </button>
-          <span v-if="!valid" class="cv__quiet">Employee + discussion are required.</span>
+          <span v-if="!locked && !valid" class="cv__quiet">Employee + discussion are required.</span>
+          <span v-if="!locked" class="cv__quiet">
+            Submitting locks the record — a mistake means delete and re-document (possible until
+            the employee opens it).
+          </span>
         </div>
       </div>
     </template>
@@ -487,6 +510,27 @@ const fmtDateTime = (iso: string) =>
   color: var(--color-danger-600, oklch(0.5 0.19 27));
   font-size: 13px;
 }
+.cv__lockbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 9px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface-soft);
+  color: var(--color-ink-soft);
+  font-size: 12.5px;
+}
+.cv__viewed {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--color-success-600, oklch(0.5 0.14 150));
+}
 .cv__grid {
   display: flex;
   flex-direction: column;
@@ -538,6 +582,15 @@ const fmtDateTime = (iso: string) =>
   font-family: var(--font-sans);
   font-size: 13.5px;
   color: var(--color-ink);
+}
+.cv__fld input:disabled,
+.cv__fld select:disabled,
+.cv__area:disabled {
+  opacity: 1;
+  color: var(--color-ink);
+  background: var(--color-surface-soft);
+  border-style: dashed;
+  cursor: default;
 }
 .cv__fld input:focus,
 .cv__fld select:focus,
@@ -664,6 +717,7 @@ const fmtDateTime = (iso: string) =>
 .cv__savebar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 4px 2px 0;
 }

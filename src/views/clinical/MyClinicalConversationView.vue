@@ -49,6 +49,9 @@ onMounted(async () => {
   } else {
     conv.value = c
     draft.value = c.response ?? ''
+    /* First open stamps viewed_at — from here the author can no longer
+       delete the record. */
+    if (auth.appUser && c.userId === auth.appUser.id) void convs.markViewed(c.id)
   }
   ready.value = true
 })
