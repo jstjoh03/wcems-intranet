@@ -303,6 +303,16 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/skills/ProtocolSkillRunView.vue'),
   },
   {
+    path: '/skills/scan/:userId',
+    name: 'skills-scan',
+    component: () => import('@/views/skills/SkillsScanView.vue'),
+  },
+  {
+    path: '/skills/day/:dayId/badges',
+    name: 'skills-day-badges',
+    component: () => import('@/views/skills/SkillsBadgesView.vue'),
+  },
+  {
     path: '/skills/:checkoffId/:candidateId',
     name: 'skills-evaluate',
     component: () => import('@/views/SkillsEvaluateView.vue'),

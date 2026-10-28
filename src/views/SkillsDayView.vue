@@ -219,6 +219,13 @@ const myEvaluations = computed(() =>
       >
         All
       </button>
+      <RouterLink
+        v-if="selectedDayId"
+        :to="`/skills/day/${selectedDayId}/badges`"
+        class="sd__day-chip sd__day-chip--link"
+      >
+        QR badges
+      </RouterLink>
     </div>
 
     <div v-if="!ready" class="sd__empty">Loading…</div>
@@ -745,6 +752,13 @@ const myEvaluations = computed(() =>
   padding: 7px 14px;
   cursor: pointer;
   white-space: nowrap;
+}
+.sd__day-chip--link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  border-style: dashed;
+  color: var(--color-accent-700);
 }
 .sd__day-chip--on {
   color: white;
