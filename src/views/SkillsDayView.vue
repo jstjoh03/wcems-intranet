@@ -235,6 +235,10 @@ const myEvaluations = computed(() =>
 
     <!-- Candidate self-view -->
     <template v-else-if="!isEvaluator">
+      <RouterLink to="/skills/rhythms" class="sd__selfquiz">
+        <span class="sd__selfquiz-title">Rhythm identification — self check-off</span>
+        <span class="sd__selfquiz-sub">Work the strip deck on your login; it records when every strip is correct</span>
+      </RouterLink>
       <div v-if="myEvaluations.length === 0" class="sd__empty">
         No check-offs recorded for you yet.
       </div>
@@ -762,6 +766,26 @@ const myEvaluations = computed(() =>
   text-decoration: none;
   border-style: dashed;
   color: var(--color-accent-700);
+}
+.sd__selfquiz {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 14px;
+  padding: 13px 16px;
+  border: 1px solid var(--color-accent-500);
+  border-radius: 12px;
+  background: var(--color-surface);
+  text-decoration: none;
+}
+.sd__selfquiz-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--color-brand-700);
+}
+.sd__selfquiz-sub {
+  font-size: 12px;
+  color: var(--color-muted);
 }
 .sd__day-chip--on {
   color: white;

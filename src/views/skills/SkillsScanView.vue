@@ -87,7 +87,16 @@ function fmtDate(onDate: string): string {
 }
 
 function go(c: SkillsCheckoff) {
+  /* The rhythm quiz is self-service on the trainee's own login — the
+     evaluator form never applies. Once recorded, open it read-only. */
+  if (c.key === 'rhythm_self' && stateFor(c) === 'pending') return
   router.push(`/skills/${c.id}/${userId.value}`)
+}
+
+function subtitleFor(c: SkillsCheckoff): string {
+  if (c.key === 'rhythm_self' && stateFor(c) === 'pending')
+    return 'Self-service — trainee completes it on their own login at /skills/rhythms'
+  return c.subtitle
 }
 </script>
 
@@ -131,7 +140,7 @@ function go(c: SkillsCheckoff) {
         >
           <span class="scan__station-main">
             <span class="scan__station-title">{{ c.title }}</span>
-            <span v-if="c.subtitle" class="scan__station-sub">{{ c.subtitle }}</span>
+            <span v-if="subtitleFor(c)" class="scan__station-sub">{{ subtitleFor(c) }}</span>
           </span>
           <span class="scan__station-side">
             <span v-if="stateFor(c) === 'done'" class="scan__chip scan__chip--done">

@@ -313,6 +313,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/skills/SkillsStationSetupView.vue'),
   },
   {
+    path: '/skills/rhythms',
+    name: 'skills-rhythm-quiz',
+    component: () => import('@/views/skills/RhythmQuizView.vue'),
+  },
+  {
     path: '/skills/day/:dayId/badges',
     name: 'skills-day-badges',
     component: () => import('@/views/skills/SkillsBadgesView.vue'),
