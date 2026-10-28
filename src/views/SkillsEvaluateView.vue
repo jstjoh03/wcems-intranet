@@ -27,6 +27,7 @@ const {
   redoKeys,
   submitEvaluation,
   submitRecheck,
+  deleteEvaluation,
   peopleNames,
 } = useSkillsDay()
 
@@ -41,6 +42,31 @@ const mode = computed<'fresh' | 'recheck' | 'done'>(() => {
   if (!existing.value) return 'fresh'
   return redoKeys(existing.value).length > 0 ? 'recheck' : 'done'
 })
+
+/* Admin reset: wipe the record (wrong signer, wrong trainee) so the
+   station can run it again. Two-tap confirm; the form flips back to
+   fresh on success because `existing` recomputes empty. */
+const resetArmed = ref(false)
+const resetBusy = ref(false)
+const resetError = ref<string | null>(null)
+
+async function resetEvaluation() {
+  if (!existing.value || resetBusy.value) return
+  if (!resetArmed.value) {
+    resetArmed.value = true
+    return
+  }
+  resetBusy.value = true
+  resetError.value = null
+  const res = await deleteEvaluation(existing.value.id)
+  resetBusy.value = false
+  resetArmed.value = false
+  if (!res.ok) {
+    resetError.value = res.error ?? 'Reset failed.'
+    return
+  }
+  clearLocalState()
+}
 
 const allItems = computed(() =>
   (checkoff.value?.sections ?? []).flatMap((s) => s.items),
@@ -303,6 +329,21 @@ function back() {
           </ul>
         </div>
       </header>
+
+      <!-- Admin reset: for a record signed by the wrong person -->
+      <div v-if="existing && auth.isAdmin" class="sev__reset">
+        <span v-if="!resetArmed" class="sev__reset-hint">Wrong signer or wrong trainee?</span>
+        <span v-else class="sev__reset-hint sev__reset-hint--warn">
+          Permanently deletes this record and its signatures — the station redoes the check-off.
+        </span>
+        <button type="button" class="sev__reset-btn" :disabled="resetBusy" @click="resetEvaluation">
+          {{ resetBusy ? 'Resetting…' : resetArmed ? 'Yes, reset it' : 'Reset check-off' }}
+        </button>
+        <button v-if="resetArmed && !resetBusy" type="button" class="sev__reset-cancel" @click="resetArmed = false">
+          Keep it
+        </button>
+        <span v-if="resetError" class="sev__reset-err">{{ resetError }}</span>
+      </div>
 
       <div v-if="draftRestoredAt && mode !== 'done'" class="sev__draft-note">
         <Save :size="13" :stroke-width="2" />
@@ -635,6 +676,54 @@ function back() {
   color: oklch(0.4 0.12 150);
   font-size: 13.5px;
   line-height: 1.5;
+}
+
+.sev__reset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px dashed oklch(0.75 0.1 25);
+  border-radius: 12px;
+  background: oklch(0.98 0.012 25);
+}
+.sev__reset-hint {
+  font-size: 12.5px;
+  color: var(--color-muted);
+}
+.sev__reset-hint--warn {
+  color: oklch(0.45 0.16 25);
+  font-weight: 650;
+}
+.sev__reset-btn {
+  padding: 7px 13px;
+  border-radius: 9px;
+  border: 1px solid oklch(0.6 0.17 25);
+  background: oklch(0.55 0.18 25);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.sev__reset-btn:disabled {
+  opacity: 0.6;
+}
+.sev__reset-cancel {
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.sev__reset-err {
+  font-size: 12.5px;
+  color: oklch(0.5 0.17 25);
+  font-weight: 650;
 }
 .sev__recheck-banner {
   display: flex;

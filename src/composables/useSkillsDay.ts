@@ -722,6 +722,25 @@ export function useSkillsDay() {
     return { ok: true }
   }
 
+  /* Admin: wipe a completed evaluation so the station can redo it —
+     the fix for a check-off signed by the wrong person. RLS allows
+     DELETE for admins only; the record is gone, not amended, and the
+     trainee goes back to pending everywhere (board, scan, packet). */
+  async function deleteEvaluation(evaluationId: string): Promise<{ ok: boolean; error?: string }> {
+    if (auth.usingDevStub) {
+      evaluations.value = evaluations.value.filter((e) => e.id !== evaluationId)
+      return { ok: true }
+    }
+    const { error, count } = await supabase
+      .from('skills_evaluations')
+      .delete({ count: 'exact' })
+      .eq('id', evaluationId)
+    if (error) return { ok: false, error: error.message }
+    if (!count) return { ok: false, error: 'Nothing deleted — admin access is required to reset a check-off.' }
+    evaluations.value = evaluations.value.filter((e) => e.id !== evaluationId)
+    return { ok: true }
+  }
+
   /* Admin: manage the extras grant list. */
   async function addEvaluator(userId: string): Promise<{ ok: boolean; error?: string }> {
     const { error } = await supabase.from('skills_evaluators').insert({ user_id: userId })
@@ -778,6 +797,7 @@ export function useSkillsDay() {
     redoKeys,
     submitEvaluation,
     submitRecheck,
+    deleteEvaluation,
     saveDayFull,
     deleteDay,
     saveCheckoff,
