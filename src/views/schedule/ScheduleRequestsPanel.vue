@@ -106,7 +106,9 @@ async function refreshUnavailable() {
 function loadDayPicks() {
   const me = sched.myUserId.value
   if (!me) return
-  dayPicks.value = sched.upcomingShiftsFor(me, todayCentralIso(), 45).map((s) => ({
+  /* A full year out — the rotation is computed, so far-future requests
+     (e.g. January vacation put in before the holidays) just work. */
+  dayPicks.value = sched.upcomingShiftsFor(me, todayCentralIso(), 365).map((s) => ({
     shift: s,
     checked: false,
     editing: false,
@@ -115,6 +117,19 @@ function loadDayPicks() {
   }))
   void refreshUnavailable()
 }
+
+/* Month groups keep a year of shifts scannable in the picker. */
+const dayPickMonths = computed(() => {
+  const groups: { label: string; picks: DayPick[] }[] = []
+  for (const d of dayPicks.value) {
+    const dt = new Date(d.shift.dateIso + 'T00:00:00')
+    const label = dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    const last = groups[groups.length - 1]
+    if (last && last.label === label) last.picks.push(d)
+    else groups.push({ label, picks: [d] })
+  }
+  return groups
+})
 
 async function submitUnavailable() {
   formError.value = null
@@ -803,29 +818,32 @@ async function cancel(r: SchedRequest) {
 
           <p class="rq__label">Your upcoming shifts — pick the days</p>
           <p v-if="dayPicks.length === 0" class="rq__muted">
-            No scheduled shifts found in the next 45 days.
+            No scheduled shifts found in the next 12 months.
           </p>
-          <div v-for="d in dayPicks" :key="d.shift.dateIso + d.shift.seatId" class="rq__day">
-            <label class="rq__day-main">
-              <input v-model="d.checked" type="checkbox" />
-              <span>
-                {{ new Date(d.shift.dateIso + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }}
-                <span class="rq__muted">· {{ d.shift.unitCode }} {{ d.shift.seatLabel }} · 0600 – 0600</span>
-              </span>
-            </label>
-            <button
-              v-if="d.checked"
-              type="button"
-              class="rq__minor"
-              @click="d.editing = !d.editing"
-            >
-              {{ d.editing ? 'Full shift' : 'Edit time' }}
-            </button>
-            <div v-if="d.checked && d.editing" class="rq__times">
-              <label>From <TimeSelect24 v-model="d.from" class="rq__input rq__input--time" /></label>
-              <label>Until <TimeSelect24 v-model="d.until" class="rq__input rq__input--time" /></label>
+          <template v-for="g in dayPickMonths" :key="g.label">
+            <p class="rq__month">{{ g.label }}</p>
+            <div v-for="d in g.picks" :key="d.shift.dateIso + d.shift.seatId" class="rq__day">
+              <label class="rq__day-main">
+                <input v-model="d.checked" type="checkbox" />
+                <span>
+                  {{ new Date(d.shift.dateIso + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) }}
+                  <span class="rq__muted">· {{ d.shift.unitCode }} {{ d.shift.seatLabel }} · 0600 – 0600</span>
+                </span>
+              </label>
+              <button
+                v-if="d.checked"
+                type="button"
+                class="rq__minor"
+                @click="d.editing = !d.editing"
+              >
+                {{ d.editing ? 'Full shift' : 'Edit time' }}
+              </button>
+              <div v-if="d.checked && d.editing" class="rq__times">
+                <label>From <TimeSelect24 v-model="d.from" class="rq__input rq__input--time" /></label>
+                <label>Until <TimeSelect24 v-model="d.until" class="rq__input rq__input--time" /></label>
+              </div>
             </div>
-          </div>
+          </template>
           </template>
         </template>
 
@@ -1448,6 +1466,18 @@ async function cancel(r: SchedRequest) {
 
 .rq__input--time {
   width: 110px;
+}
+
+.rq__month {
+  margin: 0.85rem 0 0.15rem;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+}
+.rq__month:first-of-type {
+  margin-top: 0.25rem;
 }
 
 .rq__day {
