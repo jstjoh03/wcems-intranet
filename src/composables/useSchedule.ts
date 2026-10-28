@@ -911,7 +911,7 @@ export const HIGHLIGHT_SWATCHES: { value: string | null; label: string }[] = [
 
 export const INTERNAL_CREDENTIALS = [
   'Chief', 'Assistant Chief', 'CDO', 'Supervisor',
-  'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'P4', 'EMT-FTO', 'AEMT-FTO', 'P2-FTO', 'P3-FTO',
+  'EC', 'EMT', 'AEMT', 'P1C', 'P1', 'P2', 'P3', 'P4', 'EMT-FTO', 'AEMT-FTO', 'P2-FTO', 'P3-FTO',
 ] as const
 
 /** Command staff + P4 hold any seat (Justin, 2026-09-17). */
@@ -937,12 +937,20 @@ export const AEMT_PLUS_CREDENTIALS: readonly string[] = [
  *  instead of the old hard block. AEMT/EMT still cannot self-request
  *  p2 seats. The M231 exception (any level when the other seat holds
  *  an AEMT-or-higher) lives in canFillSeat, not in this map. */
+/** EMT candidates (EC — in field training, Justin 2026-10-28) are
+ *  schedulable by admins but never self-serve: no pickups or trade
+ *  claims until they finish FTEP and become EMT. A Members-tab
+ *  "Qualified" override can open a seat for one person if needed. */
+const SELF_SERVICE_CREDENTIALS: readonly string[] = INTERNAL_CREDENTIALS.filter(
+  (c) => c !== 'EC',
+)
+
 export const QUAL_RULE_CREDENTIALS: Record<string, readonly string[]> = {
   p2: ['P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
   aemt_or_higher: [...AEMT_PLUS_CREDENTIALS],
   supervisor: [...ANY_SEAT_CREDENTIALS],
-  any_field: [...INTERNAL_CREDENTIALS],
-  any: [...INTERNAL_CREDENTIALS],
+  any_field: [...SELF_SERVICE_CREDENTIALS],
+  any: [...SELF_SERVICE_CREDENTIALS],
 }
 
 /**
@@ -997,8 +1005,9 @@ async function canFillSeat(
   /* M231 rule (Chief, 2026-10-01): the AIC seat may be covered by ANY
      level when the unit's other seat has an AEMT-or-higher aboard for
      the whole requested window — the truck still meets the AEMT/EMT
-     crew minimum (1.51). */
-  if (seat.qualRule === 'aemt_or_higher' && unit && ctx?.dateIso) {
+     crew minimum (1.51). EMT candidates don't get the exception: no
+     self-service until they finish field training (Justin, 10/28). */
+  if (seat.qualRule === 'aemt_or_higher' && cred !== 'EC' && unit && ctx?.dateIso) {
     const win = ctxWindowMs(ctx, unit)
     const cover = await unitAemtPlusCoverage(ctx.dateIso, unit.id, seat.id)
     if (!cover.error && windowCovered(cover.segs, win.start, win.end)) {
