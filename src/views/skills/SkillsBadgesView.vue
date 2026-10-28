@@ -25,6 +25,20 @@ const people = computed(() => (day.value ? candidatesForDay(day.value.id) : []))
    the holder's nominal size so the cut card slides in). */
 const SIZES = [
   {
+    key: 'cr80v',
+    label: 'Card vertical',
+    sub: 'Badgy / CR80 portrait',
+    vars: { '--bw': '2.1in', '--bh': '3.33in', '--bq': '1.6in', '--bname': '11pt' },
+    compact: true,
+  },
+  {
+    key: 'cr80',
+    label: 'Card horizontal',
+    sub: 'CR80 landscape',
+    vars: { '--bw': '3.3in', '--bh': '2.05in', '--bq': '1.15in', '--bname': '11pt' },
+    compact: true,
+  },
+  {
     key: 'h43',
     label: '4 × 3 in',
     sub: 'horizontal holder',
@@ -38,19 +52,13 @@ const SIZES = [
     vars: { '--bw': '2.85in', '--bh': '3.9in', '--bq': '1.9in', '--bname': '14pt' },
     compact: false,
   },
-  {
-    key: 'cr80',
-    label: 'Card size',
-    sub: 'CR80 / credit card',
-    vars: { '--bw': '3.3in', '--bh': '2.05in', '--bq': '1.15in', '--bname': '11pt' },
-    compact: true,
-  },
 ] as const
 
-const sizeKey = ref<string>('h43')
+const sizeKey = ref<string>('cr80v')
 onMounted(() => {
   try {
-    const saved = localStorage.getItem('wcems-badge-size')
+    /* v2 key so the Badgy-card default takes over earlier saved picks */
+    const saved = localStorage.getItem('wcems-badge-size-v2')
     if (saved && SIZES.some((s) => s.key === saved)) sizeKey.value = saved
   } catch {
     /* ignore */
@@ -59,7 +67,7 @@ onMounted(() => {
 function pickSize(key: string) {
   sizeKey.value = key
   try {
-    localStorage.setItem('wcems-badge-size', key)
+    localStorage.setItem('wcems-badge-size-v2', key)
   } catch {
     /* ignore */
   }
