@@ -31,6 +31,7 @@ interface CheckoffRow {
   sections: SkillsCheckoffSection[]
   sort: number
   active: boolean
+  equipment: string[] | null
 }
 
 interface EvaluationRow {
@@ -68,6 +69,7 @@ function checkoffFromRow(r: CheckoffRow): SkillsCheckoff {
     sections: r.sections ?? [],
     sort: r.sort,
     active: r.active,
+    equipment: r.equipment ?? null,
   }
 }
 
@@ -124,6 +126,7 @@ async function load() {
         note: 'Scenario covers the core airway sequence; bench demos after.',
         sort: 1,
         active: true,
+        equipment: ['Airway manikin', 'BVM + masks', 'Suction unit'],
         sections: [
           {
             title: 'Scenario core',
@@ -150,6 +153,7 @@ async function load() {
         note: 'Relay circuit. Automatic remediation triggers: failure to recognize a life threat · improper tourniquet placement · loss of spinal precautions.',
         sort: 3,
         active: true,
+        equipment: null,
         sections: [
           {
             title: 'Relay circuit',
@@ -516,6 +520,7 @@ export function useSkillsDay() {
     sort: number
     active: boolean
     sections: SkillsCheckoffSection[]
+    equipment: string[] | null
   }): Promise<{ ok: boolean; error?: string }> {
     if (auth.usingDevStub) {
       const id = input.id ?? `dev-co-${Date.now()}`
@@ -528,6 +533,7 @@ export function useSkillsDay() {
         sections: input.sections,
         sort: input.sort,
         active: input.active,
+        equipment: input.equipment,
       }
       allCheckoffs.value = [...allCheckoffs.value.filter((c) => c.id !== id), next].sort(
         (a, b) => a.sort - b.sort || a.title.localeCompare(b.title),
@@ -544,6 +550,7 @@ export function useSkillsDay() {
           sort: input.sort,
           active: input.active,
           sections: input.sections,
+          equipment: input.equipment,
         })
         .eq('id', input.id)
         .select('*')
@@ -565,6 +572,7 @@ export function useSkillsDay() {
         sort: input.sort,
         active: input.active,
         sections: input.sections,
+        equipment: input.equipment,
       })
       .select('*')
       .single()

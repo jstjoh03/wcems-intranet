@@ -226,6 +226,9 @@ const myEvaluations = computed(() =>
       >
         QR badges
       </RouterLink>
+      <RouterLink to="/skills/station-setup" class="sd__day-chip sd__day-chip--link">
+        Station setup
+      </RouterLink>
     </div>
 
     <div v-if="!ready" class="sd__empty">Loading…</div>

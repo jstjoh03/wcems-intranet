@@ -167,7 +167,14 @@ function fmtDate(onDate: string): string {
     grid-template-columns: 1fr;
   }
 }
+/* Print: standard 4in × 3in badge-holder inserts — cards come out at
+   exactly 3.9in × 2.85in so they slide into the holder after cutting
+   on the card border. Two across, three down per letter page. */
 @media print {
+  @page {
+    size: letter;
+    margin: 0.2in;
+  }
   .bdg {
     max-width: none;
     padding: 0;
@@ -176,12 +183,35 @@ function fmtDate(onDate: string): string {
     display: none;
   }
   .bdg__sheet {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10mm;
+    grid-template-columns: repeat(2, 3.9in);
+    justify-content: center;
+    gap: 0.12in 0.15in;
   }
   .bdg__card {
+    width: 3.9in;
+    height: 2.85in;
+    padding: 0.12in;
+    gap: 0.05in;
     border-width: 1px;
+    border-radius: 10px;
     page-break-inside: avoid;
+    justify-content: center;
+  }
+  .bdg__qr {
+    width: 1.55in;
+    height: 1.55in;
+  }
+  .bdg__name {
+    font-size: 15pt;
+  }
+  .bdg__org {
+    font-size: 8pt;
+  }
+  .bdg__day {
+    font-size: 8pt;
+  }
+  .bdg__hint {
+    font-size: 6.5pt;
   }
 }
 </style>

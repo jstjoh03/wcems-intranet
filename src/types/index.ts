@@ -196,6 +196,9 @@ export interface SkillsCheckoff {
   sections: SkillsCheckoffSection[]
   sort: number
   active: boolean
+  /* Station setup pull list (one line per item), admin-edited in Setup;
+     rendered on /skills/station-setup. Null/empty = no list. */
+  equipment: string[] | null
 }
 
 /* A scheduled Skills Day session: which stations run on which date,

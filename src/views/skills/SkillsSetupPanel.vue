@@ -240,6 +240,7 @@ interface StationDraft {
   sort: number
   active: boolean
   sections: SkillsCheckoffSection[]
+  equipmentText: string
 }
 const stationDraft = ref<StationDraft | null>(null)
 const stationSaving = ref(false)
@@ -264,6 +265,7 @@ function newStation() {
     sort: (allCheckoffs.value[allCheckoffs.value.length - 1]?.sort ?? 0) + 1,
     active: true,
     sections: [{ title: 'Check-off items', items: [] }],
+    equipmentText: '',
   }
 }
 
@@ -284,6 +286,7 @@ function editStation(checkoffId: string) {
       note: s.note,
       items: s.items.map((it) => ({ key: it.key, label: it.label })),
     })),
+    equipmentText: (c.equipment ?? []).join('\n'),
   }
 }
 
@@ -364,6 +367,10 @@ async function onSaveStation() {
     return
   }
   stationSaving.value = true
+  const equipment = stationDraft.value.equipmentText
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
   const res = await saveCheckoff({
     id: stationDraft.value.id,
     title: stationDraft.value.title.trim(),
@@ -372,6 +379,7 @@ async function onSaveStation() {
     sort: stationDraft.value.sort,
     active: stationDraft.value.active,
     sections,
+    equipment: equipment.length ? equipment : null,
   })
   stationSaving.value = false
   if (!res.ok) {
@@ -641,6 +649,15 @@ void loadPeople()
             class="sx__input sx__textarea"
             rows="3"
             placeholder="Shown to the evaluator at the top of the check-off. Keep the phrase “Automatic remediation triggers:” to render the amber callout."
+          ></textarea>
+        </label>
+        <label class="sx__field">
+          <span class="sx__label">Station setup equipment (one item per line)</span>
+          <textarea
+            v-model="stationDraft.equipmentText"
+            class="sx__input sx__textarea"
+            rows="5"
+            placeholder="Shown on the Station setup checklist — e.g. LP15 ×2 (one with modem), electrodes in bulk, therapy pads ×4"
           ></textarea>
         </label>
         <label class="sx__check">
