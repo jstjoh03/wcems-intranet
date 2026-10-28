@@ -40,11 +40,11 @@ const moduleApp = computed(() => schedApp.value || clinicalApp.value)
     <!-- Desktop chrome (portal mockup v2): utility bar + masthead + nav.
          Mobile keeps the compact topbar + drawer — crews are phone-first,
          the professional-website reading is for desktop. -->
-    <div v-if="!moduleApp" class="hidden lg:block">
+    <div v-if="!moduleApp" class="hidden lg:block app-chrome">
       <UtilityBar />
       <PortalMasthead />
     </div>
-    <div class="lg:hidden">
+    <div class="lg:hidden app-chrome">
       <AppTopBar @open-menu="navOpen = true" />
     </div>
 
@@ -52,16 +52,16 @@ const moduleApp = computed(() => schedApp.value || clinicalApp.value)
       <slot />
     </main>
 
-    <div class="hidden lg:block">
+    <div class="hidden lg:block app-chrome">
       <PortalFooter />
     </div>
-    <div class="lg:hidden">
+    <div class="lg:hidden app-chrome">
       <AppFooter />
     </div>
 
     <!-- Floating quick-links dock — mobile only; desktop reaches the
          same catalog via the utility bar + Systems menu -->
-    <div class="lg:hidden">
+    <div class="lg:hidden app-chrome">
       <QuickLinksDock />
     </div>
 

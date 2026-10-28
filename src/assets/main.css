@@ -316,3 +316,14 @@
 .page-leave-to {
   opacity: 0;
 }
+
+/* Printing any portal page prints its CONTENT: the shell chrome
+   (masthead/topbar, footers, quick-links dock) stays on screen only.
+   Same philosophy as the assistant-FAB print fix — fixed/sticky shell
+   elements otherwise stamp themselves onto every printed page
+   (badge sheets, station checklists, schedules). */
+@media print {
+  .app-chrome {
+    display: none !important;
+  }
+}
