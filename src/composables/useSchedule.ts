@@ -937,20 +937,16 @@ export const AEMT_PLUS_CREDENTIALS: readonly string[] = [
  *  instead of the old hard block. AEMT/EMT still cannot self-request
  *  p2 seats. The M231 exception (any level when the other seat holds
  *  an AEMT-or-higher) lives in canFillSeat, not in this map. */
-/** EMT candidates (EC — in field training, Justin 2026-10-28) are
- *  schedulable by admins but never self-serve: no pickups or trade
- *  claims until they finish FTEP and become EMT. A Members-tab
- *  "Qualified" override can open a seat for one person if needed. */
-const SELF_SERVICE_CREDENTIALS: readonly string[] = INTERNAL_CREDENTIALS.filter(
-  (c) => c !== 'EC',
-)
-
+/** EMT candidates (EC — in field training) may request Attendant
+ *  seats like anyone else (Justin, 2026-10-29) but never an in-charge
+ *  seat: EC stays out of p2/aemt_or_higher/supervisor and out of the
+ *  M231 any-level exception until the pipeline releases them to EMT. */
 export const QUAL_RULE_CREDENTIALS: Record<string, readonly string[]> = {
   p2: ['P1C', 'P1', 'P2', 'P3', 'P2-FTO', 'P3-FTO', ...ANY_SEAT_CREDENTIALS],
   aemt_or_higher: [...AEMT_PLUS_CREDENTIALS],
   supervisor: [...ANY_SEAT_CREDENTIALS],
-  any_field: [...SELF_SERVICE_CREDENTIALS],
-  any: [...SELF_SERVICE_CREDENTIALS],
+  any_field: [...INTERNAL_CREDENTIALS],
+  any: [...INTERNAL_CREDENTIALS],
 }
 
 /**
@@ -1005,8 +1001,8 @@ async function canFillSeat(
   /* M231 rule (Chief, 2026-10-01): the AIC seat may be covered by ANY
      level when the unit's other seat has an AEMT-or-higher aboard for
      the whole requested window — the truck still meets the AEMT/EMT
-     crew minimum (1.51). EMT candidates don't get the exception: no
-     self-service until they finish field training (Justin, 10/28). */
+     crew minimum (1.51). EMT candidates don't get the exception —
+     attendant spots only until they finish field training (10/29). */
   if (seat.qualRule === 'aemt_or_higher' && cred !== 'EC' && unit && ctx?.dateIso) {
     const win = ctxWindowMs(ctx, unit)
     const cover = await unitAemtPlusCoverage(ctx.dateIso, unit.id, seat.id)
