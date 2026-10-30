@@ -58,6 +58,10 @@ export interface SchedSeat {
   qualRule: string
   sortOrder: number
   active: boolean
+  /** Extra seat (3rd rider for a new-hire stretch, a student seat…):
+   *  staffs like any rotation seat when assigned, but while EMPTY it
+   *  derives no open shifts — nothing to fill, no open-seat noise. */
+  extra: boolean
 }
 
 export interface RotationAssignment {
@@ -712,6 +716,7 @@ async function loadCore(): Promise<void> {
     qualRule: r.qual_rule,
     sortOrder: r.sort_order,
     active: r.active,
+    extra: !!r.extra,
   }))
   rotation.value = (rRes.data ?? []).map((r) => ({
     id: r.id,
@@ -812,13 +817,15 @@ function seedDevStub(): void {
   const out: SchedSeat[] = []
   for (const u of units.value) {
     if (u.code.startsWith('S')) {
-      out.push({ id: `dev-s-${u.code}-0`, unitId: u.id, label: 'Supervisor', qualRule: 'supervisor', sortOrder: 0, active: true })
+      out.push({ id: `dev-s-${u.code}-0`, unitId: u.id, label: 'Supervisor', qualRule: 'supervisor', sortOrder: 0, active: true, extra: false })
     } else {
       const lead = u.code === 'M231' ? 'AIC / Medic' : 'Paramedic'
-      out.push({ id: `dev-s-${u.code}-0`, unitId: u.id, label: lead, qualRule: u.code === 'M231' ? 'aemt_or_higher' : 'p2', sortOrder: 0, active: true })
-      out.push({ id: `dev-s-${u.code}-1`, unitId: u.id, label: 'Attendant', qualRule: 'any_field', sortOrder: 1, active: true })
+      out.push({ id: `dev-s-${u.code}-0`, unitId: u.id, label: lead, qualRule: u.code === 'M231' ? 'aemt_or_higher' : 'p2', sortOrder: 0, active: true, extra: false })
+      out.push({ id: `dev-s-${u.code}-1`, unitId: u.id, label: 'Attendant', qualRule: 'any_field', sortOrder: 1, active: true, extra: false })
     }
   }
+  // one extra seat for preview — empty, so it must derive NO open rows
+  out.push({ id: 'dev-s-M271-2', unitId: 'dev-u-M271', label: '3rd Rider', qualRule: 'any_field', sortOrder: 2, active: true, extra: true })
   seats.value = out
   people.value = [
     { id: 'dev-p-1', fullName: 'Sample Paramedic', shift: 'A', role: 'crew', credential: 'P2', credentialAuto: 'P2', credentialSource: 'pipeline', title: 'Paramedic', email: 'sample@wallercountyems.com', phone: '(555) 555-0101', paycomCode: 'A00X', employmentType: 'full_time', active: true },
@@ -1507,17 +1514,20 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
       } else {
         const occupant = rotationOccupant(seat.id, unitPlatoon, dateIso)
         const uw = unitDayWindow(unit, dateIso)
-        raw = [
-          {
-            entryId: null,
-            userId: occupant,
-            s: tsMs(uw.startTs),
-            e: tsMs(uw.endTs),
-            kind: 'rotation',
-            open: occupant === null,
-            isRotation: occupant !== null,
-          },
-        ]
+        /* an EMPTY extra seat is nothing to fill — no row, no open */
+        raw = occupant === null && seat.extra
+          ? []
+          : [
+              {
+                entryId: null,
+                userId: occupant,
+                s: tsMs(uw.startTs),
+                e: tsMs(uw.endTs),
+                kind: 'rotation',
+                open: occupant === null,
+                isRotation: occupant !== null,
+              },
+            ]
       }
       /* carve each occupied window against the occupant's time off:
          the overlap renders as an OPEN row (claimable like any other
@@ -1547,8 +1557,11 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
           pieces = next
         }
         for (const p of pieces) carved.push({ ...r, s: p.s, e: p.e })
-        for (const o of opens)
-          carved.push({ entryId: null, userId: null, s: o.s, e: o.e, kind: 'rotation', open: true, isRotation: false })
+        /* extra seats: the occupant's off window just vanishes — an
+           optional seat never demands backfill */
+        if (!seat.extra)
+          for (const o of opens)
+            carved.push({ entryId: null, userId: null, s: o.s, e: o.e, kind: 'rotation', open: true, isRotation: false })
       }
       carved.sort((a, b) => a.s - b.s)
       /* BLOCKED overlay (Rhonda, 2026-09-28): a 'blocked' entry paints
@@ -5697,6 +5710,65 @@ async function addUnit(opts: {
   return null
 }
 
+/** Add an EXTRA seat to a unit's permanent rotation — a 3rd rider for
+ *  a new-hire stretch, a student seat, a second supervisor. It shows in
+ *  the rotation template like any seat (assign per platoon with
+ *  effective dates) but derives no open shifts while empty. */
+async function addExtraSeat(unitId: string, label: string, qualRule: string): Promise<string | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return 'Not available in the dev preview.'
+  const name = label.trim()
+  if (!name) return 'Give the seat a label.'
+  if (!(qualRule in QUAL_RULE_CREDENTIALS)) return 'Pick a seat qualification.'
+  const unit = units.value.find((u) => u.id === unitId)
+  if (!unit) return 'Unit not found.'
+  const maxOrder = Math.max(0, ...seats.value.filter((s) => s.unitId === unitId).map((s) => s.sortOrder))
+  const res = await supabase.from('sched_seats').insert({
+    unit_id: unitId,
+    label: name,
+    qual_rule: qualRule,
+    sort_order: maxOrder + 1,
+    extra: true,
+  })
+  if (res.error) return res.error.message
+  audit('seat.add', `Added extra seat "${name}" to ${unit.code}`, { entity: 'seat' })
+  await loadCore()
+  await reloadRangeIfLoaded()
+  return null
+}
+
+/** Remove an extra seat. A seat with schedule entries on the books is
+ *  deactivated so history stays intact; a clean one is deleted. Its
+ *  rotation assignments go either way. Core (non-extra) seats are
+ *  refused — they define the unit. */
+async function removeExtraSeat(seatId: string): Promise<string | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return 'Not available in the dev preview.'
+  const seat = seats.value.find((s) => s.id === seatId)
+  if (!seat) return 'Seat not found.'
+  if (!seat.extra) return 'Only extra seats can be removed — core seats define the unit.'
+  const unitCode = units.value.find((u) => u.id === seat.unitId)?.code ?? '?'
+  const c = await supabase
+    .from('sched_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('seat_id', seatId)
+  if (c.error) return c.error.message
+  const dr = await supabase.from('sched_rotation_assignments').delete().eq('seat_id', seatId)
+  if (dr.error) return dr.error.message
+  if ((c.count ?? 0) > 0) {
+    const up = await supabase.from('sched_seats').update({ active: false }).eq('id', seatId)
+    if (up.error) return up.error.message
+    audit('seat.remove', `Retired extra seat "${seat.label}" on ${unitCode} (history kept)`, { entity: 'seat', entityId: seatId })
+  } else {
+    const del = await supabase.from('sched_seats').delete().eq('id', seatId)
+    if (del.error) return del.error.message
+    audit('seat.remove', `Deleted extra seat "${seat.label}" on ${unitCode}`, { entity: 'seat', entityId: seatId })
+  }
+  await loadCore()
+  await reloadRangeIfLoaded()
+  return null
+}
+
 /** Show/hide a unit everywhere. Deactivating keeps every bit of its
  *  history in the database — boards, pickers, and counts just stop
  *  walking it; reactivate to bring it back exactly as it was. */
@@ -6672,6 +6744,8 @@ export function useSchedule() {
     dayOverlaps,
     removeRotationAssignment,
     addUnit,
+    addExtraSeat,
+    removeExtraSeat,
     saveUnitOrder,
     saveUnitRotation,
     setUnitActive,

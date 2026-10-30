@@ -1,0 +1,14 @@
+-- Extra rotation seats (2026-10-30, applied live).
+-- Justin: "I need to be able to add/remove extra seats to the permanent
+-- rotation in the schedule setup. For example we will have some new
+-- hires riding as 3rd for an extended period."
+--
+-- sched_seats.extra marks a seat that staffs like any rotation seat
+-- when someone is assigned (platoon template, effective dates, trades,
+-- My Schedule) but NEVER derives an open shift while empty — an
+-- unfilled 3rd-rider seat is nothing to fill, so it posts no opens,
+-- and its occupant's time off simply vanishes instead of carving an
+-- open piece. Explicit entry-level opens (a posted giveaway) still
+-- render. Added/removed in Setup → rotation template; removing a seat
+-- with schedule history deactivates it instead (history stays).
+alter table sched_seats add column if not exists extra boolean not null default false;

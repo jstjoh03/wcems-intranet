@@ -255,6 +255,51 @@ const QUAL_LABELS: Record<string, string> = {
   any: 'any',
 }
 
+// ── extra seats (3rd riders, students — Justin 2026-10-30) ──────────
+const EXTRA_QUAL_OPTIONS = [
+  { value: 'any_field', label: 'Attendant (any field cert)' },
+  { value: 'aemt_or_higher', label: 'AIC / Medic (AEMT or higher)' },
+  { value: 'p2', label: 'Paramedic (P2)' },
+  { value: 'supervisor', label: 'Supervisor' },
+]
+const addingSeatUnit = ref<string | null>(null)
+const nsLabel = ref('3rd Rider')
+const nsQual = ref('any_field')
+const nsBusy = ref(false)
+const nsErr = ref<string | null>(null)
+const seatRemoveArm = ref<string | null>(null)
+
+function startAddSeat(unitId: string) {
+  addingSeatUnit.value = unitId
+  nsLabel.value = '3rd Rider'
+  nsQual.value = 'any_field'
+  nsErr.value = null
+  seatRemoveArm.value = null
+}
+
+async function saveNewSeat() {
+  if (!addingSeatUnit.value || nsBusy.value) return
+  nsBusy.value = true
+  nsErr.value = null
+  const e = await sched.addExtraSeat(addingSeatUnit.value, nsLabel.value, nsQual.value)
+  nsBusy.value = false
+  if (e) {
+    nsErr.value = e
+    return
+  }
+  addingSeatUnit.value = null
+}
+
+async function removeSeat(seatId: string) {
+  if (seatRemoveArm.value !== seatId) {
+    seatRemoveArm.value = seatId
+    return
+  }
+  seatRemoveArm.value = null
+  const e = await sched.removeExtraSeat(seatId)
+  if (e) err.value = e
+}
+
 /* Grouped by unit with a full-width band row per unit — per-person
    zebra wasn't enough to find a truck when shuffling assignments
    (Justin, day-2). */
@@ -968,7 +1013,17 @@ async function saveWarnCfg() {
                 <tr v-for="seat in g.seats" :key="seat.id">
                   <td class="setup__seatcell">
                     <span class="setup__seatlabel">{{ seat.label }}</span>
+                    <span v-if="seat.extra" class="setup__extrachip" title="Extra seat — posts no open shifts while empty">extra</span>
                     <span class="setup__qual">qual: {{ QUAL_LABELS[seat.qualRule] ?? seat.qualRule }}</span>
+                    <button
+                      v-if="seat.extra"
+                      class="setup__seatx"
+                      :class="{ 'setup__seatx--armed': seatRemoveArm === seat.id }"
+                      :title="seatRemoveArm === seat.id ? 'Click again to remove this seat' : 'Remove this extra seat'"
+                      @click="removeSeat(seat.id)"
+                    >
+                      {{ seatRemoveArm === seat.id ? 'Really remove?' : 'Remove seat' }}
+                    </button>
                   </td>
                   <td v-for="p in PLATOONS" :key="p" class="setup__cell" :data-platoon="p">
                     <template v-if="editing && editing.seatId === seat.id && editing.platoon === p">
@@ -1047,6 +1102,7 @@ async function saveWarnCfg() {
                         @click="startEdit(seat.id, p)"
                       >
                         <span v-if="occupantName(seat.id, p)" class="setup__cellname">{{ occupantName(seat.id, p) }}</span>
+                        <span v-else-if="seat.extra" class="setup__open setup__open--extra">Empty — assign</span>
                         <span v-else class="setup__open">Open — assign</span>
                         <svg class="setup__editglyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
                         <span
@@ -1061,6 +1117,33 @@ async function saveWarnCfg() {
                     </template>
                   </td>
                 </tr>
+                <tr class="setup__addseatrow">
+                  <td colspan="4">
+                    <template v-if="addingSeatUnit === g.unit.id">
+                      <div class="setup__addseatform">
+                        <input
+                          v-model="nsLabel"
+                          type="text"
+                          class="setup__pickinput setup__addseatlabel"
+                          placeholder="Seat label — e.g. 3rd Rider"
+                          @keydown.enter.prevent="saveNewSeat"
+                          @keydown.esc.prevent="addingSeatUnit = null"
+                        />
+                        <select v-model="nsQual" class="setup__addseatqual">
+                          <option v-for="o in EXTRA_QUAL_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+                        </select>
+                        <button class="setup__btn setup__btn--primary" :disabled="nsBusy" @click="saveNewSeat">
+                          {{ nsBusy ? 'Adding…' : 'Add seat' }}
+                        </button>
+                        <button class="setup__btn" :disabled="nsBusy" @click="addingSeatUnit = null">Cancel</button>
+                      </div>
+                      <p v-if="nsErr" class="setup__cellerr">{{ nsErr }}</p>
+                    </template>
+                    <button v-else class="setup__addseatbtn" @click="startAddSeat(g.unit.id)">
+                      + Extra seat
+                    </button>
+                  </td>
+                </tr>
                 </template>
               </tbody>
             </table>
@@ -1071,6 +1154,9 @@ async function saveWarnCfg() {
             <strong>effective date</strong> (earlier days keep the previous assignment; a vacancy
             posts as open seats automatically). Clear the box to leave the seat open. Seat
             qualifications enforce from the clinical pipeline.
+            <strong>Extra seats</strong> (3rd rider for a new-hire stretch, a student seat) staff
+            like any seat but post <strong>no open shifts while empty</strong> — add one with
+            “+ Extra seat”, assign it per shift, and remove it when the stretch ends.
           </p>
         </section>
 
@@ -1979,6 +2065,86 @@ tr.setup__unitband td {
 .setup__qual {
   display: block;
   font-size: 0.68rem;
+  color: var(--color-muted);
+}
+
+.setup__extrachip {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: oklch(0.5 0.1 86.8);
+  background: oklch(0.97 0.04 86.8);
+  border: 1px solid oklch(0.88 0.08 86.8);
+  border-radius: 999px;
+  vertical-align: 0.1em;
+}
+
+.setup__seatx {
+  display: block;
+  margin-top: 0.15rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 0.68rem;
+  color: var(--color-muted);
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.setup__seatx:hover,
+.setup__seatx--armed {
+  color: var(--color-danger-500);
+  font-weight: 600;
+}
+
+.setup__addseatrow td {
+  padding: 0.25rem 0.9rem 0.55rem;
+}
+
+.setup__addseatbtn {
+  font: inherit;
+  font-size: 0.74rem;
+  color: var(--color-muted);
+  background: transparent;
+  border: 1px dashed var(--color-line);
+  border-radius: 8px;
+  padding: 0.2rem 0.6rem;
+  cursor: pointer;
+}
+
+.setup__addseatbtn:hover {
+  color: var(--color-ink);
+  border-color: var(--color-muted);
+}
+
+.setup__addseatform {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.setup__addseatlabel {
+  flex: 0 1 15rem;
+}
+
+.setup__addseatqual {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.35rem;
+  border: 1px solid var(--color-line);
+  border-radius: 7px;
+  background: var(--color-surface, #fff);
+}
+
+/* doubled class: .setup__open is declared later and would win the tie —
+   an EMPTY extra seat reads muted, not alarm-red */
+.setup__open.setup__open--extra {
   color: var(--color-muted);
 }
 
