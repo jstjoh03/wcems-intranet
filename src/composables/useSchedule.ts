@@ -1256,16 +1256,40 @@ function mapEntry(r: Record<string, unknown>): SchedEntry {
 async function loadRequests(): Promise<void> {
   const auth = useAuthStore()
   if (auth.usingDevStub) return
-  const res = await supabase
-    .from('sched_requests')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(400)
-  if (res.error) {
-    loadError.value = res.error.message
+  /* Two passes (2026-11-02): recent history for the lists PLUS every
+     unresolved request regardless of age. The old single newest-400
+     window silently dropped undecided rows once 400 newer requests
+     existed — a member still saw theirs as pending (RLS trims members
+     to their own rows, so their window never fills) while the admin
+     queue, loading everyone's, had long since pushed it out. 53
+     unresolved requests were invisible when this was found (J. White's
+     Sept-imported Nov 12–13 vacation among them). */
+  const [pend, recent] = await Promise.all([
+    supabase
+      .from('sched_requests')
+      .select('*')
+      .in('status', ['pending', 'partner_accepted'])
+      .order('created_at', { ascending: false })
+      .limit(1000),
+    supabase
+      .from('sched_requests')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(400),
+  ])
+  if (pend.error || recent.error) {
+    loadError.value = (pend.error ?? recent.error)!.message
     return
   }
-  requests.value = (res.data ?? []).map((r) => ({
+  type ReqRow = NonNullable<typeof recent.data>[number]
+  const byId = new Map<string, ReqRow>()
+  for (const row of [...(recent.data ?? []), ...(pend.data ?? [])]) {
+    byId.set(row.id as string, row)
+  }
+  const merged = [...byId.values()].sort((a, b) =>
+    String(b.created_at).localeCompare(String(a.created_at)),
+  )
+  requests.value = merged.map((r) => ({
     id: r.id,
     type: r.type,
     status: r.status,
