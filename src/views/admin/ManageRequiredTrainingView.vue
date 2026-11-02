@@ -16,11 +16,23 @@ import {
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
-import { useRequiredTraining } from '@/composables/useRequiredTraining'
+import {
+  useRequiredTraining,
+  type RtQuizQuestionAdmin,
+} from '@/composables/useRequiredTraining'
 import type { EmploymentType, RequiredTraining, Role, ShiftLetter, VideoSource } from '@/types'
 
 const auth = useAuthStore()
-const { ready, trainings, completionsFor, saveTraining, deleteTraining } = useRequiredTraining()
+const {
+  ready,
+  trainings,
+  completionsFor,
+  saveTraining,
+  deleteTraining,
+  quizConfigFor,
+  loadQuizQuestions,
+  saveQuizQuestions,
+} = useRequiredTraining()
 
 interface Draft {
   id?: string
@@ -144,9 +156,46 @@ const draft = ref<Draft | null>(null)
 const saving = ref(false)
 const error = ref<string | null>(null)
 
+/* ── Knowledge-test editor state (saved alongside the module) ─────── */
+const quizPassPct = ref(80)
+const quizQuestions = ref<RtQuizQuestionAdmin[]>([])
+const quizLoading = ref(false)
+
+function addQuizQuestion() {
+  quizQuestions.value = [
+    ...quizQuestions.value,
+    {
+      id: null,
+      sort: (quizQuestions.value.length + 1) * 10,
+      prompt: '',
+      options: ['', ''],
+      correctIdx: 0,
+      active: true,
+    },
+  ]
+}
+
+function removeQuizQuestion(i: number) {
+  quizQuestions.value = quizQuestions.value.filter((_, x) => x !== i)
+}
+
+function addQuizOption(q: RtQuizQuestionAdmin) {
+  q.options = [...q.options, '']
+}
+
+function removeQuizOption(q: RtQuizQuestionAdmin, oi: number) {
+  if (q.options.length <= 2) return
+  q.options = q.options.filter((_, x) => x !== oi)
+  if (oi === q.correctIdx) q.correctIdx = 0
+  else if (oi < q.correctIdx) q.correctIdx = q.correctIdx - 1
+}
+
 function startCreate() {
   draft.value = blankDraft()
   error.value = null
+  quizPassPct.value = 80
+  quizQuestions.value = []
+  quizLoading.value = false
 }
 
 function startEdit(t: RequiredTraining) {
@@ -173,6 +222,14 @@ function startEdit(t: RequiredTraining) {
     active: t.active,
   }
   error.value = null
+  quizPassPct.value = quizConfigFor(t)?.passPct ?? 80
+  quizQuestions.value = []
+  quizLoading.value = true
+  void loadQuizQuestions(t.id).then((r) => {
+    if (draft.value?.id !== t.id) return
+    if (r.ok) quizQuestions.value = r.questions
+    quizLoading.value = false
+  })
 }
 
 /* ── Thumbnail upload (same bucket + caps as recording thumbnails) ── */
@@ -277,9 +334,33 @@ async function onSave() {
     thumbnailUrl: d.thumbnailUrl,
     active: d.active,
   })
-  saving.value = false
   if (!result.ok) {
+    saving.value = false
     error.value = result.error
+    return
+  }
+  /* Knowledge test rides along: blank prompts are dropped; what's left
+     must be fully formed. An empty list clears the module's test. */
+  const qs = quizQuestions.value
+    .map((q) => ({ ...q, prompt: q.prompt.trim(), options: q.options.map((o) => o.trim()) }))
+    .filter((q) => q.prompt.length > 0)
+  for (const [i, q] of qs.entries()) {
+    if (q.options.length < 2 || q.options.some((o) => o.length === 0)) {
+      saving.value = false
+      error.value = `Test question ${i + 1} needs at least two options with no blanks.`
+      return
+    }
+    if (q.correctIdx < 0 || q.correctIdx >= q.options.length) {
+      saving.value = false
+      error.value = `Pick the correct answer for test question ${i + 1}.`
+      return
+    }
+  }
+  const pct = Math.min(100, Math.max(1, Math.round(Number(quizPassPct.value) || 80)))
+  const qres = await saveQuizQuestions(result.id, pct, qs)
+  saving.value = false
+  if (!qres.ok) {
+    error.value = `Module saved, but the test did not: ${qres.error}`
     return
   }
   draft.value = null
@@ -548,6 +629,79 @@ const orderedTrainings = computed(() =>
               />
               <span class="mrt-form__hint">One bullet per line. Defaults provided.</span>
             </label>
+          </div>
+
+          <div class="mrt-form__row">
+            <div class="mrt-form__field">
+              <span class="mrt-form__label">Knowledge test (optional)</span>
+              <span class="mrt-form__hint">
+                Multiple-choice questions the employee must pass <strong>after the video</strong>
+                and <strong>before the attestation</strong>. Graded on the server — crew never
+                receive the answer key, and failed attempts show missed question numbers only.
+                Retakes are unlimited. No questions = no test.
+              </span>
+              <div v-if="quizLoading" class="mrt-form__hint">Loading questions…</div>
+              <template v-else>
+                <label class="mrt-quiz__pass">
+                  Pass mark
+                  <input
+                    v-model.number="quizPassPct"
+                    type="number"
+                    min="1"
+                    max="100"
+                    class="mrt-form__input mrt-quiz__passinput"
+                  />
+                  %
+                </label>
+                <div v-for="(q, qi) in quizQuestions" :key="qi" class="mrt-quiz__q">
+                  <div class="mrt-quiz__qhead">
+                    <span class="mrt-quiz__qno">Question {{ qi + 1 }}</span>
+                    <button type="button" class="mrt-quiz__x" @click="removeQuizQuestion(qi)">
+                      <X :size="12" :stroke-width="2" /> Remove
+                    </button>
+                  </div>
+                  <textarea
+                    v-model="q.prompt"
+                    rows="2"
+                    class="mrt-form__input"
+                    placeholder="Question prompt"
+                  />
+                  <div v-for="(_opt, oi) in q.options" :key="oi" class="mrt-quiz__opt">
+                    <input
+                      type="radio"
+                      :name="`mrt-correct-${qi}`"
+                      :checked="q.correctIdx === oi"
+                      title="Mark as the correct answer"
+                      @change="q.correctIdx = oi"
+                    />
+                    <input
+                      v-model="q.options[oi]"
+                      type="text"
+                      class="mrt-form__input"
+                      :placeholder="`Option ${oi + 1}`"
+                    />
+                    <button
+                      type="button"
+                      class="mrt-quiz__x"
+                      :disabled="q.options.length <= 2"
+                      aria-label="Remove option"
+                      @click="removeQuizOption(q, oi)"
+                    >
+                      <X :size="12" :stroke-width="2" />
+                    </button>
+                  </div>
+                  <button type="button" class="mrt-quiz__add" @click="addQuizOption(q)">
+                    + Add option
+                  </button>
+                </div>
+                <button type="button" class="mrt-quiz__add mrt-quiz__add--q" @click="addQuizQuestion">
+                  + Add question
+                </button>
+                <span v-if="quizQuestions.length" class="mrt-form__hint">
+                  The radio button marks the correct answer. Questions are asked in this order.
+                </span>
+              </template>
+            </div>
           </div>
 
           <div class="mrt-form__row">
@@ -894,6 +1048,89 @@ const orderedTrainings = computed(() =>
   border: 1px solid oklch(0.85 0.07 20);
   border-radius: 8px;
   padding: 9px 12px;
+}
+
+/* Knowledge-test editor */
+.mrt-quiz__pass {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.mrt-quiz__passinput {
+  width: 76px;
+}
+.mrt-quiz__q {
+  border: 1px dashed var(--color-line);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 10px 0 0;
+  display: grid;
+  gap: 8px;
+}
+.mrt-quiz__qhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mrt-quiz__qno {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-brand-700);
+}
+.mrt-quiz__opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mrt-quiz__opt input[type='radio'] {
+  flex: none;
+  accent-color: var(--color-brand-700);
+}
+.mrt-quiz__opt .mrt-form__input {
+  flex: 1;
+}
+.mrt-quiz__x {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: var(--color-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.mrt-quiz__x:hover:not(:disabled) {
+  color: var(--color-danger-500);
+}
+.mrt-quiz__x:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.mrt-quiz__add {
+  justify-self: start;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--color-muted);
+  background: transparent;
+  border: 1px dashed var(--color-line);
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.mrt-quiz__add:hover {
+  color: var(--color-ink);
+  border-color: var(--color-muted);
+}
+.mrt-quiz__add--q {
+  margin-top: 10px;
+  display: inline-block;
 }
 .mrt-form__actions {
   margin-top: 18px;

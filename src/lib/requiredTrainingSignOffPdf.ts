@@ -36,6 +36,9 @@ export interface SignOffEntry {
   completedAt: string | null
   signatureDataUrl: string | null
   markedByName: string | null
+  /** Knowledge-test score (0–100) when the module has one; null = no
+   *  test or not yet passed. Rendered under the completion date. */
+  quizScore?: number | null
 }
 
 export interface SignOffLabels {
@@ -239,12 +242,17 @@ export async function generateRequiredTrainingSignOffPdf(
       doc.text('—', COL_SIG_X + 2, y + 18)
     }
 
-    /* Date */
+    /* Date (+ knowledge-test score when the module has one) */
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(10)
     if (entry.completedAt) {
       doc.setTextColor(...SUCCESS)
       doc.text(formatDate(entry.completedAt), COL_DATE_X + 2, y + 18)
+      if (entry.quizScore != null) {
+        doc.setFontSize(8)
+        doc.setTextColor(...PALE)
+        doc.text(`Test ${entry.quizScore}%`, COL_DATE_X + 2, y + 28)
+      }
     } else {
       doc.setTextColor(...PALE)
       doc.text('—', COL_DATE_X + 2, y + 18)

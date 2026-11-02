@@ -6,7 +6,11 @@ import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { useAuthStore } from '@/stores/auth'
-import { useRequiredTraining } from '@/composables/useRequiredTraining'
+import {
+  useRequiredTraining,
+  type RtQuizQuestionPublic,
+  type RtQuizResult,
+} from '@/composables/useRequiredTraining'
 import { generateRequiredTrainingCertificate } from '@/lib/requiredTrainingCertificate'
 import type { RequiredTraining } from '@/types'
 
@@ -22,6 +26,9 @@ const {
   refreshCompletion,
   saveWatchProgress,
   submitAttestation,
+  quizConfigFor,
+  startQuiz,
+  submitQuizAnswers,
 } = useRequiredTraining()
 
 const trainingId = computed(() => String(route.params.id))
@@ -325,6 +332,54 @@ onBeforeUnmount(() => {
   flushProgress()
 })
 
+/* ── Knowledge test (video → test → attestation) ─────────────────── */
+const quizCfg = computed(() => quizConfigFor(training.value))
+const quizRequired = computed(() => quizCfg.value !== null)
+/* quiz_score is stamped by the grading RPC only on a PASS. */
+const quizPassed = computed(() => completionFor(trainingId.value)?.quizScore != null)
+const quizStage = ref<'idle' | 'loading' | 'active' | 'result'>('idle')
+const quizQuestions = ref<RtQuizQuestionPublic[]>([])
+const quizPassPct = ref(80)
+const quizPicks = ref<Record<string, number>>({})
+const quizResult = ref<RtQuizResult | null>(null)
+const quizSubmitting = ref(false)
+const quizError = ref<string | null>(null)
+const allAnswered = computed(
+  () =>
+    quizQuestions.value.length > 0 &&
+    quizQuestions.value.every((q) => quizPicks.value[q.id] !== undefined),
+)
+
+async function beginQuiz() {
+  quizError.value = null
+  quizStage.value = 'loading'
+  const res = await startQuiz(trainingId.value)
+  if (!res.ok) {
+    quizError.value = res.error
+    quizStage.value = 'idle'
+    return
+  }
+  quizQuestions.value = res.questions
+  quizPassPct.value = res.passPct
+  quizPicks.value = {}
+  quizResult.value = null
+  quizStage.value = 'active'
+}
+
+async function finishQuiz() {
+  if (!allAnswered.value || quizSubmitting.value) return
+  quizSubmitting.value = true
+  quizError.value = null
+  const res = await submitQuizAnswers(trainingId.value, quizPicks.value)
+  quizSubmitting.value = false
+  if (!res.ok) {
+    quizError.value = res.error
+    return
+  }
+  quizResult.value = res.result
+  quizStage.value = 'result'
+}
+
 /* ── Attestation + submit ────────────────────────────────────────── */
 const signatureData = ref<string>('')
 const submitting = ref(false)
@@ -360,6 +415,10 @@ async function onSubmit() {
     errorMsg.value = isExternal.value
       ? 'Open the course first — the attestation unlocks once you have.'
       : 'You must watch the full video before submitting.'
+    return
+  }
+  if (quizRequired.value && !quizPassed.value) {
+    errorMsg.value = 'Pass the knowledge test before signing the attestation.'
     return
   }
   if (!signatureData.value) {
@@ -534,7 +593,8 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
               <Check :size="12" :stroke-width="2.5" /> Video complete
             </template>
             <template v-else>
-              <Lock :size="12" :stroke-width="2" /> Attestation unlocks at the end
+              <Lock :size="12" :stroke-width="2" />
+              {{ quizRequired ? 'The test unlocks at the end' : 'Attestation unlocks at the end' }}
             </template>
           </span>
         </div>
@@ -585,15 +645,136 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
                 YouTube player &middot; If you scrub ahead, the player will snap back to your last watched point.
               </template>
               <template v-else>
-                Skipping ahead is disabled. The attestation form unlocks when you finish.
+                Skipping ahead is disabled.
+                {{ quizRequired ? 'The knowledge test unlocks when you finish.' : 'The attestation form unlocks when you finish.' }}
               </template>
             </p>
           </template>
         </div>
       </AppCard>
 
+      <!-- Knowledge test — unlocks when the video ends; the attestation
+           unlocks when it is passed. Graded server-side; retake freely. -->
+      <AppCard v-if="quizRequired && !alreadyComplete && !justSubmitted" class="rtd__quiz-card">
+        <div class="rtd__video-label">
+          <Eyebrow>Knowledge test</Eyebrow>
+          <span class="rtd__lock" :class="{ 'rtd__lock--unlocked': quizPassed }">
+            <template v-if="quizPassed">
+              <Check :size="12" :stroke-width="2.5" /> Passed
+              <template v-if="completionFor(trainingId)?.quizScore != null">
+                · {{ Math.round(Number(completionFor(trainingId)?.quizScore)) }}%
+              </template>
+            </template>
+            <template v-else-if="!videoComplete">
+              <Lock :size="12" :stroke-width="2" /> Unlocks when the video ends
+            </template>
+            <template v-else>
+              {{ quizCfg?.count ?? '' }} questions · pass mark {{ quizCfg?.passPct ?? 80 }}%
+            </template>
+          </span>
+        </div>
+
+        <template v-if="quizPassed && quizStage !== 'result'">
+          <p class="rtd__quiz-intro rtd__quiz-intro--done">
+            <Check :size="14" :stroke-width="2.5" />
+            Test passed — sign the attestation below to finish the module.
+          </p>
+        </template>
+
+        <template v-else-if="!videoComplete">
+          <p class="rtd__quiz-intro">
+            Watch the video to the end, then take a short test on what changed. You can retake it
+            as many times as you need.
+          </p>
+        </template>
+
+        <template v-else-if="quizStage === 'idle' || quizStage === 'loading'">
+          <p class="rtd__quiz-intro">
+            {{ quizCfg?.count ?? 'A few' }} multiple-choice questions on the video you just
+            watched. You need {{ quizCfg?.passPct ?? 80 }}% to pass, and you can retake it as many
+            times as you need.
+          </p>
+          <div v-if="quizError" class="rtd__error">{{ quizError }}</div>
+          <button
+            type="button"
+            class="rtd__btn rtd__btn--primary"
+            :disabled="quizStage === 'loading'"
+            @click="beginQuiz"
+          >
+            {{ quizStage === 'loading' ? 'Loading…' : 'Start the test' }}
+          </button>
+        </template>
+
+        <template v-else-if="quizStage === 'active'">
+          <ol class="rtd__quiz-list">
+            <li v-for="q in quizQuestions" :key="q.id" class="rtd__quiz-q">
+              <p class="rtd__quiz-prompt">{{ q.no }}. {{ q.prompt }}</p>
+              <label
+                v-for="(opt, oi) in q.options"
+                :key="oi"
+                class="rtd__quiz-opt"
+                :class="{ 'rtd__quiz-opt--picked': quizPicks[q.id] === oi }"
+              >
+                <input
+                  v-model.number="quizPicks[q.id]"
+                  type="radio"
+                  :name="`quiz-${q.id}`"
+                  :value="oi"
+                />
+                <span>{{ opt }}</span>
+              </label>
+            </li>
+          </ol>
+          <div v-if="quizError" class="rtd__error">{{ quizError }}</div>
+          <div class="rtd__att-actions">
+            <button
+              type="button"
+              class="rtd__btn rtd__btn--primary"
+              :disabled="!allAnswered || quizSubmitting"
+              @click="finishQuiz"
+            >
+              {{
+                quizSubmitting
+                  ? 'Grading…'
+                  : allAnswered
+                    ? 'Submit answers'
+                    : `Answer all ${quizQuestions.length} questions to submit`
+              }}
+            </button>
+          </div>
+        </template>
+
+        <template v-else-if="quizStage === 'result' && quizResult">
+          <div v-if="quizResult.passed" class="rtd__quiz-result rtd__quiz-result--pass">
+            <p class="rtd__quiz-score">
+              <Check :size="16" :stroke-width="2.5" />
+              Passed — {{ quizResult.score }}% ({{ quizResult.correct }} of
+              {{ quizResult.total }})
+            </p>
+            <p class="rtd__quiz-note">Sign the attestation below to finish the module.</p>
+          </div>
+          <div v-else class="rtd__quiz-result rtd__quiz-result--fail">
+            <p class="rtd__quiz-score">
+              {{ quizResult.score }}% ({{ quizResult.correct }} of {{ quizResult.total }}) — the
+              pass mark is {{ quizResult.passPct }}%.
+            </p>
+            <p class="rtd__quiz-note">
+              Missed question{{ quizResult.missed.length === 1 ? '' : 's' }}:
+              {{ quizResult.missed.join(', ') }}. Review the video and take it again — the
+              questions follow the order of the presentation.
+            </p>
+            <button type="button" class="rtd__btn rtd__btn--primary" @click="beginQuiz">
+              Retake the test
+            </button>
+          </div>
+        </template>
+      </AppCard>
+
       <!-- Attestation -->
-      <AppCard v-if="videoComplete && !alreadyComplete && !justSubmitted" class="rtd__att-card">
+      <AppCard
+        v-if="videoComplete && (!quizRequired || quizPassed) && !alreadyComplete && !justSubmitted"
+        class="rtd__att-card"
+      >
         <Eyebrow class="mb-3">Attestation of Completion</Eyebrow>
 
         <div class="rtd__att-user">
@@ -834,6 +1015,89 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
   font-size: 12px;
   color: var(--color-success-500);
   font-weight: 600;
+}
+
+/* Knowledge-test card */
+.rtd__quiz-card {
+  margin-top: 14px;
+  padding: 18px !important;
+}
+.rtd__quiz-intro {
+  margin: 10px 0 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-ink-soft);
+}
+.rtd__quiz-intro--done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-success-700, #1a7f4b);
+  font-weight: 600;
+}
+.rtd__quiz-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
+}
+.rtd__quiz-prompt {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+  color: var(--color-ink);
+}
+.rtd__quiz-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  margin: 0 0 6px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+.rtd__quiz-opt input {
+  margin-top: 2px;
+  flex: none;
+  accent-color: var(--color-brand-700);
+}
+.rtd__quiz-opt--picked {
+  border-color: var(--color-brand-400, var(--color-brand-700));
+  background: var(--color-brand-50);
+}
+.rtd__quiz-result {
+  margin-top: 10px;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.rtd__quiz-result--pass {
+  background: var(--color-success-50, #effaf3);
+  border: 1px solid var(--color-success-200, #bfe8cf);
+}
+.rtd__quiz-result--fail {
+  background: var(--color-warning-50, oklch(0.98 0.02 85));
+  border: 1px solid oklch(0.88 0.05 60);
+}
+.rtd__quiz-score {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-ink);
+}
+.rtd__quiz-note {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--color-ink-soft);
 }
 
 /* Attestation card */

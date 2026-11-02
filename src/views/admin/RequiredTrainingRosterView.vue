@@ -272,6 +272,7 @@ function downloadRosterCsv() {
       'Station',
       'Status',
       'Completed Date',
+      'Test Score',
       'Sign-off Method',
       'Marked By (Admin)',
       'Note',
@@ -309,6 +310,7 @@ function downloadRosterCsv() {
         csvEscape(r.user.station ?? ''),
         csvEscape(statusLabel),
         csvEscape(completedDate),
+        csvEscape(c?.quizScore != null ? `${Math.round(Number(c.quizScore))}%` : ''),
         csvEscape(signedMethod),
         csvEscape(markedByName),
         csvEscape(note),
@@ -356,6 +358,7 @@ async function downloadRosterPdf() {
         completedAt: c?.completedAt ?? null,
         signatureDataUrl: c?.signatureData ?? null,
         markedByName,
+        quizScore: c?.quizScore != null ? Math.round(Number(c.quizScore)) : null,
       }
     })
 

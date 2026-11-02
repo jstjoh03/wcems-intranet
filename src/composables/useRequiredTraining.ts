@@ -176,6 +176,43 @@ async function loadEventRosters(list: RequiredTraining[]): Promise<void> {
   eventRosters.value = next
 }
 
+/* ── Knowledge tests ──────────────────────────────────────────────────
+   Questions and the answer key live server-side (rt_quiz_questions is
+   admin-only under RLS); crew fetch numbered questions and submit
+   answers through SECURITY DEFINER RPCs that also enforce the video
+   gate. The module's `quiz` jsonb carries display metadata only:
+   { passPct, count }. */
+
+export interface RtQuizConfig {
+  passPct?: number
+  count?: number
+}
+
+export interface RtQuizQuestionPublic {
+  id: string
+  no: number
+  prompt: string
+  options: string[]
+}
+
+export interface RtQuizResult {
+  score: number
+  passed: boolean
+  passPct: number
+  correct: number
+  total: number
+  missed: number[]
+}
+
+export interface RtQuizQuestionAdmin {
+  id: string | null
+  sort: number
+  prompt: string
+  options: string[]
+  correctIdx: number
+  active: boolean
+}
+
 const TRAINING_COLUMNS =
   'id, title, description, video_source, video_ref, duration_seconds, required_by, audience_roles, audience_shifts, audience_employment_types, audience_event_label, audience_event_from, audience_event_to, attestation_statement, quiz, show_in_library, thumbnail_url, active, created_by, created_at, updated_at'
 
@@ -189,7 +226,54 @@ async function load() {
   loadStarted = true
   const auth = useAuthStore()
   if (auth.usingDevStub) {
-    // Dev-stub has no required-training data — keep arrays empty.
+    /* One module with a knowledge test + the video already finished, so
+       the detail view's video → test → attestation chain renders in
+       preview (writes still stub out). */
+    trainings.value = [
+      {
+        id: 'dev-rt-1',
+        title: 'Dev Protocol Updates (stub)',
+        description: 'Dev fixture — exercises the knowledge-test flow.',
+        videoSource: 'direct',
+        videoRef: 'https://example.com/dev.mp4',
+        durationSeconds: 60,
+        requiredBy: null,
+        audienceRoles: [],
+        audienceShifts: [],
+        audienceEmploymentTypes: [],
+        audienceEventLabel: null,
+        audienceEventFrom: null,
+        audienceEventTo: null,
+        attestationStatement: '',
+        quiz: { passPct: 80, count: 2 },
+        showInLibrary: false,
+        thumbnailUrl: null,
+        active: true,
+        createdBy: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]
+    completions.value = [
+      {
+        id: 'dev-rtc-1',
+        requiredTrainingId: 'dev-rt-1',
+        userId: auth.appUser?.id ?? 'dev-user',
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        signatureData: null,
+        signedMethod: 'self',
+        markedBy: null,
+        markedNote: null,
+        quizScore: null,
+        attestationSigned: false,
+        certificateStoragePath: null,
+        watchSeconds: 60,
+        videoCompletedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]
     ready.value = true
     return
   }
@@ -643,6 +727,137 @@ export function useRequiredTraining() {
     return completions.value.filter((c) => c.requiredTrainingId === trainingId)
   }
 
+  /** The module's test config ({passPct, count}) — null when no test. */
+  function quizConfigFor(t: RequiredTraining | null): RtQuizConfig | null {
+    const q = (t?.quiz ?? null) as RtQuizConfig | null
+    return q && typeof q === 'object' && (q.count ?? 0) > 0 ? q : null
+  }
+
+  /** Crew: fetch the numbered questions (no answer key) — server
+   *  enforces the video gate. */
+  async function startQuiz(
+    trainingId: string,
+  ): Promise<{ ok: true; passPct: number; questions: RtQuizQuestionPublic[] } | { ok: false; error: string }> {
+    if (auth.usingDevStub) {
+      return {
+        ok: true,
+        passPct: 80,
+        questions: [
+          { id: 'dev-q1', no: 1, prompt: 'Dev question one?', options: ['A', 'B', 'C'] },
+          { id: 'dev-q2', no: 2, prompt: 'Dev question two?', options: ['A', 'B', 'C'] },
+        ],
+      }
+    }
+    const { data, error } = await supabase.rpc('rt_quiz_start', { p_training_id: trainingId })
+    if (error) return { ok: false, error: error.message }
+    const payload = data as { passPct?: number; questions?: RtQuizQuestionPublic[] }
+    return { ok: true, passPct: payload.passPct ?? 80, questions: payload.questions ?? [] }
+  }
+
+  /** Crew: grade server-side. Misses come back as question NUMBERS
+   *  only. A pass stamps quiz_score on the completion row. */
+  async function submitQuizAnswers(
+    trainingId: string,
+    answers: Record<string, number>,
+  ): Promise<{ ok: true; result: RtQuizResult } | { ok: false; error: string }> {
+    if (auth.usingDevStub) {
+      completions.value = completions.value.map((c) =>
+        c.requiredTrainingId === trainingId ? { ...c, quizScore: 100 } : c,
+      )
+      return {
+        ok: true,
+        result: { score: 100, passed: true, passPct: 80, correct: 2, total: 2, missed: [] },
+      }
+    }
+    const { data, error } = await supabase.rpc('rt_quiz_submit', {
+      p_training_id: trainingId,
+      p_answers: answers,
+    })
+    if (error) return { ok: false, error: error.message }
+    await refreshCompletion(trainingId)
+    return { ok: true, result: data as RtQuizResult }
+  }
+
+  /** Admin: full question rows incl. the answer key (RLS limits this
+   *  read to admins). */
+  async function loadQuizQuestions(
+    trainingId: string,
+  ): Promise<{ ok: true; questions: RtQuizQuestionAdmin[] } | { ok: false; error: string }> {
+    if (auth.usingDevStub) return { ok: true, questions: [] }
+    const { data, error } = await supabase
+      .from('rt_quiz_questions')
+      .select('id, sort, prompt, options, correct_idx, active')
+      .eq('training_id', trainingId)
+      .order('sort')
+    if (error) return { ok: false, error: error.message }
+    return {
+      ok: true,
+      questions: (data ?? []).map((r) => ({
+        id: r.id as string,
+        sort: r.sort as number,
+        prompt: r.prompt as string,
+        options: (r.options ?? []) as string[],
+        correctIdx: r.correct_idx as number,
+        active: r.active as boolean,
+      })),
+    }
+  }
+
+  /** Admin: replace-style save — upserts the given questions, deletes
+   *  rows that were removed, and refreshes the module's quiz metadata
+   *  ({passPct, count}) so crew views know a test exists without ever
+   *  seeing the key. */
+  async function saveQuizQuestions(
+    trainingId: string,
+    passPct: number,
+    questions: RtQuizQuestionAdmin[],
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (auth.usingDevStub) return { ok: false, error: 'Not available in the dev preview.' }
+    const existing = await supabase
+      .from('rt_quiz_questions')
+      .select('id')
+      .eq('training_id', trainingId)
+    if (existing.error) return { ok: false, error: existing.error.message }
+    const keepIds = new Set(questions.map((q) => q.id).filter(Boolean) as string[])
+    const removed = ((existing.data ?? []) as { id: string }[]).filter((r) => !keepIds.has(r.id))
+    if (removed.length > 0) {
+      const del = await supabase
+        .from('rt_quiz_questions')
+        .delete()
+        .in('id', removed.map((r) => r.id))
+      if (del.error) return { ok: false, error: del.error.message }
+    }
+    for (const [i, q] of questions.entries()) {
+      const row = {
+        training_id: trainingId,
+        sort: (i + 1) * 10,
+        prompt: q.prompt.trim(),
+        /* No filtering here — dropping a blank option would silently
+           shift correctIdx off the right answer. Callers validate. */
+        options: q.options.map((o) => o.trim()),
+        correct_idx: q.correctIdx,
+        active: q.active,
+        updated_at: new Date().toISOString(),
+      }
+      const res = q.id
+        ? await supabase.from('rt_quiz_questions').update(row).eq('id', q.id)
+        : await supabase.from('rt_quiz_questions').insert(row)
+      if (res.error) return { ok: false, error: res.error.message }
+    }
+    const activeCount = questions.filter((q) => q.active).length
+    const quiz = activeCount > 0 ? { passPct, count: activeCount } : null
+    const upd = await supabase
+      .from('required_trainings')
+      .update({ quiz })
+      .eq('id', trainingId)
+      .select(TRAINING_COLUMNS)
+      .single()
+    if (upd.error) return { ok: false, error: upd.error.message }
+    const next = trainingFromRow(upd.data as TrainingRow)
+    trainings.value = trainings.value.map((t) => (t.id === next.id ? next : t))
+    return { ok: true }
+  }
+
   return {
     ready,
     trainings,
@@ -662,6 +877,11 @@ export function useRequiredTraining() {
     adminMarkComplete,
     saveTraining,
     deleteTraining,
+    quizConfigFor,
+    startQuiz,
+    submitQuizAnswers,
+    loadQuizQuestions,
+    saveQuizQuestions,
     matchesAudienceFilter,
     matchesAudienceFilterForUser,
     isRequiredForUser,
