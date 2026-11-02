@@ -417,10 +417,6 @@ async function onSubmit() {
       : 'You must watch the full video before submitting.'
     return
   }
-  if (quizRequired.value && !quizPassed.value) {
-    errorMsg.value = 'Pass the knowledge test before signing the attestation.'
-    return
-  }
   if (!signatureData.value) {
     errorMsg.value = 'Please sign before submitting.'
     return
@@ -594,7 +590,7 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
             </template>
             <template v-else>
               <Lock :size="12" :stroke-width="2" />
-              {{ quizRequired ? 'The test unlocks at the end' : 'Attestation unlocks at the end' }}
+              {{ quizRequired ? 'Test + attestation unlock at the end' : 'Attestation unlocks at the end' }}
             </template>
           </span>
         </div>
@@ -646,16 +642,19 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
               </template>
               <template v-else>
                 Skipping ahead is disabled.
-                {{ quizRequired ? 'The knowledge test unlocks when you finish.' : 'The attestation form unlocks when you finish.' }}
+                {{ quizRequired ? 'The knowledge test and attestation unlock when you finish.' : 'The attestation form unlocks when you finish.' }}
               </template>
             </p>
           </template>
         </div>
       </AppCard>
 
-      <!-- Knowledge test — unlocks when the video ends; the attestation
-           unlocks when it is passed. Graded server-side; retake freely. -->
-      <AppCard v-if="quizRequired && !alreadyComplete && !justSubmitted" class="rtd__quiz-card">
+      <!-- Knowledge test — separate from the video → attestation flow
+           (Justin, 11/02): it unlocks when the video ends (or once the
+           module is already signed) and is tracked on its own, so
+           signing never waits on it and earlier completers still take
+           it. Graded server-side; retake freely. -->
+      <AppCard v-if="quizRequired && !justSubmitted" class="rtd__quiz-card">
         <div class="rtd__video-label">
           <Eyebrow>Knowledge test</Eyebrow>
           <span class="rtd__lock" :class="{ 'rtd__lock--unlocked': quizPassed }">
@@ -677,7 +676,7 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
         <template v-if="quizPassed && quizStage !== 'result'">
           <p class="rtd__quiz-intro rtd__quiz-intro--done">
             <Check :size="14" :stroke-width="2.5" />
-            Test passed — sign the attestation below to finish the module.
+            Test passed{{ alreadyComplete ? ' — you’re all set.' : '. Don’t forget to sign the attestation below.' }}
           </p>
         </template>
 
@@ -751,7 +750,9 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
               Passed — {{ quizResult.score }}% ({{ quizResult.correct }} of
               {{ quizResult.total }})
             </p>
-            <p class="rtd__quiz-note">Sign the attestation below to finish the module.</p>
+            <p class="rtd__quiz-note">
+              {{ alreadyComplete ? 'Your score has been recorded — you’re all set.' : 'Don’t forget to sign the attestation below.' }}
+            </p>
           </div>
           <div v-else class="rtd__quiz-result rtd__quiz-result--fail">
             <p class="rtd__quiz-score">
@@ -771,10 +772,7 @@ const isYoutube = computed(() => training.value?.videoSource === 'youtube')
       </AppCard>
 
       <!-- Attestation -->
-      <AppCard
-        v-if="videoComplete && (!quizRequired || quizPassed) && !alreadyComplete && !justSubmitted"
-        class="rtd__att-card"
-      >
+      <AppCard v-if="videoComplete && !alreadyComplete && !justSubmitted" class="rtd__att-card">
         <Eyebrow class="mb-3">Attestation of Completion</Eyebrow>
 
         <div class="rtd__att-user">

@@ -635,10 +635,11 @@ const orderedTrainings = computed(() =>
             <div class="mrt-form__field">
               <span class="mrt-form__label">Knowledge test (optional)</span>
               <span class="mrt-form__hint">
-                Multiple-choice questions the employee must pass <strong>after the video</strong>
-                and <strong>before the attestation</strong>. Graded on the server — crew never
-                receive the answer key, and failed attempts show missed question numbers only.
-                Retakes are unlimited. No questions = no test.
+                Multiple-choice questions that unlock <strong>after the video</strong> and are
+                tracked <strong>separately from the attestation</strong> — signing never waits on
+                the test, and people who already signed can still take it. Graded on the server —
+                crew never receive the answer key, and failed attempts show missed question
+                numbers only. Retakes are unlimited. No questions = no test.
               </span>
               <div v-if="quizLoading" class="mrt-form__hint">Loading questions…</div>
               <template v-else>

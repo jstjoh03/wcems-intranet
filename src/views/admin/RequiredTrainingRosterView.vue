@@ -34,10 +34,15 @@ const {
   isRequiredForUser,
   getOverride,
   setOverride,
+  quizConfigFor,
 } = useRequiredTraining()
 
 const trainingId = computed(() => String(route.params.id))
 const training = computed(() => trainingById(trainingId.value))
+
+/* Knowledge test (separate from the attestation): a tag per row when
+   the module has one — passed score, or "Test pending". */
+const hasQuiz = computed(() => !!training.value && quizConfigFor(training.value) !== null)
 
 /* Load the active roster once. Admins-only route, so RLS allows it. */
 const roster = ref<Employee[]>([])
@@ -557,6 +562,13 @@ async function downloadRosterPdf() {
               <span v-else class="rtr-chip rtr-chip--not_started">
                 Not started
               </span>
+              <span
+                v-if="hasQuiz"
+                class="rtr-chip"
+                :class="r.completion?.quizScore != null ? 'rtr-chip--signed' : 'rtr-chip--in_progress'"
+              >
+                {{ r.completion?.quizScore != null ? `Test ${Math.round(Number(r.completion.quizScore))}%` : 'Test pending' }}
+              </span>
             </td>
             <td class="rtr-table__actions">
               <button
@@ -629,6 +641,13 @@ async function downloadRosterPdf() {
               </span>
               <span v-else class="rtr-chip rtr-chip--not_started">
                 Not started
+              </span>
+              <span
+                v-if="hasQuiz"
+                class="rtr-chip"
+                :class="r.completion?.quizScore != null ? 'rtr-chip--signed' : 'rtr-chip--in_progress'"
+              >
+                {{ r.completion?.quizScore != null ? `Test ${Math.round(Number(r.completion.quizScore))}%` : 'Test pending' }}
               </span>
             </td>
             <td class="rtr-table__actions">
