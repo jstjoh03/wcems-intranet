@@ -7,6 +7,7 @@ import {
   payPeriodFor,
   addDaysIso,
   hhmm,
+  tsMs,
   personSortKey,
   OFF_LABELS,
   REQ_TYPE_LABELS,
@@ -364,6 +365,47 @@ watch(editMoveTo, () => {
     editUntil.value = toInput(t.end)
   }
 })
+
+/* Every scheduled row this person holds on this seat today. More than
+   one means duplicate coverage left behind by re-seating churn (the
+   Chief triple-assigned DeLany on S201 10/31 filling stray opens) —
+   the modal then lists the rows with one-click deletes. removeEntry
+   skips its reopen logic for windows another row still spans, so
+   deleting a duplicate never posts a phantom open. */
+const personRows = computed(() => {
+  const ctx = editor.person.value
+  if (!ctx) return []
+  return sched.entries.value
+    .filter(
+      (e) =>
+        e.workDate === ctx.dateIso &&
+        e.seatId === ctx.seatId &&
+        e.userId === ctx.userId &&
+        e.status === 'scheduled' &&
+        e.kind !== 'timeoff',
+    )
+    .sort((a, b) => tsMs(a.startAt) - tsMs(b.startAt))
+})
+
+const dupArm = ref<string | null>(null)
+
+async function deleteDupRow(entryId: string): Promise<void> {
+  if (dupArm.value !== entryId) {
+    dupArm.value = entryId
+    return
+  }
+  dupArm.value = null
+  busy.value = true
+  err.value = null
+  const e = await sched.removeEntry(entryId)
+  busy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  flash('Row deleted.')
+  if (personRows.value.length <= 1) editor.closeAll()
+}
 
 async function runEdit(): Promise<void> {
   const ctx = editor.person.value
@@ -2083,6 +2125,23 @@ async function reqCancel() {
           {{ fmtShort(editor.person.value.dateIso) }} ·
           {{ editor.person.value.start }} – {{ editor.person.value.end }}
         </p>
+
+        <!-- duplicate coverage from re-seating churn: list + delete -->
+        <div v-if="personRows.length > 1" class="em__warnbox">
+          <p class="em__warnhead">
+            {{ editor.person.value.personName }} holds {{ personRows.length }} separate rows on
+            this seat today — usually duplicates left behind by re-seating. Delete the extras:
+          </p>
+          <div v-for="r in personRows" :key="r.id" class="em__pickrow">
+            <p class="em__pickmain">
+              <span class="em__pickname">{{ toInput(hhmm(r.startAt)) }} – {{ toInput(hhmm(r.endAt)) }}</span>
+              <span class="em__picksub">{{ r.kind }}</span>
+            </p>
+            <button class="em__mini em__mini--danger" :disabled="busy" @click="deleteDupRow(r.id)">
+              {{ dupArm === r.id ? 'Really delete?' : 'Delete this row' }}
+            </button>
+          </div>
+        </div>
 
         <div class="em__actions">
           <button

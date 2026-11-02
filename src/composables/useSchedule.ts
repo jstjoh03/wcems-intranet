@@ -928,6 +928,23 @@ function seedDevStub(): void {
       eventId: 'dev-ev-1', studentProgram: 'Attendant', unitId: null,
       note: 'Dev County Fair', sourceRequest: null,
     },
+    /* Duplicate-coverage fixture (2026-11-02): the same person holding
+       the same seat twice — renders the person modal's duplicate-row
+       delete list in dev (deletes error, exercising the error line). */
+    {
+      id: 'dev-e-dup1', workDate: devDay, seatId: 'dev-s-M271-1', userId: 'dev-p-2',
+      startAt: centralTs(devDay, '06:00'), endAt: centralTs(addDaysIso(devDay, 1), '06:00'),
+      kind: 'rotation', status: 'scheduled', offType: null, timeType: 'regular',
+      eventId: null, studentProgram: null, unitId: 'dev-u-M271',
+      note: null, sourceRequest: null,
+    },
+    {
+      id: 'dev-e-dup2', workDate: devDay, seatId: 'dev-s-M271-1', userId: 'dev-p-2',
+      startAt: centralTs(devDay, '07:30'), endAt: centralTs(addDaysIso(devDay, 1), '06:00'),
+      kind: 'pickup', status: 'scheduled', offType: null, timeType: 'regular',
+      eventId: null, studentProgram: null, unitId: 'dev-u-M271',
+      note: null, sourceRequest: null,
+    },
   ]
 }
 
@@ -4120,6 +4137,32 @@ async function assignOpenSeat(opts: {
     const rEnd = Math.min(oEnd, tsMs(w.reqEnd))
     if (rEnd - rStart < MIN_SEG_MS) {
       return 'The requested window does not overlap that open shift.'
+    }
+    /* Duplicate guard (2026-11-02): claiming a stray open for someone
+       who ALREADY covers that window on this seat silently doubled
+       their coverage — the Chief tripled a Supervisor filling leftover
+       opens one by one on S201 10/31. Refuse and point at the fix.
+       (The no-entry branch below claims against standing coverage, so
+       it can never double anyone.) */
+    const mine = await supabase
+      .from('sched_entries')
+      .select('start_at, end_at')
+      .eq('work_date', opts.dateIso)
+      .eq('seat_id', opts.seatId)
+      .eq('user_id', opts.userId)
+      .eq('status', 'scheduled')
+      .neq('id', opts.entryId)
+    if (mine.error) return mine.error.message
+    for (const r of mine.data ?? []) {
+      const ovS = Math.max(tsMs(r.start_at as string), rStart)
+      const ovE = Math.min(tsMs(r.end_at as string), rEnd)
+      if (ovE - ovS >= MIN_SEG_MS) {
+        return (
+          `${displayName(opts.userId).name} already covers ` +
+          `${hhmm(r.start_at as string)}–${hhmm(r.end_at as string)} on this seat that day. ` +
+          `This open row is a leftover — use "Remove this open seat from the day" instead of assigning it again.`
+        )
+      }
     }
     actualFrom = hhmm(new Date(rStart).toISOString())
     actualUntil = hhmm(new Date(rEnd).toISOString())
