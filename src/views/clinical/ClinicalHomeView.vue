@@ -98,12 +98,20 @@ function goBoard(focus: string) {
 
 /* ── Field training queue ──────────────────────────────────────────── */
 
-/** Trainees whose active transition has no anchored (started) phase —
- *  day counts and projections can't run until a start date is set. */
+/** Trainees whose timeline genuinely can't run — mirrors
+ *  buildFtepTimeline's anchor rules, which this card used to be
+ *  stricter than (the whole roster showed "no phase anchored" while
+ *  every timeline on the FTEP page ran fine — Justin, 2026-11-02):
+ *  an enrollment date (working_started_at) anchors the first field
+ *  phase by itself, a phase row anchors by its start date OR its
+ *  first planned day, and tracks without published day tables
+ *  (legacy / ride-up / AEMT) have nothing to anchor at all. */
 const unanchored = computed(() =>
   inPipeline.value.filter((p) => {
+    if (!ftepLadderKeyFor(p.record)) return false
+    if (p.record.workingStartedAt) return false
     const rows = phasesFor(p.record.id)
-    return !rows.some((r) => r.startedAt && !r.completedAt)
+    return !rows.some((r) => r.startedAt || r.scheduledDays.length > 0)
   }),
 )
 
