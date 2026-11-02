@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ShieldCheck, Check, Clock, AlertTriangle, ChevronRight } from 'lucide-vue-next'
+import { ShieldCheck, Check, Clock, AlertTriangle, ChevronRight, FileQuestion } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useRequiredTraining } from '@/composables/useRequiredTraining'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
-const { ready, activeForUser, isComplete, completionFor } = useRequiredTraining()
+const { ready, activeForUser, isComplete, completionFor, testPending } = useRequiredTraining()
 
 interface RowVM {
   id: string
@@ -16,9 +16,10 @@ interface RowVM {
   description: string
   requiredBy: string | null
   thumbnailUrl: string | null
-  status: 'complete' | 'in_progress' | 'not_started' | 'overdue'
+  status: 'complete' | 'test_pending' | 'in_progress' | 'not_started' | 'overdue'
   statusLabel: string
   completedAt: string | null
+  testScore: number | null
 }
 
 function formatRequiredBy(iso: string | null): string {
@@ -56,8 +57,13 @@ const rows = computed<RowVM[]>(() =>
     const completion = completionFor(t.id)
     const complete = isComplete(t.id)
     const overdue = !complete && isOverdue(t.requiredBy)
+    /* A signed module whose knowledge test hasn't been passed stays in
+       the outstanding list — the test is tracked separately from the
+       attestation (Justin, 11/02). */
     const status: RowVM['status'] = complete
-      ? 'complete'
+      ? testPending(t)
+        ? 'test_pending'
+        : 'complete'
       : overdue
         ? 'overdue'
         : completion
@@ -65,6 +71,7 @@ const rows = computed<RowVM[]>(() =>
           : 'not_started'
     const statusLabel = {
       complete: 'Complete',
+      test_pending: 'Test pending',
       overdue: 'Overdue',
       in_progress: 'In progress',
       not_started: 'Not started',
@@ -78,6 +85,7 @@ const rows = computed<RowVM[]>(() =>
       status,
       statusLabel,
       completedAt: completion?.completedAt ?? null,
+      testScore: completion?.quizScore != null ? Math.round(Number(completion.quizScore)) : null,
     }
   }),
 )
@@ -95,7 +103,8 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
       </div>
       <p class="rt__sub">
         Compliance modules from the Chief and Medical Director. Complete the video or course
-        and sign the attestation. A certificate downloads automatically when you finish.
+        and sign the attestation — some modules also carry a short knowledge test. A
+        certificate downloads automatically when you finish.
       </p>
     </header>
 
@@ -126,12 +135,16 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
                   <span class="rt-row__chip" :class="`rt-row__chip--${r.status}`">
                     <Clock v-if="r.status === 'in_progress'" :size="12" :stroke-width="2" />
                     <AlertTriangle v-else-if="r.status === 'overdue'" :size="12" :stroke-width="2" />
+                    <FileQuestion v-else-if="r.status === 'test_pending'" :size="12" :stroke-width="2" />
                     {{ r.statusLabel }}
                   </span>
                 </div>
                 <p v-if="r.description" class="rt-row__desc">{{ r.description }}</p>
                 <div class="rt-row__meta">
-                  <span>Due: <strong>{{ formatRequiredBy(r.requiredBy) }}</strong></span>
+                  <span v-if="r.status === 'test_pending'">
+                    Video signed off — a short knowledge test was added. Tap to take it.
+                  </span>
+                  <span v-else>Due: <strong>{{ formatRequiredBy(r.requiredBy) }}</strong></span>
                 </div>
               </div>
               <ChevronRight :size="18" :stroke-width="1.85" class="rt-row__chev" />
@@ -158,6 +171,9 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
                     <span class="rt-row__chip rt-row__chip--complete">
                       <Check :size="12" :stroke-width="2.5" />
                       {{ formatRelative(r.completedAt) }}
+                    </span>
+                    <span v-if="r.testScore != null" class="rt-row__chip rt-row__chip--complete">
+                      Test {{ r.testScore }}%
                     </span>
                   </div>
                 </div>
@@ -291,6 +307,11 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
   color: var(--color-brand-700);
   border-color: var(--color-brand-100);
   background: var(--color-brand-50);
+}
+.rt-row__chip--test_pending {
+  color: oklch(0.5 0.13 60);
+  border-color: oklch(0.88 0.05 60);
+  background: oklch(0.98 0.02 85);
 }
 .rt-row__chip--overdue {
   color: var(--color-danger-500);

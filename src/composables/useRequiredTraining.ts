@@ -254,7 +254,33 @@ async function load() {
         updatedAt: new Date().toISOString(),
       },
     ]
+    /* A second module mirroring the 45 early completers: signed BEFORE
+       the test existed → shows "Test pending" on the list. */
+    trainings.value.push({
+      ...trainings.value[0]!,
+      id: 'dev-rt-2',
+      title: 'Dev Signed-Before-Test (stub)',
+      description: 'Signed attestation + pending knowledge test.',
+    })
     completions.value = [
+      {
+        id: 'dev-rtc-2',
+        requiredTrainingId: 'dev-rt-2',
+        userId: auth.appUser?.id ?? 'dev-user',
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        signatureData: null,
+        signedMethod: 'self',
+        markedBy: null,
+        markedNote: null,
+        quizScore: null,
+        attestationSigned: true,
+        certificateStoragePath: null,
+        watchSeconds: 60,
+        videoCompletedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
       {
         id: 'dev-rtc-1',
         requiredTrainingId: 'dev-rt-1',
@@ -463,8 +489,17 @@ export function useRequiredTraining() {
     return completionFor(trainingId, userId)?.attestationSigned === true
   }
 
+  /** The module carries a test this user hasn't passed yet. Tracked
+   *  separately from the attestation (Justin, 11/02) — a signed module
+   *  with the test still open counts as outstanding work. */
+  function testPending(t: RequiredTraining, userId?: string): boolean {
+    const q = (t.quiz ?? null) as RtQuizConfig | null
+    if (!q || typeof q !== 'object' || (q.count ?? 0) === 0) return false
+    return (completionFor(t.id, userId)?.quizScore ?? null) == null
+  }
+
   const outstandingCount = computed(() =>
-    activeForUser.value.filter((t) => !isComplete(t.id)).length,
+    activeForUser.value.filter((t) => !isComplete(t.id) || testPending(t)).length,
   )
 
   /* Mark "started" — fire once when the user first plays the video so
@@ -868,6 +903,7 @@ export function useRequiredTraining() {
     outstandingCount,
     completionFor,
     isComplete,
+    testPending,
     completionsFor,
     trainingById,
     markStarted,

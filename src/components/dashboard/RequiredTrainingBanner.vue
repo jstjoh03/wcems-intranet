@@ -32,8 +32,8 @@ const visible = computed(
     <div class="rtb__copy">
       <strong class="rtb__title">Required training awaiting completion</strong>
       <span class="rtb__sub">
-        You have {{ outstandingCount }} module{{ outstandingCount === 1 ? '' : 's' }} to watch
-        and sign off on. Tap to start.
+        You have {{ outstandingCount }} module{{ outstandingCount === 1 ? '' : 's' }} to complete
+        — watch, test, or sign off. Tap to start.
       </span>
     </div>
     <ChevronRight :size="18" :stroke-width="1.85" class="rtb__chev" />

@@ -182,11 +182,12 @@ const summary = computed(() => {
   const started = rows.value.filter((r) => r.status === 'in_progress').length
   const total = rows.value.length
   const pct = total === 0 ? 0 : Math.round((signed / total) * 100)
-  return { signed, started, total, pct }
+  const testPassed = rows.value.filter((r) => r.completion?.quizScore != null).length
+  return { signed, started, total, pct, testPassed }
 })
 
 /* Filter chips */
-type FilterKey = 'all' | 'outstanding' | 'signed'
+type FilterKey = 'all' | 'outstanding' | 'signed' | 'test_pending'
 const filter = ref<FilterKey>('outstanding')
 const shiftFilter = ref<'all' | ShiftLetter>('all')
 const visibleRows = computed(() => {
@@ -194,6 +195,7 @@ const visibleRows = computed(() => {
     .filter((r) => {
       if (filter.value === 'outstanding' && r.status === 'signed') return false
       if (filter.value === 'signed' && r.status !== 'signed') return false
+      if (filter.value === 'test_pending' && r.completion?.quizScore != null) return false
       if (shiftFilter.value !== 'all' && r.user.shift !== shiftFilter.value) return false
       return true
     })
@@ -440,6 +442,11 @@ async function downloadRosterPdf() {
             <div class="rtr-summary__big">{{ summary.total - summary.signed }}</div>
             <div class="rtr-summary__sub">still need to complete</div>
           </div>
+          <div v-if="hasQuiz" class="rtr-summary__cell">
+            <Eyebrow>Test passed</Eyebrow>
+            <div class="rtr-summary__big">{{ summary.testPassed }}</div>
+            <div class="rtr-summary__sub">of {{ summary.total }} · knowledge test</div>
+          </div>
         </div>
       </AppCard>
 
@@ -455,6 +462,15 @@ async function downloadRosterPdf() {
             @click="filter = opt"
           >
             {{ opt === 'outstanding' ? 'Outstanding' : opt === 'signed' ? 'Signed' : 'All' }}
+          </button>
+          <button
+            v-if="hasQuiz"
+            type="button"
+            class="rtr-filters__chip"
+            :class="{ 'rtr-filters__chip--on': filter === 'test_pending' }"
+            @click="filter = 'test_pending'"
+          >
+            Test pending
           </button>
         </div>
         <div class="rtr-filters__group">
