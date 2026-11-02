@@ -96,10 +96,9 @@ function fmtY(iso: string | null): string {
       </div>
 
       <p v-if="finalPlan" class="ftl__final">
-        <b>Final evaluation needs a DIFFERENT FTO</b> —
-        {{ finalPlan.current ? 'started' : 'projected to start' }} ≈ <b>{{ fmtY(finalPlan.start) }}</b>.
-        FTOs used so far: {{ tl.ftosUsed.length ? tl.ftosUsed.join(', ') : 'none yet' }} — plan the
-        pairing (and station move) ahead with scheduling.
+        <b>Final evaluation</b> — the primary FTO steps fully back to an evaluator role: scored,
+        not taught (Guide v1.2). {{ finalPlan.current ? 'Started' : 'Projected to start' }} ≈
+        <b>{{ fmtY(finalPlan.start) }}</b> — line the tour up with scheduling ahead of time.
       </p>
 
       <p v-if="tl.unanchored" class="ftl__hint">

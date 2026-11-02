@@ -3,6 +3,7 @@ import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
 import {
   activeTransitionFor,
+  isEmtBasic,
   jurisprudenceStatus,
   requirementStatus,
 } from '@/constants/pipelineGates'
@@ -236,7 +237,7 @@ export function useClinical() {
    *   aemt   — AEMT upgrade: skills checklists + med sign-off
    */
   function ftepTrackFor(p: PipelinePerson): {
-    key: 'new' | 'legacy' | 'rideup' | 'aemt'
+    key: 'new' | 'ec' | 'legacy' | 'rideup' | 'aemt'
     label: string
     /** Legacy DORs live in Jotform on a different scale — the portal
      *  tracks only their call evals, so DOR stats are off entirely. */
@@ -258,6 +259,10 @@ export function useClinical() {
       return { key: 'rideup', label: 'Ride-up supervisor', dorTracked: true, dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: 4 }
     if (t === 'AEMT')
       return { key: 'aemt', label: 'AEMT upgrade', dorTracked: true, dorWindow: 4, icrTarget: null, icrLabel: '', rideoutTarget: null }
+    /* EC — the parallel EMT-candidate track (Guide v1.2): same DOR
+       standards, but 5 scored ICRs instead of 10. */
+    if (t === 'EC_EMT' || (t === 'NEOP' && isEmtBasic(p.record.certLevel)))
+      return { key: 'ec', label: 'FTEP — EMT candidate (EC)', dorTracked: true, dorWindow: 4, icrTarget: 5, icrLabel: 'ICRs', rideoutTarget: null }
     return { key: 'new', label: 'FTEP — new program', dorTracked: true, dorWindow: 4, icrTarget: 10, icrLabel: 'ICRs', rideoutTarget: null }
   }
 

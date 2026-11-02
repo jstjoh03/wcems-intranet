@@ -2,7 +2,7 @@ import { useSchedule, todayCentralIso, type TimeSegment } from '@/composables/us
 import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
 import { useFtepDayOverrides } from '@/composables/useFtepDayOverrides'
-import { activeTransitionFor } from '@/constants/pipelineGates'
+import { activeTransitionFor, ftepLadderKeyFor } from '@/constants/pipelineGates'
 import {
   FTEP_PROGRAM_PHASES,
   FTEP_DAY_STANDARDS,
@@ -67,7 +67,7 @@ export interface FtepGateChip {
 }
 
 export interface FtepTimeline {
-  transition: 'P1C_P1' | 'P1_P2'
+  transition: 'P1C_P1' | 'P1_P2' | 'EC_EMT'
   accelerated: boolean
   /** No phase row carried a date — the first field phase was anchored
    *  from the record's enrollment (working start) as a fallback. */
@@ -104,13 +104,13 @@ export async function buildFtepTimeline(
   person: PipelinePerson,
   opts?: { segs?: TimeSegment[] },
 ): Promise<FtepTimeline | null> {
-  /* The Aug-17 cohort rode phases while their working phase still said
-     NEOP - treat NEOP as the P1 track so the timeline never hides on a
-     stale pointer. Legacy/rideup/AEMT tracks have no day tables. */
+  /* NEOP maps to the cert's first field ladder (the Aug-17 cohort rode
+     phases while their working phase still said NEOP — the timeline
+     never hides on a stale pointer); EMT-B hires ride the EC track.
+     Legacy/rideup/AEMT tracks have no day tables. */
   const raw = activeTransitionFor(person.record)
-  const transition = raw === 'NEOP' ? 'P1C_P1' : raw
-  if (transition !== 'P1C_P1' && transition !== 'P1_P2') return null
-  if (person.record.legacyTrack) return null
+  const transition = ftepLadderKeyFor(person.record)
+  if (!transition) return null
 
   const sched = useSchedule()
   const pipeline = usePipeline()

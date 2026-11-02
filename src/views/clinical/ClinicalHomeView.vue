@@ -10,7 +10,7 @@ import { useExams } from '@/composables/useExams'
 import { useClinicalMessages, type FtepMessage } from '@/composables/useClinicalMessages'
 import { useFtoEvalRequests } from '@/composables/useFtoEvalRequests'
 import { useClinicalAutoWires } from '@/composables/useClinicalAutoWires'
-import { activeTransitionFor } from '@/constants/pipelineGates'
+import { ftepLadderKeyFor } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES } from '@/constants/ftepForms'
 import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
 import { supabase } from '@/lib/supabase'
@@ -142,13 +142,8 @@ async function nudgeEvals() {
 const missingDor = computed(() => {
   const out: { p: PipelinePerson; phase: string; day: string }[] = []
   for (const p of inPipeline.value) {
-    const t = activeTransitionFor(p.record)
-    const ladder =
-      (t === 'NEOP' || t === 'P1C_P1') && /emt-p|^lp$/i.test(p.record.certLevel ?? '')
-        ? FTEP_PROGRAM_PHASES.P1C_P1
-        : t === 'P1_P2'
-          ? FTEP_PROGRAM_PHASES.P1_P2
-          : []
+    const k = ftepLadderKeyFor(p.record)
+    const ladder = k ? FTEP_PROGRAM_PHASES[k] : []
     if (!ladder.length) continue
     const set = buildDorDateSet(ftep.activeDors(p.userId))
     const rows = phasesFor(p.record.id)

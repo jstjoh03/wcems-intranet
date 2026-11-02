@@ -62,6 +62,13 @@ const SIGNOFF_GATES = (withLetters: boolean): GateDef[] => [
   check('badge_issued', 'New badge issued'),
 ]
 
+/** EMT-Basic cert — the EC (EMT Candidate) track applies to these.
+ *  'EMT-P', 'LP', and 'ADV EMT' never match. */
+export function isEmtBasic(certLevel: string | null): boolean {
+  const c = (certLevel ?? '').trim().toLowerCase()
+  return c === 'emt-b' || c === 'emt'
+}
+
 export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
   NEOP: {
     transition: 'NEOP',
@@ -74,6 +81,26 @@ export const TRANSITIONS: Record<PipelineTransition, TransitionDef> = {
       check('workbook', 'Workbook'),
     ],
     petitionChain: [],
+    includesAccess: false,
+  },
+  /* EC → EMT (Guide v1.2 §8 — the parallel EMT-candidate track):
+     5 scored ICRs (not 10), workbook + NEOP skills validation, the EMT
+     protocol exam, and the Driver Log. No OpIQ/NarcSafe — EMT-Bs never
+     hold either. */
+  EC_EMT: {
+    transition: 'EC_EMT',
+    label: 'EC → EMT',
+    toLabel: 'EMT',
+    gates: [
+      metric('dor_avg', 'DOR average (final four)', '≥3.5, no category below 3'),
+      metric('scored_icrs', 'Scored ICRs', '5 required'),
+      check('workbook', 'EMT Candidate Phase Workbook sign-offs'),
+      check('neop_skills', 'NEOP skills validation complete'),
+      exam('protocol_exam', 'EMT protocol exam'),
+      check('driver_log', 'Driver Log filed'),
+      ...SIGNOFF_GATES(false),
+    ],
+    petitionChain: ['FTO', 'Supervisor', 'CDO', 'Asst Chief'],
     includesAccess: false,
   },
   P1C_P1: {
@@ -176,7 +203,7 @@ export const PHASE_LADDER: PipelinePhase[] = ['NEOP', 'FTR', 'P1', 'P2', 'FinalR
 
 export const PHASE_LABELS: Record<PipelinePhase, string> = {
   NEOP: 'NEOP Academy',
-  FTR: 'Field Training Rotation',
+  FTR: 'EC — EMT Candidate',
   P1: 'P1 — Attendant',
   P2: 'P2 — In-Charge',
   P3: 'P3 — FTO',
@@ -204,6 +231,7 @@ export interface EnrollmentTrack {
     legacyTrack?: boolean
     inP3Process?: boolean
     inAemtUpgrade?: boolean
+    p2Accelerated?: boolean
   }
 }
 
@@ -217,10 +245,17 @@ export const ENROLLMENT_TRACKS: EnrollmentTrack[] = [
   },
   {
     key: 'neop_emt',
-    label: 'New hire — EMT orientation (NEOP)',
-    hint: 'EMT FTEP program to be built — tracks the NEOP gate set for now',
+    label: 'New hire — EMT (NEOP · starts the EC track)',
+    hint: 'NEOP Academy, then EC field training to EMT release',
     days: 14,
     patch: { workingPhase: 'NEOP' },
+  },
+  {
+    key: 'ec_emt',
+    label: 'EMT FTEP — EC field training (EC → EMT)',
+    hint: '90-day cap · ops orientation → attendant development → partner tour / final eval',
+    days: 90,
+    patch: { workingPhase: 'FTR' },
   },
   {
     key: 'neop_aemt',
@@ -238,10 +273,17 @@ export const ENROLLMENT_TRACKS: EnrollmentTrack[] = [
   },
   {
     key: 'p1_p2',
-    label: 'Paramedic FTEP — P1 → P2',
-    hint: 'six-month cap · phases 5–7',
+    label: 'Paramedic FTEP — P1 → P2 (traditional)',
+    hint: 'six-month cap · phases 5–7 · 28-day field minimum',
     days: 180,
-    patch: { workingPhase: 'P2', legacyTrack: false },
+    patch: { workingPhase: 'P2', legacyTrack: false, p2Accelerated: false },
+  },
+  {
+    key: 'p1_p2_accel',
+    label: 'Paramedic FTEP — P1 → P2 (accelerated)',
+    hint: 'selective · 10 training days · 30–90 day window · ≥2 yrs recent full-time 911 medic',
+    days: 90,
+    patch: { workingPhase: 'P2', legacyTrack: false, p2Accelerated: true },
   },
   {
     key: 'p1_legacy',
@@ -286,7 +328,28 @@ export function activeTransitionFor(r: PipelineRecord): PipelineTransition | nul
   if (r.workingPhase === 'NEOP') return 'NEOP'
   if (r.workingPhase === 'P2') return r.legacyTrack ? 'P1_P2_LEGACY' : 'P1_P2'
   if (r.workingPhase === 'P3') return 'P2_P3'
+  /* EMT-B hires ride the EC track (Guide v1.2); their working phase is
+     FTR. Medics on FTR/P1 keep the P1C ladder. */
+  if (isEmtBasic(r.certLevel)) return 'EC_EMT'
   return r.legacyTrack ? 'P1_LEGACY' : 'P1C_P1'
+}
+
+/** Which Program-Guide day-table ladder applies to a record (v1.2):
+ *  medics ride P1C_P1 then P1_P2; EMT-B hires ride the EC track. A
+ *  record still in NEOP maps to its cert's first field ladder so the
+ *  road ahead renders during academy week. Legacy/ride-up/AEMT tracks
+ *  have no published day tables. */
+export function ftepLadderKeyFor(r: PipelineRecord): 'P1C_P1' | 'P1_P2' | 'EC_EMT' | null {
+  if (r.legacyTrack) return null
+  const t = activeTransitionFor(r)
+  if (t === 'P1_P2') return 'P1_P2'
+  if (t === 'EC_EMT') return 'EC_EMT'
+  if (t === 'NEOP' || t === 'P1C_P1') {
+    if (/emt-p|^lp$/i.test((r.certLevel ?? '').trim())) return 'P1C_P1'
+    if (isEmtBasic(r.certLevel)) return 'EC_EMT'
+    return null
+  }
+  return null
 }
 
 /* ── Gate item resolution (defs ⋈ stored rows ⋈ record dates) ──────── */
@@ -338,7 +401,7 @@ export function gateItemsFor(
 
 /** Canonical career order for rendering credentialing history. */
 const TRANSITION_ORDER: PipelineTransition[] = [
-  'NEOP', 'P1C_P1', 'P1_LEGACY', 'P1_P2', 'P1_P2_LEGACY', 'AEMT', 'P2_P3',
+  'NEOP', 'EC_EMT', 'P1C_P1', 'P1_LEGACY', 'P1_P2', 'P1_P2_LEGACY', 'AEMT', 'P2_P3',
 ]
 
 /** Transitions with recorded gate rows that are NOT the active one —
@@ -384,10 +447,12 @@ export function gateItemsForTransition(
       const n = row?.value?.match(/\d+/)
       if (n && parseInt(n[0], 10) >= 2) status = 'complete'
     }
-    /* Call-eval / ICR gates self-complete from the live report counts. */
+    /* Call-eval / ICR gates self-complete from the live report counts.
+       The EC track needs 5 scored ICRs; every medic rung needs 10. */
+    const icrTarget = transition === 'EC_EMT' ? 5 : 10
     if (g.key === 'call_evals' && open && (stats?.callEvals ?? 0) >= 10)
       status = 'complete'
-    if (g.key === 'scored_icrs' && open && (stats?.scoredIcrs ?? 0) >= 10)
+    if (g.key === 'scored_icrs' && open && (stats?.scoredIcrs ?? 0) >= icrTarget)
       status = 'complete'
     /* The DOR average self-completes once the credential-scoped final
        four meet the floor with no category below 3 (Guide standard):
@@ -407,7 +472,7 @@ export function gateItemsForTransition(
         (g.key === 'call_evals' && stats?.callEvals != null
           ? `${stats.callEvals}/10`
           : g.key === 'scored_icrs' && stats?.scoredIcrs != null
-            ? `${stats.scoredIcrs}/10`
+            ? `${stats.scoredIcrs}/${icrTarget}`
             : g.key === 'dor_avg' && stats?.dorAvg != null
               ? `avg ${stats.dorAvg.toFixed(2)}`
               : null),
@@ -505,9 +570,14 @@ export function pillFor(r: PipelineRecord, rows: PipelineGateProgress[]): Pipeli
   if (r.pending) return { text: 'Awaiting clearance', variant: 'hold' }
   const transition = activeTransitionFor(r)
   if (!transition) {
-    return r.clearedPhase === 'FinalRelease'
-      ? { text: 'Credentialed', variant: 'credentialed' }
-      : { text: '—', variant: 'none' }
+    if (r.clearedPhase === 'FinalRelease')
+      return { text: 'Credentialed', variant: 'credentialed' }
+    /* Cleared a phase but not enrolled in the next — promote leaves
+       people here on purpose (enrolling is a deliberate act), but the
+       state must READ that way, not vanish (Ibarra, 2026-11-02). */
+    if (r.clearedPhase)
+      return { text: `Cleared ${r.clearedPhase} — enroll next phase`, variant: 'hold' }
+    return { text: '—', variant: 'none' }
   }
   const def = TRANSITIONS[transition]
   const gaps = openGapCount(r, rows)

@@ -161,27 +161,20 @@ const ftoOptions = computed(() => {
     .sort((a, b) => a.name.localeCompare(b.name))
   return opts
 })
+/* Guide v1.2 (Single-FTO Edition): final evaluations are conducted by
+   the trainee's PRIMARY FTO, who steps back into a pure evaluator role
+   — the old different-FTO rule (and its waiver) is retired. */
 const usedFtos = computed(() => props.timeline?.ftosUsed ?? [])
 function ftoUsed(name: string): boolean {
   return usedFtos.value.some((u) => u.toLowerCase() === name.toLowerCase())
 }
 const nextFtoPick = ref('') // userId or '__other'
 const nextFtoCustom = ref('')
-const ftoWaiverOpen = ref(false)
-const ftoWaiverReason = ref('')
 
 const nextFtoName = computed(() => {
   if (nextFtoPick.value === '__other') return nextFtoCustom.value.trim()
   return ftoOptions.value.find((o) => o.userId === nextFtoPick.value)?.name ?? ''
 })
-
-const ftoRuleBlocked = computed(
-  () =>
-    nextIsFinal.value &&
-    !!nextFtoName.value &&
-    ftoUsed(nextFtoName.value) &&
-    !ftoWaiverReason.value.trim(),
-)
 
 /* ── Signatures ─────────────────────────────────────────────────────── */
 
@@ -202,8 +195,6 @@ const blockers = computed<string[]>(() => {
   if (!isFinalClose.value) {
     if (!nextStartDate.value) out.push(`Set the ${next.value?.label ?? 'next phase'} start date.`)
     if (!nextFtoName.value) out.push('Pick the next phase’s FTO.')
-    if (ftoRuleBlocked.value)
-      out.push(`${nextFtoName.value} has already trained this employee — the Final Evaluation needs a different FTO, or waive the rule with a reason.`)
   }
   if (!empSig.value) out.push('Employee signature required (sign on this device).')
   return out
@@ -245,12 +236,6 @@ async function save() {
         'phase_day_min',
         `${cur.value.label} closed below the ${belowMin.value.min}-day minimum (${belowMin.value.counted} counted)`,
         dayWaiverReason.value.trim(),
-      )
-    if (nextIsFinal.value && nextFtoName.value && ftoUsed(nextFtoName.value) && ftoWaiverReason.value.trim())
-      await fileWaiver(
-        'final_fto_different',
-        `Final Evaluation runs with ${nextFtoName.value}, who has trained this employee`,
-        ftoWaiverReason.value.trim(),
       )
 
     /* 2 — the record itself */
@@ -461,16 +446,11 @@ async function save() {
             </label>
             <label class="ad__fld">
               Field Training Officer
-              <small v-if="nextIsFinal" class="ad__hint">— must differ from the earlier phases</small>
+              <small v-if="nextIsFinal" class="ad__hint">— the primary FTO, stepping back to score (Guide v1.2)</small>
               <select v-model="nextFtoPick">
                 <option value="" disabled>Pick an FTO…</option>
-                <option
-                  v-for="o in ftoOptions"
-                  :key="o.userId"
-                  :value="o.userId"
-                  :disabled="nextIsFinal && ftoUsed(o.name) && !ftoWaiverReason.trim()"
-                >
-                  {{ o.name }}{{ nextIsFinal && ftoUsed(o.name) ? ' — used in earlier phases' : '' }}
+                <option v-for="o in ftoOptions" :key="o.userId" :value="o.userId">
+                  {{ o.name }}{{ ftoUsed(o.name) ? ' — trained earlier phases' : '' }}
                 </option>
                 <option value="__other">Other (type a name)…</option>
               </select>
@@ -478,23 +458,6 @@ async function save() {
             <label v-if="nextFtoPick === '__other'" class="ad__fld">FTO name
               <input v-model="nextFtoCustom" type="text" maxlength="80" placeholder="e.g. J. Cates" />
             </label>
-            <template v-if="nextIsFinal">
-              <button v-if="!ftoWaiverOpen" type="button" class="ad__lnk" @click="ftoWaiverOpen = true">
-                No different FTO available? Waive the rule for this advancement
-              </button>
-              <div v-else class="ad__waive">
-                <input
-                  v-model="ftoWaiverReason"
-                  type="text"
-                  maxlength="200"
-                  placeholder="Exception reason — e.g. only one FTO available on A shift this period"
-                />
-                <p class="ad__hint" style="margin: 4px 0 0">
-                  One-time, documented exception on <b>this</b> Advancement Record only — the
-                  program rule is unchanged. Used FTOs become selectable once a reason is given.
-                </p>
-              </div>
-            </template>
           </template>
           <div v-else class="ad__note">
             This closes the program's final phase. Credentialing (effective date, signed form,

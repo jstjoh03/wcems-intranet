@@ -253,7 +253,7 @@ const nextLine = computed(() => {
   const cur = currentPhase.value
   const finalNote =
     cur?.key === tl.finalPhaseKey || (cur && tl.phases[tl.phases.length - 2]?.key === cur.key)
-      ? ` — Final Evaluation needs a different FTO (${tl.ftosUsed.length ? tl.ftosUsed.join(', ') + ' used' : 'none used yet'})`
+      ? ' — Final Evaluation: the primary FTO steps back and scores, not teaches (Guide v1.2)'
       : ''
   if (!up) return `No FTO-paired days on the schedule yet — line one up with scheduling${finalNote}`
   const fto = up.ftoNames.join(', ')

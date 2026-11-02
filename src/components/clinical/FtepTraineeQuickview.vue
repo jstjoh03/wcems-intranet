@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { X, Check, AlertTriangle, CalendarDays } from 'lucide-vue-next'
 import type { PipelinePerson } from '@/types'
-import { activeTransitionFor, gateItemsFor, petitionItemsFor } from '@/constants/pipelineGates'
+import { ftepLadderKeyFor, gateItemsFor, petitionItemsFor } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { usePipeline } from '@/composables/usePipeline'
 import { useClinical } from '@/composables/useClinical'
@@ -37,11 +37,8 @@ const track = computed(() => (props.person ? ftepTrackFor(props.person) : null))
 
 const phaseSet = computed<FtepProgramPhase[]>(() => {
   if (!record.value) return []
-  const t = activeTransitionFor(record.value)
-  const paramedic = /emt-p|^lp$/i.test(record.value.certLevel ?? '')
-  if ((t === 'NEOP' || t === 'P1C_P1') && paramedic) return FTEP_PROGRAM_PHASES.P1C_P1
-  if (t === 'P1_P2') return FTEP_PROGRAM_PHASES.P1_P2
-  return []
+  const k = ftepLadderKeyFor(record.value)
+  return k ? FTEP_PROGRAM_PHASES[k] : []
 })
 
 const rowByKey = computed(() => {

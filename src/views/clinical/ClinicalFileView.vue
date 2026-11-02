@@ -24,7 +24,7 @@ import { supabase } from '@/lib/supabase'
 import { useSkillsDay } from '@/composables/useSkillsDay'
 import { useClinicalConversations } from '@/composables/useClinicalConversations'
 import { usePipeline } from '@/composables/usePipeline'
-import { requirementStatus, activeTransitionFor, jurisprudenceStatus, ENROLLMENT_TRACKS } from '@/constants/pipelineGates'
+import { requirementStatus, activeTransitionFor, ftepLadderKeyFor, jurisprudenceStatus, ENROLLMENT_TRACKS } from '@/constants/pipelineGates'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
 import { useAuthStore } from '@/stores/auth'
 import type { PipelinePerson, PipelineRequirement } from '@/types'
@@ -349,9 +349,7 @@ async function toggleExcluded() {
 /* ── Field training ─────────────────────────────────────────────────── */
 
 function hasPhaseLadder(p: PipelinePerson): boolean {
-  const t = activeTransitionFor(p.record)
-  const paramedic = /emt-p|^lp$/i.test(p.record.certLevel ?? '')
-  return ((t === 'NEOP' || t === 'P1C_P1') && paramedic) || t === 'P1_P2'
+  return ftepLadderKeyFor(p.record) !== null
 }
 
 const tl = ref<FtepTimeline | null>(null)

@@ -13,7 +13,7 @@ import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
-import { activeTransitionFor, gateItemsFor, petitionItemsFor } from '@/constants/pipelineGates'
+import { activeTransitionFor, ftepLadderKeyFor, gateItemsFor, petitionItemsFor, phaseLabel } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
 import { buildFtepTimeline, type FtepTimeline } from '@/composables/useFtepTimeline'
@@ -47,9 +47,10 @@ watch(
 /** Trainees grouped by FTEP track — the programs carry different
  *  requirements and must read as distinct. "Mine" (ftoName matches
  *  the signed-in evaluator) sort first within each group. */
-const TRACK_ORDER = ['new', 'legacy', 'rideup', 'aemt'] as const
+const TRACK_ORDER = ['new', 'ec', 'legacy', 'rideup', 'aemt'] as const
 const TRACK_HINTS: Record<string, string> = {
   new: 'DOR average over the final four (floor 3.5) · 10 scored ALS ICRs',
+  ec: 'EMT candidates · DOR floor 3.5 · 5 scored ICRs · partner tour doubles as the final evaluation',
   legacy: '10 call evaluations per credentialing rung — filed as portal ICRs (Jotform retired 2026-08-31; historical evals already counted) · no DOR tracking',
   rideup: '4 × 12-hr rideouts with a supervisor · skills check-offs · protocol test — no ICR count',
   aemt: 'Skills checklists · medication administration sign-off · protocol exam',
@@ -62,7 +63,8 @@ const groups = computed(() => {
   return TRACK_ORDER.map((key) => ({
     key,
     label: {
-      new: 'FTEP — new program',
+      new: 'FTEP — paramedic program',
+      ec: 'FTEP — EMT candidates (EC)',
       legacy: 'Legacy track',
       rideup: 'Ride-up supervisor (P2 → P3)',
       aemt: 'AEMT upgrade',
@@ -164,6 +166,20 @@ async function remindDor(m: { p: PipelinePerson; phase: string; day: string }) {
   }
 }
 
+/* Cleared a phase with nothing enrolled next — the promote flow parks
+   people here; surface them instead of letting them vanish. */
+const awaitingEnrollment = computed(() =>
+  clinicalPeople.value.filter(
+    (p) =>
+      !p.record.pending &&
+      !p.record.workingPhase &&
+      !p.record.inP3Process &&
+      !p.record.inAemtUpgrade &&
+      !!p.record.clearedPhase &&
+      p.record.clearedPhase !== 'FinalRelease',
+  ),
+)
+
 /* ── Trainee quickview — click the card for the planning picture ──── */
 const quickview = ref<PipelinePerson | null>(null)
 function openQuickview(p: PipelinePerson, e: MouseEvent) {
@@ -184,11 +200,9 @@ function initials(name: string): string {
 
 /** Whether the Program Guide has a phase ladder for this trainee (the
  *  stepper's own render guard, mirrored so the wrapper strip doesn't
- *  draw empty for e.g. an EMT new hire). */
+ *  draw empty for a track without day tables). */
 function hasPhaseLadder(p: PipelinePerson): boolean {
-  const t = activeTransitionFor(p.record)
-  const paramedic = /emt-p|^lp$/i.test(p.record.certLevel ?? '')
-  return ((t === 'NEOP' || t === 'P1C_P1') && paramedic) || t === 'P1_P2'
+  return ftepLadderKeyFor(p.record) !== null
 }
 
 function fmt(iso: string | null): string {
@@ -198,11 +212,8 @@ function fmt(iso: string | null): string {
 
 /** The trainee's Program Guide ladder (mirrors the stepper's guard). */
 function ladderFor(p: PipelinePerson): FtepProgramPhase[] {
-  const t = activeTransitionFor(p.record)
-  const paramedic = /emt-p|^lp$/i.test(p.record.certLevel ?? '')
-  if ((t === 'NEOP' || t === 'P1C_P1') && paramedic) return FTEP_PROGRAM_PHASES.P1C_P1
-  if (t === 'P1_P2') return FTEP_PROGRAM_PHASES.P1_P2
-  return []
+  const k = ftepLadderKeyFor(p.record)
+  return k ? FTEP_PROGRAM_PHASES[k] : []
 }
 
 /* Scheduled shift days whose grace window has passed with no DOR on
@@ -236,10 +247,7 @@ const timelines = ref<Record<string, FtepTimeline>>({})
 let segsCache: TimeSegment[] | null = null
 
 async function loadTimelines(refetch = false) {
-  const elig = clinicalPeople.value.filter((q) => {
-    const t = activeTransitionFor(q.record)
-    return (t === 'NEOP' || t === 'P1C_P1' || t === 'P1_P2') && !q.record.legacyTrack && hasPhaseLadder(q)
-  })
+  const elig = clinicalPeople.value.filter((q) => ftepLadderKeyFor(q.record) !== null)
   if (!elig.length) {
     timelines.value = {}
     return
@@ -672,12 +680,12 @@ async function review(r: FtepReport) {
         </div>
       </section>
 
-      <!-- Final evaluations to plan — different FTO required -->
+      <!-- Final evaluations to plan — the primary FTO scores, not teaches -->
       <section v-else-if="openPanel === 'plan' && canEdit" class="fh__panel fh__panel--gold">
         <div class="fh__panel-hd">
           <CalendarClock :size="15" :stroke-width="2" />
           Plan ahead — final evaluations
-          <span class="fh__panel-sub">needs a DIFFERENT FTO (usually a station move) — line the pairing up with scheduling early</span>
+          <span class="fh__panel-sub">run by the trainee's PRIMARY FTO, who steps back to score (Guide v1.2) — line the tour up with scheduling early</span>
         </div>
         <div v-if="!planRows.length" class="fh__panel-empty">
           <Check :size="14" :stroke-width="2.5" /> No final evaluations on the horizon.
@@ -687,7 +695,27 @@ async function review(r: FtepReport) {
           <span class="fh__missing-meta">
             {{ r.started ? 'final eval STARTED' : 'final eval ≈' }} {{ fmt(r.start) }}
             · ready to test ≈ {{ fmt(r.testStd) }}
-            · FTOs used: {{ r.ftos.length ? r.ftos.join(', ') : 'none yet' }}
+            · FTOs so far: {{ r.ftos.length ? r.ftos.join(', ') : 'none yet' }}
+          </span>
+        </div>
+      </section>
+
+      <!-- Cleared a phase, next one not enrolled yet — promote parks
+           people here deliberately, but they must stay VISIBLE
+           (Ibarra "disappeared" after clearing NEOP, 2026-11-02). -->
+      <section v-if="awaitingEnrollment.length" class="fh__panel fh__panel--gold">
+        <div class="fh__panel-hd">
+          <Inbox :size="15" :stroke-width="2" />
+          Cleared — awaiting next-phase enrollment
+          <span class="fh__panel-sub">promotion cleared their phase; enroll the next one from their file (Edit record → Enroll)</span>
+        </div>
+        <div v-for="p in awaitingEnrollment" :key="p.userId" class="fh__missing-row">
+          <span class="fh__missing-who">{{ p.fullName }}</span>
+          <span class="fh__missing-meta">cleared {{ phaseLabel(p.record.clearedPhase) }}</span>
+          <span class="fh__missing-actions">
+            <button type="button" class="fh__mini" @click="router.push(`/clinical/people/${p.userId}`)">
+              Open file
+            </button>
           </span>
         </div>
       </section>
@@ -700,7 +728,7 @@ async function review(r: FtepReport) {
         </div>
         <template v-for="p in g.people" :key="p.userId">
         <FtepTraineeCard
-          v-if="g.key === 'new' && hasPhaseLadder(p)"
+          v-if="(g.key === 'new' || g.key === 'ec') && hasPhaseLadder(p)"
           :person="p"
           :timeline="timelines[p.userId] ?? null"
           :can-edit="canEdit"

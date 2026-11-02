@@ -160,24 +160,34 @@ export interface FtepProgramPhase {
   tours?: number
 }
 
-export const FTEP_PROGRAM_PHASES: Record<'P1C_P1' | 'P1_P2', FtepProgramPhase[]> = {
+export const FTEP_PROGRAM_PHASES: Record<'P1C_P1' | 'P1_P2' | 'EC_EMT', FtepProgramPhase[]> = {
   /* P1C → P1 (90-day cap) */
   P1C_P1: [
     { key: 'phase0', no: 0, label: 'NEOP Academy', hint: 'Clinical Department · 4 days', noFto: true, tours: 4 },
-    { key: 'phase1', no: 1, label: 'EMT Orientation', hint: '1 tour', tours: 1 },
+    { key: 'phase1', no: 1, label: 'Operations Orientation', hint: '1 tour · EMT FTO', tours: 1 },
     { key: 'phase2', no: 2, label: 'Clinical Integration', hint: '2 tours', tours: 2 },
     { key: 'phase3', no: 3, label: 'Partner Phase', hint: '4 tours', tours: 4 },
-    { key: 'phase4', no: 4, label: 'Final Evaluation', hint: '1 tour · different FTO', tours: 1 },
+    { key: 'phase4', no: 4, label: 'Final Evaluation', hint: '1 tour · primary FTO scores', tours: 1 },
   ],
-  /* P1 → P2 (traditional 36 days / accelerated 10 · 6-month cap) */
+  /* P1 → P2 (traditional 32 days / accelerated 10 · 6-month cap) */
   P1_P2: [
-    { key: 'phase5', no: 5, label: 'P2 Development', hint: 'traditional 36 d · accelerated 10 d' },
-    { key: 'phase6', no: 6, label: 'Ghost Phase', hint: '' },
-    { key: 'phase7', no: 7, label: 'P2 Final Evaluation', hint: '' },
+    { key: 'phase5', no: 5, label: 'P2 Development', hint: 'traditional 28 d · accelerated 6 d' },
+    { key: 'phase6', no: 6, label: 'Ghost Phase', hint: '1 tour · FTO rides 3rd' },
+    { key: 'phase7', no: 7, label: 'P2 Final Evaluation', hint: '1 tour · primary FTO scores' },
+  ],
+  /* EC → EMT (90-day cap) — the parallel EMT-candidate track; trains
+     with an EMT/AEMT FTO throughout, and the partner tour doubles as
+     the final evaluation (Guide v1.2 §4). */
+  EC_EMT: [
+    { key: 'phase0', no: 0, label: 'NEOP Academy', hint: 'Clinical Department · 4 days', noFto: true, tours: 4 },
+    { key: 'phase1', no: 1, label: 'Operations Orientation', hint: '1 tour · EMT FTO', tours: 1 },
+    { key: 'phase2', no: 2, label: 'Attendant Development', hint: '3 tours', tours: 3 },
+    { key: 'phase3', no: 3, label: 'Partner Tour & Final Evaluation', hint: '1 tour · primary FTO scores', tours: 1 },
   ],
 }
 
-/* ── Published training-day counts (FTEP Program Guide v1.0 §4) ───────
+/* ── Published training-day counts (FTEP Program Guide v1.2 §4,
+   Single-FTO Edition) ─────────────────────────────────────────────────
    One tour = TWO training days; only days scheduled WITH an FTO count
    toward a phase. Phase 0 (NEOP Academy) is classroom — no FTO, no
    schedule linkage. Accelerated P2 is the selective 10-day pathway. */
@@ -189,7 +199,7 @@ export interface PhaseDayStandard {
 }
 
 export const FTEP_DAY_STANDARDS: Record<
-  'P1C_P1' | 'P1_P2' | 'P1_P2_ACCEL',
+  'P1C_P1' | 'P1_P2' | 'P1_P2_ACCEL' | 'EC_EMT',
   Record<string, PhaseDayStandard>
 > = {
   P1C_P1: {
@@ -200,13 +210,18 @@ export const FTEP_DAY_STANDARDS: Record<
   },
   P1_P2: {
     phase5: { min: 24, std: 28, max: 46 },
-    phase6: { min: 4, std: 6, max: 10 },
+    phase6: { min: 2, std: 2, max: 4 },
     phase7: { min: 2, std: 2, max: 4 },
   },
   P1_P2_ACCEL: {
     phase5: { min: 6, std: 6, max: 8 },
     phase6: { min: 2, std: 2, max: 2 },
     phase7: { min: 2, std: 2, max: 2 },
+  },
+  EC_EMT: {
+    phase1: { min: 2, std: 2, max: 4 },
+    phase2: { min: 4, std: 6, max: 10 },
+    phase3: { min: 2, std: 2, max: 4 },
   },
 }
 

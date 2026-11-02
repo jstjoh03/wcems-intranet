@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watchEffect } from 'vue'
 import { Check } from 'lucide-vue-next'
 import type { PipelinePerson } from '@/types'
-import { activeTransitionFor } from '@/constants/pipelineGates'
+import { ftepLadderKeyFor } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
@@ -49,13 +49,10 @@ function missingDorDays(key: string, noFto?: boolean): string[] {
 }
 
 const phaseSet = computed<FtepProgramPhase[] | null>(() => {
-  const t = activeTransitionFor(record.value)
-  /* The written program covers paramedic tracks; EMT/AEMT programs are
-     still to be built — no ladder to draw for them yet. */
-  const paramedic = /emt-p|^lp$/i.test(record.value.certLevel ?? '')
-  if ((t === 'NEOP' || t === 'P1C_P1') && paramedic) return FTEP_PROGRAM_PHASES.P1C_P1
-  if (t === 'P1_P2') return FTEP_PROGRAM_PHASES.P1_P2
-  return null
+  /* Guide v1.2 ladders: paramedic P1C→P1 and P1→P2, plus the EC (EMT
+     candidate) track. AEMT programs are still to be built. */
+  const k = ftepLadderKeyFor(record.value)
+  return k ? FTEP_PROGRAM_PHASES[k] : null
 })
 
 const rowByKey = computed(() => {
