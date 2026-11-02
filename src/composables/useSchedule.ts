@@ -513,6 +513,38 @@ export function hoursBetween(startTs: string, endTs: string): number {
   return (new Date(endTs).getTime() - new Date(startTs).getTime()) / 3_600_000
 }
 
+/** Chicago wall-clock milliseconds of an instant — the basis for
+ *  schedule-nominal durations across DST changes. */
+const wallClockFmt = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Chicago',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+})
+
+function wallClockMs(ts: string): number {
+  const p: Record<string, number> = {}
+  for (const part of wallClockFmt.formatToParts(new Date(ts))) {
+    if (part.type !== 'literal') p[part.type] = Number(part.value)
+  }
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second)
+}
+
+/** Schedule-NOMINAL hours between two instants: the Chicago wall-clock
+ *  difference. A fall-back 0600→0600 shift is 25 real hours but 24
+ *  nominal; spring-forward is 23 real but 24 nominal. PAID TIME OFF is
+ *  charged nominal hours (Justin, 2026-11-02) — worked time everywhere
+ *  else stays real elapsed hours, so the DST hour is paid when worked
+ *  but never over- or under-charges a leave balance. Keep in lockstep
+ *  with the sched_leave_used view (same wall-clock math in SQL). */
+export function nominalHours(startTs: string, endTs: string): number {
+  return (wallClockMs(endTs) - wallClockMs(startTs)) / 3_600_000
+}
+
 /** Epoch millis for comparisons. NEVER compare timestamp STRINGS from
  *  mixed sources: PostgREST returns '+00:00' while toISOString() gives
  *  '.000Z', and at the same instant '+00:00' < '.000Z' lexically. */
@@ -2394,7 +2426,9 @@ async function fetchTimeSegments(
         dateIso: iso,
         startMs: s2,
         endMs: en2,
-        hours: (en2 - s2) / 3_600_000,
+        // PTO charges schedule-nominal hours — a DST-day 0600→0600
+        // off record is 24, while worked rows above keep real elapsed
+        hours: nominalHours(e.startAt, e.endAt),
         unitId: null,
         source: OFF_LABELS[ot] ?? 'Time Off',
         kind: 'timeoff',
@@ -2951,8 +2985,7 @@ async function fetchLeaveTaken(userId?: string): Promise<LeaveTaken[]> {
     userId: r.user_id as string,
     kind: r.off_type as 'vacation' | 'sick',
     dateIso: r.work_date as string,
-    hours:
-      Math.round(((tsMs(r.end_at as string) - tsMs(r.start_at as string)) / 3600e3) * 100) / 100,
+    hours: Math.round(nominalHours(r.start_at as string, r.end_at as string) * 100) / 100,
   }))
 }
 
@@ -3118,7 +3151,7 @@ async function projectedLeaveBalance(
 function pendingLeaveHours(userId: string, kind: string): number {
   return requests.value
     .filter((r) => r.requesterId === userId && r.type === 'time_off' && r.status === 'pending' && r.offType === kind && r.startAt && r.endAt)
-    .reduce((k, r) => k + (tsMs(r.endAt as string) - tsMs(r.startAt as string)) / 3600e3, 0)
+    .reduce((k, r) => k + nominalHours(r.startAt as string, r.endAt as string), 0)
 }
 
 // ── request mutations ────────────────────────────────────────────────
@@ -3157,7 +3190,7 @@ async function createTimeOffRequests(
   if (offType === 'vacation' || offType === 'sick') {
     const reqHrs = daysReq.reduce((k, d) => {
       const w = shiftWindow(d.dateIso, d.from, d.until)
-      return k + (tsMs(w.reqEnd) - tsMs(w.reqStart)) / 3600e3
+      return k + nominalHours(w.reqStart, w.reqEnd)
     }, 0)
     const lastDay = daysReq.reduce((m, d) => (d.dateIso > m ? d.dateIso : m), daysReq[0].dateIso)
     const proj = await projectedLeaveBalance(me, offType, lastDay)
