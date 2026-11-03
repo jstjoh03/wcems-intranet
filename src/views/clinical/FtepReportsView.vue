@@ -8,6 +8,7 @@ import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
+import { icrRequirementPhrase, icrTargetFor } from '@/constants/pipelineGates'
 import type { FtepReport } from '@/types'
 
 /**
@@ -71,6 +72,7 @@ async function makePdf(r: FtepReport) {
     report: r,
     traineeName: nameOf(r.traineeId),
     evaluatorName: nameOf(r.evaluatorId),
+    icrRequirement: icrRequirementPhrase(personById(r.traineeId)?.record),
   })
 }
 async function viewPdf(r: FtepReport) {
@@ -136,7 +138,7 @@ async function downloadPdf(r: FtepReport) {
             {{ fmt(r.evalDate) }} · by {{ nameOf(r.evaluatorId) }}
             <template v-if="r.payload.average !== undefined"> · avg {{ r.payload.average?.toFixed(2) }}</template>
             <b v-if="r.payload.nrtFlagged" class="fr__nrt"> · NRT</b>
-            <template v-if="r.kind === 'icr' && r.payload.countsToward10 === false"> · excluded from the 10</template>
+            <template v-if="r.kind === 'icr' && r.payload.countsToward10 === false"> · excluded from the {{ icrTargetFor(personById(r.traineeId)?.record) }}</template>
             <template v-if="r.kind === 'dor' && r.payload.excludedFromRecord"> · excluded from record</template>
             <template v-if="r.reviewedAt"> · reviewed</template>
           </span>

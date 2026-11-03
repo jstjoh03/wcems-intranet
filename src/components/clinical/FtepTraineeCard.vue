@@ -7,7 +7,7 @@ import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useFtepDayOverrides } from '@/composables/useFtepDayOverrides'
-import { gateItemsFor, petitionItemsFor, TRANSITIONS } from '@/constants/pipelineGates'
+import { gateItemsFor, icrRequirementPhrase, petitionItemsFor, TRANSITIONS } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, FTEP_DAY_STANDARDS } from '@/constants/ftepForms'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import type { FtepTimeline, FtepDayRow } from '@/composables/useFtepTimeline'
@@ -325,6 +325,7 @@ async function viewDor(reportId: string | null) {
       report: r,
       traineeName: personById(r.traineeId)?.fullName ?? 'Trainee',
       evaluatorName: personById(r.evaluatorId)?.fullName ?? 'Evaluator',
+      icrRequirement: icrRequirementPhrase(personById(r.traineeId)?.record),
     })
     window.open(doc.output('bloburl'), '_blank', 'noopener')
   } finally {

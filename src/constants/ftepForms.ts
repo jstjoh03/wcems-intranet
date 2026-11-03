@@ -125,6 +125,57 @@ export const ICR_SECTIONS: FtepSection[] = [
   },
 ]
 
+/* ── BLS ICR (EC — EMT candidate track, Guide v1.2) ──────────────────
+   The ICR reframed to EMT scope: EMTs do not initiate IVs or interpret
+   ECGs — they set up and place them when a paramedic/AEMT is present —
+   and their medication list is the EMT band of the protocol book. The
+   variant is stamped into the report payload (icrVariant: 'bls') at
+   save so records always render with the category set they were scored
+   on; reports without a stamp are the original ALS form. */
+
+export const ICR_SECTIONS_BLS: FtepSection[] = [
+  {
+    title: 'Assessment & Clinical Decision-Making',
+    categories: [
+      { no: 1, label: 'Scene management & safety' },
+      { no: 2, label: 'Patient assessment' },
+      { no: 3, label: 'History gathering' },
+      { no: 4, label: 'Vitals & diagnostics (incl. temperature & BGL)' },
+      { no: 5, label: 'Field impression & protocol selection' },
+      { no: 6, label: 'Treatment plan & reassessment' },
+      { no: 7, label: 'ALS recognition & escalation (identifies ALS needs early)' },
+      { no: 8, label: 'Transport decision & destination' },
+    ],
+  },
+  {
+    title: 'Skills & Interventions — EMT scope',
+    categories: [
+      { no: 9, label: 'Airway management & oxygen (BLS adjuncts · suction · BVM · CPAP)' },
+      { no: 10, label: 'Medication administration — EMT scope (3-check with cross-check)' },
+      { no: 11, label: 'ALS assist — IV setup, ECG & 12-lead placement (paramedic/AEMT present)' },
+      { no: 12, label: 'Immobilization / wound care / splinting' },
+      { no: 13, label: 'Stretcher operations & body mechanics' },
+    ],
+  },
+  {
+    title: 'Communication & Professionalism',
+    categories: [
+      { no: 14, label: 'Attendant role — call ownership & teamwork' },
+      { no: 15, label: 'Communication with patient & family' },
+      { no: 16, label: 'Communication with crews, public safety & hospital staff' },
+      { no: 17, label: 'Consults & notifications' },
+      { no: 18, label: 'Attitude & acceptance of feedback' },
+    ],
+  },
+  {
+    title: 'Documentation',
+    categories: [
+      { no: 19, label: 'ePCR content & narrative' },
+      { no: 20, label: 'Documentation timeliness' },
+    ],
+  },
+]
+
 /** Uniform tier & phase choices (per the FTEP Program Guide) — a
  *  dropdown so printed PDFs never depend on FTOs typing them alike. */
 export const TIER_PHASE_OPTIONS = [
@@ -139,6 +190,15 @@ export const TIER_PHASE_OPTIONS = [
   'P1 · Legacy P2 track',
   'P2 · P3 Ride-up (supervisor rideout)',
   'AEMT upgrade',
+] as const
+
+/** EC (EMT-candidate) phase choices — shown in place of the paramedic
+ *  list when the trainee is on the EC track (Guide v1.2 §4). */
+export const TIER_PHASE_OPTIONS_EC = [
+  'EC · Phase 0 — NEOP Academy',
+  'EC · Phase 1 — Operations Orientation',
+  'EC · Phase 2 — Attendant Development',
+  'EC · Phase 3 — Partner Tour & Final Evaluation',
 ] as const
 
 export const UNIT_OPTIONS = [
@@ -264,12 +324,17 @@ export interface FtoEvalPayload {
 
 export type FtepKind = 'dor' | 'icr'
 
-export function sectionsFor(kind: FtepKind): FtepSection[] {
-  return kind === 'dor' ? DOR_SECTIONS : ICR_SECTIONS
+/** ICR form variant — 'bls' for EC (EMT-candidate) trainees. Absent or
+ *  'als' = the original form, so pre-variant reports render unchanged. */
+export type IcrVariant = 'als' | 'bls'
+
+export function sectionsFor(kind: FtepKind, variant?: IcrVariant): FtepSection[] {
+  if (kind === 'dor') return DOR_SECTIONS
+  return variant === 'bls' ? ICR_SECTIONS_BLS : ICR_SECTIONS
 }
 
-export function allCategories(kind: FtepKind): FtepCategory[] {
-  return sectionsFor(kind).flatMap((s) => s.categories)
+export function allCategories(kind: FtepKind, variant?: IcrVariant): FtepCategory[] {
+  return sectionsFor(kind, variant).flatMap((s) => s.categories)
 }
 
 /** One rated category inside a report payload. */
@@ -309,6 +374,9 @@ export interface FtepPayload {
   incidentNo?: string
   chiefComplaint?: string
   callLevel?: 'bls' | 'als' | 'als_p2'
+  /** 'bls' = scored on the EMT-scope category set (EC trainees).
+   *  Stamped at save; absent = the original ALS form. */
+  icrVariant?: IcrVariant
   countsToward10?: boolean
   explanation?: string
   /** Optional FTO narrative — anything relevant to the call. */
@@ -362,9 +430,10 @@ export function ratingAverage(ratings: Record<string, FtepRating> | undefined): 
 export function missingComments(
   kind: FtepKind,
   ratings: Record<string, FtepRating> | undefined,
+  variant?: IcrVariant,
 ): number[] {
   if (!ratings) return []
-  return allCategories(kind)
+  return allCategories(kind, variant)
     .filter((c) => {
       const r = ratings[String(c.no)]
       return r && typeof r.score === 'number' && r.score < 3 && !r.comment?.trim()

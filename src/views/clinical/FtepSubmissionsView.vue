@@ -9,6 +9,7 @@ import { useClinical } from '@/composables/useClinical'
 import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useFtep } from '@/composables/useFtep'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
+import { icrRequirementPhrase, icrTargetFor } from '@/constants/pipelineGates'
 import { FTO_EVAL_AREAS, FTO_EVAL_NARRATIVES, type FtoEvalPayload } from '@/constants/ftepForms'
 import type { FtepReport } from '@/types'
 
@@ -295,6 +296,12 @@ const counts = computed(() => {
   }
 })
 
+/** Track-aware ICR requirement — ECs file 5 scored call evaluations,
+ *  medics 10 scored ALS ones (Guide v1.2). */
+function icrTargetOf(userId: string): number {
+  return icrTargetFor(personById(userId)?.record)
+}
+
 function fmtSubmitted(r: FtepReport): string {
   const iso = r.submittedAt
   if (!iso) return new Date(`${r.evalDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -349,6 +356,7 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
       report: r,
       traineeName: nameOf(r.traineeId),
       evaluatorName: nameOf(r.evaluatorId),
+      icrRequirement: icrRequirementPhrase(personById(r.traineeId)?.record),
     })
     if (mode === 'view') {
       window.open(doc.output('bloburl'), '_blank', 'noopener')
@@ -423,7 +431,7 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
               </label>
               <label class="fs__queue-check">
                 <input v-model="queueCounts" type="checkbox" />
-                Counts toward the required 10 call evaluations
+                Counts toward the required {{ queueEmployee ? icrTargetOf(queueEmployee) : 10 }} call evaluations
               </label>
               <button type="button" class="fs__triage-btn fs__triage-btn--accept" :disabled="queueBusy" @click="acceptQueueRow(row)">
                 Accept into file
@@ -497,8 +505,8 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
               :class="r.payload.countsToward10 ? 'fs__count--yes' : 'fs__count--no'"
               role="button"
               :title="r.payload.countsToward10
-                ? 'Counts toward the required 10 — click to exclude with a reason'
-                : `Excluded from the 10${r.payload.triageNote ? ` — ${r.payload.triageNote}` : ''} — click to manage`"
+                ? `Counts toward the required ${icrTargetOf(r.traineeId)} — click to exclude with a reason`
+                : `Excluded from the ${icrTargetOf(r.traineeId)}${r.payload.triageNote ? ` — ${r.payload.triageNote}` : ''} — click to manage`"
               @click.stop="openTriage(r)"
             >{{ r.payload.countsToward10 ? 'counts' : 'excluded' }}</span>
             <span class="fs__when">{{ fmtSubmitted(r) }}</span>
@@ -513,7 +521,7 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
           </button>
           <div v-if="triageOpen === r.id" class="fs__triage">
             <template v-if="r.payload.countsToward10">
-              <span class="fs__triage-l">Exclude this ICR from the required 10 — document why:</span>
+              <span class="fs__triage-l">Exclude this ICR from the required {{ icrTargetOf(r.traineeId) }} — document why:</span>
               <input
                 v-model="triageReason"
                 type="text"
@@ -527,7 +535,7 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
             </template>
             <template v-else>
               <span class="fs__triage-l">
-                Excluded from the 10<template v-if="r.payload.triageNote"> — “{{ r.payload.triageNote }}”</template>.
+                Excluded from the {{ icrTargetOf(r.traineeId) }}<template v-if="r.payload.triageNote"> — “{{ r.payload.triageNote }}”</template>.
               </span>
               <button type="button" class="fs__triage-btn" :disabled="triageBusy" @click="includeIcr(r)">
                 Count it again

@@ -21,6 +21,7 @@ import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.v
 import type { FtepReport } from '@/types'
 import {
   activeTransitionFor,
+  icrRequirementPhrase,
   openGapCount,
   phaseLabel,
   pillFor,
@@ -353,6 +354,7 @@ async function viewMyReport(reportId: string) {
       report: r,
       traineeName: myRecord.value.fullName,
       evaluatorName: evalNames.value[r.evaluatorId] ?? 'Evaluator',
+      icrRequirement: icrRequirementPhrase(myRecord.value.record),
     })
     window.open(doc.output('bloburl'), '_blank', 'noopener')
   } finally {

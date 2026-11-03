@@ -352,6 +352,19 @@ export function ftepLadderKeyFor(r: PipelineRecord): 'P1C_P1' | 'P1_P2' | 'EC_EM
   return null
 }
 
+/** ICR requirement for a trainee's track (Guide v1.2): medics file 10
+ *  scored ALS call evaluations; ECs file 5 scored call evaluations —
+ *  BLS calls, so never say "ALS" to an EC (Justin, 2026-11-03). */
+export function icrTargetFor(r: PipelineRecord | null | undefined): number {
+  return r && ftepLadderKeyFor(r) === 'EC_EMT' ? 5 : 10
+}
+
+export function icrRequirementPhrase(r: PipelineRecord | null | undefined): string {
+  return r && ftepLadderKeyFor(r) === 'EC_EMT'
+    ? 'the 5 required scored call evaluations'
+    : 'the 10 required scored ALS call evaluations'
+}
+
 /* ── Gate item resolution (defs ⋈ stored rows ⋈ record dates) ──────── */
 
 export interface GateItem {

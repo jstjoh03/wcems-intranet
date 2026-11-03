@@ -14,11 +14,14 @@ import {
   DOR_SCALE_NOTE,
   ICR_SCALE_NOTE,
   TIER_PHASE_OPTIONS,
+  TIER_PHASE_OPTIONS_EC,
   UNIT_OPTIONS,
   type FtepKind,
   type FtepRating,
   type FtepPayload,
+  type IcrVariant,
 } from '@/constants/ftepForms'
+import { icrRequirementPhrase } from '@/constants/pipelineGates'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -44,6 +47,15 @@ const kind = computed<FtepKind>(() => (route.params.kind === 'icr' ? 'icr' : 'do
 const traineeId = computed(() => String(route.params.traineeId))
 const trainee = computed(() => personById(traineeId.value))
 const isDor = computed(() => kind.value === 'dor')
+/* EC (EMT-candidate) trainees get the BLS ICR — the EMT-scope category
+   set; everyone else keeps the original ALS form. Stamped into the
+   payload at save so the record renders with the set it was scored on. */
+const isEc = computed(() => !!trainee.value && ftepTrackFor(trainee.value)?.key === 'ec')
+const icrVariant = computed<IcrVariant>(() => (kind.value === 'icr' && isEc.value ? 'bls' : 'als'))
+const icrPhrase = computed(() => icrRequirementPhrase(trainee.value?.record))
+const tierOptions = computed<readonly string[]>(() =>
+  isEc.value ? TIER_PHASE_OPTIONS_EC : TIER_PHASE_OPTIONS,
+)
 const title = computed(() => (isDor.value ? 'Daily Observation Report' : 'Individual Call Report'))
 /** "P1C" from "P1C · Phase 2 — Clinical Integration". */
 const tierShort = computed(() => meta.tierPhase.split('·')[0]?.trim() || null)
@@ -123,6 +135,7 @@ function buildPayload(): FtepPayload {
     base.incidentNo = meta.incidentNo || undefined
     base.chiefComplaint = meta.chiefComplaint || undefined
     base.callLevel = meta.callLevel
+    if (icrVariant.value === 'bls') base.icrVariant = 'bls'
     base.countsToward10 = meta.countsToward10
     base.explanation = explanation.value || undefined
     base.callNotes = callNotes.value.trim() || undefined
@@ -218,7 +231,7 @@ function toggleNrt(no: number) {
   ratings[k].nrt = !ratings[k].nrt
 }
 
-const cats = computed(() => allCategories(kind.value))
+const cats = computed(() => allCategories(kind.value, icrVariant.value))
 const ratedCount = computed(() => cats.value.filter((c) => ratings[String(c.no)]).length)
 const average = computed(() => ratingAverage(ratings))
 const nrtFlagged = computed(() => Object.values(ratings).some((r) => r.nrt))
@@ -227,7 +240,7 @@ const hasOne = computed(() => Object.values(ratings).some((r) => r.score === 1))
 const hasBelowThree = computed(() =>
   Object.values(ratings).some((r) => typeof r.score === 'number' && r.score < 3),
 )
-const commentGaps = computed(() => missingComments(kind.value, ratings))
+const commentGaps = computed(() => missingComments(kind.value, ratings, icrVariant.value))
 
 const blockers = computed<string[]>(() => {
   const out: string[] = []
@@ -342,7 +355,7 @@ function fmtSaveState(): string {
           <label>Tier &amp; phase
             <select v-model="meta.tierPhase">
               <option value="" disabled>Select…</option>
-              <option v-for="t in TIER_PHASE_OPTIONS" :key="t" :value="t">{{ t }}</option>
+              <option v-for="t in tierOptions" :key="t" :value="t">{{ t }}</option>
             </select>
           </label>
           <label>Unit
@@ -378,7 +391,7 @@ function fmtSaveState(): string {
             </label>
             <label class="fr__check">
               <input v-model="meta.countsToward10" type="checkbox" />
-              Counts toward the 10 required scored ALS call evaluations
+              Counts toward {{ icrPhrase }}
             </label>
           </template>
         </div>
@@ -391,7 +404,11 @@ function fmtSaveState(): string {
           <span class="fr__progress">{{ ratedCount }} / {{ cats.length }} rated<template v-if="average !== null"> · avg {{ average.toFixed(2) }}</template></span>
         </div>
         <p class="fr__scale">{{ isDor ? DOR_SCALE_NOTE : ICR_SCALE_NOTE }}</p>
-        <template v-for="section in sectionsFor(kind)" :key="section.title">
+        <p v-if="!isDor && icrVariant === 'bls'" class="fr__scale">
+          BLS form — EMT-scope categories for EC candidates. ALS skills are scored as assists
+          performed with the paramedic/AEMT, never as independent interventions.
+        </p>
+        <template v-for="section in sectionsFor(kind, icrVariant)" :key="section.title">
           <div class="fr__section">{{ section.title }}</div>
           <div v-for="cat in section.categories" :key="cat.no" class="fr__row">
             <div class="fr__row-top">

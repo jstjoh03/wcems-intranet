@@ -13,7 +13,7 @@ import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
-import { activeTransitionFor, ftepLadderKeyFor, gateItemsFor, petitionItemsFor, phaseLabel } from '@/constants/pipelineGates'
+import { activeTransitionFor, ftepLadderKeyFor, gateItemsFor, icrRequirementPhrase, icrTargetFor, petitionItemsFor, phaseLabel } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
 import { buildFtepTimeline, type FtepTimeline } from '@/composables/useFtepTimeline'
@@ -50,7 +50,7 @@ watch(
 const TRACK_ORDER = ['new', 'ec', 'legacy', 'rideup', 'aemt'] as const
 const TRACK_HINTS: Record<string, string> = {
   new: 'DOR average over the final four (floor 3.5) · 10 scored ALS ICRs',
-  ec: 'EMT candidates · DOR floor 3.5 · 5 scored ICRs · partner tour doubles as the final evaluation',
+  ec: 'EMT candidates · DOR floor 3.5 · 5 scored ICRs (BLS form) · partner tour doubles as the final evaluation',
   legacy: '10 call evaluations per credentialing rung — filed as portal ICRs (Jotform retired 2026-08-31; historical evals already counted) · no DOR tracking',
   rideup: '4 × 12-hr rideouts with a supervisor · skills check-offs · protocol test — no ICR count',
   aemt: 'Skills checklists · medication administration sign-off · protocol exam',
@@ -446,12 +446,18 @@ function nameOf(userId: string): string {
   return personById(userId)?.fullName ?? 'Staff'
 }
 
+/** Track-aware ICR requirement — ECs file 5, medics 10 (Guide v1.2). */
+function icrTargetOf(userId: string): number {
+  return icrTargetFor(personById(userId)?.record)
+}
+
 const pdfBusy = ref<string | null>(null)
 async function makePdf(r: FtepReport) {
   return generateFtepReportPdf({
     report: r,
     traineeName: nameOf(r.traineeId),
     evaluatorName: nameOf(r.evaluatorId),
+    icrRequirement: icrRequirementPhrase(personById(r.traineeId)?.record),
   })
 }
 async function downloadPdf(r: FtepReport) {
@@ -613,10 +619,10 @@ async function review(r: FtepReport) {
               <div v-if="triageOpen === r.id" class="fh__triage">
                 <button type="button" :disabled="triageBusy" @click="triageInclude(r)">
                   <Check :size="12" :stroke-width="2.5" />
-                  {{ r.kind === 'icr' ? 'Counts toward the 10' : 'Include in the record' }}
+                  {{ r.kind === 'icr' ? `Counts toward the ${icrTargetOf(r.traineeId)}` : 'Include in the record' }}
                 </button>
                 <button type="button" :disabled="triageBusy" @click="startExclude(r)">
-                  {{ r.kind === 'icr' ? 'Exclude from the 10…' : 'Exclude from the record…' }}
+                  {{ r.kind === 'icr' ? `Exclude from the ${icrTargetOf(r.traineeId)}…` : 'Exclude from the record…' }}
                 </button>
                 <div v-if="triageExcluding === r.id" class="fh__triage-form" @click.stop>
                   <input

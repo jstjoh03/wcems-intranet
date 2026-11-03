@@ -24,7 +24,7 @@ import { supabase } from '@/lib/supabase'
 import { useSkillsDay } from '@/composables/useSkillsDay'
 import { useClinicalConversations } from '@/composables/useClinicalConversations'
 import { usePipeline } from '@/composables/usePipeline'
-import { requirementStatus, activeTransitionFor, ftepLadderKeyFor, jurisprudenceStatus, ENROLLMENT_TRACKS } from '@/constants/pipelineGates'
+import { requirementStatus, activeTransitionFor, ftepLadderKeyFor, icrRequirementPhrase, jurisprudenceStatus, ENROLLMENT_TRACKS } from '@/constants/pipelineGates'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
 import { useAuthStore } from '@/stores/auth'
 import type { PipelinePerson, PipelineRequirement } from '@/types'
@@ -411,7 +411,12 @@ async function ftepPdf(reportId: string, mode: 'view' | 'download' = 'download')
   ftepPdfBusy.value = reportId
   try {
     const evaluator = personById(r.evaluatorId)?.fullName ?? 'Evaluator'
-    const doc = await generateFtepReportPdf({ report: r, traineeName: p.fullName, evaluatorName: evaluator })
+    const doc = await generateFtepReportPdf({
+      report: r,
+      traineeName: p.fullName,
+      evaluatorName: evaluator,
+      icrRequirement: icrRequirementPhrase(p.record),
+    })
     if (mode === 'view') {
       window.open(doc.output('bloburl'), '_blank', 'noopener')
     } else {

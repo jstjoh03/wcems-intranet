@@ -246,6 +246,12 @@ function seedDevFixture() {
       clearedPhase: 'FinalRelease', level: 'EMT', certLevel: 'EMT-B',
       txLicenseExpiresAt: '2026-09-30',
     }),
+    /* EC — EMT candidate on the Guide v1.2 track (BLS ICR form). */
+    mk('dev-6', 'Aslan Sukolics', 'B', '211', {
+      clearedPhase: 'NEOP', workingPhase: 'FTR', workingStartedAt: '2026-11-02',
+      workingTargetAt: '2027-01-31', level: 'EC', certLevel: 'EMT-B',
+      txLicenseExpiresAt: '2030-06-30',
+    }),
   ]
   editorIds.value = ['dev-admin']
   allPeople.value = people.value
