@@ -81,6 +81,10 @@ const CERT_MAP: Record<string, string> = {
   'emergency vehicle operations course': 'EVOC',
   'emergency vehicle operations': 'EVOC',
   'national registry certification': 'National Registry',
+  /* Annual active-attack training (requirement row added 2026-11-03).
+     Paycom lists an ALERRT slot for everyone; only rows with a date are
+     completions — the rest fall into missingStart and are skipped. */
+  'alerrt': 'ALERRT',
 }
 const DSHS_NAMES = new Set(['texas department of state health services'])
 
@@ -190,9 +194,9 @@ Deno.serve(async (req: Request) => {
 
     const { data: reqs, error: qErr } = await supabase
       .from('pipeline_requirements')
-      .select('id, name')
+      .select('id, name, cycle')
     if (qErr) return json({ ok: false, error: qErr.message }, 500)
-    const reqByName = new Map((reqs ?? []).map((r) => [r.name, r.id]))
+    const reqByName = new Map((reqs ?? []).map((r) => [r.name, { id: r.id, cycle: r.cycle }]))
 
     const unmatched = new Set<string>()
     const skippedCerts = new Set<string>()
@@ -242,13 +246,17 @@ Deno.serve(async (req: Request) => {
         skippedCerts.add(certRaw)
         continue
       }
-      const reqId = reqByName.get(reqName)
-      if (!reqId) {
+      const req = reqByName.get(reqName)
+      if (!req) {
         skippedCerts.add(`${certRaw} (no requirement row)`)
         continue
       }
 
-      const expires = endRaw ? endOfMonth(endRaw) : null
+      /* The end-of-month snap is a CARD convention (AHA cards print
+         month/year). Annual items like ALERRT carry a real completion
+         date — and their due date is computed from completed_at anyway —
+         so their expiration is stored as-is. */
+      const expires = endRaw ? (req.cycle === 'certification' ? endOfMonth(endRaw) : endRaw) : null
       const completed = start ?? endRaw
       if (!completed) {
         missingStart.push(`${person.fullName}: ${certRaw} (no dates at all)`)
@@ -257,7 +265,7 @@ Deno.serve(async (req: Request) => {
       if (!start) missingStart.push(`${person.fullName}: ${certRaw} (no start date; used expiration)`)
 
       upserts.push({
-        requirement_id: reqId,
+        requirement_id: req.id,
         user_id: person.id,
         completed_at: completed,
         expires_at: expires,

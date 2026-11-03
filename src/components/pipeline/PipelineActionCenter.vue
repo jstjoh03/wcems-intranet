@@ -397,6 +397,8 @@ const reportLines = computed<string[]>(() => {
   }
   const lists: [string, string[]][] = [
     ['Unmatched people', (d.unmatchedPeople as string[]) ?? []],
+    ['Skipped cert types (no mapping — not imported)', (d.skippedCertTypes as string[]) ?? []],
+    ['Rows without dates (not completions — skipped)', (d.missingStart as string[]) ?? []],
     ['DSHS — verify manually', (d.dshsManualVerify as string[]) ?? []],
     ['DSHS mismatches', (d.dshsMismatch as string[]) ?? []],
   ]
