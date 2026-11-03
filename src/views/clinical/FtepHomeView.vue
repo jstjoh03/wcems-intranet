@@ -175,8 +175,11 @@ const awaitingEnrollment = computed(() =>
       !p.record.workingPhase &&
       !p.record.inP3Process &&
       !p.record.inAemtUpgrade &&
+      /* Only rungs with a MANDATORY next phase. P2 is the destination
+         credential — P3/FTO is opt-in later — so cleared P2/P3 and
+         Final Release are done, not awaiting enrollment (Justin, 11/02). */
       !!p.record.clearedPhase &&
-      p.record.clearedPhase !== 'FinalRelease',
+      ['NEOP', 'FTR', 'P1'].includes(p.record.clearedPhase),
   ),
 )
 

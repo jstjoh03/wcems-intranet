@@ -572,9 +572,15 @@ export function pillFor(r: PipelineRecord, rows: PipelineGateProgress[]): Pipeli
   if (!transition) {
     if (r.clearedPhase === 'FinalRelease')
       return { text: 'Credentialed', variant: 'credentialed' }
-    /* Cleared a phase but not enrolled in the next — promote leaves
-       people here on purpose (enrolling is a deliberate act), but the
-       state must READ that way, not vanish (Ibarra, 2026-11-02). */
+    /* P2 is the destination credential — P3/FTO is opt-in later — so a
+       cleared P2/P3 is DONE, never "awaiting enrollment" (Justin,
+       2026-11-02). */
+    if (r.clearedPhase === 'P2' || r.clearedPhase === 'P3')
+      return { text: `Credentialed ${r.clearedPhase}`, variant: 'credentialed' }
+    /* Cleared a lower rung but not enrolled in the next — promote
+       leaves people here on purpose (enrolling is a deliberate act),
+       but the state must READ that way, not vanish (Ibarra,
+       2026-11-02). */
     if (r.clearedPhase)
       return { text: `Cleared ${r.clearedPhase} — enroll next phase`, variant: 'hold' }
     return { text: '—', variant: 'none' }
