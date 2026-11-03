@@ -53,6 +53,26 @@ async function clearRow(entryId: string | null) {
   if (e) err.value = e
 }
 
+/* "Covered — no extra punch" rows: the whole row is the control, armed
+   on the first tap (Justin, 2026-11-03 — the old inline ✕ was a 12px
+   target nobody could hit on a phone, and Chief keeps adding blocks by
+   mistake). Second tap deletes the blocked entry; the window derives
+   open again on its own. */
+const armedBlock = ref<string | null>(null)
+let armedTimer: ReturnType<typeof setTimeout> | null = null
+async function tapBlocked(entryId: string | null): Promise<void> {
+  if (!entryId) return
+  if (armedBlock.value !== entryId) {
+    armedBlock.value = entryId
+    if (armedTimer) clearTimeout(armedTimer)
+    armedTimer = setTimeout(() => { armedBlock.value = null }, 4000)
+    return
+  }
+  if (armedTimer) clearTimeout(armedTimer)
+  armedBlock.value = null
+  await clearRow(entryId)
+}
+
 async function removeNote(id: string) {
   if (busy.value) return
   busy.value = true
@@ -144,17 +164,17 @@ function fixBalance(b: DayImbalance): void {
             :class="{ 'db__row--open': row.open }"
           >
             <span class="db__seat">{{ sm.seat.label }}</span>
-            <span v-if="row.kind === 'blocked'" class="db__name db__name--blocked">
+            <button
+              v-if="row.kind === 'blocked' && sched.canEdit.value"
+              class="db__name db__name--blocked db__name--btn"
+              :class="{ 'db__name--armed': armedBlock === row.entryId }"
+              :title="armedBlock === row.entryId ? 'Tap again to remove — the window shows open again' : 'Marked covered (no extra punch) — tap twice to remove'"
+              @click="tapBlocked(row.entryId)"
+            >
+              {{ armedBlock === row.entryId ? 'Remove? Tap again' : row.name }}
+            </button>
+            <span v-else-if="row.kind === 'blocked'" class="db__name db__name--blocked">
               {{ row.name }}
-              <button
-                v-if="sched.canEdit.value && row.entryId"
-                class="db__x"
-                aria-label="Unblock"
-                title="Remove the block — the window shows open again"
-                @click="clearRow(row.entryId)"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-              </button>
             </span>
             <button
               v-else-if="row.open"
@@ -618,6 +638,13 @@ function fixBalance(b: DayImbalance): void {
 .db__name--blocked {
   color: var(--color-muted);
   font-style: italic;
+}
+
+/* armed = first tap landed; the second tap removes the block */
+.db__name--armed {
+  color: var(--color-danger-500);
+  font-style: normal;
+  font-weight: 700;
 }
 
 /* time-off rows are buttons for editors — row click opens the

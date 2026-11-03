@@ -945,6 +945,16 @@ function seedDevStub(): void {
       eventId: null, studentProgram: null, unitId: 'dev-u-M271',
       note: null, sourceRequest: null,
     },
+    /* Blocked-window fixture (2026-11-03): "Covered — no extra punch"
+       on an open window — renders the two-tap remove on the month and
+       day boards in dev (the delete errors, exercising the error line). */
+    {
+      id: 'dev-e-blk1', workDate: devDay, seatId: 'dev-s-M231-1', userId: null,
+      startAt: centralTs(devDay, '16:00'), endAt: centralTs(addDaysIso(devDay, 1), '06:00'),
+      kind: 'blocked', status: 'off', offType: null, timeType: 'regular',
+      eventId: null, studentProgram: null, unitId: 'dev-u-M231',
+      note: null, sourceRequest: null,
+    },
   ]
 }
 

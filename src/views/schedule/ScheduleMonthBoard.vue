@@ -106,6 +106,28 @@ function imbTitle(iso: string): string {
     .join('\n')
 }
 
+/* "Covered — no extra punch" rows: two-tap remove right on the row
+   (Justin, 2026-11-03 — Chief keeps marking windows covered by
+   mistake, and these used to misroute to the person editor with no
+   person). First tap arms, second deletes the blocked entry; the
+   window derives open again on its own. */
+const armedBlock = ref<string | null>(null)
+const blockErr = ref<string | null>(null)
+let armedTimer: ReturnType<typeof setTimeout> | null = null
+async function tapBlocked(entryId: string | null): Promise<void> {
+  if (!entryId || !sched.canEdit.value) return
+  if (armedBlock.value !== entryId) {
+    armedBlock.value = entryId
+    blockErr.value = null
+    if (armedTimer) clearTimeout(armedTimer)
+    armedTimer = setTimeout(() => { armedBlock.value = null }, 4000)
+    return
+  }
+  if (armedTimer) clearTimeout(armedTimer)
+  armedBlock.value = null
+  blockErr.value = await sched.removeEntry(entryId)
+}
+
 /** Time Off rows open the time-off editor — retime, change the type,
  *  or delete the record (Chief, 2026-09-25; the old route to the
  *  seat/person drawer offered seat tools that make no sense here). */
@@ -184,6 +206,7 @@ const weeks = computed<Cell[][]>(() => {
 
 <template>
   <div ref="rootEl" class="mb" :class="{ 'mb--mine': props.mine }">
+    <p v-if="blockErr" class="mb__blockerr">{{ blockErr }}</p>
     <!-- Shift letters in shift colors — nothing to memorize, the color
          is reinforcement, not the code (Justin, 2026-09-24). -->
     <div class="mb__legend">
@@ -263,6 +286,18 @@ const weeks = computed<Cell[][]>(() => {
                 >
                   {{ sm.seat.label }}
                 </button>
+                <button
+                  v-else-if="row.kind === 'blocked' && sched.canEdit.value"
+                  class="mb__name mb__rowbtn mb__name--blocked"
+                  :class="{ 'mb__name--armed': armedBlock === row.entryId }"
+                  :title="armedBlock === row.entryId ? 'Tap again to remove — the window shows open again' : 'Marked covered (no extra punch) — tap twice to remove'"
+                  @click="tapBlocked(row.entryId)"
+                >
+                  {{ armedBlock === row.entryId ? 'Remove? Tap again' : row.name }}
+                </button>
+                <span v-else-if="row.kind === 'blocked'" class="mb__name">
+                  {{ row.name }}
+                </span>
                 <button
                   v-else-if="sched.canEdit.value"
                   class="mb__name mb__rowbtn"
@@ -820,6 +855,25 @@ const weeks = computed<Cell[][]>(() => {
   font-weight: 700;
   border-radius: 4px;
   padding: 0 3px;
+}
+
+/* "Covered — no extra punch" overlay rows: muted italic; armed state
+   flips to the danger treatment so the second tap is unmistakable. */
+.mb__name--blocked {
+  color: var(--color-muted);
+  font-style: italic;
+}
+
+.mb__blockerr {
+  margin: 0 0 0.4rem;
+  font-size: 0.78rem;
+  color: var(--color-danger-500);
+}
+
+.mb__name--armed {
+  color: var(--color-danger-500);
+  font-style: normal;
+  font-weight: 700;
 }
 
 .mb__cred {
