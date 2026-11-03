@@ -139,21 +139,52 @@ const saveState = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let dirtySinceSave = false
 
-async function persistDraft(): Promise<boolean> {
-  if (!trainee.value) return false
-  saveState.value = 'saving'
-  const res = await ftep.saveDraft({
-    id: reportId.value ?? undefined,
-    kind: kind.value,
-    traineeId: trainee.value.userId,
-    evalDate: evalDate.value,
-    payload: buildPayload(),
-  })
-  if (!res.ok) { saveState.value = 'error'; return false }
-  reportId.value = res.id
-  saveState.value = 'saved'
-  dirtySinceSave = false
-  return true
+/* SERIALIZED: one save request in flight, ever. On a stalled tablet
+   connection the queued autosaves used to dispatch together before the
+   first insert returned its id — every one inserted a brand-new draft
+   (Joe Diaz, 2026-11-02: 20 orphan drafts + 3 duplicate submitted ICRs
+   for one call, all created within 190 ms). A save requested while one
+   is in flight now just re-runs once after it lands, with the id and
+   the latest form state. */
+let saveInFlight: Promise<boolean> | null = null
+let saveRerun = false
+
+function persistDraft(): Promise<boolean> {
+  if (saveInFlight) {
+    /* The running loop picks the latest form state up in one more pass;
+       awaiting callers (submit) get the final result with the id set. */
+    saveRerun = true
+    return saveInFlight
+  }
+  saveInFlight = (async () => {
+    let ok = false
+    try {
+      do {
+        saveRerun = false
+        if (!trainee.value) return false
+        saveState.value = 'saving'
+        const res = await ftep.saveDraft({
+          id: reportId.value ?? undefined,
+          kind: kind.value,
+          traineeId: trainee.value.userId,
+          evalDate: evalDate.value,
+          payload: buildPayload(),
+        })
+        if (!res.ok) {
+          saveState.value = 'error'
+          return false
+        }
+        reportId.value = res.id
+        saveState.value = 'saved'
+        dirtySinceSave = false
+        ok = true
+      } while (saveRerun)
+    } finally {
+      saveInFlight = null
+    }
+    return ok
+  })()
+  return saveInFlight
 }
 
 function queueAutosave() {

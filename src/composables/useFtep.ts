@@ -206,7 +206,28 @@ export function useFtep() {
       })
       .select(COLUMNS)
       .single()
-    if (error) return { ok: false, error: error.message }
+    if (error) {
+      /* One draft per evaluator+trainee+kind (unique partial index,
+         2026-11-02) — a racing insert adopts the existing draft and
+         lands this save as an update instead of a duplicate row. */
+      if (error.code === '23505') {
+        const existing = await supabase
+          .from('ftep_reports')
+          .select(COLUMNS)
+          .eq('evaluator_id', uid)
+          .eq('trainee_id', input.traineeId)
+          .eq('kind', input.kind)
+          .eq('status', 'draft')
+          .limit(1)
+          .maybeSingle()
+        if (existing.data) {
+          const adopted = fromRow(existing.data as ReportRow)
+          reports.value = [adopted, ...reports.value.filter((r) => r.id !== adopted.id)]
+          return saveDraft({ ...input, id: adopted.id })
+        }
+      }
+      return { ok: false, error: error.message }
+    }
     const row = fromRow(data as ReportRow)
     reports.value = [row, ...reports.value]
     return { ok: true, id: row.id }

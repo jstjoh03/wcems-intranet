@@ -24,6 +24,12 @@
 //     a Trainee Evaluation of FTO (auto on a protocol-test pass or a
 //     final-eval FTO change). Recipient = the trainee only; links the
 //     prefilled form. Push + email, matrix 'clinical'.
+//   { kind: 'rt_test_pending',   trainingId, dryRun? }  ← one-shot blast
+//     to everyone in a filter-audience required-training module's
+//     audience whose knowledge test is unpassed (signed people too —
+//     the test is tracked separately from the attestation). Editors ad
+//     hoc, or pg_cron one-shots as the system (x-sync-secret). Push +
+//     email, matrix 'training'.
 //   { kind: 'shift_reminders',   dryRun? }   ← pg_cron every 15 min (also
 //     editors, for testing). System calls authenticate with the
 //     x-sync-secret header (ROSTER_SYNC_SECRET) + the anon key as the
@@ -605,8 +611,8 @@ Deno.serve(async (req: Request) => {
 
   /* pg_cron calls carry the anon key (passes the gateway JWT check) +
    * the shared sync secret — same trust pattern as roster-sync. A
-   * system caller may ONLY run shift_reminders (its empty id and
-   * non-editor level dead-end every other branch). */
+   * system caller may ONLY run shift_reminders and rt_test_pending
+   * (its empty id and non-editor level dead-end every other branch). */
   const syncSecret = env.get('ROSTER_SYNC_SECRET')
   const caller: Caller | null =
     syncSecret && req.headers.get('x-sync-secret') === syncSecret
@@ -1216,6 +1222,86 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── shift reminders (cron every 15 min) ──────────────────────────
+    /* ── required training: knowledge-test nudge (one-shot blast) ─────
+     * Push + email to everyone in a filter-audience module's audience
+     * whose knowledge test is still unpassed (the test is tracked
+     * separately from the attestation, so signed people are nudged
+     * too). Editors fire it ad hoc; pg_cron one-shots call it as the
+     * system — e.g. the 0800 Nov-3 protocol-updates nudge. dryRun
+     * returns the would-send list without delivering. */
+    if (kind === 'rt_test_pending') {
+      if (caller.level !== 'system' && !isEditor(caller))
+        return Response.json({ ok: false, error: 'Not authorized' }, { status: 403, headers: CORS })
+      const trainingId = String(body.trainingId ?? '')
+      const dryRunRt = body.dryRun === true
+      if (!trainingId)
+        return Response.json({ ok: false, error: 'trainingId required' }, { status: 400, headers: CORS })
+
+      const { data: mod, error: mErr } = await sb
+        .from('required_trainings')
+        .select('id, title, active, quiz, audience_roles, audience_shifts, audience_employment_types, audience_event_label')
+        .eq('id', trainingId)
+        .maybeSingle()
+      if (mErr || !mod)
+        return Response.json({ ok: false, error: mErr?.message ?? 'Module not found' }, { status: 404, headers: CORS })
+      const quizCfg = (mod.quiz ?? {}) as { count?: number; passPct?: number }
+      if (!mod.active || !quizCfg.count)
+        return Response.json({ ok: false, error: 'Module has no active knowledge test' }, { status: 400, headers: CORS })
+      if (mod.audience_event_label)
+        return Response.json({ ok: false, error: 'Event-audience modules are handled by the rt_event sweep' }, { status: 400, headers: CORS })
+
+      const [uRt, oRt, cRt] = await Promise.all([
+        sb.from('app_users').select('id, role, shift, employment_type').eq('active', true).eq('account_type', 'person'),
+        sb.from('required_training_user_overrides').select('user_id, included').eq('required_training_id', trainingId),
+        sb.from('required_training_completions').select('user_id, quiz_score').eq('required_training_id', trainingId),
+      ])
+      const rtErr = uRt.error ?? oRt.error ?? cRt.error
+      if (rtErr) return Response.json({ ok: false, error: rtErr.message }, { status: 500, headers: CORS })
+      const aRoles = (mod.audience_roles ?? []) as string[]
+      const aShifts = (mod.audience_shifts ?? []) as string[]
+      const aTypes = (mod.audience_employment_types ?? []) as string[]
+      const rtOverride = new Map((oRt.data ?? []).map((o) => [o.user_id as string, o.included as boolean]))
+      const rtPassed = new Set(
+        (cRt.data ?? []).filter((c) => c.quiz_score != null).map((c) => c.user_id as string),
+      )
+      const rtTargets = (uRt.data ?? [])
+        .filter((u) => {
+          const ov = rtOverride.get(u.id as string)
+          const inAudience =
+            (aRoles.length === 0 || aRoles.includes(u.role as string)) &&
+            (aShifts.length === 0 || (u.shift != null && aShifts.includes(u.shift as string))) &&
+            (aTypes.length === 0 || aTypes.includes(u.employment_type as string))
+          return (ov ?? inAudience) && !rtPassed.has(u.id as string)
+        })
+        .map((u) => u.id as string)
+
+      if (dryRunRt)
+        return Response.json({ ok: true, dryRun: true, count: rtTargets.length, targets: rtTargets }, { headers: CORS })
+      if (rtTargets.length === 0)
+        return Response.json({ ok: true, delivery: null, count: 0 }, { headers: CORS })
+
+      const dRt = await deliver(
+        rtTargets,
+        'training',
+        {
+          title: 'Required training — knowledge test',
+          body: `The knowledge test for “${mod.title}” is live — about 10 minutes, ${quizCfg.passPct ?? 80}% to pass. Tap to take it.`,
+          tag: `rt-test-${trainingId}`,
+          subject: 'WCEMS Required Training — knowledge test to complete',
+          emailLines: [
+            `A short knowledge test has been added to <b>${esc(String(mod.title))}</b>.`,
+            `It takes about 10 minutes and needs ${quizCfg.passPct ?? 80}% to pass — retake it as many times as you need. Already signed the attestation? Your sign-off still counts; the test is tracked separately.`,
+            'Open Required Training in the employee portal to take it.',
+          ],
+          sms: '',
+          url: `/training/required/${trainingId}`,
+          channels: { sms: false },
+        },
+        caller.id || null,
+      )
+      return Response.json({ ok: true, delivery: dRt, count: rtTargets.length }, { headers: CORS })
+    }
+
     if (kind === 'shift_reminders') {
       if (caller.level !== 'system' && !isEditor(caller))
         return Response.json({ ok: false, error: 'Not authorized' }, { status: 403, headers: CORS })
