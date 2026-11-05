@@ -334,13 +334,12 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
               <div v-for="r in s.rows" :key="r.unit" class="cmd__row">
                 <span class="cmd__unit">{{ r.unit }}</span>
                 <span class="cmd__who">
-                  <template v-for="(p, i) in r.people" :key="i"><template v-if="i"><span class="cmd__sep">·</span></template><b>{{ p.name }}</b></template>
+                  <template v-for="(p, i) in r.people" :key="i"><template v-if="i"><span class="cmd__sep">·</span></template><b>{{ p.name }}</b><span v-if="p.credential" class="cmd__pcred"> – {{ p.credential }}</span></template>
                   <span v-if="!r.people.length" class="cmd__muted">—</span>
                   <span v-if="r.flag === 'aemt'" class="cmd__flag cmd__flag--warn" title="Respond along with this unit more often"><span class="cmd__dot cmd__dot--warn"></span>AEMT-led</span>
                   <span v-else-if="r.flag === 'p1'" class="cmd__flag cmd__flag--bad" title="Respond along with this unit more often"><span class="cmd__dot cmd__dot--bad"></span>P1-led</span>
                   <span v-if="r.open" class="cmd__open">{{ r.open }}</span>
                 </span>
-                <span class="cmd__cred">{{ r.people.map((p) => p.credential).filter(Boolean).join(' · ') }}</span>
               </div>
             </div>
           </div>
@@ -521,12 +520,12 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__shead-sup { font-weight: 500; letter-spacing: 0.02em; text-transform: none; font-size: 12px; color: var(--color-ink-soft, var(--color-ink)); }
 .cmd__shead-sup b { font-weight: 700; color: var(--color-ink); }
 .cmd__rows .cmd__row:nth-child(even) { background: var(--color-surface-soft); }
-.cmd__row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 8px 8px 8px 4px; font-size: 13px; border-bottom: 1px solid var(--color-line-soft, var(--color-line)); }
+.cmd__row { display: grid; grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 4px 10px; padding: 8px 8px 8px 4px; font-size: 13px; border-bottom: 1px solid var(--color-line-soft, var(--color-line)); }
 .cmd__sep { color: var(--color-muted); margin: 0 6px; }
 .cmd__unit { font-weight: 800; }
 .cmd__who { color: var(--color-ink-soft, var(--color-ink)); }
 .cmd__who b { font-weight: 600; color: var(--color-ink); }
-.cmd__cred { font-size: 10.5px; color: var(--color-muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cmd__pcred { font-size: 11px; color: var(--color-muted); white-space: nowrap; }
 .cmd__open { font-size: 11.5px; font-weight: 700; color: var(--color-danger-500); margin-left: 8px; }
 .cmd__openday { display: grid; grid-template-columns: 110px 1fr; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--color-line); font-size: 12.5px; align-items: start; }
 .cmd__openday-d { font-weight: 700; color: var(--color-ink); text-decoration: none; }
@@ -569,11 +568,6 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__fleetname { font-weight: 600; }
 .cmd__fleetadd { display: flex; gap: 8px; margin-top: 9px; }
 .cmd__fleetadd input { flex: 1; border: 1px solid var(--color-line); border-radius: 5px; background: var(--color-surface); color: var(--color-ink); padding: 7px 10px; font: 13px inherit; font-family: inherit; }
-
-@media (max-width: 560px) {
-  .cmd__row { grid-template-columns: 48px minmax(0, 1fr); }
-  .cmd__cred { grid-column: 2; text-align: left; }
-}
 
 .cmd__tablebox { overflow-x: auto; }
 .cmd__table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
