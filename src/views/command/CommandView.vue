@@ -153,6 +153,25 @@ async function openPdf(path: string | null) {
   if (url) window.open(url, '_blank', 'noopener')
 }
 
+/* ── fleet editor (admins only — vehicles managed in-app) ─────────── */
+const manageFleet = ref(false)
+const newVehicle = ref('')
+const fleetErr = ref<string | null>(null)
+const fleetBusy = ref(false)
+async function onAddVehicle() {
+  if (fleetBusy.value || !newVehicle.value.trim()) return
+  fleetBusy.value = true
+  fleetErr.value = await cmd.addFleetVehicle(newVehicle.value)
+  fleetBusy.value = false
+  if (!fleetErr.value) newVehicle.value = ''
+}
+async function onToggleVehicle(id: string, active: boolean) {
+  if (fleetBusy.value) return
+  fleetBusy.value = true
+  fleetErr.value = await cmd.setFleetActive(id, active)
+  fleetBusy.value = false
+}
+
 /* ── latest fleet status from the most recent submitted summaries ── */
 const latestFleet = computed(() => {
   const seen = new Map<string, { status: string; location: string; notes: string; date: string }>()
@@ -358,7 +377,33 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
       <div class="cmd__cols">
         <!-- Fleet -->
         <section class="cmd__sec">
-          <div class="cmd__sec-h"><h2 class="display">Fleet</h2><span class="cmd__hint">as of the last Daily Summary</span></div>
+          <div class="cmd__sec-h">
+            <h2 class="display">Fleet</h2>
+            <span class="cmd__hint">as of the last Daily Summary</span>
+            <button v-if="auth.isAdmin" type="button" class="cmd__manage" @click="manageFleet = !manageFleet">
+              {{ manageFleet ? 'Done' : 'Manage fleet' }}
+            </button>
+          </div>
+
+          <div v-if="manageFleet && auth.isAdmin" class="cmd__fleetmgr">
+            <div v-for="v in cmd.fleetAll.value" :key="v.id" class="cmd__fleetrow" :class="{ 'cmd__fleetrow--off': !v.active }">
+              <span class="cmd__fleetname">{{ v.label }}</span>
+              <span v-if="!v.active" class="cmd__chip">archived</span>
+              <span class="cmd__spacer"></span>
+              <button type="button" class="cmd__link" :disabled="fleetBusy" @click="onToggleVehicle(v.id, !v.active)">
+                {{ v.active ? 'Archive' : 'Restore' }}
+              </button>
+            </div>
+            <div class="cmd__fleetadd">
+              <input v-model="newVehicle" placeholder="New vehicle # or name (e.g. 8752)" @keydown.enter="onAddVehicle" />
+              <button type="button" class="cmd__btn" :disabled="fleetBusy || !newVehicle.trim()" @click="onAddVehicle">Add</button>
+            </div>
+            <p v-if="fleetErr" class="cmd__err">{{ fleetErr }}</p>
+            <p class="cmd__muted" style="font-size: 11px; margin: 4px 0 8px">
+              Archived vehicles disappear from new Daily Summaries; history keeps them.
+            </p>
+          </div>
+
           <div v-if="!fleetKnown.length" class="cmd__muted" style="padding: 6px 2px">No summary filed yet — the board fills in as summaries come in.</div>
           <div class="cmd__tablebox" v-else>
             <table class="cmd__table">
@@ -457,6 +502,15 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__btn--primary { background: var(--color-brand-600); border-color: var(--color-brand-600); color: #fff; }
 .cmd__btn--gold { background: var(--color-gold-100, #f3e9c9); border-color: var(--color-gold-500, #c9a227); color: var(--color-ink); }
 .cmd__link { background: none; border: 0; padding: 0; color: var(--color-brand-700, var(--color-brand-600)); font: 600 12px inherit; font-family: inherit; cursor: pointer; text-decoration: underline; }
+
+.cmd__manage { margin-left: auto; font: 600 11.5px inherit; font-family: inherit; border: 1px solid var(--color-line); border-radius: 7px; background: var(--color-surface); color: var(--color-ink-soft, var(--color-ink)); padding: 3px 9px; cursor: pointer; }
+.cmd__manage:hover { border-color: var(--color-brand-600); }
+.cmd__fleetmgr { border: 1px dashed var(--color-line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
+.cmd__fleetrow { display: flex; align-items: center; gap: 9px; padding: 5px 0; border-bottom: 1px solid var(--color-line); font-size: 13px; }
+.cmd__fleetrow--off .cmd__fleetname { color: var(--color-muted); text-decoration: line-through; }
+.cmd__fleetname { font-weight: 600; }
+.cmd__fleetadd { display: flex; gap: 8px; margin-top: 9px; }
+.cmd__fleetadd input { flex: 1; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-surface); color: var(--color-ink); padding: 7px 10px; font: 13px inherit; font-family: inherit; }
 
 .cmd__tablebox { overflow-x: auto; }
 .cmd__table { border-collapse: collapse; width: 100%; font-size: 12.5px; }

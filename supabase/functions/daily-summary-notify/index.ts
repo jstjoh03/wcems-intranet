@@ -12,7 +12,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 // @ts-expect-error Deno global
 const env = Deno.env
 
-const SENDER = 'office@wallercountyems.com'
+/* Sender is env-driven so it can move to a dedicated shared mailbox
+   (e.g. operations@ / noreply@) the moment one exists — set the
+   DAILY_SUMMARY_SENDER secret, no redeploy needed. The mailbox must
+   exist in the tenant or Graph rejects the send. */
+const SENDER = env.get('DAILY_SUMMARY_SENDER') ?? 'office@wallercountyems.com'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',

@@ -161,7 +161,9 @@ function fromRow(r: SummaryRow): DailySummary {
 /* ── module-singleton state ───────────────────────────────────────── */
 const ready = ref(false)
 const notes = ref<CommandNote[]>([])
-const fleet = ref<FleetVehicle[]>([])
+/** Every vehicle incl. archived — the admin fleet editor needs both. */
+const fleetAll = ref<FleetVehicle[]>([])
+const fleet = computed<FleetVehicle[]>(() => fleetAll.value.filter((f) => f.active))
 const summaries = ref<DailySummary[]>([])
 const loadError = ref<string | null>(null)
 let loadStarted = false
@@ -176,7 +178,7 @@ export function useCommand() {
 
     if (!isLive.value) {
       /* Dev fixtures — the page renders signed-out; writes error. */
-      fleet.value = [
+      fleetAll.value = [
         '8751', '9238', '0081', '8237', '8744', '8750',
         'Vannie Mae', '2795', '2793', '0379', '8665', '2794',
       ].map((label, i) => ({ id: `dev-f-${i}`, label, sort: (i + 1) * 10, active: true }))
@@ -224,7 +226,7 @@ export function useCommand() {
       pinned: r.pinned,
       createdAt: r.created_at,
     }))
-    fleet.value = (fRes.data ?? []).filter((f) => f.active)
+    fleetAll.value = fRes.data ?? []
     summaries.value = ((sRes.data ?? []) as SummaryRow[]).map(fromRow)
     ready.value = true
   }
@@ -266,6 +268,32 @@ export function useCommand() {
     notes.value = [...notes.value].sort((a, b) =>
       a.pinned === b.pinned ? b.createdAt.localeCompare(a.createdAt) : a.pinned ? -1 : 1,
     )
+    return null
+  }
+
+  /* ── fleet editor (admins; in-app, never the backend) ────────────── */
+  async function addFleetVehicle(label: string): Promise<string | null> {
+    const clean = label.trim()
+    if (!clean) return 'Enter the vehicle number or name.'
+    if (!isLive.value) return 'Not available in the dev preview.'
+    if (fleetAll.value.some((f) => f.label.toLowerCase() === clean.toLowerCase()))
+      return 'That vehicle is already on the list (restore it if archived).'
+    const sort = Math.max(0, ...fleetAll.value.map((f) => f.sort)) + 10
+    const { data, error } = await supabase
+      .from('command_fleet')
+      .insert({ label: clean, sort })
+      .select('id, label, sort, active')
+      .single()
+    if (error) return error.message
+    fleetAll.value = [...fleetAll.value, data].sort((a, b) => a.sort - b.sort)
+    return null
+  }
+
+  async function setFleetActive(id: string, active: boolean): Promise<string | null> {
+    if (!isLive.value) return 'Not available in the dev preview.'
+    const { error } = await supabase.from('command_fleet').update({ active }).eq('id', id)
+    if (error) return error.message
+    fleetAll.value = fleetAll.value.map((f) => (f.id === id ? { ...f, active } : f))
     return null
   }
 
@@ -373,6 +401,9 @@ export function useCommand() {
     loadError,
     notes,
     fleet,
+    fleetAll,
+    addFleetVehicle,
+    setFleetActive,
     summaries,
     load,
     addNote,

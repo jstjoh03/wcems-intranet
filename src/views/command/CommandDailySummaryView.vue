@@ -148,6 +148,11 @@ function freshForm() {
 
 function hydrate(s: DailySummary) {
   Object.assign(form, { ...emptySummaryData(), ...s.data })
+  /* A vehicle added to the fleet after this draft was started needs a
+     row, or the fleet table would bind against undefined. */
+  for (const v of cmd.fleet.value) {
+    if (!form.fleet[v.label]) form.fleet[v.label] = { status: 'in_service', location: '', pstrax: false, notes: '' }
+  }
   /* Rebuild the pristine snapshot so untouched schedule cells keep the
      gold dot after a resume; anything differing reads as corrected. */
   pristine = {}
