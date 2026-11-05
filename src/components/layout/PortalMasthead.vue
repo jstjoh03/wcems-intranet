@@ -92,6 +92,11 @@ const nav = computed<NavItem[]>(() => [
   ...(canSeeSchedule.value
     ? [{ label: 'Scheduling', to: '/schedule', match: '/schedule' } as NavItem]
     : []),
+  /* Command staff (supervisors + admins): ops dashboard, the native
+     Supervisor Daily Summary, and its archive. */
+  ...(auth.isSupervisor
+    ? [{ label: 'Command', to: '/command', match: '/command' } as NavItem]
+    : []),
   /* Event equipment check-out: board for everyone, check-out/registry
      for supervisors, admins, and granted staff. */
   { label: 'Equipment', to: '/equipment', match: '/equipment' },

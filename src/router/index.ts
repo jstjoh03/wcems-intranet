@@ -132,6 +132,26 @@ const routes: RouteRecordRaw[] = [
        view hides overrides/mark-complete for them). */
     meta: { supervisorOnly: true },
   },
+  /* Command module — operational picture + the native Supervisor Daily
+     Summary (command staff = supervisors + admins). */
+  {
+    path: '/command',
+    name: 'command',
+    component: () => import('@/views/command/CommandView.vue'),
+    meta: { supervisorOnly: true },
+  },
+  {
+    path: '/command/daily-summary',
+    name: 'command-daily-summary',
+    component: () => import('@/views/command/CommandDailySummaryView.vue'),
+    meta: { supervisorOnly: true },
+  },
+  {
+    path: '/command/summaries',
+    name: 'command-archive',
+    component: () => import('@/views/command/CommandArchiveView.vue'),
+    meta: { supervisorOnly: true },
+  },
   {
     path: '/policies',
     name: 'policies',

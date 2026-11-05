@@ -30,6 +30,7 @@ import {
   ExternalLink,
   Boxes,
   MessageCircleQuestion,
+  Radio,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useQuickLinks } from '@/composables/useQuickLinks'
@@ -105,6 +106,8 @@ const pages = computed<NavItem[]>(() => [
   /* Soft-launch: editors, supervisors, and pilot testers only until
      the crew-wide opening. */
   ...(canSeeSchedule.value ? [{ label: 'Scheduling', to: '/schedule', icon: CalendarDays }] : []),
+  /* Command staff (supervisors + admins) only. */
+  ...(auth.isSupervisor ? [{ label: 'Command', to: '/command', icon: Radio }] : []),
   { label: 'Event Equipment', to: '/equipment', icon: Boxes },
   { label: 'MIH Patient Referral', to: '/mih-referral', icon: HeartHandshake },
   { label: 'Hospitals', to: '/hospitals', icon: Hospital },
