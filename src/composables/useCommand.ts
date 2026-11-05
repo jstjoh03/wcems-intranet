@@ -26,6 +26,11 @@ export interface FleetVehicle {
   label: string
   sort: number
   active: boolean
+  /** Cold-start defaults for the Daily Summary fleet matrix — the
+   *  newest submitted summary carries real state forward instead. */
+  homeLocation: string
+  homeOos: boolean
+  homeNote: string
 }
 
 export type SummarySide = 'north' | 'south' | 'all'
@@ -178,10 +183,18 @@ export function useCommand() {
 
     if (!isLive.value) {
       /* Dev fixtures — the page renders signed-out; writes error. */
-      fleetAll.value = [
-        '8751', '9238', '0081', '8237', '8744', '8750',
-        'Vannie Mae', '2795', '2793', '0379', '8665', '2794',
-      ].map((label, i) => ({ id: `dev-f-${i}`, label, sort: (i + 1) * 10, active: true }))
+      const DEV_HOMES: Array<[string, string, boolean, string]> = [
+        ['8751', 'M211 - Main', false, ''], ['9238', 'M221 - Main', false, ''],
+        ['0081', 'At Shop', true, 'Fleet'], ['8237', 'At Shop', true, 'Leak'],
+        ['8744', 'M231 - Main', false, ''], ['8750', 'M242 - Main', false, ''],
+        ['Vannie Mae', 'M242 - Reserve', false, ''], ['2795', 'M271 - Main', false, ''],
+        ['2793', 'M206 - Main', false, ''], ['0379', 'M272 - Main', false, ''],
+        ['8665', 'M272 - Reserve', false, ''], ['2794', 'M281 - Main', false, ''],
+      ]
+      fleetAll.value = DEV_HOMES.map(([label, homeLocation, homeOos, homeNote], i) => ({
+        id: `dev-f-${i}`, label, sort: (i + 1) * 10, active: true,
+        homeLocation, homeOos, homeNote,
+      }))
       notes.value = [
         { id: 'dev-n-1', authorId: 'dev-1', authorName: 'Rhonda Getschman', note: 'Burn ban in effect county-wide — expect brush-fire standbys with WCFD.', pinned: true, createdAt: new Date(Date.now() - 5 * 864e5).toISOString() },
         { id: 'dev-n-2', authorId: 'dev-2', authorName: 'Sample Supervisor', note: '8237 pulling right under braking — PSTrax ticket in, shop appt Thursday. Spare only.', pinned: false, createdAt: new Date(Date.now() - 6 * 36e5).toISOString() },
@@ -205,7 +218,7 @@ export function useCommand() {
         .order('pinned', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(60),
-      supabase.from('command_fleet').select('id, label, sort, active').order('sort'),
+      supabase.from('command_fleet').select('id, label, sort, active, home_location, home_oos, home_note').order('sort'),
       supabase
         .from('sup_daily_summaries')
         .select(SUMMARY_COLUMNS)
@@ -226,7 +239,10 @@ export function useCommand() {
       pinned: r.pinned,
       createdAt: r.created_at,
     }))
-    fleetAll.value = fRes.data ?? []
+    fleetAll.value = (fRes.data ?? []).map((f) => ({
+      id: f.id, label: f.label, sort: f.sort, active: f.active,
+      homeLocation: f.home_location ?? '', homeOos: f.home_oos ?? false, homeNote: f.home_note ?? '',
+    }))
     summaries.value = ((sRes.data ?? []) as SummaryRow[]).map(fromRow)
     ready.value = true
   }
@@ -282,10 +298,14 @@ export function useCommand() {
     const { data, error } = await supabase
       .from('command_fleet')
       .insert({ label: clean, sort })
-      .select('id, label, sort, active')
+      .select('id, label, sort, active, home_location, home_oos, home_note')
       .single()
     if (error) return error.message
-    fleetAll.value = [...fleetAll.value, data].sort((a, b) => a.sort - b.sort)
+    fleetAll.value = [
+      ...fleetAll.value,
+      { id: data.id, label: data.label, sort: data.sort, active: data.active,
+        homeLocation: data.home_location ?? '', homeOos: data.home_oos ?? false, homeNote: data.home_note ?? '' },
+    ].sort((a, b) => a.sort - b.sort)
     return null
   }
 
@@ -295,6 +315,27 @@ export function useCommand() {
     if (error) return error.message
     fleetAll.value = fleetAll.value.map((f) => (f.id === id ? { ...f, active } : f))
     return null
+  }
+
+  /** The fleet matrix a NEW summary starts from: the newest submitted
+   *  summary's state per vehicle, falling back to the vehicle's home
+   *  defaults (PSTrax resets each day — it's a per-shift attestation). */
+  function fleetStartState(): Record<string, FleetStatusRow> {
+    const seen = new Map<string, FleetStatusRow>()
+    for (const s of [...summaries.value].sort((a, b) => b.shiftDate.localeCompare(a.shiftDate))) {
+      if (s.status !== 'submitted') continue
+      for (const [veh, f] of Object.entries(s.data.fleet ?? {})) {
+        if (!seen.has(veh)) seen.set(veh, f)
+      }
+    }
+    const out: Record<string, FleetStatusRow> = {}
+    for (const v of fleet.value) {
+      const prev = seen.get(v.label)
+      out[v.label] = prev
+        ? { status: prev.status, location: prev.location, pstrax: true, notes: prev.notes }
+        : { status: v.homeOos ? 'oos' : 'in_service', location: v.homeLocation, pstrax: true, notes: v.homeNote }
+    }
+    return out
   }
 
   /* ── daily summaries ─────────────────────────────────────────────── */
@@ -404,6 +445,7 @@ export function useCommand() {
     fleetAll,
     addFleetVehicle,
     setFleetActive,
+    fleetStartState,
     summaries,
     load,
     addNote,

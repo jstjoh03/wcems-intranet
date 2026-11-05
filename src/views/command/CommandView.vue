@@ -22,9 +22,20 @@ const cmd = useCommand()
 const rt = useRequiredTraining()
 
 onMounted(() => {
-  void sched.ensureLoaded()
+  void (async () => {
+    await sched.ensureLoaded()
+    /* loadCore never loads entries — without a range the board renders
+       pure rotation (no trades, riders, or time off; launch-day bug). */
+    const from = addDaysIso(todayCentralIso(), -1)
+    const to = addDaysIso(todayCentralIso(), 7)
+    const rs = sched.rangeStart.value
+    const re = sched.rangeEnd.value
+    if (!rs || !re || from < rs || to > re) {
+      await sched.loadRange(rs && rs < from ? rs : from, re && re > to ? re : to)
+    }
+    if (sched.canEdit.value) void sched.loadRequests()
+  })()
   void cmd.load()
-  if (sched.canEdit.value) void sched.loadRequests()
 })
 
 const today = todayCentralIso()
@@ -174,16 +185,23 @@ async function onToggleVehicle(id: string, active: boolean) {
 
 /* ── latest fleet status from the most recent submitted summaries ── */
 const latestFleet = computed(() => {
-  const seen = new Map<string, { status: string; location: string; notes: string; date: string }>()
-  for (const s of cmd.summaries.value) {
+  const seen = new Map<string, { status: string; location: string; notes: string }>()
+  for (const s of [...cmd.summaries.value].sort((a, b) => b.shiftDate.localeCompare(a.shiftDate))) {
     if (s.status !== 'submitted') continue
     for (const [veh, f] of Object.entries(s.data.fleet ?? {})) {
-      if (!seen.has(veh)) seen.set(veh, { status: f.status, location: f.location, notes: f.notes, date: s.shiftDate })
+      if (!seen.has(veh)) seen.set(veh, { status: f.status, location: f.location, notes: f.notes })
     }
   }
-  return cmd.fleet.value.map((v) => ({ label: v.label, ...(seen.get(v.label) ?? null) }))
+  return cmd.fleet.value.map((v) => ({
+    label: v.label,
+    ...(seen.get(v.label) ?? {
+      status: v.homeOos ? 'oos' : 'in_service',
+      location: v.homeLocation,
+      notes: v.homeNote,
+    }),
+  }))
 })
-const fleetKnown = computed(() => latestFleet.value.filter((f) => 'status' in f && (f as { status?: string }).status))
+const fleetKnown = computed(() => latestFleet.value)
 
 /* ── follow up with your crew (Required Training, on-shift people) ── */
 const followUps = computed(() => {
@@ -223,7 +241,11 @@ const trainees = computed(() => {
   const out: { unit: string; name: string; withWhom: string }[] = []
   for (const um of model.value.units) {
     if (um.unit.code.startsWith('S')) continue
-    const lead = um.seats[0]?.rows.find((r) => !r.open && r.userId)
+    /* Pair with the FTO on the truck (any seat) — e.g. Lani rides with
+       the EMT-FTO attendant, not the medic in charge. Fallback: seat 1. */
+    const crew = um.seats.flatMap((sm) => sm.rows.filter((r) => !r.open && r.userId))
+    const fto = crew.find((r) => (r.credential ?? '').includes('FTO'))
+    const lead = fto ?? um.seats[0]?.rows.find((r) => !r.open && r.userId)
     for (const ex of um.extras) {
       if (ex.open || !ex.userId) continue
       out.push({ unit: um.unit.code, name: ex.name, withWhom: lead?.name ?? um.unit.code })
@@ -234,15 +256,26 @@ const trainees = computed(() => {
 
 /* ── open seats, next 7 days ──────────────────────────────────────── */
 const openWeek = computed(() => {
-  const out: { iso: string; label: string; count: number }[] = []
+  const out: { iso: string; label: string; items: string[] }[] = []
   for (let i = 0; i < 7; i++) {
     const iso = addDaysIso(today, i)
-    const count = sched.dayModel(iso).openCount
-    if (count > 0) {
+    const m = sched.dayModel(iso)
+    const items: string[] = []
+    for (const um of m.units) {
+      for (const sm of um.seats) {
+        for (const r of sm.rows) {
+          if (r.open) items.push(`${um.unit.code} · ${sm.seat.label} · ${r.start}–${r.end}`)
+        }
+      }
+      for (const ex of um.extras) {
+        if (ex.open) items.push(`${um.unit.code} · ${ex.posLabel ?? 'Rider'} (extra) · ${ex.start}–${ex.end}`)
+      }
+    }
+    if (items.length) {
       out.push({
         iso,
         label: new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
-        count,
+        items,
       })
     }
   }
@@ -287,23 +320,26 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
           <span class="cmd__hint">live from the schedule · flags mark units the supervisor should respond with more often</span>
         </div>
         <div class="cmd__cols">
-          <div v-for="s in onDuty" :key="s.key">
-            <p class="cmd__station">{{ s.label }} <em v-if="s.note">· {{ s.note }}</em></p>
-            <div class="cmd__row">
-              <span class="cmd__unit">{{ s.key === 'north' ? 'S201' : 'S202' }}</span>
-              <span class="cmd__who"><b>{{ s.sup ?? '—' }}</b></span>
-              <span class="cmd__cred">Supervisor</span>
+          <div v-for="s in onDuty" :key="s.key" class="cmd__board">
+            <div class="cmd__band">
+              <span class="cmd__band-side">{{ s.label }}</span>
+              <span v-if="s.note" class="cmd__band-note">{{ s.note }}</span>
+              <span class="cmd__spacer"></span>
+              <span class="cmd__band-sup"><b>{{ s.sup ?? '—' }}</b> · Supervisor</span>
             </div>
-            <div v-for="r in s.rows" :key="r.unit" class="cmd__row">
-              <span class="cmd__unit">{{ r.unit }}</span>
-              <span class="cmd__who">
-                <template v-for="(p, i) in r.people" :key="i"><template v-if="i"> · </template><b>{{ p.name }}</b></template>
-                <span v-if="!r.people.length" class="cmd__muted">—</span>
-              </span>
-              <span class="cmd__cred">{{ r.people.map((p) => p.credential).filter(Boolean).join(' · ') }}</span>
-              <span v-if="r.flag === 'aemt'" class="cmd__flag cmd__flag--warn"><span class="cmd__dot cmd__dot--warn"></span>AEMT-led — respond along</span>
-              <span v-else-if="r.flag === 'p1'" class="cmd__flag cmd__flag--bad"><span class="cmd__dot cmd__dot--bad"></span>P1-led — respond along</span>
-              <span v-if="r.open" class="cmd__open">{{ r.open }}</span>
+            <div class="cmd__rows">
+              <div v-for="r in s.rows" :key="r.unit" class="cmd__row">
+                <span class="cmd__unit">{{ r.unit }}</span>
+                <span class="cmd__who">
+                  <template v-for="(p, i) in r.people" :key="i"><template v-if="i"><span class="cmd__sep">·</span></template><b>{{ p.name }}</b></template>
+                  <span v-if="!r.people.length" class="cmd__muted">—</span>
+                  <span v-if="r.trainee" class="cmd__chip cmd__chip--gold" style="margin-left: 8px">trainee</span>
+                  <span v-if="r.flag === 'aemt'" class="cmd__flag cmd__flag--warn" title="Respond along with this unit more often"><span class="cmd__dot cmd__dot--warn"></span>AEMT-led</span>
+                  <span v-else-if="r.flag === 'p1'" class="cmd__flag cmd__flag--bad" title="Respond along with this unit more often"><span class="cmd__dot cmd__dot--bad"></span>P1-led</span>
+                  <span v-if="r.open" class="cmd__open">{{ r.open }}</span>
+                </span>
+                <span class="cmd__cred">{{ r.people.map((p) => p.credential).filter(Boolean).join(' · ') }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -440,10 +476,15 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
           </div>
 
           <div v-if="openWeek.length" style="margin-top: 18px">
-            <div class="cmd__sec-h"><h2 class="display" style="font-size: 17px">Open seats — next 7 days</h2></div>
-            <div v-for="o in openWeek" :key="o.iso" class="cmd__sumrow">
-              <span>{{ o.label }}</span><span class="cmd__spacer"></span>
-              <RouterLink class="cmd__link" :to="`/schedule?v=day&d=${o.iso}`">{{ o.count }} open</RouterLink>
+            <div class="cmd__sec-h">
+              <h2 class="display" style="font-size: 17px">Open seats — next 7 days</h2>
+              <RouterLink class="cmd__link" style="margin-left: auto" to="/schedule?v=pages">Page-out screen →</RouterLink>
+            </div>
+            <div v-for="o in openWeek" :key="o.iso" class="cmd__openday">
+              <RouterLink class="cmd__openday-d" :to="`/schedule?v=day&d=${o.iso}`">{{ o.label }}</RouterLink>
+              <div class="cmd__openday-items">
+                <span v-for="(it, i) in o.items" :key="i" class="cmd__openitem">{{ it }}</span>
+              </div>
             </div>
           </div>
         </section>
@@ -467,14 +508,25 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__hint { font-size: 11.5px; color: var(--color-muted); }
 .cmd__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 36px; }
 
-.cmd__station { font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; color: var(--color-muted); margin: 12px 0 2px; text-transform: uppercase; }
-.cmd__station em { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 500; }
-.cmd__row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding: 6px 2px; border-bottom: 1px solid var(--color-line); font-size: 13px; }
-.cmd__unit { font-weight: 700; min-width: 44px; }
+.cmd__board { margin-top: 12px; min-width: 0; }
+.cmd__band { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; background: var(--color-brand-600); color: #fff; border-radius: 9px 9px 0 0; padding: 7px 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.cmd__band-note { font-weight: 500; letter-spacing: 0.02em; text-transform: none; color: oklch(0.88 0.05 90); }
+.cmd__band-sup { font-weight: 500; letter-spacing: 0.02em; text-transform: none; font-size: 12px; }
+.cmd__band-sup b { font-weight: 700; }
+.cmd__rows { border: 1px solid var(--color-line); border-top: 0; border-radius: 0 0 9px 9px; overflow: hidden; }
+.cmd__rows .cmd__row:nth-child(odd) { background: var(--color-surface-soft); }
+.cmd__row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 8px 12px; font-size: 13px; }
+.cmd__sep { color: var(--color-muted); margin: 0 6px; }
+.cmd__unit { font-weight: 800; }
 .cmd__who { color: var(--color-ink-soft, var(--color-ink)); }
 .cmd__who b { font-weight: 600; color: var(--color-ink); }
-.cmd__cred { font-size: 10.5px; color: var(--color-muted); }
-.cmd__open { font-size: 11.5px; font-weight: 700; color: var(--color-danger-500); }
+.cmd__cred { font-size: 10.5px; color: var(--color-muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cmd__open { font-size: 11.5px; font-weight: 700; color: var(--color-danger-500); margin-left: 8px; }
+.cmd__openday { display: grid; grid-template-columns: 110px 1fr; gap: 10px; padding: 8px 2px; border-bottom: 1px solid var(--color-line); font-size: 12.5px; align-items: start; }
+.cmd__openday-d { font-weight: 700; color: var(--color-ink); text-decoration: none; }
+.cmd__openday-d:hover { text-decoration: underline; }
+.cmd__openday-items { display: flex; flex-direction: column; gap: 3px; }
+.cmd__openitem { color: var(--color-danger-500); font-weight: 600; }
 .cmd__muted { color: var(--color-muted); font-size: 12.5px; }
 
 .cmd__flag { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
@@ -511,6 +563,11 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__fleetname { font-weight: 600; }
 .cmd__fleetadd { display: flex; gap: 8px; margin-top: 9px; }
 .cmd__fleetadd input { flex: 1; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-surface); color: var(--color-ink); padding: 7px 10px; font: 13px inherit; font-family: inherit; }
+
+@media (max-width: 560px) {
+  .cmd__row { grid-template-columns: 48px minmax(0, 1fr); }
+  .cmd__cred { grid-column: 2; text-align: left; }
+}
 
 .cmd__tablebox { overflow-x: auto; }
 .cmd__table { border-collapse: collapse; width: 100%; font-size: 12.5px; }

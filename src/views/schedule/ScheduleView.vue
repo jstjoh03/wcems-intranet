@@ -316,6 +316,11 @@ onMounted(async () => {
       tab.value = 'mine'
       void router.replace({ query: { ...route.query, v: undefined } })
     }
+    // Command-dashboard open-seat links land on the page-out screen.
+    if (route.query.v === 'pages') {
+      tab.value = 'pages'
+      void router.replace({ query: { ...route.query, v: undefined } })
+    }
     // Verification deep links from the sched-notify prompts: the
     // verify cards live on My schedule; attest + sign-off open their
     // drawers directly (rendered globally in ScheduleEditModals).

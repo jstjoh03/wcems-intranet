@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ClipboardList, Plus, X } from 'lucide-vue-next'
 import CommandNav from '@/components/command/CommandNav.vue'
 import { useAuthStore } from '@/stores/auth'
-import { useSchedule, todayCentralIso } from '@/composables/useSchedule'
+import { useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSchedule'
 import {
   useCommand,
   emptySummaryData,
@@ -33,9 +33,23 @@ const sched = useSchedule()
 const cmd = useCommand()
 
 onMounted(() => {
-  void sched.ensureLoaded()
+  void (async () => {
+    await sched.ensureLoaded()
+    await ensureRange(shiftDate.value)
+  })()
   void cmd.load()
 })
+
+/* loadCore never loads entries; make sure the chosen date is covered
+   (union with whatever range is already loaded so nothing shrinks). */
+async function ensureRange(iso: string): Promise<void> {
+  const from = addDaysIso(iso, -1)
+  const to = addDaysIso(iso, 1)
+  const rs = sched.rangeStart.value
+  const re = sched.rangeEnd.value
+  if (rs && re && from >= rs && to <= re) return
+  await sched.loadRange(rs && rs < from ? rs : from, re && re > to ? re : to)
+}
 
 /* ── header state ─────────────────────────────────────────────────── */
 const shiftDate = ref(todayCentralIso())
@@ -136,9 +150,7 @@ function freshForm() {
       pm: { ic: u.pm.ic, at: u.pm.at, third: u.pm.third },
     }
   }
-  for (const v of cmd.fleet.value) {
-    next.fleet[v.label] = { status: 'in_service', location: '', pstrax: false, notes: '' }
-  }
+  next.fleet = cmd.fleetStartState()
   Object.assign(form, next)
   chartAudits.value = null
   rowId.value = null
@@ -150,8 +162,9 @@ function hydrate(s: DailySummary) {
   Object.assign(form, { ...emptySummaryData(), ...s.data })
   /* A vehicle added to the fleet after this draft was started needs a
      row, or the fleet table would bind against undefined. */
+  const start = cmd.fleetStartState()
   for (const v of cmd.fleet.value) {
-    if (!form.fleet[v.label]) form.fleet[v.label] = { status: 'in_service', location: '', pstrax: false, notes: '' }
+    if (!form.fleet[v.label]) form.fleet[v.label] = start[v.label]!
   }
   /* Rebuild the pristine snapshot so untouched schedule cells keep the
      gold dot after a resume; anything differing reads as corrected. */
@@ -173,14 +186,22 @@ function hydrate(s: DailySummary) {
    schedule + command data so the pre-fill has something to read. */
 const initialized = ref(false)
 watch(
-  [() => cmd.ready.value, () => sched.loaded.value, shiftDate, side],
-  ([cReady, sReady]) => {
+  [() => cmd.ready.value, () => sched.loaded.value, () => sched.rangeStart.value, () => sched.rangeEnd.value, shiftDate, side],
+  ([cReady, sReady], oldVals) => {
     if (!cReady || !sReady) return
+    void ensureRange(shiftDate.value)
+    /* oldVals is undefined on the immediate first run. */
+    const switched = !oldVals || oldVals[4] !== shiftDate.value || oldVals[5] !== side.value
     const existing = cmd.summaryFor(shiftDate.value, side.value)
-    if (existing) hydrate(existing)
-    else freshForm()
+    if (existing) {
+      if (switched || !initialized.value) hydrate(existing)
+    } else if (switched || !initialized.value || !dirty) {
+      /* Re-prefill when the entries range lands — but never over typed
+         work (dirty) on the same date+side. */
+      freshForm()
+    }
     initialized.value = true
-    dirty = false
+    if (switched) dirty = false
   },
   { immediate: true },
 )
@@ -330,6 +351,20 @@ async function onSubmit() {
     submitting.value = false
   }
 }
+
+/* Fleet locations are unit assignments (Main/Reserve per medic unit),
+   not stations — plus the shop. Stored values outside the list still
+   render (first option group). */
+const locationOptions = computed<string[]>(() => {
+  const units: string[] = []
+  for (const um of sched.dayModel(shiftDate.value).units) {
+    if (!um.unit.code.startsWith('S')) units.push(um.unit.code)
+  }
+  const out: string[] = []
+  for (const u of units) out.push(`${u} - Main`, `${u} - Reserve`)
+  out.push('At Shop', 'Station 201', 'Station 202', 'Other')
+  return out
+})
 
 const sideLabel = computed(() =>
   side.value === 'north' ? 'North — S201' : side.value === 'south' ? 'South — S202' : 'County-wide',
@@ -483,10 +518,8 @@ function fmtSave(): string {
                   <td>
                     <select v-model="form.fleet[v.label]!.location">
                       <option value="">—</option>
-                      <option>Station 201</option>
-                      <option>Station 202</option>
-                      <option>Shop</option>
-                      <option>Other</option>
+                      <option v-if="form.fleet[v.label]!.location && !locationOptions.includes(form.fleet[v.label]!.location)">{{ form.fleet[v.label]!.location }}</option>
+                      <option v-for="loc in locationOptions" :key="loc">{{ loc }}</option>
                     </select>
                   </td>
                   <td style="text-align: center"><input v-model="form.fleet[v.label]!.pstrax" type="checkbox" /></td>
@@ -644,19 +677,33 @@ function fmtSave(): string {
 .cds__sec-h h2 { margin: 0; font-size: 19px; font-weight: 400; }
 .cds__hint { font-size: 11.5px; color: var(--color-muted); }
 
-.cds__units { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-.cds__unit { border: 1px solid var(--color-line); border-radius: 11px; background: var(--color-surface); padding: 11px 13px 13px; }
-.cds__unit h3 { margin: 0 0 8px; font-size: 17px; font-weight: 400; }
-.cds__crew { display: grid; grid-template-columns: 76px 1fr 1fr; gap: 5px 7px; align-items: center; }
-.cds__ch { font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; color: var(--color-muted); }
-.cds__rl { font-size: 10.5px; font-weight: 700; color: var(--color-muted); }
+.cds__units { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 36px; }
+.cds__unit { padding: 9px 10px 11px; border-bottom: 1px solid var(--color-line); min-width: 0; }
+.cds__unit:nth-child(odd) { background: var(--color-surface-soft); }
+.cds__unit h3 { margin: 0 0 6px; font-size: 16px; font-weight: 400; }
+.cds__crew { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 2px 10px; align-items: center; }
+.cds__ch { font-size: 9px; font-weight: 700; letter-spacing: 0.09em; color: var(--color-muted); }
+.cds__rl { font-size: 10px; font-weight: 700; color: var(--color-muted); display: flex; align-items: center; gap: 4px; }
 .cds__cellwrap { position: relative; display: block; }
-.cds__cellwrap .cds__cell { width: 100%; box-sizing: border-box; padding-right: 20px; }
-.cds__src { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); width: 7px; height: 7px; border-radius: 50%; background: var(--color-gold-500, #c9a227); }
+.cds__cellwrap .cds__cell { width: 100%; box-sizing: border-box; padding-right: 18px; }
+.cds__crew .cds__cell,
+.cds__table .cds__cell {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-line);
+  border-radius: 0;
+  padding: 3px 18px 3px 2px;
+}
+.cds__crew .cds__cell:focus,
+.cds__table .cds__cell:focus {
+  outline: none;
+  border-bottom-color: var(--color-brand-600);
+}
+.cds__src { position: absolute; right: 5px; top: 50%; transform: translateY(-50%); width: 7px; height: 7px; border-radius: 50%; background: var(--color-gold-500, #c9a227); }
 .cds__src--edited { background: var(--color-danger-500); }
-.cds__calls { display: flex; gap: 7px; margin-top: 9px; }
-.cds__calls .cds__f { flex: 1; }
-.cds__calls input { width: 100%; box-sizing: border-box; text-align: center; }
+.cds__calls { display: flex; gap: 14px; margin-top: 8px; align-items: end; }
+.cds__calls .cds__f { flex: 0 0 auto; }
+.cds__calls input { width: 64px; box-sizing: border-box; text-align: center; padding: 4px 6px; }
 
 .cds__tablebox { overflow-x: auto; }
 .cds__table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
