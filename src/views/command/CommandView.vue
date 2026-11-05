@@ -5,7 +5,7 @@ import { Radio, Pin, Trash2 } from 'lucide-vue-next'
 import CommandNav from '@/components/command/CommandNav.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSchedule'
-import { useCommand, type CommandNote } from '@/composables/useCommand'
+import { useCommand, normalizeFleetRow, type CommandNote } from '@/composables/useCommand'
 import { useRequiredTraining } from '@/composables/useRequiredTraining'
 
 /**
@@ -73,7 +73,6 @@ interface DutyRow {
   people: { name: string; credential: string | null }[]
   open: string | null
   flag: 'aemt' | 'p1' | null
-  trainee: boolean
 }
 
 interface DutySide {
@@ -114,12 +113,10 @@ const onDuty = computed<DutySide[]>(() => {
         else if (r.userId) people.push({ name: r.name, credential: r.credential })
       }
     }
-    let trainee = false
     for (const ex of um.extras) {
       if (ex.open || !ex.userId) continue
       if (covers(ex.start, ex.end, probe)) {
         people.push({ name: ex.name, credential: ex.kind === 'student' ? 'Student' : null })
-        trainee = true
       }
     }
     const ranks = people
@@ -132,7 +129,7 @@ const onDuty = computed<DutySide[]>(() => {
       if (topName === 'AEMT' || topName === 'AEMT-FTO') flag = 'aemt'
       else if (topName === 'P1' || topName === 'P1C') flag = 'p1'
     }
-    sides[side].rows.push({ unit: um.unit.code, people, open, flag, trainee })
+    sides[side].rows.push({ unit: um.unit.code, people, open, flag })
   }
   return [sides.north, sides.south]
 })
@@ -185,23 +182,29 @@ async function onToggleVehicle(id: string, active: boolean) {
 
 /* ── latest fleet status from the most recent submitted summaries ── */
 const latestFleet = computed(() => {
-  const seen = new Map<string, { status: string; location: string; notes: string }>()
+  const seen = new Map<string, Partial<import('@/composables/useCommand').FleetStatusRow>>()
   for (const s of [...cmd.summaries.value].sort((a, b) => b.shiftDate.localeCompare(a.shiftDate))) {
     if (s.status !== 'submitted') continue
     for (const [veh, f] of Object.entries(s.data.fleet ?? {})) {
-      if (!seen.has(veh)) seen.set(veh, { status: f.status, location: f.location, notes: f.notes })
+      if (!seen.has(veh)) seen.set(veh, f)
     }
   }
-  return cmd.fleet.value.map((v) => ({
-    label: v.label,
-    ...(seen.get(v.label) ?? {
-      status: v.homeOos ? 'oos' : 'in_service',
-      location: v.homeLocation,
-      notes: v.homeNote,
-    }),
-  }))
+  return cmd.fleet.value.map((v) => {
+    const prev = seen.get(v.label)
+    const row = prev
+      ? normalizeFleetRow(prev)
+      : normalizeFleetRow({ status: v.homeOos ? 'oos' : 'in_service', location: v.homeLocation, notes: v.homeNote })
+    return { label: v.label, ...row }
+  })
 })
 const fleetKnown = computed(() => latestFleet.value)
+const fleetCounts = computed(() => {
+  const rows = latestFleet.value
+  const inService = rows.filter((r) => r.status === 'in_service').length
+  const reserve = rows.filter((r) => r.status === 'in_service' && r.role === 'reserve').length
+  const oos = rows.filter((r) => r.status === 'oos').length
+  return { inService, reserve, oos }
+})
 
 /* ── follow up with your crew (Required Training, on-shift people) ── */
 const followUps = computed(() => {
@@ -321,11 +324,11 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
         </div>
         <div class="cmd__cols">
           <div v-for="s in onDuty" :key="s.key" class="cmd__board">
-            <div class="cmd__band">
-              <span class="cmd__band-side">{{ s.label }}</span>
-              <span v-if="s.note" class="cmd__band-note">{{ s.note }}</span>
+            <div class="cmd__shead">
+              <span class="cmd__shead-side">{{ s.label }}</span>
+              <span v-if="s.note" class="cmd__shead-note">· {{ s.note }}</span>
               <span class="cmd__spacer"></span>
-              <span class="cmd__band-sup"><b>{{ s.sup ?? '—' }}</b> · Supervisor</span>
+              <span class="cmd__shead-sup"><b>{{ s.sup ?? '—' }}</b> · Supervisor</span>
             </div>
             <div class="cmd__rows">
               <div v-for="r in s.rows" :key="r.unit" class="cmd__row">
@@ -333,7 +336,6 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
                 <span class="cmd__who">
                   <template v-for="(p, i) in r.people" :key="i"><template v-if="i"><span class="cmd__sep">·</span></template><b>{{ p.name }}</b></template>
                   <span v-if="!r.people.length" class="cmd__muted">—</span>
-                  <span v-if="r.trainee" class="cmd__chip cmd__chip--gold" style="margin-left: 8px">trainee</span>
                   <span v-if="r.flag === 'aemt'" class="cmd__flag cmd__flag--warn" title="Respond along with this unit more often"><span class="cmd__dot cmd__dot--warn"></span>AEMT-led</span>
                   <span v-else-if="r.flag === 'p1'" class="cmd__flag cmd__flag--bad" title="Respond along with this unit more often"><span class="cmd__dot cmd__dot--bad"></span>P1-led</span>
                   <span v-if="r.open" class="cmd__open">{{ r.open }}</span>
@@ -424,7 +426,7 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
           <div v-if="manageFleet && auth.isAdmin" class="cmd__fleetmgr">
             <div v-for="v in cmd.fleetAll.value" :key="v.id" class="cmd__fleetrow" :class="{ 'cmd__fleetrow--off': !v.active }">
               <span class="cmd__fleetname">{{ v.label }}</span>
-              <span v-if="!v.active" class="cmd__chip">archived</span>
+              <span v-if="!v.active" class="cmd__count">archived</span>
               <span class="cmd__spacer"></span>
               <button type="button" class="cmd__link" :disabled="fleetBusy" @click="onToggleVehicle(v.id, !v.active)">
                 {{ v.active ? 'Archive' : 'Restore' }}
@@ -443,16 +445,20 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
           <div v-if="!fleetKnown.length" class="cmd__muted" style="padding: 6px 2px">No summary filed yet — the board fills in as summaries come in.</div>
           <div class="cmd__tablebox" v-else>
             <table class="cmd__table">
-              <thead><tr><th>Vehicle</th><th>Status</th><th>Location</th><th>Notes</th></tr></thead>
+              <thead><tr><th>Vehicle</th><th>Status</th><th>Location</th><th>Role</th><th>Notes</th></tr></thead>
               <tbody>
-                <tr v-for="f in fleetKnown" :key="f.label" :class="{ 'cmd__oos': (f as any).status === 'oos' }">
+                <tr v-for="f in fleetKnown" :key="f.label" :class="{ 'cmd__oos': f.status === 'oos' }">
                   <td><b>{{ f.label }}</b></td>
-                  <td><span class="cmd__dot" :class="(f as any).status === 'oos' ? 'cmd__dot--bad' : 'cmd__dot--ok'"></span> {{ (f as any).status === 'oos' ? 'OOS' : 'In service' }}</td>
-                  <td>{{ (f as any).location || '—' }}</td>
-                  <td>{{ (f as any).notes || '' }}</td>
+                  <td><span class="cmd__dot" :class="f.status === 'oos' ? 'cmd__dot--bad' : 'cmd__dot--ok'"></span> {{ f.status === 'oos' ? 'OOS' : 'In service' }}</td>
+                  <td>{{ f.location || '—' }}</td>
+                  <td class="cmd__rolecell">{{ f.role === 'main' ? 'Main' : f.role === 'reserve' ? 'Reserve' : '—' }}</td>
+                  <td>{{ f.notes || '' }}</td>
                 </tr>
               </tbody>
             </table>
+            <p class="cmd__fleetcount">
+              {{ fleetCounts.inService }} in service · {{ fleetCounts.reserve }} reserve ready · {{ fleetCounts.oos }} OOS
+            </p>
           </div>
         </section>
 
@@ -461,13 +467,13 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
           <div class="cmd__sec-h"><h2 class="display">Follow up with your crew</h2><span class="cmd__hint">on-shift people with open items</span></div>
           <div v-if="!followUps.length" class="cmd__muted" style="padding: 6px 2px">Everyone on shift is caught up. 🎯</div>
           <div v-for="f in followUps" :key="f.module + f.kind" class="cmd__qa">
-            <div class="cmd__q">{{ f.module }} — {{ f.kind === 'video' ? 'video / sign-off' : 'knowledge test' }} <span class="cmd__chip">{{ f.names.length }}</span></div>
+            <div class="cmd__q">{{ f.module }} — {{ f.kind === 'video' ? 'video / sign-off' : 'knowledge test' }} <span class="cmd__count">({{ f.names.length }})</span></div>
             <div class="cmd__names">{{ f.names.join(' · ') }}</div>
           </div>
           <p style="margin: 10px 0 0"><RouterLink class="cmd__link" to="/training/required">Full completion rosters →</RouterLink></p>
 
           <div v-if="approvals" class="cmd__chief">
-            <span class="cmd__chip cmd__chip--gold" style="float: right">schedule editors</span>
+            <span class="cmd__tagline" style="float: right">SCHEDULE EDITORS</span>
             <b>Awaiting approval</b>
             <div class="cmd__sumrow"><span>Shift trades</span><span class="cmd__spacer"></span><b>{{ approvals.trades }}</b></div>
             <div class="cmd__sumrow"><span>Time off</span><span class="cmd__spacer"></span><b>{{ approvals.timeOff }}</b></div>
@@ -508,14 +514,14 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__hint { font-size: 11.5px; color: var(--color-muted); }
 .cmd__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 36px; }
 
-.cmd__board { margin-top: 12px; min-width: 0; }
-.cmd__band { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; background: var(--color-brand-600); color: #fff; border-radius: 9px 9px 0 0; padding: 7px 12px; font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
-.cmd__band-note { font-weight: 500; letter-spacing: 0.02em; text-transform: none; color: oklch(0.88 0.05 90); }
-.cmd__band-sup { font-weight: 500; letter-spacing: 0.02em; text-transform: none; font-size: 12px; }
-.cmd__band-sup b { font-weight: 700; }
-.cmd__rows { border: 1px solid var(--color-line); border-top: 0; border-radius: 0 0 9px 9px; overflow: hidden; }
-.cmd__rows .cmd__row:nth-child(odd) { background: var(--color-surface-soft); }
-.cmd__row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 8px 12px; font-size: 13px; }
+.cmd__board { margin-top: 14px; min-width: 0; }
+.cmd__shead { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; border-bottom: 1.5px solid var(--color-ink); padding-bottom: 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; color: var(--color-muted); text-transform: uppercase; }
+.cmd__shead-side { color: var(--color-ink); }
+.cmd__shead-note { font-weight: 500; letter-spacing: 0.02em; text-transform: none; }
+.cmd__shead-sup { font-weight: 500; letter-spacing: 0.02em; text-transform: none; font-size: 12px; color: var(--color-ink-soft, var(--color-ink)); }
+.cmd__shead-sup b { font-weight: 700; color: var(--color-ink); }
+.cmd__rows .cmd__row:nth-child(even) { background: var(--color-surface-soft); }
+.cmd__row { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding: 8px 8px 8px 4px; font-size: 13px; border-bottom: 1px solid var(--color-line-soft, var(--color-line)); }
 .cmd__sep { color: var(--color-muted); margin: 0 6px; }
 .cmd__unit { font-weight: 800; }
 .cmd__who { color: var(--color-ink-soft, var(--color-ink)); }
@@ -529,9 +535,9 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__openitem { color: var(--color-danger-500); font-weight: 600; }
 .cmd__muted { color: var(--color-muted); font-size: 12.5px; }
 
-.cmd__flag { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
-.cmd__flag--warn { background: oklch(0.95 0.045 90); color: oklch(0.5 0.12 70); }
-.cmd__flag--bad { background: oklch(0.96 0.025 25); color: oklch(0.5 0.17 25); }
+.cmd__flag { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; margin-left: 10px; white-space: nowrap; }
+.cmd__flag--warn { color: oklch(0.5 0.12 70); }
+.cmd__flag--bad { color: oklch(0.5 0.17 25); }
 .cmd__dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: oklch(0.85 0.006 255); }
 .cmd__dot--ok { background: oklch(0.55 0.13 150); }
 .cmd__dot--warn { background: oklch(0.65 0.12 70); }
@@ -544,25 +550,25 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__mini { background: none; border: 0; color: var(--color-muted); cursor: pointer; padding: 1px; display: inline-flex; }
 .cmd__mini:hover { color: var(--color-ink); }
 .cmd__notein { display: flex; gap: 8px; margin-top: 10px; }
-.cmd__notein input { flex: 1; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-surface); color: var(--color-ink); padding: 8px 10px; font: 13px inherit; font-family: inherit; }
+.cmd__notein input { flex: 1; border: 1px solid var(--color-line); border-radius: 5px; background: var(--color-surface); color: var(--color-ink); padding: 8px 10px; font: 13px inherit; font-family: inherit; }
 
 .cmd__sumrow { display: flex; align-items: center; gap: 9px; padding: 8px 2px; border-bottom: 1px solid var(--color-line); font-size: 13px; }
 .cmd__spacer { flex: 1; }
 .cmd__due { color: var(--color-danger-500); font-weight: 600; }
 
-.cmd__btn { font: 600 12px inherit; font-family: inherit; border-radius: 8px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--color-line); background: var(--color-surface); color: var(--color-ink); text-decoration: none; }
+.cmd__btn { font: 600 12px inherit; font-family: inherit; border-radius: 6px; padding: 6px 12px; cursor: pointer; border: 1px solid var(--color-line); background: var(--color-surface); color: var(--color-ink); text-decoration: none; }
 .cmd__btn--primary { background: var(--color-brand-600); border-color: var(--color-brand-600); color: #fff; }
 .cmd__btn--gold { background: var(--color-gold-100, #f3e9c9); border-color: var(--color-gold-500, #c9a227); color: var(--color-ink); }
 .cmd__link { background: none; border: 0; padding: 0; color: var(--color-brand-700, var(--color-brand-600)); font: 600 12px inherit; font-family: inherit; cursor: pointer; text-decoration: underline; }
 
-.cmd__manage { margin-left: auto; font: 600 11.5px inherit; font-family: inherit; border: 1px solid var(--color-line); border-radius: 7px; background: var(--color-surface); color: var(--color-ink-soft, var(--color-ink)); padding: 3px 9px; cursor: pointer; }
+.cmd__manage { margin-left: auto; font: 600 11.5px inherit; font-family: inherit; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-surface); color: var(--color-ink-soft, var(--color-ink)); padding: 3px 9px; cursor: pointer; }
 .cmd__manage:hover { border-color: var(--color-brand-600); }
 .cmd__fleetmgr { border: 1px dashed var(--color-line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
 .cmd__fleetrow { display: flex; align-items: center; gap: 9px; padding: 5px 0; border-bottom: 1px solid var(--color-line); font-size: 13px; }
 .cmd__fleetrow--off .cmd__fleetname { color: var(--color-muted); text-decoration: line-through; }
 .cmd__fleetname { font-weight: 600; }
 .cmd__fleetadd { display: flex; gap: 8px; margin-top: 9px; }
-.cmd__fleetadd input { flex: 1; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-surface); color: var(--color-ink); padding: 7px 10px; font: 13px inherit; font-family: inherit; }
+.cmd__fleetadd input { flex: 1; border: 1px solid var(--color-line); border-radius: 5px; background: var(--color-surface); color: var(--color-ink); padding: 7px 10px; font: 13px inherit; font-family: inherit; }
 
 @media (max-width: 560px) {
   .cmd__row { grid-template-columns: 48px minmax(0, 1fr); }
@@ -578,7 +584,9 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__qa { padding: 8px 2px; border-bottom: 1px solid var(--color-line); font-size: 13px; }
 .cmd__q { font-weight: 600; }
 .cmd__names { color: var(--color-ink-soft, var(--color-ink)); font-size: 12.5px; margin-top: 2px; }
-.cmd__chip { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--color-surface-soft); color: var(--color-ink-soft, var(--color-ink)); border: 1px solid var(--color-line); }
-.cmd__chip--gold { background: var(--color-gold-100, #f3e9c9); border-color: var(--color-gold-500, #c9a227); }
+.cmd__count { font-size: 11px; font-weight: 600; color: var(--color-muted); }
+.cmd__tagline { font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; color: var(--color-muted); }
+.cmd__rolecell { font-variant-numeric: tabular-nums; }
+.cmd__fleetcount { margin: 7px 0 0; font-size: 11.5px; color: var(--color-muted); font-weight: 600; }
 .cmd__chief { border: 1.5px solid var(--color-gold-500, #c9a227); border-radius: 11px; background: var(--color-surface); padding: 12px 14px; margin-top: 18px; font-size: 13px; }
 </style>

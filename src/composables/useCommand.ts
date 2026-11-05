@@ -68,9 +68,33 @@ export interface UnitSection {
 
 export interface FleetStatusRow {
   status: 'in_service' | 'oos'
+  /** Where the vehicle sits — a unit code, 'At Shop', a station… */
   location: string
+  /** Main rig or reserve for that location ('' = n/a, e.g. shop). */
+  role: '' | 'main' | 'reserve'
   pstrax: boolean
   notes: string
+}
+
+/** Older rows (and the seeded homes) stored "M242 - Reserve" as one
+ *  string — split it into location + role; pass-through otherwise. */
+export function splitFleetLocation(loc: string): { location: string; role: '' | 'main' | 'reserve' } {
+  const m = /^(.*?)\s*-\s*(Main|Reserve)$/i.exec(loc ?? '')
+  if (!m) return { location: loc ?? '', role: '' }
+  return { location: m[1]!.trim(), role: m[2]!.toLowerCase() as 'main' | 'reserve' }
+}
+
+/** Normalize a stored fleet row (legacy combined location, missing
+ *  role) into the current shape. */
+export function normalizeFleetRow(f: Partial<FleetStatusRow>): FleetStatusRow {
+  const base = splitFleetLocation(f.location ?? '')
+  return {
+    status: f.status === 'oos' ? 'oos' : 'in_service',
+    location: base.location,
+    role: f.role ?? base.role,
+    pstrax: f.pstrax ?? false,
+    notes: f.notes ?? '',
+  }
 }
 
 export interface DowntimeBlock {
@@ -203,7 +227,7 @@ export function useCommand() {
       const devData = emptySummaryData()
       devData.supervisors = [{ name: 'Sample Supervisor' }]
       devData.esd.lateCalls = { answer: true, rows: [{ incident: '26-058704', reason: 'both units committed on transfers' }] }
-      devData.fleet = { '8237': { status: 'oos', location: 'Shop', pstrax: true, notes: 'brakes — Thursday appt' } }
+      devData.fleet = { '8237': { status: 'oos', location: 'At Shop', role: '', pstrax: true, notes: 'brakes — Thursday appt' } }
       summaries.value = [
         { id: 'dev-s-1', shiftDate: dd, side: 'south', shiftLetter: 'B', supervisorId: 'dev-2', chartAudits: 10, data: devData, status: 'submitted', submittedAt: new Date().toISOString(), pdfPath: null, updatedAt: new Date().toISOString() },
       ]
@@ -331,9 +355,18 @@ export function useCommand() {
     const out: Record<string, FleetStatusRow> = {}
     for (const v of fleet.value) {
       const prev = seen.get(v.label)
-      out[v.label] = prev
-        ? { status: prev.status, location: prev.location, pstrax: true, notes: prev.notes }
-        : { status: v.homeOos ? 'oos' : 'in_service', location: v.homeLocation, pstrax: true, notes: v.homeNote }
+      if (prev) {
+        out[v.label] = { ...normalizeFleetRow(prev), pstrax: true }
+      } else {
+        const home = splitFleetLocation(v.homeLocation)
+        out[v.label] = {
+          status: v.homeOos ? 'oos' : 'in_service',
+          location: home.location,
+          role: home.role,
+          pstrax: true,
+          notes: v.homeNote,
+        }
+      }
     }
     return out
   }

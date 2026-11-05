@@ -16,7 +16,7 @@
       <div class="section">
         <div class="section-title">TIME OF BIRTH</div>
         <div class="time-row">
-          <input v-model="form.birthTime" type="time" step="1" class="time-input" />
+          <TimeInput24 v-model="form.birthTime" class="time-input" />
           <input v-model="form.birthDate" type="date" class="date-input" />
           <button class="now-btn" @click="stampBirth">Now</button>
         </div>
@@ -25,7 +25,7 @@
       <div class="section">
         <div class="section-title">TIME PLACENTA DELIVERED</div>
         <div class="time-row">
-          <input v-model="form.placentaTime" type="time" step="1" class="time-input" />
+          <TimeInput24 v-model="form.placentaTime" class="time-input" />
           <input v-model="form.placentaDate" type="date" class="date-input" />
           <button class="now-btn" @click="stampPlacenta">Now</button>
         </div>
@@ -161,6 +161,7 @@
 
 <script setup>
 import { ref, computed, reactive } from 'vue'
+import TimeInput24 from '@/components/primitives/TimeInput24.vue'
 import { contractionStore } from '@/stores/protocols/contractionStore'
 import { deliveryStore } from '@/stores/protocols/deliveryStore'
 
@@ -175,13 +176,13 @@ const { form, complications, apgar1, apgar5 } = deliveryStore
 
 function stampBirth() {
   const now = new Date()
-  form.birthTime = now.toTimeString().slice(0, 8)
+  form.birthTime = now.toTimeString().slice(0, 5)
   form.birthDate = now.toISOString().slice(0, 10)
 }
 
 function stampPlacenta() {
   const now = new Date()
-  form.placentaTime = now.toTimeString().slice(0, 8)
+  form.placentaTime = now.toTimeString().slice(0, 5)
   form.placentaDate = now.toISOString().slice(0, 10)
 }
 

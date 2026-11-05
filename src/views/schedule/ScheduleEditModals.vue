@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
+import TimeSelect24 from '@/components/primitives/TimeSelect24.vue'
 import {
   useSchedule,
   platoonFor,

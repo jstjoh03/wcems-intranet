@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
-import TimeSelect24 from '@/views/schedule/TimeSelect24.vue'
+import TimeSelect24 from '@/components/primitives/TimeSelect24.vue'
 import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
   useSchedule,

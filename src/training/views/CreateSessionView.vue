@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, computed, watch } from 'vue'
+import TimeSelect24 from '@/components/primitives/TimeSelect24.vue'
 import AppShell from '@/training/components/AppShell.vue'
 import { useSessionsStore } from '@/training/stores/sessions'
 import { useAuthStore } from '@/training/stores/auth'
@@ -614,11 +615,11 @@ function reset() {
               </label>
               <label class="f">
                 <span>Start Time <i>*</i></span>
-                <input v-model="form.startTime" type="time" />
+                <TimeSelect24 v-model="form.startTime" />
               </label>
               <label class="f">
                 <span>End Time <i>*</i></span>
-                <input v-model="form.endTime" type="time" />
+                <TimeSelect24 v-model="form.endTime" />
               </label>
               <label class="f span2">
                 <span>Location <em>optional</em></span>

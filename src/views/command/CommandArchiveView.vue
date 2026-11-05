@@ -195,7 +195,7 @@ async function openPdf(s: DailySummary) {
 .ca__gate { margin-top: 24px; padding: 28px; text-align: center; font-size: 13px; color: var(--color-muted); border: 1px dashed var(--color-line); border-radius: 12px; }
 
 .ca__filters { display: flex; gap: 8px 18px; flex-wrap: wrap; align-items: center; background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 12px; padding: 11px 13px; }
-.ca__search { flex: 1 1 220px; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-bg, var(--color-surface-soft)); color: var(--color-ink); font: 13px inherit; font-family: inherit; padding: 7px 10px; }
+.ca__search { flex: 1 1 220px; border: 1px solid var(--color-line); border-radius: 5px; background: var(--color-bg, var(--color-surface-soft)); color: var(--color-ink); font: 13px inherit; font-family: inherit; padding: 7px 10px; }
 .ca__group { display: flex; gap: 5px; align-items: center; }
 .ca__lbl { font-size: 10px; font-weight: 700; letter-spacing: 0.09em; color: var(--color-muted); text-transform: uppercase; margin-right: 2px; }
 .ca__chip { border: 1px solid var(--color-line); background: var(--color-surface); border-radius: 999px; font: 600 11.5px inherit; font-family: inherit; color: var(--color-ink-soft, var(--color-ink)); padding: 4px 11px; cursor: pointer; }
@@ -209,10 +209,11 @@ async function openPdf(s: DailySummary) {
 .ca__row { cursor: pointer; }
 .ca__row:hover td { background: var(--color-surface-soft); }
 .ca__flags { display: flex; gap: 5px; flex-wrap: wrap; }
-.ca__flag { font-size: 10px; font-weight: 700; padding: 1.5px 7px; border-radius: 999px; white-space: nowrap; }
-.ca__flag--warn { background: oklch(0.95 0.045 90); color: oklch(0.5 0.12 70); }
-.ca__flag--bad { background: oklch(0.96 0.025 25); color: oklch(0.5 0.17 25); }
-.ca__pdf { display: inline-flex; align-items: center; gap: 4px; font: 600 11.5px inherit; font-family: inherit; border: 1px solid var(--color-line); border-radius: 7px; background: var(--color-surface); color: var(--color-ink); padding: 4px 9px; cursor: pointer; white-space: nowrap; }
+.ca__flag { font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+.ca__flag::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: currentColor; }
+.ca__flag--warn { color: oklch(0.5 0.12 70); }
+.ca__flag--bad { color: oklch(0.5 0.17 25); }
+.ca__pdf { display: inline-flex; align-items: center; gap: 4px; font: 600 11.5px inherit; font-family: inherit; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-surface); color: var(--color-ink); padding: 4px 9px; cursor: pointer; white-space: nowrap; }
 .ca__pdf:hover { border-color: var(--color-brand-600); }
 
 .ca__detail td { background: var(--color-surface); font-size: 12.5px; color: var(--color-ink-soft, var(--color-ink)); padding: 10px 14px 12px; }

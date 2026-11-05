@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import TimeSelect24 from '@/components/primitives/TimeSelect24.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ClipboardList, Plus, X } from 'lucide-vue-next'
 import CommandNav from '@/components/command/CommandNav.vue'
@@ -8,6 +9,7 @@ import { useSchedule, todayCentralIso, addDaysIso } from '@/composables/useSched
 import {
   useCommand,
   emptySummaryData,
+  normalizeFleetRow,
   type SummaryData,
   type SummarySide,
   type UnitSection,
@@ -160,11 +162,16 @@ function freshForm() {
 
 function hydrate(s: DailySummary) {
   Object.assign(form, { ...emptySummaryData(), ...s.data })
-  /* A vehicle added to the fleet after this draft was started needs a
-     row, or the fleet table would bind against undefined. */
+  /* Normalize stored rows (legacy combined "X - Reserve" locations,
+     missing role), repair untouched-empty rows from drafts that predate
+     the seeded homes, and backfill vehicles added after the draft. */
   const start = cmd.fleetStartState()
   for (const v of cmd.fleet.value) {
-    if (!form.fleet[v.label]) form.fleet[v.label] = start[v.label]!
+    const cur = form.fleet[v.label]
+    const pristineEmpty =
+      cur && cur.status === 'in_service' && !cur.location && !(cur as { role?: string }).role && !cur.notes
+    if (!cur || pristineEmpty) form.fleet[v.label] = start[v.label]!
+    else form.fleet[v.label] = normalizeFleetRow(cur)
   }
   /* Rebuild the pristine snapshot so untouched schedule cells keep the
      gold dot after a resume; anything differing reads as corrected. */
@@ -356,14 +363,21 @@ async function onSubmit() {
    not stations — plus the shop. Stored values outside the list still
    render (first option group). */
 const locationOptions = computed<string[]>(() => {
-  const units: string[] = []
-  for (const um of sched.dayModel(shiftDate.value).units) {
-    if (!um.unit.code.startsWith('S')) units.push(um.unit.code)
-  }
   const out: string[] = []
-  for (const u of units) out.push(`${u} - Main`, `${u} - Reserve`)
+  for (const um of sched.dayModel(shiftDate.value).units) {
+    if (!um.unit.code.startsWith('S')) out.push(um.unit.code)
+  }
   out.push('At Shop', 'Station 201', 'Station 202', 'Other')
   return out
+})
+
+/** Reserve-depth line under the fleet matrix. */
+const fleetCounts = computed(() => {
+  const rows = Object.values(form.fleet)
+  const inService = rows.filter((r) => r.status === 'in_service').length
+  const reserve = rows.filter((r) => r.status === 'in_service' && r.role === 'reserve').length
+  const oos = rows.filter((r) => r.status === 'oos').length
+  return { inService, reserve, oos }
 })
 
 const sideLabel = computed(() =>
@@ -441,8 +455,8 @@ function fmtSave(): string {
                 <input v-model="s.name" list="cds-sups" placeholder="Name" />
               </label>
               <template v-if="form.supervisors.length > 1">
-                <label class="cds__f"><span>From</span><input v-model="s.from" type="time" /></label>
-                <label class="cds__f"><span>Until</span><input v-model="s.until" type="time" /></label>
+                <label class="cds__f"><span>From</span><TimeSelect24 v-model="s.from!" /></label>
+                <label class="cds__f"><span>Until</span><TimeSelect24 v-model="s.until!" /></label>
               </template>
               <button v-if="form.supervisors.length > 1" type="button" class="cds__x" title="Remove" @click="removeSupervisor(i)"><X :size="13" :stroke-width="2" /></button>
             </div>
@@ -505,7 +519,7 @@ function fmtSave(): string {
           <div class="cds__sec-h"><h2 class="display">Fleet status</h2><span class="cds__hint">all vehicles — shared between sides</span></div>
           <div class="cds__tablebox">
             <table class="cds__table">
-              <thead><tr><th>Vehicle</th><th>Status</th><th>Location</th><th>PSTrax updated</th><th>Notes</th></tr></thead>
+              <thead><tr><th>Vehicle</th><th>Status</th><th>Location</th><th>Main / Reserve</th><th>PSTrax updated</th><th>Notes</th></tr></thead>
               <tbody>
                 <tr v-for="v in cmd.fleet.value" :key="v.id" :class="{ 'cds__oos': form.fleet[v.label]?.status === 'oos' }">
                   <td><b>{{ v.label }}</b></td>
@@ -522,11 +536,21 @@ function fmtSave(): string {
                       <option v-for="loc in locationOptions" :key="loc">{{ loc }}</option>
                     </select>
                   </td>
+                  <td>
+                    <select v-model="form.fleet[v.label]!.role">
+                      <option value="">—</option>
+                      <option value="main">Main</option>
+                      <option value="reserve">Reserve</option>
+                    </select>
+                  </td>
                   <td style="text-align: center"><input v-model="form.fleet[v.label]!.pstrax" type="checkbox" /></td>
                   <td><input v-model="form.fleet[v.label]!.notes" class="cds__cell" placeholder="" /></td>
                 </tr>
               </tbody>
             </table>
+            <p class="cds__fleetcount">
+              {{ fleetCounts.inService }} in service · {{ fleetCounts.reserve }} reserve ready · {{ fleetCounts.oos }} OOS
+            </p>
           </div>
         </section>
 
@@ -543,8 +567,8 @@ function fmtSave(): string {
               <label class="cds__f"><span>Unit</span>
                 <select v-model="form.downtime.first.unit"><option v-for="c in unitCodes" :key="c">{{ c }}</option></select>
               </label>
-              <label class="cds__f"><span>From</span><input v-model="form.downtime.first.from" type="time" /></label>
-              <label class="cds__f"><span>Until</span><input v-model="form.downtime.first.until" type="time" /></label>
+              <label class="cds__f"><span>From</span><TimeSelect24 v-model="form.downtime.first.from" /></label>
+              <label class="cds__f"><span>Until</span><TimeSelect24 v-model="form.downtime.first.until" /></label>
               <label class="cds__f cds__f--grow"><span>Reason</span><input v-model="form.downtime.first.reason" /></label>
             </div>
             <template v-if="form.downtime.first.used">
@@ -557,8 +581,8 @@ function fmtSave(): string {
                 <label class="cds__f"><span>Unit</span>
                   <select v-model="form.downtime.second.unit"><option v-for="c in unitCodes" :key="c">{{ c }}</option></select>
                 </label>
-                <label class="cds__f"><span>From</span><input v-model="form.downtime.second.from" type="time" /></label>
-                <label class="cds__f"><span>Until</span><input v-model="form.downtime.second.until" type="time" /></label>
+                <label class="cds__f"><span>From</span><TimeSelect24 v-model="form.downtime.second.from" /></label>
+                <label class="cds__f"><span>Until</span><TimeSelect24 v-model="form.downtime.second.until" /></label>
                 <label class="cds__f cds__f--grow"><span>Reason</span><input v-model="form.downtime.second.reason" /></label>
               </div>
             </template>
@@ -643,7 +667,7 @@ function fmtSave(): string {
 .cds__gate { margin-top: 24px; padding: 28px; text-align: center; font-size: 13px; color: var(--color-muted); border: 1px dashed var(--color-line); border-radius: 12px; }
 .cds__topline { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-bottom: 6px; }
 .cds__savestate { font-size: 11.5px; color: var(--color-muted); }
-.cds__filedtag { font-size: 11px; font-weight: 700; color: var(--color-gold-700, #8a6d14); background: var(--color-gold-100, #f3e9c9); border-radius: 999px; padding: 3px 10px; }
+.cds__filedtag { font-size: 11px; font-weight: 700; color: var(--color-gold-700, #8a6d14); }
 
 .cds__card { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 12px; padding: 14px 16px; }
 .cds__meta { display: flex; gap: 10px 22px; flex-wrap: wrap; align-items: end; }
@@ -651,17 +675,17 @@ function fmtSave(): string {
 .cds__f--grow { flex: 1; min-width: 180px; }
 .cds__f > span { font-size: 10px; font-weight: 700; letter-spacing: 0.09em; color: var(--color-muted); text-transform: uppercase; }
 .cds__f input, .cds__f select, .cds__f textarea, .cds__cell {
-  border: 1px solid var(--color-line); border-radius: 7px; background: var(--color-bg, var(--color-surface-soft));
+  border: 1px solid var(--color-line); border-radius: 4px; background: var(--color-bg, var(--color-surface-soft));
   color: var(--color-ink); font: 13px inherit; font-family: inherit; padding: 7px 9px;
 }
 .cds__total { font-size: 22px; font-variant-numeric: tabular-nums; }
 .cds__segs { display: flex; }
 .cds__seg { border: 1px solid var(--color-line); background: var(--color-surface); color: var(--color-ink-soft, var(--color-ink)); font: 700 12px inherit; font-family: inherit; padding: 7px 12px; cursor: pointer; }
-.cds__seg:first-child { border-radius: 8px 0 0 8px; }
-.cds__seg:last-child { border-radius: 0 8px 8px 0; }
+.cds__seg:first-child { border-radius: 5px 0 0 5px; }
+.cds__seg:last-child { border-radius: 0 5px 5px 0; }
 .cds__seg + .cds__seg { border-left: 0; }
 .cds__seg--on { background: var(--color-brand-600); border-color: var(--color-brand-600); color: #fff; }
-.cds__seg--sm { padding: 4px 8px; font-size: 11px; }
+.cds__seg--sm { padding: 3px 7px; font-size: 10.5px; }
 .cds__seg--bad.cds__seg--on { background: var(--color-danger-500); border-color: var(--color-danger-500); }
 
 .cds__sups { margin-top: 12px; border-top: 1px solid var(--color-line); padding-top: 10px; }
@@ -670,17 +694,16 @@ function fmtSave(): string {
 .cds__x { background: none; border: 0; color: var(--color-muted); cursor: pointer; padding: 2px; display: inline-flex; vertical-align: middle; }
 .cds__x:hover { color: var(--color-danger-500); }
 
-.cds__prefnote { font-size: 12px; color: var(--color-ink-soft, var(--color-ink)); background: var(--color-gold-100, #f3e9c9); border-radius: 9px; padding: 8px 12px; margin: 14px 0 0; }
+.cds__prefnote { font-size: 12px; color: var(--color-ink-soft, var(--color-ink)); background: var(--color-gold-100, #f3e9c9); border-radius: 6px; padding: 8px 12px; margin: 14px 0 0; }
 
 .cds__sec { margin-top: 22px; }
 .cds__sec-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; border-bottom: 1.5px solid var(--color-ink); padding-bottom: 4px; margin-bottom: 10px; }
 .cds__sec-h h2 { margin: 0; font-size: 19px; font-weight: 400; }
 .cds__hint { font-size: 11.5px; color: var(--color-muted); }
 
-.cds__units { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 36px; }
-.cds__unit { padding: 9px 10px 11px; border-bottom: 1px solid var(--color-line); min-width: 0; }
-.cds__unit:nth-child(odd) { background: var(--color-surface-soft); }
-.cds__unit h3 { margin: 0 0 6px; font-size: 16px; font-weight: 400; }
+.cds__units { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 6px 44px; }
+.cds__unit { padding: 8px 2px 14px; min-width: 0; }
+.cds__unit h3 { margin: 0 0 8px; font-size: 16px; font-weight: 400; border-bottom: 1px solid var(--color-line); padding-bottom: 4px; display: flex; align-items: baseline; justify-content: space-between; }
 .cds__crew { display: grid; grid-template-columns: 64px 1fr 1fr; gap: 2px 10px; align-items: center; }
 .cds__ch { font-size: 9px; font-weight: 700; letter-spacing: 0.09em; color: var(--color-muted); }
 .cds__rl { font-size: 10px; font-weight: 700; color: var(--color-muted); display: flex; align-items: center; gap: 4px; }
@@ -709,7 +732,8 @@ function fmtSave(): string {
 .cds__table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .cds__table th { text-align: left; font-size: 10px; letter-spacing: 0.1em; color: var(--color-muted); font-weight: 700; padding: 5px 8px; border-bottom: 1.5px solid var(--color-line); white-space: nowrap; }
 .cds__table td { padding: 6px 8px; border-bottom: 1px solid var(--color-line); }
-.cds__table select { border: 1px solid var(--color-line); border-radius: 7px; background: var(--color-surface); color: var(--color-ink); font: 12.5px inherit; font-family: inherit; padding: 5px 7px; }
+.cds__table select { border: 1px solid var(--color-line); border-radius: 4px; background: var(--color-surface); color: var(--color-ink); font: 12.5px inherit; font-family: inherit; padding: 5px 7px; }
+.cds__fleetcount { margin: 8px 0 0; font-size: 11.5px; color: var(--color-muted); font-weight: 600; }
 .cds__table .cds__cell { width: 100%; box-sizing: border-box; min-width: 140px; }
 .cds__oos td { background: oklch(0.96 0.025 25 / 0.45); }
 
@@ -722,7 +746,7 @@ function fmtSave(): string {
 .cds__late { margin-top: 10px; }
 .cds__laterow { display: grid; grid-template-columns: 150px 1fr 26px; gap: 8px; align-items: center; margin-bottom: 6px; }
 .cds__laterow--head { font-size: 10px; font-weight: 700; letter-spacing: 0.09em; color: var(--color-muted); text-transform: uppercase; margin-bottom: 2px; }
-.cds__laterow input { border: 1px solid var(--color-line); border-radius: 7px; background: var(--color-surface); color: var(--color-ink); font: 13px inherit; font-family: inherit; padding: 7px 9px; min-width: 0; }
+.cds__laterow input { border: 1px solid var(--color-line); border-radius: 4px; background: var(--color-surface); color: var(--color-ink); font: 13px inherit; font-family: inherit; padding: 7px 9px; min-width: 0; }
 
 .cds__notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
 .cds__notes textarea { resize: vertical; }
@@ -730,7 +754,7 @@ function fmtSave(): string {
 .cds__err { margin-top: 14px; color: var(--color-danger-500); font-size: 13px; }
 .cds__done { margin-top: 14px; color: var(--color-success-600, var(--color-success-500)); font-weight: 600; font-size: 13px; }
 .cds__foot { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
-.cds__btn { font: 600 13px inherit; font-family: inherit; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--color-line); background: var(--color-surface); color: var(--color-ink); }
+.cds__btn { font: 600 13px inherit; font-family: inherit; border-radius: 6px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--color-line); background: var(--color-surface); color: var(--color-ink); }
 .cds__btn--primary { background: var(--color-brand-600); border-color: var(--color-brand-600); color: #fff; }
 .cds__btn:disabled { opacity: 0.6; cursor: default; }
 

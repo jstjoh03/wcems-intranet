@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
+import TimeSelect24 from '@/components/primitives/TimeSelect24.vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/training/components/AppShell.vue'
 import { useSessionsStore } from '@/training/stores/sessions'
@@ -2754,11 +2755,11 @@ function fmtSubmittedAt(ts: string) {
           </label>
           <label class="fld">
             <span>Start</span>
-            <input v-model="editForm.startTime" type="time" />
+            <TimeSelect24 v-model="editForm.startTime" />
           </label>
           <label class="fld">
             <span>End</span>
-            <input v-model="editForm.endTime" type="time" />
+            <TimeSelect24 v-model="editForm.endTime" />
           </label>
         </div>
 
