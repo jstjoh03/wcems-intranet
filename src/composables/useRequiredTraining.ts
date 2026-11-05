@@ -262,7 +262,36 @@ async function load() {
       title: 'Dev Signed-Before-Test (stub)',
       description: 'Signed attestation + pending knowledge test.',
     })
+    /* Roster-view fixtures (2026-11-04): one completion per state for
+       the fixture employees RequiredTrainingRosterView seeds in dev —
+       signed+test-passed, signed+test-pending, in-progress; absence =
+       not started. */
+    const rtcBase = {
+      requiredTrainingId: 'dev-rt-1',
+      signatureData: null,
+      signedMethod: 'self' as const,
+      markedBy: null,
+      markedNote: null,
+      certificateStoragePath: null,
+      watchSeconds: 60,
+      videoCompletedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+    }
     completions.value = [
+      {
+        ...rtcBase, id: 'dev-rtc-e1', userId: 'dev-emp-1',
+        completedAt: '2026-10-30T15:00:00Z', attestationSigned: true, quizScore: 93,
+      },
+      {
+        ...rtcBase, id: 'dev-rtc-e2', userId: 'dev-emp-2',
+        completedAt: '2026-10-28T15:00:00Z', attestationSigned: true, quizScore: null,
+      },
+      {
+        ...rtcBase, id: 'dev-rtc-e3', userId: 'dev-emp-3',
+        completedAt: null, attestationSigned: false, quizScore: null,
+      },
       {
         id: 'dev-rtc-2',
         requiredTrainingId: 'dev-rt-2',

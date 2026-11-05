@@ -1,31 +1,54 @@
 import jsPDF from 'jspdf'
 
 /**
- * Multi-page sign-off-sheet PDF for a single required-training module.
+ * Multi-page sign-off-sheet PDF for a single required-training module
+ * (also drives policy acknowledgement sheets via the labels input).
  *
- * Layout philosophy (rewritten 2026-06-01):
- *   • The CSV export is the wide audit format (role/shift/station/method/
- *     notes/etc.). This PDF is the "Rhonda-prints-it-for-HR" format —
- *     name, signature, completion date, end of story.
- *   • Each person gets ONE compact row (~36pt). On 72-pt margins that
- *     fits ~17 rows / page after the page-1 header band, so a 36-person
- *     audience lands in 3 pages instead of 8.
- *   • FT employees come first, then PT — each group alphabetized by
- *     LAST name (Wix used last-name sort and it's what Rhonda expects).
- *   • Signatures (self-attested) embed inline. Admin-marked rows show
- *     "Marked by <Admin>" in italics in the signature slot.
- *   • Unsigned rows stay in the doc so it's still a true sign-off
- *     sheet — they just show "—" in the signature + date columns.
+ * Restyled 2026-11-04 (Justin): the old navy web-band header is gone —
+ * this now carries the same minimal B&W letterhead as the clinical
+ * conversation / megacode documents (crest + agency block + double
+ * rule), so everything filed on paper reads as one family.
+ *
+ * Layout philosophy (2026-06-01, unchanged):
+ *   • The CSV export is the wide audit format. This PDF is the
+ *     "Rhonda-prints-it-for-HR" format — name, signature, date.
+ *   • One compact row per person; FT first then PT, last-name alpha.
+ *   • Self-attested signatures embed inline; admin-marked rows show
+ *     "Marked by <Admin>"; unsigned rows stay with "—" so the sheet
+ *     is a true sign-off roster.
  */
 
-const NAVY: [number, number, number] = [15, 26, 51]
-const INK_SOFT: [number, number, number] = [71, 85, 105]
-const MUTED: [number, number, number] = [100, 116, 139]
-const PALE: [number, number, number] = [180, 192, 210]
-const SUCCESS: [number, number, number] = [22, 163, 74]
-const LINE: [number, number, number] = [226, 232, 240]
-const SOFT_BG: [number, number, number] = [248, 250, 252]
-const GOLD: [number, number, number] = [201, 167, 92]
+const BLACK: [number, number, number] = [20, 20, 20]
+const INK: [number, number, number] = [55, 55, 55]
+const INK_SOFT: [number, number, number] = [110, 110, 110]
+const PALE: [number, number, number] = [185, 185, 185]
+const LINE: [number, number, number] = [225, 225, 225]
+
+function pdfSafe(s: string): string {
+  return (s ?? '')
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/—/g, '--')
+    .replace(/–/g, '-')
+    .replace(/·/g, '-')
+    .replace(/[^\x20-\x7E\n]/g, '')
+}
+
+async function loadImageAsBase64(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return await new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result as string)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
+}
 
 export interface SignOffEntry {
   fullName: string
@@ -42,8 +65,10 @@ export interface SignOffEntry {
 }
 
 export interface SignOffLabels {
-  /** Top navy banner text — shown on every page. */
-  headerTitle: string
+  /** Letterhead right-block department line (uppercase). */
+  deptLine: string
+  /** Letterhead right-block document name. */
+  docName: string
   /** Column header above the signature timestamp column. */
   dateColumnHeader: string
   /** Verb used in "X of Y <verb> (Z%)" subtitle. */
@@ -51,13 +76,15 @@ export interface SignOffLabels {
 }
 
 export const DEFAULT_TRAINING_LABELS: SignOffLabels = {
-  headerTitle: 'WCEMS · REQUIRED TRAINING SIGN-OFF',
+  deptLine: 'REQUIRED TRAINING',
+  docName: 'Sign-off sheet',
   dateColumnHeader: 'COMPLETION DATE',
   completedVerb: 'completed',
 }
 
 export const DEFAULT_POLICY_LABELS: SignOffLabels = {
-  headerTitle: 'WCEMS · POLICY ACKNOWLEDGEMENT SIGN-OFF',
+  deptLine: 'POLICY ACKNOWLEDGEMENT',
+  docName: 'Acknowledgement sheet',
   dateColumnHeader: 'ACKNOWLEDGED ON',
   completedVerb: 'acknowledged',
 }
@@ -95,11 +122,11 @@ export async function generateRequiredTrainingSignOffPdf(
   const W = doc.internal.pageSize.getWidth() // 612
   const H = doc.internal.pageSize.getHeight() // 792
 
-  const MARGIN_X = 40
-  const MARGIN_TOP = 48
-  const MARGIN_BOTTOM = 40
+  const MARGIN_X = 52
+  const MARGIN_BOTTOM = 44
   const CONTENT_W = W - MARGIN_X * 2
 
+  const labels = input.labels ?? DEFAULT_TRAINING_LABELS
   const generatedAt = input.generatedAt ?? new Date()
   const generatedStr = generatedAt.toLocaleString('en-US', {
     month: 'short',
@@ -108,6 +135,10 @@ export async function generateRequiredTrainingSignOffPdf(
     hour: 'numeric',
     minute: '2-digit',
   })
+
+  const crest = await loadImageAsBase64(`${window.location.origin}/wcems-patch-bw.jpg`)
+  const CREST_W = 40
+  const CREST_H = CREST_W * (280 / 262)
 
   /* ── Sort: FT first then PT, last-name alpha inside each group. ──── */
   const ftEntries = input.entries
@@ -123,93 +154,102 @@ export async function generateRequiredTrainingSignOffPdf(
 
   /* Column geometry — one horizontal row per person. */
   const COL_NAME_X = MARGIN_X
-  const COL_NAME_W = 180
+  const COL_NAME_W = 170
   const COL_SIG_X = COL_NAME_X + COL_NAME_W + 10
-  const COL_SIG_W = 220
+  const COL_SIG_W = 200
   const COL_DATE_X = COL_SIG_X + COL_SIG_W + 10
   const ROW_H = 36
   const SIG_H = 28 // image height inside the signature column
 
-  const labels = input.labels ?? DEFAULT_TRAINING_LABELS
+  let y = 0
 
-  /* ── Page header — slim navy band ────────────────────────────────── */
-  function drawHeader() {
-    doc.setFillColor(...NAVY)
-    doc.rect(0, 0, W, 34, 'F')
+  /* ── Minimal letterhead — crest + agency block + double rule ─────── */
+  function pageHeader() {
+    const top = 34
+    if (crest) doc.addImage(crest, 'JPEG', MARGIN_X, top - 6, CREST_W, CREST_H, 'wcems-crest-bw')
+    const tx = MARGIN_X + CREST_W + 14
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(10)
-    doc.setTextColor(255, 255, 255)
-    doc.text(labels.headerTitle, MARGIN_X, 22)
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8.5)
-    doc.setTextColor(...GOLD)
-    doc.text(input.moduleTitle, W - MARGIN_X, 22, { align: 'right' })
-  }
-
-  /* ── Compact title block (page 1 only) ───────────────────────────── */
-  function drawTitleBlock(): number {
-    let y = MARGIN_TOP + 8
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(16)
-    doc.setTextColor(...NAVY)
-    doc.text(input.moduleTitle, MARGIN_X, y)
-    y += 14
-
+    doc.setFontSize(15)
+    doc.setTextColor(...BLACK)
+    doc.text('WALLER COUNTY', tx, top + 10, { charSpace: 1.2 })
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
-    doc.setTextColor(...MUTED)
+    doc.setTextColor(...INK)
+    doc.text('EMERGENCY MEDICAL SERVICES', tx, top + 23, { charSpace: 1.6 })
+    doc.setFontSize(7.5)
+    doc.setTextColor(...INK_SOFT)
+    doc.text('Hempstead, Texas   -   Established 1996', tx, top + 34)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(...BLACK)
+    doc.text(pdfSafe(labels.deptLine), W - MARGIN_X, top + 10, { align: 'right', charSpace: 0.8 })
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8)
+    doc.setTextColor(...INK_SOFT)
+    doc.text(pdfSafe(labels.docName), W - MARGIN_X, top + 22, { align: 'right' })
+    doc.setFontSize(7.5)
+    doc.text(pdfSafe(`Generated ${generatedStr}`), W - MARGIN_X, top + 33, { align: 'right' })
+    const ruleY = top + CREST_H
+    doc.setDrawColor(...BLACK)
+    doc.setLineWidth(1.4)
+    doc.line(MARGIN_X, ruleY, W - MARGIN_X, ruleY)
+    doc.setLineWidth(0.4)
+    doc.line(MARGIN_X, ruleY + 3, W - MARGIN_X, ruleY + 3)
+    y = ruleY + 26
+  }
+
+  /* ── Title block (page 1 only) ───────────────────────────────────── */
+  function drawTitleBlock() {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(15)
+    doc.setTextColor(...BLACK)
+    doc.text(pdfSafe(input.moduleTitle), MARGIN_X, y)
+    y += 15
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    doc.setTextColor(...INK_SOFT)
     doc.text(
-      `${signedCount} of ${totalCount} ${labels.completedVerb} (${pct}%)  ·  Generated ${generatedStr}`,
+      pdfSafe(`${signedCount} of ${totalCount} ${labels.completedVerb} (${pct}%)`),
       MARGIN_X,
       y,
     )
-    y += 16
-    return y
+    y += 18
   }
 
   /* ── Column header strip ─────────────────────────────────────────── */
-  function drawColumnHeader(y: number): number {
+  function drawColumnHeader() {
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(8.5)
-    doc.setTextColor(...MUTED)
-    doc.text('NAME', COL_NAME_X + 2, y)
-    doc.text('SIGNATURE', COL_SIG_X + 2, y)
-    doc.text(labels.dateColumnHeader, COL_DATE_X + 2, y)
+    doc.setFontSize(8)
+    doc.setTextColor(...INK_SOFT)
+    doc.text('NAME', COL_NAME_X + 2, y, { charSpace: 0.6 })
+    doc.text('SIGNATURE', COL_SIG_X + 2, y, { charSpace: 0.6 })
+    doc.text(labels.dateColumnHeader, COL_DATE_X + 2, y, { charSpace: 0.6 })
     doc.setDrawColor(...LINE)
     doc.setLineWidth(0.5)
     doc.line(MARGIN_X, y + 4, MARGIN_X + CONTENT_W, y + 4)
-    return y + 12
+    y += 14
   }
 
   /* ── Group label ("Full-Time" / "Part-Time") ─────────────────────── */
-  function drawGroupLabel(label: string, count: number, y: number): number {
-    doc.setFillColor(...SOFT_BG)
-    doc.rect(MARGIN_X, y - 10, CONTENT_W, 18, 'F')
+  function drawGroupLabel(label: string, count: number) {
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(9)
-    doc.setTextColor(...NAVY)
-    doc.text(label.toUpperCase(), MARGIN_X + 6, y + 2)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(...MUTED)
-    doc.text(`(${count})`, MARGIN_X + 6 + doc.getTextWidth(label.toUpperCase()) + 6, y + 2)
-    return y + 18
+    doc.setFontSize(8.5)
+    doc.setTextColor(...INK_SOFT)
+    doc.text(`${label.toUpperCase()}  (${count})`, MARGIN_X, y, { charSpace: 1 })
+    doc.setDrawColor(200, 200, 200)
+    doc.setLineWidth(0.4)
+    doc.line(MARGIN_X, y + 4, W - MARGIN_X, y + 4)
+    y += 14
   }
 
   /* ── One compact row ─────────────────────────────────────────────── */
-  function drawRow(entry: SignOffEntry, y: number, zebra: boolean): number {
-    if (zebra) {
-      doc.setFillColor(252, 253, 255)
-      doc.rect(MARGIN_X, y - 2, CONTENT_W, ROW_H, 'F')
-    }
-
+  function drawRow(entry: SignOffEntry) {
     /* Name */
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(10.5)
-    doc.setTextColor(...NAVY)
-    /* Truncate aggressively if the name's wider than the column.
-       splitTextToSize handles word-wrap; we only want one line. */
-    const nameLines = doc.splitTextToSize(entry.fullName, COL_NAME_W - 4)
-    doc.text(nameLines[0] ?? entry.fullName, COL_NAME_X + 2, y + 18)
+    doc.setTextColor(...BLACK)
+    const nameLines = doc.splitTextToSize(pdfSafe(entry.fullName), COL_NAME_W - 4)
+    doc.text(nameLines[0] ?? pdfSafe(entry.fullName), COL_NAME_X + 2, y + 18)
 
     /* Signature column */
     if (entry.status === 'signed' && entry.signedMethod === 'self' && entry.signatureDataUrl) {
@@ -225,14 +265,14 @@ export async function generateRequiredTrainingSignOffPdf(
       } catch {
         doc.setFont('helvetica', 'italic')
         doc.setFontSize(9)
-        doc.setTextColor(...MUTED)
+        doc.setTextColor(...INK_SOFT)
         doc.text('[signature on file]', COL_SIG_X + 2, y + 18)
       }
     } else if (entry.status === 'signed' && entry.signedMethod === 'admin_marked') {
       doc.setFont('helvetica', 'italic')
       doc.setFontSize(9)
-      doc.setTextColor(...INK_SOFT)
-      const text = `Marked by ${entry.markedByName ?? 'admin'}`
+      doc.setTextColor(...INK)
+      const text = pdfSafe(`Marked by ${entry.markedByName ?? 'admin'}`)
       const wrapped = doc.splitTextToSize(text, COL_SIG_W - 4)
       doc.text(wrapped[0] ?? text, COL_SIG_X + 2, y + 18)
     } else {
@@ -246,11 +286,11 @@ export async function generateRequiredTrainingSignOffPdf(
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(10)
     if (entry.completedAt) {
-      doc.setTextColor(...SUCCESS)
+      doc.setTextColor(...INK)
       doc.text(formatDate(entry.completedAt), COL_DATE_X + 2, y + 18)
       if (entry.quizScore != null) {
-        doc.setFontSize(8)
-        doc.setTextColor(...PALE)
+        doc.setFontSize(7.5)
+        doc.setTextColor(...INK_SOFT)
         doc.text(`Test ${entry.quizScore}%`, COL_DATE_X + 2, y + 28)
       }
     } else {
@@ -263,45 +303,41 @@ export async function generateRequiredTrainingSignOffPdf(
     doc.setLineWidth(0.3)
     doc.line(MARGIN_X, y + ROW_H - 1, MARGIN_X + CONTENT_W, y + ROW_H - 1)
 
-    return y + ROW_H
+    y += ROW_H
   }
 
   /* ── Layout pass ─────────────────────────────────────────────────── */
-  drawHeader()
-  let y = drawTitleBlock()
-  y = drawColumnHeader(y)
+  pageHeader()
+  drawTitleBlock()
+  drawColumnHeader()
   let pageNum = 1
-  let zebra = false
 
   function ensureSpace(needed: number) {
     if (y + needed > H - MARGIN_BOTTOM) {
       doc.addPage()
       pageNum += 1
-      drawHeader()
-      y = MARGIN_TOP + 4
-      y = drawColumnHeader(y)
-      zebra = false
+      pageHeader()
+      drawColumnHeader()
     }
   }
 
   if (ftEntries.length) {
     ensureSpace(18 + ROW_H)
-    y = drawGroupLabel('Full-Time', ftEntries.length, y + 8) + 4
+    y += 4
+    drawGroupLabel('Full-Time', ftEntries.length)
     for (const entry of ftEntries) {
       ensureSpace(ROW_H)
-      y = drawRow(entry, y, zebra)
-      zebra = !zebra
+      drawRow(entry)
     }
   }
 
   if (ptEntries.length) {
-    ensureSpace(18 + ROW_H)
-    zebra = false
-    y = drawGroupLabel('Part-Time', ptEntries.length, y + 12) + 4
+    ensureSpace(22 + ROW_H)
+    y += 10
+    drawGroupLabel('Part-Time', ptEntries.length)
     for (const entry of ptEntries) {
       ensureSpace(ROW_H)
-      y = drawRow(entry, y, zebra)
-      zebra = !zebra
+      drawRow(entry)
     }
   }
 
@@ -312,10 +348,10 @@ export async function generateRequiredTrainingSignOffPdf(
     doc.setPage(i)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
-    doc.setTextColor(...MUTED)
+    doc.setTextColor(...INK_SOFT)
     doc.text(`Page ${i} of ${pageCount}`, W - MARGIN_X, H - 20, { align: 'right' })
     doc.text(
-      `${signedCount} of ${totalCount} ${labels.completedVerb}`,
+      pdfSafe(`${signedCount} of ${totalCount} ${labels.completedVerb}`),
       MARGIN_X,
       H - 20,
     )

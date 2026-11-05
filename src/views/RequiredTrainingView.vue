@@ -8,7 +8,14 @@ import { useRequiredTraining } from '@/composables/useRequiredTraining'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
-const { ready, activeForUser, isComplete, completionFor, testPending } = useRequiredTraining()
+const { ready, trainings, activeForUser, isComplete, completionFor, testPending } = useRequiredTraining()
+
+/* Supervisors (and admins) get a quiet link per active module into the
+   completion roster — read-only progress for the whole audience
+   (Justin, 2026-11-04). */
+const supervisorModules = computed(() =>
+  auth.isSupervisor ? trainings.value.filter((t) => t.active) : [],
+)
 
 interface RowVM {
   id: string
@@ -114,6 +121,19 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
       <div v-if="!ready" class="rt__empty">Loading…</div>
 
       <template v-else>
+        <div v-if="supervisorModules.length" class="rt-sup">
+          <span class="rt-sup__label">Crew completion</span>
+          <RouterLink
+            v-for="t in supervisorModules"
+            :key="t.id"
+            :to="`/admin/required-training/${t.id}`"
+            class="rt-sup__link"
+          >
+            {{ t.title }}
+            <ChevronRight :size="12" :stroke-width="2" />
+          </RouterLink>
+        </div>
+
         <Eyebrow class="mt-6 mb-2">
           Outstanding · {{ outstanding.length }}
         </Eyebrow>
@@ -212,6 +232,39 @@ const done = computed(() => rows.value.filter((r) => r.status === 'complete'))
   font-size: 13px;
   color: var(--color-muted);
 }
+/* Supervisor strip — quiet row of roster links, not cards. */
+.rt-sup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 10px;
+  background: var(--color-surface-soft);
+}
+.rt-sup__label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin-right: 2px;
+}
+.rt-sup__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-brand-700);
+  text-decoration: none;
+}
+.rt-sup__link:hover {
+  text-decoration: underline;
+}
+
 .rt__gate {
   margin-top: 32px;
   padding: 32px;

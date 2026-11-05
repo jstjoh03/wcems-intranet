@@ -128,7 +128,9 @@ const routes: RouteRecordRaw[] = [
     path: '/admin/required-training/:id',
     name: 'admin-required-training-roster',
     component: () => import('@/views/admin/RequiredTrainingRosterView.vue'),
-    meta: { adminOnly: true },
+    /* Supervisors read completion progress; manage stays admin (the
+       view hides overrides/mark-complete for them). */
+    meta: { supervisorOnly: true },
   },
   {
     path: '/policies',
@@ -572,6 +574,11 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.adminOnly && !auth.isAdmin) {
+    return { name: 'not-found' }
+  }
+
+  /* supervisorOnly = supervisors AND admins (isSupervisor includes both). */
+  if (to.meta.supervisorOnly && !auth.isSupervisor) {
     return { name: 'not-found' }
   }
 

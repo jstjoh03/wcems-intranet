@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, ShieldCheck, Check, CircleDashed, UserCheck, Download, FileText, X } from 'lucide-vue-next'
+import { ArrowLeft, ShieldCheck, Check, UserCheck, Download, FileText, X } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -40,6 +40,11 @@ const {
 const trainingId = computed(() => String(route.params.id))
 const training = computed(() => trainingById(trainingId.value))
 
+/* Supervisors get the full progress picture read-only (Justin,
+   2026-11-04); overrides, mark-complete and the note stay admin. */
+const canView = computed(() => auth.isSupervisor)
+const canManage = computed(() => auth.isAdmin)
+
 /* Knowledge test (separate from the attestation): a tag per row when
    the module has one — passed score, or "Test pending". */
 const hasQuiz = computed(() => !!training.value && quizConfigFor(training.value) !== null)
@@ -52,6 +57,19 @@ const rosterError = ref<string | null>(null)
 async function loadRoster() {
   rosterLoading.value = true
   rosterError.value = null
+  /* Dev stub: fixture employees across shifts/roles/FT-PT so the roster
+     renders signed-out — completions for them live in the
+     useRequiredTraining stub (signed+passed, signed+pending, started). */
+  if (auth.usingDevStub) {
+    roster.value = [
+      { id: 'dev-emp-1', fullName: 'Sample Paramedic', role: 'crew', shift: 'A', station: 'Station 201', employmentType: 'full_time' },
+      { id: 'dev-emp-2', fullName: 'Sample Attendant', role: 'crew', shift: 'B', station: 'Station 202', employmentType: 'full_time' },
+      { id: 'dev-emp-3', fullName: 'Sample Supervisor', role: 'supervisor', shift: 'C', station: null, employmentType: 'full_time' },
+      { id: 'dev-emp-4', fullName: 'Sample Part-Timer', role: 'crew', shift: null, station: null, employmentType: 'part_time' },
+    ]
+    rosterLoading.value = false
+    return
+  }
   const { data, error } = await supabase
     .from('app_users')
     .select('id, full_name, role, shift, station, employment_type, active')
@@ -74,7 +92,7 @@ async function loadRoster() {
 }
 
 onMounted(() => {
-  if (auth.isAdmin) void loadRoster()
+  if (canView.value) void loadRoster()
 })
 
 /* Audience = role × shift × employment_type filter, then per-user
@@ -149,7 +167,7 @@ const showOutside = ref(false)
 async function onToggleRequirement(row: RosterRow) {
   /* Cycle: auto_in → force_exclude → force_include → auto_in */
   const t = training.value
-  if (!t) return
+  if (!t || !canManage.value) return
   const matchesFilter = matchesAudienceFilterForUser(t, {
     id: row.user.id,
     role: row.user.role,
@@ -243,7 +261,9 @@ function formatDate(iso: string | null): string {
 }
 
 function back() {
-  router.push('/admin/required-training')
+  /* Supervisors arrive from the Required Training list, not the
+     admin manage page (which stays admin-only). */
+  router.push(canManage.value ? '/admin/required-training' : '/training/required')
 }
 
 /* CSV export of the FULL roster (ignores active filter chips so you
@@ -388,7 +408,7 @@ async function downloadRosterPdf() {
       Back to Required Training
     </button>
 
-    <div v-if="!auth.isAdmin" class="rtr__gate">Admin only.</div>
+    <div v-if="!canView" class="rtr__gate">Admins and supervisors only.</div>
 
     <template v-else-if="!ready || rosterLoading">
       <div class="rtr__empty">Loading…</div>
@@ -489,7 +509,7 @@ async function downloadRosterPdf() {
       </div>
 
       <!-- Mark-complete note (shared across rows in this session) -->
-      <div class="rtr-note">
+      <div v-if="canManage" class="rtr-note">
         <label class="rtr-note__label">
           <span>Note (optional, attaches to "Mark complete" actions):</span>
           <input
@@ -516,7 +536,8 @@ async function downloadRosterPdf() {
             <th class="rtr-table__small">Role</th>
             <th class="rtr-table__small">FT/PT</th>
             <th class="rtr-table__req">Required?</th>
-            <th>Status</th>
+            <th>Sign-off</th>
+            <th v-if="hasQuiz">Test</th>
             <th class="rtr-table__actions"></th>
           </tr>
         </thead>
@@ -524,7 +545,7 @@ async function downloadRosterPdf() {
         <!-- Full-Time section -->
         <tbody v-if="ftRows.length">
           <tr class="rtr-table__group">
-            <td colspan="7">
+            <td :colspan="hasQuiz ? 8 : 7">
               <span class="rtr-table__group-label">Full-Time</span>
               <span class="rtr-table__group-count">{{ ftRows.length }}</span>
             </td>
@@ -539,6 +560,7 @@ async function downloadRosterPdf() {
                 type="button"
                 class="rtr-req"
                 :class="`rtr-req--${r.requirement}`"
+                :disabled="!canManage"
                 :title="
                   r.requirement === 'force_include'
                     ? 'Force-included — click to remove from this training'
@@ -565,30 +587,19 @@ async function downloadRosterPdf() {
                 </span>
               </button>
             </td>
-            <td>
-              <span v-if="r.status === 'signed'" class="rtr-chip rtr-chip--signed">
-                <Check :size="11" :stroke-width="2.5" />
-                {{ r.completion?.signedMethod === 'admin_marked' ? 'Admin-marked' : 'Signed' }}
-                <span class="rtr-chip__date">· {{ formatDate(r.completion?.completedAt ?? null) }}</span>
-              </span>
-              <span v-else-if="r.status === 'in_progress'" class="rtr-chip rtr-chip--in_progress">
-                <CircleDashed :size="11" :stroke-width="2" />
-                In progress
-              </span>
-              <span v-else class="rtr-chip rtr-chip--not_started">
-                Not started
-              </span>
-              <span
-                v-if="hasQuiz"
-                class="rtr-chip"
-                :class="r.completion?.quizScore != null ? 'rtr-chip--signed' : 'rtr-chip--in_progress'"
-              >
-                {{ r.completion?.quizScore != null ? `Test ${Math.round(Number(r.completion.quizScore))}%` : 'Test pending' }}
-              </span>
+            <td class="rtr-cell" :class="{ 'rtr-cell--warn': r.status === 'in_progress', 'rtr-cell--bad': r.status === 'not_started' }">
+              <span class="rtr-cdot" :class="r.status === 'signed' ? 'rtr-cdot--ok' : r.status === 'in_progress' ? 'rtr-cdot--warn' : 'rtr-cdot--bad'"></span>
+              {{ r.status === 'signed' ? (r.completion?.signedMethod === 'admin_marked' ? 'admin-marked' : 'signed') : r.status === 'in_progress' ? 'in progress' : 'not started' }}
+              <span class="rtr-ctag">{{ r.status === 'signed' ? formatDate(r.completion?.completedAt ?? null) : r.status === 'in_progress' ? 'not signed' : 'required' }}</span>
+            </td>
+            <td v-if="hasQuiz" class="rtr-cell" :class="{ 'rtr-cell--warn': r.completion?.quizScore == null }">
+              <span class="rtr-cdot" :class="r.completion?.quizScore != null ? 'rtr-cdot--ok' : 'rtr-cdot--warn'"></span>
+              {{ r.completion?.quizScore != null ? 'passed' : 'pending' }}
+              <span class="rtr-ctag">{{ r.completion?.quizScore != null ? `${Math.round(Number(r.completion.quizScore))}%` : 'knowledge test' }}</span>
             </td>
             <td class="rtr-table__actions">
               <button
-                v-if="r.status !== 'signed' && r.requirement !== 'force_exclude'"
+                v-if="canManage && r.status !== 'signed' && r.requirement !== 'force_exclude'"
                 type="button"
                 class="rtr-mark"
                 :disabled="markingId === r.user.id"
@@ -604,7 +615,7 @@ async function downloadRosterPdf() {
         <!-- Part-Time section -->
         <tbody v-if="ptRows.length">
           <tr class="rtr-table__group rtr-table__group--pt">
-            <td colspan="7">
+            <td :colspan="hasQuiz ? 8 : 7">
               <span class="rtr-table__group-label">Part-Time</span>
               <span class="rtr-table__group-count">{{ ptRows.length }}</span>
             </td>
@@ -619,6 +630,7 @@ async function downloadRosterPdf() {
                 type="button"
                 class="rtr-req"
                 :class="`rtr-req--${r.requirement}`"
+                :disabled="!canManage"
                 :title="
                   r.requirement === 'force_include'
                     ? 'Force-included — click to remove from this training'
@@ -645,30 +657,19 @@ async function downloadRosterPdf() {
                 </span>
               </button>
             </td>
-            <td>
-              <span v-if="r.status === 'signed'" class="rtr-chip rtr-chip--signed">
-                <Check :size="11" :stroke-width="2.5" />
-                {{ r.completion?.signedMethod === 'admin_marked' ? 'Admin-marked' : 'Signed' }}
-                <span class="rtr-chip__date">· {{ formatDate(r.completion?.completedAt ?? null) }}</span>
-              </span>
-              <span v-else-if="r.status === 'in_progress'" class="rtr-chip rtr-chip--in_progress">
-                <CircleDashed :size="11" :stroke-width="2" />
-                In progress
-              </span>
-              <span v-else class="rtr-chip rtr-chip--not_started">
-                Not started
-              </span>
-              <span
-                v-if="hasQuiz"
-                class="rtr-chip"
-                :class="r.completion?.quizScore != null ? 'rtr-chip--signed' : 'rtr-chip--in_progress'"
-              >
-                {{ r.completion?.quizScore != null ? `Test ${Math.round(Number(r.completion.quizScore))}%` : 'Test pending' }}
-              </span>
+            <td class="rtr-cell" :class="{ 'rtr-cell--warn': r.status === 'in_progress', 'rtr-cell--bad': r.status === 'not_started' }">
+              <span class="rtr-cdot" :class="r.status === 'signed' ? 'rtr-cdot--ok' : r.status === 'in_progress' ? 'rtr-cdot--warn' : 'rtr-cdot--bad'"></span>
+              {{ r.status === 'signed' ? (r.completion?.signedMethod === 'admin_marked' ? 'admin-marked' : 'signed') : r.status === 'in_progress' ? 'in progress' : 'not started' }}
+              <span class="rtr-ctag">{{ r.status === 'signed' ? formatDate(r.completion?.completedAt ?? null) : r.status === 'in_progress' ? 'not signed' : 'required' }}</span>
+            </td>
+            <td v-if="hasQuiz" class="rtr-cell" :class="{ 'rtr-cell--warn': r.completion?.quizScore == null }">
+              <span class="rtr-cdot" :class="r.completion?.quizScore != null ? 'rtr-cdot--ok' : 'rtr-cdot--warn'"></span>
+              {{ r.completion?.quizScore != null ? 'passed' : 'pending' }}
+              <span class="rtr-ctag">{{ r.completion?.quizScore != null ? `${Math.round(Number(r.completion.quizScore))}%` : 'knowledge test' }}</span>
             </td>
             <td class="rtr-table__actions">
               <button
-                v-if="r.status !== 'signed' && r.requirement !== 'force_exclude'"
+                v-if="canManage && r.status !== 'signed' && r.requirement !== 'force_exclude'"
                 type="button"
                 class="rtr-mark"
                 :disabled="markingId === r.user.id"
@@ -684,7 +685,7 @@ async function downloadRosterPdf() {
 
       <!-- Outside-audience section — opt-in expand so admin can add
            individuals who fall outside role/shift/employment filter. -->
-      <div v-if="outsideAudience.length" class="rtr-outside">
+      <div v-if="canManage && outsideAudience.length" class="rtr-outside">
         <button
           type="button"
           class="rtr-outside__toggle"
@@ -981,52 +982,68 @@ async function downloadRosterPdf() {
   color: var(--color-muted);
 }
 
-.rtr-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11.5px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--color-line);
-  background: var(--color-surface-soft);
+/* Status cells — the clinical compliance-board treatment (dot + state
+   word + stacked bold detail), replacing the crowded pills (Justin,
+   2026-11-04). Same oklch values as ClinicalBoardView's cb__ cells. */
+.rtr-cell {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rtr-ctag {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 13px;
   color: var(--color-muted);
 }
-.rtr-chip--signed {
-  color: var(--color-success-500);
-  border-color: #c6e4d2;
-  background: #f0f8f3;
+.rtr-cell--bad,
+.rtr-cell--bad .rtr-ctag {
+  color: oklch(0.5 0.17 25);
 }
-.rtr-chip--in_progress {
-  color: var(--color-brand-700);
-  border-color: var(--color-brand-100);
-  background: var(--color-brand-50);
+.rtr-cell--warn,
+.rtr-cell--warn .rtr-ctag {
+  color: oklch(0.5 0.12 70);
 }
-.rtr-chip--not_started {
-  color: var(--color-muted);
+.rtr-cdot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: 1px;
+  background: oklch(0.85 0.006 255);
 }
-.rtr-chip__date {
-  font-family: var(--font-mono);
-  font-weight: 500;
-  margin-left: 2px;
+.rtr-cdot--bad {
+  background: oklch(0.55 0.17 25);
+}
+.rtr-cdot--warn {
+  background: oklch(0.65 0.12 70);
+}
+.rtr-cdot--ok {
+  background: oklch(0.55 0.13 150);
 }
 
+/* Quiet ghost button — the solid navy block overpowered the new
+   compact status cells (Justin, 2026-11-04). */
 .rtr-mark {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12px;
+  gap: 4px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 5px 10px;
+  padding: 3px 8px;
   border-radius: 6px;
-  background: var(--color-brand-600);
-  color: white;
-  border: none;
+  background: transparent;
+  color: var(--color-brand-700);
+  border: 1px solid var(--color-line);
   cursor: pointer;
+  white-space: nowrap;
 }
 .rtr-mark:hover:not(:disabled) {
-  background: var(--color-brand-700);
+  border-color: var(--color-brand-600);
+  background: var(--color-brand-50);
 }
 .rtr-mark:disabled {
   opacity: 0.6;
@@ -1035,6 +1052,11 @@ async function downloadRosterPdf() {
 
 .rtr-table__req {
   width: 130px;
+}
+.rtr-req:disabled {
+  /* Supervisors see the state read-only — no hand cursor, full color. */
+  cursor: default;
+  opacity: 1;
 }
 .rtr-req {
   display: inline-flex;
@@ -1254,18 +1276,5 @@ async function downloadRosterPdf() {
     white-space: nowrap;
   }
 
-  /* Status chip date span gets squeezed — show date on its own line. */
-  .rtr-chip__date {
-    display: block;
-    margin: 2px 0 0 0;
-    font-size: 10.5px;
-  }
-
-  /* Mark button: compact on phones. */
-  .rtr-mark {
-    padding: 5px 9px;
-    font-size: 11.5px;
-    white-space: nowrap;
-  }
 }
 </style>
