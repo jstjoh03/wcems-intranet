@@ -138,13 +138,31 @@ const checkedIn = computed(() =>
     (r) => r.phase === 'checkedin' && match(r.studentName, r.studentEmail),
   ),
 )
+/* The 15-minute sync now imports Wix bookers straight onto the roster
+   (training_attendance), so this live-Wix group only shows anyone NOT
+   yet imported — normally empty between sync ticks. */
+const onRoster = computed(() => {
+  const keys = new Set<string>()
+  for (const r of sessions.registrationRows) {
+    const em = (r.studentEmail ?? '').toLowerCase().trim()
+    keys.add(em || `n:${(r.studentName ?? '').toLowerCase().trim()}`)
+  }
+  return keys
+})
+const wixPending = computed(() =>
+  wixRegs.value.filter((r) => {
+    const key = (r.email ?? '').toLowerCase().trim() || `n:${(r.name ?? '').toLowerCase().trim()}`
+    return !onRoster.value.has(key)
+  }),
+)
 const wixFiltered = computed(() =>
-  wixRegs.value.filter((r) => match(r.name, r.email)),
+  wixPending.value.filter((r) => match(r.name, r.email)),
 )
 
 const registeredCount = computed(() =>
   isCardClass.value
-    ? wixRegs.value.length
+    ? sessions.registrationRows.filter((r) => r.phase === 'registered').length +
+      wixPending.value.length
     : sessions.registrationRows.filter((r) => r.phase === 'registered').length,
 )
 const checkedInCount = computed(
@@ -160,7 +178,7 @@ function exportCsv() {
       .join(','),
   ]
   if (isCardClass.value) {
-    wixRegs.value.forEach((r) =>
+    wixPending.value.forEach((r) =>
       lines.push(
         [r.name, r.email, 'Wix', 'Registered', r.status, '', r.createdDate]
           .map(esc)
@@ -488,9 +506,9 @@ async function submitAdd() {
       <!-- Card class → Wix bookings -->
       <section v-if="isCardClass" class="grp">
         <div class="grp-h">
-          <Globe :size="15" /> Registered — Wix
-          <span class="cnt">{{ wixRegs.length }}</span>
-          <span class="grp-sub">Booked on the Wix member portal</span>
+          <Globe :size="15" /> Booked on Wix — awaiting import
+          <span class="cnt">{{ wixFiltered.length }}</span>
+          <span class="grp-sub">Auto-imports onto the roster every 15 minutes</span>
         </div>
         <div v-if="wixError" class="grp-note err">
           <AlertTriangle :size="14" /> {{ wixError }}
@@ -501,7 +519,7 @@ async function submitAdd() {
           unsure.
         </div>
         <div v-if="!wixFiltered.length" class="grp-empty">
-          No Wix bookings found for this session.
+          Every Wix booking is on the roster below.
         </div>
         <table v-else class="tbl">
           <thead>

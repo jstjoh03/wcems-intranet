@@ -9,6 +9,11 @@
 //      training that doesn't have a Wix booking). Rows tagged
 //      source='calendar'.
 //
+// PHASE 2 (2026-11-05): also imports card-class Wix BOOKINGS into
+// `training_attendance` so the QR check-in system sees every booker —
+// the Registrations view only displayed them before, and instructors
+// were re-typing each registrant by hand.
+//
 // Replaces both the Power Automate flow (Wix → SP) and the
 // browser-side MSAL fetch. Single architecture, no popups.
 //
@@ -145,6 +150,145 @@ function slotToRow(slot: WixTimeSlot): SessionRow | null {
     source: 'wix',
     synced_at: new Date().toISOString(),
   }
+}
+
+// ── Wix bookings → training_attendance (QR roster) ──────────────────
+
+const WIX_BOOKINGS_URL =
+  'https://www.wixapis.com/_api/bookings-reader/v2/extended-bookings/query'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractSlots(be: any): any[] {
+  if (!be) return []
+  if (be.slot) return [be.slot]
+  if (Array.isArray(be.setOfSlots)) return be.setOfSlots
+  if (be.singleSession) return [be.singleSession]
+  return []
+}
+
+/** Central-time calendar date of a UTC ISO instant (DST-safe). */
+function centralDate(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+}
+
+function bookingMatchesSession(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  b: any,
+  wixEventId: string | null,
+  wixScheduleId: string | null,
+  classDate: string,
+): boolean {
+  const slots = extractSlots(b?.bookedEntity)
+  let dateHit = false
+  const starts: string[] = [
+    String(b?.startDate || ''),
+    ...slots.map((s) => String(s?.startDate || s?.start || '')),
+  ].filter(Boolean)
+  for (const st of starts) {
+    if (classDate && centralDate(st) === classDate) dateHit = true
+  }
+  const scheduleIds = [
+    b?.bookedEntity?.scheduleId,
+    b?.bookedEntity?.schedule?.scheduleId,
+    b?.bookedEntity?.schedule?.id,
+    b?.schedule?.scheduleId,
+    ...slots.map((s) => s?.scheduleId),
+    ...slots.map((s) => s?.schedule?.scheduleId),
+  ]
+    .map((x) => String(x || ''))
+    .filter(Boolean)
+  const scheduleHit = !!wixScheduleId && scheduleIds.includes(wixScheduleId)
+  const eventIds = [
+    b?.bookedEntity?.eventId,
+    b?.bookedEntity?.sessionId,
+    b?.bookedEntity?.slot?.sessionId,
+    ...slots.map((s) => s?.sessionId),
+    ...slots.map((s) => s?.eventId),
+    ...slots.map((s) => s?.id),
+  ]
+    .map((x) => String(x || ''))
+    .filter(Boolean)
+  const exact = !!wixEventId && eventIds.includes(wixEventId)
+  /* Confident matches only: the exact Wix session, or the same course
+     on the same Central calendar date. */
+  return exact || (scheduleHit && dateHit)
+}
+
+interface LiveBooking {
+  name: string
+  email: string
+  phone: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  booking: any
+}
+
+/** Recent live bookings, newest first (the reader ignores offset on
+ *  some sites, so newest-first sorting is what guarantees fresh
+ *  bookings are reachable; the 15-minute cadence keeps them on the
+ *  first pages). */
+async function fetchRecentBookings(
+  token: string,
+  siteId: string,
+): Promise<LiveBooking[]> {
+  const PAGE = 100
+  const MAX_PAGES = 6
+  const out: LiveBooking[] = []
+  const seen = new Set<string>()
+  let offset = 0
+  for (let p = 0; p < MAX_PAGES; p++) {
+    const res = await fetch(WIX_BOOKINGS_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: token,
+        'wix-site-id': siteId,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: { sort: [{ fieldName: 'createdDate', order: 'DESC' }] },
+        paging: { limit: PAGE, offset },
+      }),
+    })
+    if (!res.ok) {
+      if (p === 0) {
+        const text = await res.text()
+        throw new Error(`Wix bookings ${res.status}: ${text.slice(0, 200)}`)
+      }
+      break
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data: any = await res.json()
+    const list = Array.isArray(data?.extendedBookings) ? data.extendedBookings : []
+    if (!list.length) break
+    const before = seen.size
+    for (const e of list) {
+      const b = e?.booking ? e.booking : e
+      const id = String(b?.id || b?._id || '')
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      const st = String(b?.status || '').toUpperCase()
+      if (st === 'CANCELED' || st === 'CANCELLED' || st === 'DECLINED') continue
+      const c =
+        e?.contactDetails || b?.contactDetails || b?.formInfo?.contactDetails || {}
+      const name =
+        [c.firstName, c.lastName].filter(Boolean).join(' ').trim() ||
+        c.fullName ||
+        c.name ||
+        ''
+      out.push({
+        name,
+        email: String(c.email || '').toLowerCase().trim(),
+        phone: String(c.phone || ''),
+        booking: b,
+      })
+    }
+    if (seen.size === before) break // offset ignored by this site — stop
+    offset += list.length
+    if (list.length < PAGE) break
+  }
+  return out
 }
 
 // ── Graph ────────────────────────────────────────────────────────────
@@ -411,6 +555,106 @@ Deno.serve(async (req: Request) => {
       .eq('source', 'manual')
       .lt('local_start', cutoff)
 
+    /* ── Phase 2: card-class bookings → training_attendance ──────────
+       The QR check-in reads training_attendance; until 2026-11-05 Wix
+       bookers were display-only in the Registrations view and had to
+       be re-typed by hand. Match every live booking to an upcoming
+       CardClass session (exact Wix session id, else same course +
+       same Central date) and insert the missing roster rows. Dedupe
+       key is (session, lowercased email) — or the exact name when a
+       booking carries no email — so manual rows never duplicate.
+       Cancelled bookings are skipped; rows already on the roster are
+       left untouched. Failures here never block the session sync. */
+    let regsImported = 0
+    let regsMatched = 0
+    const regsPerSession: Record<string, number> = {}
+    let regsError: string | null = null
+    try {
+      const sinceIso = new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10)
+      const { data: csRows, error: csErr } = await supabase
+        .from('course_sessions')
+        .select('session_id, title, wix_event_id, wix_schedule_id, class_date')
+        .eq('session_type', 'CardClass')
+        .not('wix_schedule_id', 'is', null)
+        .gte('class_date', sinceIso)
+      if (csErr) throw new Error(csErr.message)
+      const cardSessions = csRows ?? []
+
+      if (cardSessions.length > 0) {
+        const bookings = await fetchRecentBookings(wixToken, wixSiteId)
+        const bySession = new Map<string, LiveBooking[]>()
+        for (const bk of bookings) {
+          for (const s of cardSessions) {
+            const classDate = String(s.class_date || '').slice(0, 10)
+            if (bookingMatchesSession(bk.booking, s.wix_event_id, s.wix_schedule_id, classDate)) {
+              const list = bySession.get(s.session_id) ?? []
+              list.push(bk)
+              bySession.set(s.session_id, list)
+              regsMatched++
+              break
+            }
+          }
+        }
+
+        if (bySession.size > 0) {
+          const ids = [...bySession.keys()]
+          const { data: existing, error: exErr } = await supabase
+            .from('training_attendance')
+            .select('session_id, student_name, student_email')
+            .in('session_id', ids)
+          if (exErr) throw new Error(exErr.message)
+          const have = new Set(
+            (existing ?? []).map((r) => {
+              const em = String(r.student_email || '').toLowerCase().trim()
+              return `${r.session_id}|${em || 'n:' + String(r.student_name || '').toLowerCase().trim()}`
+            }),
+          )
+
+          /* Link portal accounts by email where possible. */
+          const { data: users } = await supabase
+            .from('app_users')
+            .select('id, email')
+            .eq('account_type', 'person')
+          const userByEmail = new Map(
+            (users ?? [])
+              .filter((u) => !!u.email)
+              .map((u) => [String(u.email).toLowerCase(), u.id]),
+          )
+
+          const inserts: Record<string, unknown>[] = []
+          for (const [sessionId, list] of bySession) {
+            for (const bk of list) {
+              if (!bk.name && !bk.email) continue
+              const key = `${sessionId}|${bk.email || 'n:' + bk.name.toLowerCase().trim()}`
+              if (have.has(key)) continue
+              have.add(key)
+              inserts.push({
+                session_id: sessionId,
+                student_name: bk.name || bk.email,
+                student_email: bk.email,
+                phone: bk.phone,
+                attendance_mode: 'InPerson',
+                status: 'Pending',
+                phase: 'registered',
+                user_id: bk.email ? (userByEmail.get(bk.email) ?? null) : null,
+              })
+              regsPerSession[sessionId] = (regsPerSession[sessionId] ?? 0) + 1
+            }
+          }
+          if (inserts.length > 0) {
+            const { error: insErr } = await supabase
+              .from('training_attendance')
+              .insert(inserts)
+            if (insErr) throw new Error(insErr.message)
+            regsImported = inserts.length
+          }
+        }
+      }
+    } catch (err) {
+      regsError = (err as Error).message
+      console.error('[sync] bookings import failed:', err)
+    }
+
     return new Response(
       JSON.stringify({
         ok: true,
@@ -418,6 +662,10 @@ Deno.serve(async (req: Request) => {
         calendarCount: calRowsResult.length,
         syncedCount: rows.length,
         graphConfigured,
+        regsMatched,
+        regsImported,
+        regsPerSession,
+        regsError,
       }),
       {
         status: 200,
