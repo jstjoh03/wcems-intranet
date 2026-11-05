@@ -367,7 +367,7 @@ const locationOptions = computed<string[]>(() => {
   for (const um of sched.dayModel(shiftDate.value).units) {
     if (!um.unit.code.startsWith('S')) out.push(um.unit.code)
   }
-  out.push('At Shop', 'Station 201', 'Station 202', 'Other')
+  out.push('At Shop', 'Other')
   return out
 })
 
