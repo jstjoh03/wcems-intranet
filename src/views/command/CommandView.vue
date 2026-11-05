@@ -116,7 +116,10 @@ const onDuty = computed<DutySide[]>(() => {
     for (const ex of um.extras) {
       if (ex.open || !ex.userId) continue
       if (covers(ex.start, ex.end, probe)) {
-        people.push({ name: ex.name, credential: ex.kind === 'student' ? 'Student' : null })
+        /* Riders show THEIR credential (a NEOP medic rider is a P1C),
+           falling back to Student for program students. */
+        const cred = sched.personById(ex.userId)?.credential ?? (ex.kind === 'student' ? 'Student' : null)
+        people.push({ name: ex.name, credential: cred })
       }
     }
     const ranks = people
@@ -296,6 +299,14 @@ const approvals = computed(() => {
   }
 })
 
+const openToday = computed(() => model.value.openCount)
+const summariesFiled = computed(() => {
+  const n = !!northToday.value
+  const so = !!southToday.value
+  return { done: (n ? 1 : 0) + (so ? 1 : 0), total: 2 }
+})
+const followUpCount = computed(() => followUps.value.reduce((t, f) => t + f.names.length, 0))
+
 const shiftLetter = computed(() => model.value.platoon)
 const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 </script>
@@ -316,8 +327,32 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
       <CommandNav />
       <p v-if="cmd.loadError.value" class="cmd__err">{{ cmd.loadError.value }}</p>
 
+      <!-- Vitals band -->
+      <div class="cmd__stats cmd__reveal">
+        <div class="cmd__stat">
+          <span class="cmd__stat-eyebrow">Open seats today</span>
+          <span class="cmd__stat-num" :class="{ 'cmd__stat-num--bad': openToday > 0 }">{{ openToday }}</span>
+          <span class="cmd__stat-sub">{{ openToday === 0 ? 'fully covered' : 'need coverage' }}</span>
+        </div>
+        <div class="cmd__stat">
+          <span class="cmd__stat-eyebrow">Daily summaries</span>
+          <span class="cmd__stat-num" :class="{ 'cmd__stat-num--bad': summariesFiled.done < summariesFiled.total }">{{ summariesFiled.done }}<small>/{{ summariesFiled.total }}</small></span>
+          <span class="cmd__stat-sub">filed for today</span>
+        </div>
+        <div class="cmd__stat">
+          <span class="cmd__stat-eyebrow">Fleet</span>
+          <span class="cmd__stat-num">{{ fleetCounts.inService }}</span>
+          <span class="cmd__stat-sub">in service · {{ fleetCounts.reserve }} reserve · {{ fleetCounts.oos }} OOS</span>
+        </div>
+        <div class="cmd__stat">
+          <span class="cmd__stat-eyebrow">Crew follow-ups</span>
+          <span class="cmd__stat-num" :class="{ 'cmd__stat-num--warn': followUpCount > 0 }">{{ followUpCount }}</span>
+          <span class="cmd__stat-sub">open items on shift</span>
+        </div>
+      </div>
+
       <!-- On duty now -->
-      <section class="cmd__sec">
+      <section class="cmd__sec cmd__reveal" style="animation-delay: 60ms">
         <div class="cmd__sec-h">
           <h2 class="display">On duty now</h2>
           <span class="cmd__hint">live from the schedule · flags mark units the supervisor should respond with more often</span>
@@ -348,7 +383,7 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 
       <div class="cmd__cols">
         <!-- Handoff -->
-        <section class="cmd__sec">
+        <section class="cmd__sec cmd__reveal" style="animation-delay: 120ms">
           <div class="cmd__sec-h"><h2 class="display">Shift handoff</h2><span class="cmd__hint">visible to all command staff</span></div>
           <div v-for="n in cmd.notes.value" :key="n.id" class="cmd__note" :class="{ 'cmd__note--pinned': n.pinned }">
             <span v-if="n.pinned" class="cmd__pintag">PINNED</span>
@@ -369,7 +404,7 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
         </section>
 
         <!-- Daily summary + trainees -->
-        <section class="cmd__sec">
+        <section class="cmd__sec cmd__reveal" style="animation-delay: 150ms">
           <div class="cmd__sec-h"><h2 class="display">Daily Summary</h2><span class="cmd__hint">one per side · county-wide covers both</span></div>
           <div class="cmd__sumrow">
             <b>North</b>
@@ -402,7 +437,7 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
             </template>
           </div>
 
-          <div class="cmd__sec-h" style="margin-top: 22px"><h2 class="display">Trainees riding today</h2></div>
+          <div class="cmd__sec-h" style="margin-top: 38px"><h2 class="display">Trainees riding today</h2></div>
           <div v-if="!trainees.length" class="cmd__muted" style="padding: 6px 2px">None scheduled today.</div>
           <div v-for="t in trainees" :key="t.unit + t.name" class="cmd__row">
             <span class="cmd__unit">{{ t.unit }}</span>
@@ -413,7 +448,7 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 
       <div class="cmd__cols">
         <!-- Fleet -->
-        <section class="cmd__sec">
+        <section class="cmd__sec cmd__reveal" style="animation-delay: 200ms">
           <div class="cmd__sec-h">
             <h2 class="display">Fleet</h2>
             <span class="cmd__hint">as of the last Daily Summary</span>
@@ -462,7 +497,7 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
         </section>
 
         <!-- Follow up -->
-        <section class="cmd__sec">
+        <section class="cmd__sec cmd__reveal" style="animation-delay: 230ms">
           <div class="cmd__sec-h"><h2 class="display">Follow up with your crew</h2><span class="cmd__hint">on-shift people with open items</span></div>
           <div v-if="!followUps.length" class="cmd__muted" style="padding: 6px 2px">Everyone on shift is caught up. 🎯</div>
           <div v-for="f in followUps" :key="f.module + f.kind" class="cmd__qa">
@@ -471,7 +506,7 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
           </div>
           <p style="margin: 10px 0 0"><RouterLink class="cmd__link" to="/training/required">Full completion rosters →</RouterLink></p>
 
-          <div v-if="approvals" class="cmd__chief">
+          <div v-if="approvals" class="cmd__chief" style="margin-top: 26px">
             <span class="cmd__tagline" style="float: right">SCHEDULE EDITORS</span>
             <b>Awaiting approval</b>
             <div class="cmd__sumrow"><span>Shift trades</span><span class="cmd__spacer"></span><b>{{ approvals.trades }}</b></div>
@@ -480,7 +515,7 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
             <RouterLink class="cmd__link" to="/schedule?v=requests">Open the request queue →</RouterLink>
           </div>
 
-          <div v-if="openWeek.length" style="margin-top: 18px">
+          <div v-if="openWeek.length" style="margin-top: 38px">
             <div class="cmd__sec-h">
               <h2 class="display" style="font-size: 17px">Open seats — next 7 days</h2>
               <RouterLink class="cmd__link" style="margin-left: auto" to="/schedule?v=pages">Page-out screen →</RouterLink>
@@ -499,19 +534,37 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 </template>
 
 <style scoped>
-.cmd { max-width: 1080px; margin: 0 auto; padding: 24px 16px 80px; }
-@media (min-width: 768px) { .cmd { padding: 36px 40px 80px; } }
+.cmd { max-width: 1120px; margin: 0 auto; padding: 24px 16px 96px; }
+@media (min-width: 768px) { .cmd { padding: 36px 40px 96px; } }
+
+.cmd__reveal { opacity: 0; transform: translateY(6px); animation: cmd-reveal 500ms cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+@keyframes cmd-reveal { to { opacity: 1; transform: translateY(0); } }
+
+.cmd__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 18px 0;
+  margin: 10px 0 8px;
+}
+.cmd__stat { display: flex; flex-direction: column; gap: 3px; padding: 2px 22px; border-left: 1px solid var(--color-line); min-width: 0; }
+.cmd__stat:first-child { border-left: 0; padding-left: 2px; }
+.cmd__stat-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-muted); }
+.cmd__stat-num { font-family: var(--font-display, inherit); font-size: 34px; line-height: 1.05; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.cmd__stat-num small { font-size: 20px; color: var(--color-muted); }
+.cmd__stat-num--bad { color: var(--color-danger-500); }
+.cmd__stat-num--warn { color: oklch(0.5 0.12 70); }
+.cmd__stat-sub { font-size: 11.5px; color: var(--color-muted); }
 .cmd__head { margin-bottom: 10px; }
 .cmd__title { font-size: 26px; margin: 0; }
 .cmd__sub { margin: 2px 0 14px; font-size: 13px; color: var(--color-muted); }
 .cmd__gate { margin-top: 24px; padding: 28px; text-align: center; font-size: 13px; color: var(--color-muted); border: 1px dashed var(--color-line); border-radius: 12px; }
 .cmd__err { color: var(--color-danger-500); font-size: 12.5px; }
 
-.cmd__sec { margin-top: 20px; min-width: 0; }
-.cmd__sec-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; border-bottom: 1.5px solid var(--color-ink); padding-bottom: 4px; margin-bottom: 8px; }
+.cmd__sec { margin-top: 42px; min-width: 0; }
+.cmd__sec-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; border-bottom: 1.5px solid var(--color-ink); padding-bottom: 5px; margin-bottom: 14px; }
 .cmd__sec-h h2 { margin: 0; font-size: 19px; font-weight: 400; }
 .cmd__hint { font-size: 11.5px; color: var(--color-muted); }
-.cmd__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 36px; }
+.cmd__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 60px; }
 
 .cmd__board { margin-top: 14px; min-width: 0; }
 .cmd__shead { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; border-bottom: 1.5px solid var(--color-ink); padding-bottom: 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; color: var(--color-muted); text-transform: uppercase; }
