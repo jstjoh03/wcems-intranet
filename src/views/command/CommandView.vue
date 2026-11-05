@@ -118,7 +118,9 @@ const onDuty = computed<DutySide[]>(() => {
       if (covers(ex.start, ex.end, probe)) {
         /* Riders show THEIR credential (a NEOP medic rider is a P1C),
            falling back to Student for program students. */
-        const cred = sched.personById(ex.userId)?.credential ?? (ex.kind === 'student' ? 'Student' : null)
+        const cred =
+          sched.personById.value.get(ex.userId)?.credential ??
+          (ex.kind === 'student' ? 'Student' : null)
         people.push({ name: ex.name, credential: cred })
       }
     }
@@ -216,11 +218,10 @@ const followUps = computed(() => {
     const match = sched.people.value.find((x) => x.fullName === p.name)
     if (match) ids.add(match.id)
   }
-  const out: { module: string; kind: 'video' | 'test'; names: string[] }[] = []
+  const out: { module: string; rows: { name: string; need: 'video' | 'test' }[] }[] = []
   for (const t of rt.trainings.value.filter((x) => x.active && !x.audienceEventLabel)) {
     const comps = rt.completionsFor(t.id)
-    const video: string[] = []
-    const test: string[] = []
+    const rows: { name: string; need: 'video' | 'test' }[] = []
     for (const uid of ids) {
       const p = sched.people.value.find((x) => x.id === uid)
       if (!p) continue
@@ -233,11 +234,10 @@ const followUps = computed(() => {
       if (!required) continue
       const c = comps.find((x) => x.userId === uid) ?? null
       const hasQuiz = rt.quizConfigFor(t) !== null
-      if (!c?.attestationSigned) video.push(p.fullName)
-      else if (hasQuiz && c.quizScore == null) test.push(p.fullName)
+      if (!c?.attestationSigned) rows.push({ name: p.fullName, need: 'video' })
+      else if (hasQuiz && c.quizScore == null) rows.push({ name: p.fullName, need: 'test' })
     }
-    if (video.length) out.push({ module: t.title, kind: 'video', names: video.sort() })
-    if (test.length) out.push({ module: t.title, kind: 'test', names: test.sort() })
+    if (rows.length) out.push({ module: t.title, rows: rows.sort((a, b) => a.name.localeCompare(b.name)) })
   }
   return out
 })
@@ -305,7 +305,7 @@ const summariesFiled = computed(() => {
   const so = !!southToday.value
   return { done: (n ? 1 : 0) + (so ? 1 : 0), total: 2 }
 })
-const followUpCount = computed(() => followUps.value.reduce((t, f) => t + f.names.length, 0))
+const followUpCount = computed(() => followUps.value.reduce((t, f) => t + f.rows.length, 0))
 
 const shiftLetter = computed(() => model.value.platoon)
 const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
@@ -500,9 +500,15 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
         <section class="cmd__sec cmd__reveal" style="animation-delay: 230ms">
           <div class="cmd__sec-h"><h2 class="display">Follow up with your crew</h2><span class="cmd__hint">on-shift people with open items</span></div>
           <div v-if="!followUps.length" class="cmd__muted" style="padding: 6px 2px">Everyone on shift is caught up. 🎯</div>
-          <div v-for="f in followUps" :key="f.module + f.kind" class="cmd__qa">
-            <div class="cmd__q">{{ f.module }} — {{ f.kind === 'video' ? 'video / sign-off' : 'knowledge test' }} <span class="cmd__count">({{ f.names.length }})</span></div>
-            <div class="cmd__names">{{ f.names.join(' · ') }}</div>
+          <div v-for="f in followUps" :key="f.module" class="cmd__fu">
+            <div class="cmd__fu-h">{{ f.module }} <span class="cmd__count">({{ f.rows.length }})</span></div>
+            <div v-for="r in f.rows" :key="r.name" class="cmd__fu-row">
+              <span class="cmd__fu-name">{{ r.name }}</span>
+              <span class="cmd__fu-need" :class="r.need === 'video' ? 'cmd__fu-need--bad' : 'cmd__fu-need--warn'">
+                <span class="cmd__dot" :class="r.need === 'video' ? 'cmd__dot--bad' : 'cmd__dot--warn'"></span>
+                {{ r.need === 'video' ? 'video & sign-off' : 'knowledge test' }}
+              </span>
+            </div>
           </div>
           <p style="margin: 10px 0 0"><RouterLink class="cmd__link" to="/training/required">Full completion rosters →</RouterLink></p>
 
@@ -628,9 +634,14 @@ const todayLabel = new Date(`${today}T00:00:00`).toLocaleDateString('en-US', { w
 .cmd__table td { padding: 6px 8px; border-bottom: 1px solid var(--color-line); }
 .cmd__oos td { background: oklch(0.96 0.025 25 / 0.5); }
 
-.cmd__qa { padding: 8px 2px; border-bottom: 1px solid var(--color-line); font-size: 13px; }
-.cmd__q { font-weight: 600; }
-.cmd__names { color: var(--color-ink-soft, var(--color-ink)); font-size: 12.5px; margin-top: 2px; }
+.cmd__fu { margin-bottom: 14px; }
+.cmd__fu-h { font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--color-line); padding: 4px 0 5px; }
+.cmd__fu-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 4px; font-size: 12.5px; border-bottom: 1px solid var(--color-line-soft, var(--color-line)); }
+.cmd__fu-row:nth-child(odd) { background: var(--color-surface-soft); }
+.cmd__fu-name { color: var(--color-ink); font-weight: 500; }
+.cmd__fu-need { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+.cmd__fu-need--bad { color: oklch(0.5 0.17 25); }
+.cmd__fu-need--warn { color: oklch(0.5 0.12 70); }
 .cmd__count { font-size: 11px; font-weight: 600; color: var(--color-muted); }
 .cmd__tagline { font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; color: var(--color-muted); }
 .cmd__rolecell { font-variant-numeric: tabular-nums; }
