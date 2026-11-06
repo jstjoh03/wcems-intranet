@@ -49,6 +49,11 @@ export interface SchedUnit {
    *  standard 06:00 → 06:00 24-hour shift. */
   shiftStart: string | null
   shiftEnd: string | null
+  /** Opening day (ISO date). Null = open since forever. A future date
+   *  keeps the unit plannable in Setup's rotation template while every
+   *  live surface — boards, open seats, page-outs, reminders — ignores
+   *  it until that date arrives. */
+  effectiveFrom: string | null
 }
 
 export interface SchedSeat {
@@ -740,6 +745,7 @@ async function loadCore(): Promise<void> {
     rotationAnchor: r.rotation_anchor ?? null,
     shiftStart: r.shift_start ? String(r.shift_start).slice(0, 5) : null,
     shiftEnd: r.shift_end ? String(r.shift_end).slice(0, 5) : null,
+    effectiveFrom: r.effective_from ?? null,
   }))
   seats.value = (sRes.data ?? []).map((r) => ({
     id: r.id,
@@ -845,6 +851,7 @@ function seedDevStub(): void {
     rotationAnchor: null,
     shiftStart: null,
     shiftEnd: null,
+    effectiveFrom: null,
   }))
   const out: SchedSeat[] = []
   for (const u of units.value) {
@@ -1503,20 +1510,34 @@ function rotationOccupant(seatId: string, platoon: Platoon, dateIso: string): st
   return best ? best.userId : null
 }
 
+/** A unit is live on a date when it's active AND past its opening day
+ *  (effectiveFrom null = always). Future-dated units stay plannable in
+ *  the rotation template but invisible on every live surface. */
+function unitLiveOn(unit: SchedUnit | undefined | null, dateIso: string): boolean {
+  if (!unit || !unit.active) return false
+  return !unit.effectiveFrom || dateIso >= unit.effectiveFrom
+}
+
 /** Rotation occupant of a seat on a date under its UNIT's pattern
  *  (agency default when the unit has none); null when the unit is
- *  inactive, not staffed that day, or the seat is vacant. */
+ *  inactive, not yet open, not staffed that day, or the seat is vacant. */
 function seatRotationOccupant(seatId: string, dateIso: string): string | null {
   const seat = seats.value.find((s) => s.id === seatId)
   const unit = seat ? units.value.find((u) => u.id === seat.unitId) : null
-  if (unit && !unit.active) return null
+  if (unit && !unitLiveOn(unit, dateIso)) return null
   const platoon = unitPlatoonFor(unit, dateIso)
   return platoon ? rotationOccupant(seatId, platoon, dateIso) : null
 }
 
-/** Active seats on ACTIVE units — the only seats the generators walk. */
-function activeSeatList(): SchedSeat[] {
-  const activeUnits = new Set(units.value.filter((u) => u.active).map((u) => u.id))
+/** Active seats on ACTIVE units — the only seats the generators walk.
+ *  With a date, units that haven't reached their opening day drop out
+ *  too; without one (no date in scope) only the active flag gates. */
+function activeSeatList(dateIso?: string): SchedSeat[] {
+  const activeUnits = new Set(
+    units.value
+      .filter((u) => u.active && (!dateIso || !u.effectiveFrom || dateIso >= u.effectiveFrom))
+      .map((u) => u.id),
+  )
   return seats.value.filter((s) => s.active && activeUnits.has(s.unitId))
 }
 
@@ -1557,7 +1578,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
     offWindowsByUser.set(e.userId, l)
   }
 
-  for (const unit of units.value.filter((u) => u.active)) {
+  for (const unit of units.value.filter((u) => unitLiveOn(u, dateIso))) {
     const unitPlatoon = unitPlatoonFor(unit, dateIso)
     const unitSeats = seats.value
       .filter((s) => s.unitId === unit.id && s.active)
@@ -2002,7 +2023,7 @@ export function daySummary(dateIso: string, myUserId: string | null) {
   let myStart = '0600'
   let myEnd = '0600'
 
-  for (const seat of activeSeatList()) {
+  for (const seat of activeSeatList(dateIso)) {
     const overrides = dayEntries.filter(
       (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
     )
@@ -2061,7 +2082,7 @@ function upcomingShiftsFor(userId: string, fromIso: string, days = 45): Upcoming
   for (let i = 0; i < days; i++) {
     const iso = addDaysIso(fromIso, i)
     const dayEntries = entries.value.filter((e) => e.workDate === iso)
-    for (const seat of activeSeatList()) {
+    for (const seat of activeSeatList(iso)) {
       const overrides = dayEntries.filter(
         (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
       )
@@ -2207,7 +2228,7 @@ async function fetchMySchedule(
   const items: MyScheduleItem[] = []
   for (let iso = fromIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
     const dayRows = rows.filter((e) => e.workDate === iso)
-    for (const seat of activeSeatList()) {
+    for (const seat of activeSeatList(iso)) {
       const unit = unitById.get(seat.unitId)
       const label = `${unit?.code ?? ''} ${seat.label}`.trim()
       const seatRows = dayRows.filter(
@@ -2361,7 +2382,7 @@ async function fetchTimeSegments(
   const segs: TimeSegment[] = []
   for (let iso = startIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
     const dayRows = rows.filter((e) => e.workDate === iso)
-    for (const seat of activeSeatList()) {
+    for (const seat of activeSeatList(iso)) {
       const unit = unitById.get(seat.unitId)
       const source = `${unit?.code ?? ''} ${seat.label}`.trim()
       const seatRows = dayRows.filter(
@@ -2681,7 +2702,7 @@ function warningThresholds() {
 function segsForUserOnDate(dateIso: string, userId: string, rows: SchedEntry[]): Seg[] {
   const dayRows = rows.filter((e) => e.workDate === dateIso)
   const out: Seg[] = []
-  for (const seat of activeSeatList()) {
+  for (const seat of activeSeatList(dateIso)) {
     const seatRows = dayRows.filter(
       (e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off',
     )
@@ -4637,7 +4658,7 @@ function dayLedgerFor(userId: string, dateIso: string): DayLedger | null {
   const dayE = tsMs(centralTs(addDaysIso(dateIso, 1), '06:00'))
   let expected: Seg[] = []
   const tSeatIds: string[] = []
-  for (const seat of activeSeatList()) {
+  for (const seat of activeSeatList(dateIso)) {
     if (seatRotationOccupant(seat.id, dateIso) !== userId) continue
     const unit = units.value.find((u) => u.id === seat.unitId) ?? null
     const uw = unitDayWindow(unit, dateIso)
@@ -4716,7 +4737,7 @@ function dayImbalances(dateIso: string): DayImbalance[] {
   if (dateIso < BALANCE_FLOOR_ISO) return []
   const seen = new Set<string>()
   const out: DayImbalance[] = []
-  for (const seat of activeSeatList()) {
+  for (const seat of activeSeatList(dateIso)) {
     const occ = seatRotationOccupant(seat.id, dateIso)
     if (!occ || seen.has(occ)) continue
     seen.add(occ)
@@ -5790,11 +5811,20 @@ async function addUnit(opts: {
   label: string
   station: string
   preset: UnitPreset
+  /** ISO opening date — the unit stays off every live surface until
+   *  then (plan rotation in Setup meanwhile). Omit to open now. */
+  opensOn?: string | null
 }): Promise<string | null> {
   const maxOrder = Math.max(0, ...units.value.map((u) => u.sortOrder))
   const ins = await supabase
     .from('sched_units')
-    .insert({ code: opts.code, label: opts.label, station: opts.station, sort_order: maxOrder + 1 })
+    .insert({
+      code: opts.code,
+      label: opts.label,
+      station: opts.station,
+      sort_order: maxOrder + 1,
+      effective_from: opts.opensOn || null,
+    })
     .select('id')
     .single()
   if (ins.error) return ins.error.message
@@ -5815,8 +5845,35 @@ async function addUnit(opts: {
     .from('sched_seats')
     .insert(seatsToAdd.map((s) => ({ ...s, unit_id: unitId })))
   if (sres.error) return sres.error.message
-  audit('unit.add', `Added unit ${opts.code} (${opts.preset})`, { entity: 'unit', entityId: unitId })
+  audit(
+    'unit.add',
+    `Added unit ${opts.code} (${opts.preset})${opts.opensOn ? ` — opens ${opts.opensOn}` : ''}`,
+    { entity: 'unit', entityId: unitId },
+  )
   await loadCore()
+  return null
+}
+
+/** Set or clear a unit's opening day. Before the date the unit is
+ *  hidden from boards, open-seat feeds, page-outs, and reminders —
+ *  but stays in Setup's rotation template so assignments can be
+ *  planned ahead. Clearing (null) opens it immediately. */
+async function setUnitOpensOn(unitId: string, opensOn: string | null): Promise<string | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return 'Not available in the dev preview.'
+  const res = await supabase
+    .from('sched_units')
+    .update({ effective_from: opensOn || null })
+    .eq('id', unitId)
+  if (res.error) return res.error.message
+  const code = units.value.find((u) => u.id === unitId)?.code ?? '?'
+  audit(
+    'unit.opens_on',
+    opensOn ? `Set unit ${code} to open ${opensOn}` : `Cleared opening date on unit ${code} (open now)`,
+    { entity: 'unit', entityId: unitId },
+  )
+  await loadCore()
+  await reloadRangeIfLoaded()
   return null
 }
 
@@ -6017,19 +6074,19 @@ async function findOpenShifts(startIso: string, endIso: string): Promise<OpenShi
     if (r.seat_id) {
       const seat = seats.value.find((s) => s.id === r.seat_id)
       const unit = seat ? units.value.find((u) => u.id === seat.unitId) : null
-      if (unit && !unit.active) continue
+      if (unit && !unitLiveOn(unit, r.work_date)) continue
       out.push({ entryId: r.id, dateIso: r.work_date, unit: unit?.code ?? null, position: seat?.label ?? null, window: w, text: `${fmtD(r.work_date)} · ${unit?.code ?? '?'} ${seat?.label ?? 'seat'} · ${w}` })
     } else if (r.kind === 'event') {
       out.push({ entryId: r.id, dateIso: r.work_date, unit: null, position: r.student_program ?? null, window: w, text: `${fmtD(r.work_date)} · ${r.note ?? 'Event'} — ${r.student_program ?? 'slot'} · ${w}` })
     } else if (r.kind === 'rider') {
       const unit = units.value.find((u) => u.id === r.unit_id)
-      if (unit && !unit.active) continue
+      if (unit && !unitLiveOn(unit, r.work_date)) continue
       out.push({ entryId: r.id, dateIso: r.work_date, unit: unit?.code ?? null, position: r.student_program ?? null, window: w, text: `${fmtD(r.work_date)} · ${unit?.code ?? '?'} extra ${r.student_program ?? 'seat'} · ${w}` })
     }
   }
   const rowsBySeatDate = new Set(rows.filter((r) => r.seat_id).map((r) => `${r.work_date}|${r.seat_id}`))
   for (let iso = startIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
-    for (const seat of activeSeatList()) {
+    for (const seat of activeSeatList(iso)) {
       if (rowsBySeatDate.has(`${iso}|${seat.id}`)) continue
       const unit = units.value.find((u) => u.id === seat.unitId)
       if (!unit || unitPlatoonFor(unit, iso) === null) continue
@@ -6056,7 +6113,7 @@ async function assignedUserIdsOn(dateIso: string): Promise<Set<string>> {
   const rows = (res.data ?? []).filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
   const overridden = new Set(rows.filter((r) => r.seat_id).map((r) => r.seat_id as string))
   for (const r of rows) if (r.user_id) out.add(r.user_id)
-  for (const seat of activeSeatList()) {
+  for (const seat of activeSeatList(dateIso)) {
     if (overridden.has(seat.id)) continue
     const occ = seatRotationOccupant(seat.id, dateIso)
     if (occ) out.add(occ)
@@ -6854,6 +6911,7 @@ export function useSchedule() {
     dayOverlaps,
     removeRotationAssignment,
     addUnit,
+    setUnitOpensOn,
     addExtraSeat,
     removeExtraSeat,
     saveUnitOrder,

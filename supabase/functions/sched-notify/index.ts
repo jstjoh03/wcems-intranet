@@ -1326,7 +1326,7 @@ Deno.serve(async (req: Request) => {
       for (let i = -3; i <= 1; i++) dates.push(addDaysIso(today, i))
 
       const [uR, sR, rR, eR, pR] = await Promise.all([
-        sb.from('sched_units').select('id, code, active, rotation_pattern, rotation_anchor, shift_start, shift_end'),
+        sb.from('sched_units').select('id, code, active, effective_from, rotation_pattern, rotation_anchor, shift_start, shift_end'),
         sb.from('sched_seats').select('id, unit_id, label, active'),
         sb.from('sched_rotation_assignments').select('seat_id, platoon, user_id, effective_from, effective_to'),
         sb.from('sched_entries').select('work_date, seat_id, user_id, kind, status, start_at, end_at, note')
@@ -1397,6 +1397,9 @@ Deno.serve(async (req: Request) => {
           const dayRows = entryRows.filter((r) => r.work_date === dateIso)
           for (const seat of seatsA) {
             const unit = unitById.get(seat.unit_id)!
+            // Future-dated units (effective_from) are planning-only until
+            // opening day — no reminders, lockstep with the client gate.
+            if (unit.effective_from && dateIso < unit.effective_from) continue
             const label = `${unit.code} ${seat.label}`
             const isSupUnit = String(unit.code).toUpperCase().startsWith('S')
             const seatRows = dayRows.filter((r) => r.seat_id === seat.id && r.kind !== 'timeoff' && r.status !== 'off')

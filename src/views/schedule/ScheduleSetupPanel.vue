@@ -385,6 +385,7 @@ const nuCode = ref('')
 const nuLabel = ref('')
 const nuStation = ref('')
 const nuPreset = ref<UnitPreset>('medic')
+const nuOpens = ref('')
 const nuBusy = ref(false)
 
 async function submitUnit() {
@@ -399,6 +400,7 @@ async function submitUnit() {
     label: nuLabel.value.trim(),
     station: nuStation.value.trim(),
     preset: nuPreset.value,
+    opensOn: nuOpens.value || null,
   })
   nuBusy.value = false
   if (e) {
@@ -406,8 +408,41 @@ async function submitUnit() {
     return
   }
   addingUnit.value = false
-  nuCode.value = nuLabel.value = nuStation.value = ''
+  nuCode.value = nuLabel.value = nuStation.value = nuOpens.value = ''
   nuPreset.value = 'medic'
+}
+
+// ── unit opening day (future units: plan now, show later) ────────────
+const todayIsoStart = todayCentralIso()
+const opensUnit = ref<string | null>(null) // unit whose opens editor is open
+const opensDate = ref('')
+const opensBusy = ref(false)
+
+function fmtOpens(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+function opensLabel(u: { effectiveFrom: string | null }): string {
+  return u.effectiveFrom ? `Opens ${fmtOpens(u.effectiveFrom)}` : 'Opens on…'
+}
+function startOpensEdit(u: { id: string; effectiveFrom: string | null }) {
+  opensUnit.value = opensUnit.value === u.id ? null : u.id
+  opensDate.value = u.effectiveFrom ?? ''
+}
+async function saveOpens(unitId: string, clear = false) {
+  opensBusy.value = true
+  err.value = null
+  const e = await sched.setUnitOpensOn(unitId, clear ? null : opensDate.value || null)
+  opensBusy.value = false
+  if (e) {
+    err.value = e
+    return
+  }
+  opensUnit.value = null
 }
 
 // ── unit lifecycle: deactivate / reactivate / delete ─────────────────
@@ -1239,6 +1274,10 @@ async function saveWarnCfg() {
                   <option value="supervisor">Supervisor</option>
                 </select>
               </label>
+              <label class="setup__field">
+                <span>Opens on — blank = now. A future date keeps it off every board until then, while you plan its rotation below.</span>
+                <input v-model="nuOpens" type="date" class="setup__input" />
+              </label>
             </div>
             <button type="submit" class="setup__btn setup__btn--primary" :disabled="nuBusy">
               {{ nuBusy ? 'Adding…' : 'Add unit' }}
@@ -1257,6 +1296,13 @@ async function saveWarnCfg() {
                 <span v-if="u.station" class="setup__unitstation">{{ u.station }}</span>
                 <button class="setup__rotbtn" @click="startRotEdit(u)">
                   {{ rotationLabel(u) }}
+                </button>
+                <button
+                  class="setup__rotbtn"
+                  :class="{ 'setup__rotbtn--opens': u.effectiveFrom && u.effectiveFrom > todayIsoStart }"
+                  @click="startOpensEdit(u)"
+                >
+                  {{ opensLabel(u) }}
                 </button>
                 <button
                   class="setup__rotbtn setup__rotbtn--danger"
@@ -1319,6 +1365,36 @@ async function saveWarnCfg() {
                   {{ rotBusy ? 'Saving…' : 'Save rotation' }}
                 </button>
                 <button class="setup__btn" :disabled="rotBusy" @click="rotUnit = null">Cancel</button>
+              </div>
+            </div>
+
+            <div v-if="opensUnit === u.id" class="setup__rotedit">
+              <label class="setup__field">
+                <span>
+                  Opening day — until this date {{ u.code }} stays off every board, open-seat
+                  list, and page-out, but its rotation can be planned below like any unit.
+                </span>
+                <input v-model="opensDate" type="date" class="setup__input" />
+              </label>
+              <div class="setup__editbtns">
+                <button
+                  class="setup__btn setup__btn--primary"
+                  :disabled="opensBusy || !opensDate"
+                  @click="saveOpens(u.id)"
+                >
+                  {{ opensBusy ? 'Saving…' : 'Save opening day' }}
+                </button>
+                <button
+                  v-if="u.effectiveFrom"
+                  class="setup__btn"
+                  :disabled="opensBusy"
+                  @click="saveOpens(u.id, true)"
+                >
+                  Clear — open now
+                </button>
+                <button class="setup__btn" :disabled="opensBusy" @click="opensUnit = null">
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
@@ -1696,6 +1772,11 @@ async function saveWarnCfg() {
 
 .setup__rotbtn--danger {
   color: var(--color-danger-500);
+}
+
+/* Future opening day — the unit is planning-only until then. */
+.setup__rotbtn--opens {
+  color: var(--color-accent-700);
 }
 
 .setup__inactive {
