@@ -2,7 +2,7 @@
 import { onMounted, ref, reactive, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import PublicShell from '@/training/components/PublicShell.vue'
-import { invokeEdge } from '@/training/lib/supabase'
+import { invokeEdge, supabase } from '@/training/lib/supabase'
 import type { PublicSession } from '@/training/types'
 
 const route = useRoute()
@@ -53,7 +53,34 @@ const seatInfo = computed(() => {
   return { remaining: s.maxSeats - (s.registeredCount || 0), max: s.maxSeats }
 })
 
-onMounted(load)
+/* If a signed-in portal member opens the link, spare them the typing —
+   the same identity the one-tap sign-up on /training submits. Kiosk
+   accounts stay anonymous (shared station logins must type who they
+   are), and signed-out visitors see the form unchanged. */
+const signedInAs = ref<string | null>(null)
+async function prefillFromPortal() {
+  try {
+    const { data } = await supabase.auth.getSession()
+    const uid = data.session?.user?.id
+    if (!uid) return
+    const { data: row } = await supabase
+      .from('app_users')
+      .select('full_name, email, account_type')
+      .eq('auth_user_id', uid)
+      .maybeSingle()
+    if (!row || row.account_type === 'kiosk') return
+    if (!form.name) form.name = row.full_name || ''
+    if (!form.email) form.email = (row.email || '').toLowerCase()
+    signedInAs.value = row.email || null
+  } catch {
+    /* anonymous flow unchanged */
+  }
+}
+
+onMounted(() => {
+  void load()
+  void prefillFromPortal()
+})
 
 async function load() {
   state.value = 'loading'
@@ -169,6 +196,10 @@ async function submit() {
         </div>
         <div class="divider" />
 
+        <p v-if="signedInAs" class="muted sihint">
+          Signed in as {{ signedInAs }} — your details are prefilled.
+        </p>
+
         <label
           >Full Name <i>*</i>
           <input v-model="form.name" type="text" autocomplete="name" />
@@ -274,6 +305,10 @@ async function submit() {
 .muted {
   color: var(--color-muted);
   font-size: 14px;
+}
+.sihint {
+  font-size: 12px;
+  margin: -4px 0 12px;
 }
 .bad {
   color: var(--color-danger-500);

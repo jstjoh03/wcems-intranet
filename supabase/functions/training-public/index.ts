@@ -215,6 +215,22 @@ async function inPersonCount(admin, sessionId: string): Promise<number> {
   return count ?? 0
 }
 
+/** Collapse a schedule/pipeline credential (P1, P1C, P2-FTO, LP, EMT-P,
+ *  AEMT, ADV EMT, EMT-B, …) into the lecture quiz's two cert buckets. */
+function certLevelFromCredential(cred: string | null): string | null {
+  const c = String(cred || '').toUpperCase().trim()
+  if (!c) return null
+  if (/^(P\d|LP|EMT-?P|PARAMEDIC)/.test(c)) return 'Paramedic'
+  if (c.includes('EMT')) return 'EMT'
+  return null
+}
+
+/** Escape LIKE wildcards so an email containing `_` can't fuzzy-match
+ *  a different address in the case-insensitive lookup. */
+function likeSafe(s: string): string {
+  return s.replace(/([\\%_])/g, '\\$1')
+}
+
 // @ts-expect-error Deno.serve available in Edge Runtime
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -261,6 +277,102 @@ Deno.serve(async (req: Request) => {
       return json({ ...pub, tokenKind })
     }
 
+    // ── lectureBoard (portal /training page) ──────────────────────────
+    // One call powering the in-app sign-up affordance: every upcoming
+    // open Lecture with live seat state, plus — when a portal access
+    // token rides along — who the caller is (for one-tap registration)
+    // and which of those lectures they're already on.
+    if (action === 'lectureBoard') {
+      const today = new Date().toLocaleDateString('en-CA', {
+        timeZone: 'America/Chicago',
+      })
+      const { data: rows } = await admin
+        .from('course_sessions')
+        .select(SESSION_COLS)
+        .eq('session_type', 'Lecture')
+        .gte('class_date', today)
+        .order('class_date', { ascending: true })
+      const open = ((rows ?? []) as SessionRow[]).filter((r) => {
+        const st = String(r.status || '').toLowerCase()
+        return st === 'active' || st === 'scheduled'
+      })
+      const sessions: ReturnType<typeof toPublic>[] = []
+      for (const r of open) {
+        sessions.push(toPublic(r, await inPersonCount(admin, r.session_id)))
+      }
+
+      let me: {
+        name: string
+        email: string
+        certLevel: string | null
+      } | null = null
+      const mine: { sessionId: string; mode: string }[] = []
+      const jwt = (req.headers.get('Authorization') || '')
+        .replace(/^Bearer\s+/i, '')
+        .trim()
+      if (jwt) {
+        const { data: u } = await admin.auth.getUser(jwt)
+        const authId = u?.user?.id
+        if (authId) {
+          const { data: person } = await admin
+            .from('app_users')
+            .select('id, full_name, email, account_type')
+            .eq('auth_user_id', authId)
+            .maybeSingle()
+          if (person && person.account_type !== 'kiosk') {
+            // Cert bucket for the quiz match: manual schedule credential
+            // first, then the pipeline-derived one.
+            let cred: string | null = null
+            const { data: man } = await admin
+              .from('sched_credentials')
+              .select('credential')
+              .eq('user_id', person.id)
+              .maybeSingle()
+            cred = man?.credential ?? null
+            if (!cred) {
+              const { data: pipe } = await admin.rpc(
+                'sched_pipeline_credentials',
+              )
+              const hit = (
+                (pipe ?? []) as { user_id: string; credential: string | null }[]
+              ).find((p) => p.user_id === person.id)
+              cred = hit?.credential ?? null
+            }
+            const myEmail = String(person.email || '').toLowerCase()
+            me = {
+              name: person.full_name || '',
+              email: myEmail,
+              certLevel: certLevelFromCredential(cred),
+            }
+            if (sessions.length) {
+              const ids = sessions.map((s) => s.sessionId)
+              const { data: regs } = await admin
+                .from('training_attendance')
+                .select('session_id, attendance_mode, user_id, student_email')
+                .in('session_id', ids)
+              for (const a of (regs ?? []) as {
+                session_id: string
+                attendance_mode: string
+                user_id: string | null
+                student_email: string | null
+              }[]) {
+                if (
+                  a.user_id === person.id ||
+                  String(a.student_email || '').toLowerCase() === myEmail
+                ) {
+                  mine.push({
+                    sessionId: a.session_id,
+                    mode: a.attendance_mode,
+                  })
+                }
+              }
+            }
+          }
+        }
+      }
+      return json({ sessions, me, mine })
+    }
+
     // ── register (Lecture pre-registration) ───────────────────────────
     if (action === 'register') {
       const sessionId = String(body.sessionId || '')
@@ -298,6 +410,14 @@ Deno.serve(async (req: Request) => {
           )
         }
       }
+      // Roster matching — link the row to the portal account whose
+      // email this is (same rule the Wix booking import uses), so QR
+      // scan-to-evaluate and transcripts resolve the person.
+      const { data: appUser } = await admin
+        .from('app_users')
+        .select('id')
+        .ilike('email', likeSafe(email))
+        .maybeSingle()
       const { error } = await admin.from('training_attendance').upsert(
         {
           session_id: sessionId,
@@ -307,6 +427,7 @@ Deno.serve(async (req: Request) => {
           cert_level: certLevel,
           status: 'Pending',
           phase: 'registered',
+          user_id: appUser?.id ?? null,
         },
         { onConflict: 'session_id,student_email', ignoreDuplicates: false },
       )

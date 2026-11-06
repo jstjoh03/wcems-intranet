@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import SkillsChooserDialog from '@/components/SkillsChooserDialog.vue'
 import {
   GraduationCap,
@@ -8,12 +8,15 @@ import {
   Clock,
   User,
   ExternalLink,
+  Check,
 } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
-import { useTraining } from '@/composables/useTraining'
+import { useTraining, type TrainingEvent } from '@/composables/useTraining'
 import { useAuthStore } from '@/stores/auth'
 import { useClinicalAccess } from '@/composables/useClinicalAccess'
 import { parseDateOnly } from '@/utils/date'
+import { invokeEdge } from '@/training/lib/supabase'
+import { supabase } from '@/lib/supabase'
 
 const REGISTER_URL = 'https://www.wallercountyems.com/internaleducation'
 
@@ -27,6 +30,105 @@ const { isFto, isEditor } = useClinicalAccess()
 const showSkillsDay = computed(() => auth.isSupervisor || isFto.value || isEditor.value)
 /* Two skills boards exist now — ask which one (NEOP vs protocol updates). */
 const skillsChooser = ref(false)
+
+/* ── In-app lecture sign-up ───────────────────────────────────────────
+   Signed-in (non-kiosk) employees get a tap-to-confirm Sign up on
+   lecture tiles instead of the external form. `lectureBoard` returns
+   the upcoming lectures with live seat state, who the caller is, and
+   which lectures they're already on; sign-up posts the same
+   training-public `register` action the public form uses — same seat
+   caps, same roster the QR check-in reads. */
+interface BoardSession {
+  sessionId: string
+  virtualEnabled: boolean
+  maxSeats: number | null
+  registeredCount: number
+}
+interface BoardMe {
+  name: string
+  email: string
+  certLevel: string | null
+}
+const boardSessions = ref(new Map<string, BoardSession>())
+const boardMine = ref(new Map<string, string>())
+const boardMe = ref<BoardMe | null>(null)
+
+function sesIdOf(t: TrainingEvent): string | null {
+  const m = /[?&]sessionId=(SES-[^&]+)/i.exec(t.registrationUrl || '')
+  return m ? m[1] : null
+}
+function boardFor(t: TrainingEvent): BoardSession | null {
+  const id = sesIdOf(t)
+  return id ? (boardSessions.value.get(id) ?? null) : null
+}
+function canOneTap(t: TrainingEvent): boolean {
+  return t.source === 'lecture' && !!boardMe.value && !!boardFor(t)
+}
+function myMode(t: TrainingEvent): string | null {
+  const id = sesIdOf(t)
+  return id ? (boardMine.value.get(id) ?? null) : null
+}
+function seatsFull(t: TrainingEvent): boolean {
+  const s = boardFor(t)
+  return !!(s && s.maxSeats && s.registeredCount >= s.maxSeats)
+}
+
+async function loadBoard() {
+  if (auth.isKiosk) return
+  try {
+    const { data } = await supabase.auth.getSession()
+    const token = data.session?.access_token
+    if (!token) return
+    const res = await invokeEdge<{
+      sessions: BoardSession[]
+      me: BoardMe | null
+      mine: { sessionId: string; mode: string }[]
+    }>('training-public', { action: 'lectureBoard' }, { authToken: token })
+    boardSessions.value = new Map(res.sessions.map((s) => [s.sessionId, s]))
+    boardMine.value = new Map(res.mine.map((m) => [m.sessionId, m.mode]))
+    boardMe.value = res.me
+  } catch {
+    /* quiet — lecture tiles fall back to the register link */
+  }
+}
+onMounted(loadBoard)
+
+const armed = ref<string | null>(null)
+let disarmTimer: ReturnType<typeof setTimeout> | undefined
+const signupBusy = ref<string | null>(null)
+const signupErr = ref<Record<string, string>>({})
+
+function arm(t: TrainingEvent) {
+  armed.value = sesIdOf(t)
+  if (disarmTimer) clearTimeout(disarmTimer)
+  disarmTimer = setTimeout(() => (armed.value = null), 6000)
+}
+async function signUp(t: TrainingEvent, mode: 'InPerson' | 'Virtual') {
+  const id = sesIdOf(t)
+  const me = boardMe.value
+  if (!id || !me) return
+  signupBusy.value = id
+  signupErr.value[id] = ''
+  try {
+    await invokeEdge('training-public', {
+      action: 'register',
+      sessionId: id,
+      name: me.name,
+      email: me.email,
+      attendanceMode: mode,
+      certLevel: me.certLevel ?? '',
+    })
+    boardMine.value.set(id, mode)
+    const s = boardSessions.value.get(id)
+    if (s && mode === 'InPerson') s.registeredCount++
+    armed.value = null
+    void refresh()
+  } catch (e) {
+    signupErr.value[id] = e instanceof Error ? e.message : 'Sign-up failed.'
+  } finally {
+    signupBusy.value = null
+  }
+}
 
 function freshnessLabel(d: Date | null): string {
   if (!d) return ''
@@ -213,8 +315,60 @@ function fillColor(filled: number, total: number) {
               </div>
             </div>
           </div>
+          <div v-if="canOneTap(t)" class="training__signup">
+            <span v-if="myMode(t)" class="training__signedup">
+              <Check :size="14" :stroke-width="2.5" />
+              Signed up{{ myMode(t) === 'Virtual' ? ' — virtual' : '' }}
+            </span>
+            <span
+              v-else-if="seatsFull(t) && !boardFor(t)?.virtualEnabled"
+              class="training__signup-full"
+            >
+              Seats full
+            </span>
+            <template v-else-if="armed === sesIdOf(t)">
+              <span class="training__signup-as">as {{ boardMe?.name }}</span>
+              <button
+                type="button"
+                class="training__register training__signup-confirm"
+                :disabled="signupBusy === sesIdOf(t) || seatsFull(t)"
+                @click="signUp(t, 'InPerson')"
+              >
+                {{
+                  signupBusy === sesIdOf(t)
+                    ? 'Signing up…'
+                    : seatsFull(t)
+                      ? 'In person full'
+                      : 'Confirm — in person'
+                }}
+              </button>
+              <button
+                v-if="boardFor(t)?.virtualEnabled"
+                type="button"
+                class="training__register training__signup-confirm training__signup-confirm--ghost"
+                :disabled="signupBusy === sesIdOf(t)"
+                @click="signUp(t, 'Virtual')"
+              >
+                Confirm — virtual
+              </button>
+            </template>
+            <button
+              v-else
+              type="button"
+              class="training__register training__signup-go"
+              @click="arm(t)"
+            >
+              Sign up
+            </button>
+            <span
+              v-if="signupErr[sesIdOf(t) || '']"
+              class="training__signup-err"
+            >
+              {{ signupErr[sesIdOf(t) || ''] }}
+            </span>
+          </div>
           <a
-            v-if="t.source === 'wix' || t.registrationUrl"
+            v-else-if="t.source === 'wix' || t.registrationUrl"
             :href="t.registrationUrl || REGISTER_URL"
             target="_blank"
             rel="noopener noreferrer"
@@ -509,6 +663,68 @@ function fillColor(filled: number, total: number) {
 .training__register:hover {
   background: var(--color-brand-700);
 }
+/* In-app lecture sign-up (signed-in members) */
+.training__signup {
+  flex-shrink: 0;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: 200px;
+}
+.training__signup-go,
+.training__signup-confirm {
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+.training__signup-confirm {
+  background: var(--color-accent-700);
+}
+.training__signup-confirm:hover:not(:disabled) {
+  background: var(--color-accent-800, var(--color-accent-700));
+}
+.training__signup-confirm:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.training__signup-confirm--ghost {
+  background: transparent;
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+}
+.training__signup-confirm--ghost:hover:not(:disabled) {
+  background: var(--color-surface-soft);
+  color: var(--color-ink);
+}
+.training__signup-as {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: var(--color-muted);
+}
+.training__signedup {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-success-500);
+  white-space: nowrap;
+}
+.training__signup-full {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-danger-500);
+  white-space: nowrap;
+}
+.training__signup-err {
+  font-size: 11px;
+  color: var(--color-danger-500);
+  text-align: right;
+}
+
 @media (max-width: 639px) {
   .training__row {
     flex-wrap: wrap;
@@ -517,6 +733,19 @@ function fillColor(filled: number, total: number) {
     align-self: stretch;
     justify-content: center;
     margin-left: 72px; /* line up under the body, not the date pill */
+  }
+  .training__signup {
+    align-self: stretch;
+    align-items: stretch;
+    max-width: none;
+    margin-left: 72px;
+  }
+  .training__signup .training__register {
+    margin-left: 0;
+  }
+  .training__signup-as,
+  .training__signup-err {
+    text-align: center;
   }
 }
 </style>
