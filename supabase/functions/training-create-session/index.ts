@@ -375,7 +375,10 @@ Deno.serve(async (req: Request) => {
       const calendarTitle =
         payload.lectureTitle || payload.title || 'CE Lecture'
 
+      // training_sessions.id is a text PK with NO default — it must be
+      // supplied, mirroring the sync's `wix:<eventId>` convention.
       const { error: tsErr } = await admin.from('training_sessions').insert({
+        id: `lecture:${sessionId}`,
         service_id: null,
         title: calendarTitle,
         local_start: localStart,
