@@ -14,6 +14,7 @@ import {
 import { useScheduleAccess } from '@/composables/useScheduleAccess'
 import { useAuthStore } from '@/stores/auth'
 import { formatPhoneInput } from '@/utils/phone'
+import { supabase } from '@/lib/supabase'
 
 /**
  * My scheduling settings — SMS consent (checkbox + the number it applies
@@ -61,7 +62,58 @@ onMounted(async () => {
   if (!s.smsPhone && auth.appUser?.phone) s.smsPhone = auth.appUser.phone
   set.value = s
   unavail.value = await sched.listMyUnavailable()
+  if (!auth.usingDevStub) {
+    // RLS scopes the table to the caller's own row.
+    const { data } = await supabase.from('sched_ics_feeds').select('token').maybeSingle()
+    icsToken.value = (data?.token as string | undefined) ?? null
+  }
 })
+
+/* ── Calendar sync — personal iCal subscription (sched-ics feed) ─────
+   The token is the whole credential: calendar apps fetch the URL with
+   no auth headers, so creating/rotating goes through the definer RPC
+   and the link is treated like a password in the copy below. */
+const icsToken = ref<string | null>(null)
+const icsBusy = ref(false)
+const icsCopied = ref(false)
+const icsErr = ref<string | null>(null)
+const icsResetArmed = ref(false)
+
+const icsUrl = computed(() =>
+  icsToken.value
+    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/sched-ics?t=${icsToken.value}`
+    : null,
+)
+const icsWebcal = computed(() => (icsUrl.value ? icsUrl.value.replace(/^https:/, 'webcal:') : null))
+
+async function icsCreate(rotate: boolean) {
+  icsBusy.value = true
+  icsErr.value = null
+  icsCopied.value = false
+  const { data, error } = await supabase.rpc('sched_ics_feed_token', { p_rotate: rotate })
+  icsBusy.value = false
+  icsResetArmed.value = false
+  if (error) {
+    icsErr.value = error.message
+    return
+  }
+  icsToken.value = (data as string | null) ?? null
+}
+
+async function icsCopy() {
+  if (!icsUrl.value) return
+  try {
+    await navigator.clipboard.writeText(icsUrl.value)
+    icsCopied.value = true
+    setTimeout(() => (icsCopied.value = false), 2500)
+  } catch {
+    icsErr.value = 'Copy failed — tap the link and copy it manually.'
+  }
+}
+
+function icsSelectAll(ev: FocusEvent) {
+  ;(ev.target as HTMLInputElement).select()
+}
 
 function nChecked(key: string, ch: NotifyChannel): boolean {
   return set.value ? notifyOn(set.value.notify, key, ch) : true
@@ -201,6 +253,56 @@ function fmtUnavail(iso: string): string {
             @click="set.highlightColor = sw.value"
           />
         </div>
+      </section>
+
+      <section class="msf__sec">
+        <h4 class="msf__h">Calendar sync</h4>
+        <p v-if="auth.usingDevStub" class="msf__hint">
+          Calendar sync needs the live portal — unavailable in the dev preview.
+        </p>
+        <template v-else>
+          <p class="msf__hint">
+            Subscribe your phone or computer's calendar to your WCEMS shifts.
+            Trades, pickups, and time off flow in on their own — calendar apps
+            refresh every few hours (Google can take up to a day).
+          </p>
+          <template v-if="icsUrl">
+            <div class="msf__icsrow">
+              <input class="msf__icsurl" :value="icsUrl" readonly @focus="icsSelectAll" />
+              <button type="button" class="msf__icsbtn" :disabled="icsBusy" @click="icsCopy">
+                {{ icsCopied ? 'Copied' : 'Copy link' }}
+              </button>
+              <a class="msf__icsbtn msf__icsbtn--ghost" :href="icsWebcal ?? '#'">Apple Calendar</a>
+            </div>
+            <p class="msf__hint">
+              <strong>iPhone / Apple:</strong> tap “Apple Calendar”, then Subscribe.
+              <strong>Google:</strong> calendar.google.com → Settings → Add calendar →
+              From URL → paste the link. <strong>Outlook:</strong> Calendar → Add
+              calendar → Subscribe from web.
+            </p>
+            <p class="msf__hint">
+              This link is personal — anyone who has it can see your shift calendar.
+              If it leaks,
+              <button
+                type="button"
+                class="msf__icsreset"
+                :disabled="icsBusy"
+                @click="icsResetArmed ? icsCreate(true) : (icsResetArmed = true)"
+              >
+                {{ icsResetArmed ? 'confirm reset — the old link stops working' : 'reset the link' }}</button>.
+            </p>
+          </template>
+          <button
+            v-else
+            type="button"
+            class="msf__icsbtn"
+            :disabled="icsBusy"
+            @click="icsCreate(false)"
+          >
+            {{ icsBusy ? 'Creating…' : 'Create my calendar link' }}
+          </button>
+          <p v-if="icsErr" class="msf__hint msf__icserr">{{ icsErr }}</p>
+        </template>
       </section>
 
       <section class="msf__sec">
@@ -426,6 +528,68 @@ function fmtUnavail(iso: string): string {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.msf__icsrow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0.3rem 0;
+}
+
+.msf__icsurl {
+  flex: 1 1 220px;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.76rem;
+  padding: 0.34rem 0.5rem;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+}
+
+.msf__icsbtn {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.34rem 0.75rem;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.18), 0 1px 2px oklch(0.2 0.04 260 / 0.2);
+  color: white;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.msf__icsbtn--ghost {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-brand-700);
+  border: 1px solid var(--color-line);
+}
+
+.msf__icsbtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.msf__icsreset {
+  font: inherit;
+  font-size: inherit;
+  color: var(--color-danger-600, oklch(0.5 0.19 27));
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.msf__icserr {
+  color: var(--color-danger-600, oklch(0.5 0.19 27));
 }
 
 .msf__swatch {
