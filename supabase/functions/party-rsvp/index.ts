@@ -1,13 +1,20 @@
 // supabase/functions/party-rsvp/index.ts
 //
 // Christmas-party RSVP by email (2026-11-09). One personalized email per
-// member with tokenized Yes / No buttons; both land on a small branded
-// page served by this function, and the SUBMIT (form POST) — never the
-// GET, which mail scanners like Outlook SafeLinks prefetch — records the
-// answer and writes it straight into Laurel's tracker workbook on her
-// OneDrive (row matched by name; C=RSVP Status, D=Total Attending,
-// E=Guest Name(s), F=Dietary, G=Portal stamp). Her summary formulas
-// (rows 3–5) read those columns, so the top-of-sheet counts stay live.
+// member with tokenized Yes / No buttons; both land on a small festive
+// page served by this function THROUGH the portal-domain proxy
+// (functions/rsvp.js on Cloudflare Pages — the Supabase gateway
+// force-rewrites HTML on *.supabase.co to text/plain + CSP sandbox, so
+// the page must come from our own domain). The SUBMIT (form POST) —
+// never the GET, which mail scanners like Outlook SafeLinks prefetch —
+// records the answer and writes it straight into Laurel's tracker
+// workbook on her OneDrive (row matched by name; C=RSVP Status,
+// D=Total Attending, E=Guest Name(s), F=Dietary, G=Portal stamp). Her
+// summary formulas (rows 3–5) read those columns, so the counts at the
+// top of the sheet stay live.
+//
+// Look: matches the party flyer — warm cream, deep red, evergreen,
+// gold, the color patch, 30-years language, Santa ribbon.
 //
 // Actions:
 //   POST {action:'send', test?: string[], onlyPending?: bool, resend?: bool}
@@ -33,12 +40,12 @@ const SERVICE_KEY = env.get('SUPABASE_SERVICE_ROLE_KEY')!
 // ── event + workbook constants (one-off event helper) ────────────────
 const EVENT_KEY = 'christmas-2026'
 const EVENT_DATE_TEXT = 'Friday, December 4th'
+const EVENT_TIME_TEXT = '6:00–9:00 PM'
+const VENUE_LINE = 'Fife Realty · 1620 Austin St, Hempstead'
 const DEADLINE_TEXT = 'Wednesday, November 19th'
 const SENDER = 'office@wallercountyems.com'
-// Email links go through the portal-domain proxy (functions/rsvp.js on
-// Cloudflare Pages): the Supabase gateway force-rewrites HTML responses
-// on *.supabase.co to text/plain + CSP sandbox, so the page must be
-// served from our own domain.
+const PATCH_URL = 'https://employee.wallercountyems.com/wcems-patch.png'
+// Email links go through the portal-domain proxy (functions/rsvp.js).
 const PUBLIC_BASE = 'https://employee.wallercountyems.com/rsvp'
 // Laurel's tracker: christmas_party_attendance_tracker_filled.xlsx on her
 // OneDrive (resolved via Graph search 2026-11-09).
@@ -206,51 +213,78 @@ function escHtml(s: string): string {
 const PAGE_CSS = `
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
-  body { margin: 0; background: #f4f1ea; background: linear-gradient(180deg, #f6f3ec, #efe9dd);
-         font: 15px/1.5 -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1d2433; }
-  .wrap { max-width: 440px; margin: 0 auto; padding: 28px 16px 48px; }
-  .card { background: #fff; border: 1px solid #e3ddd0; border-radius: 6px;
-          box-shadow: 0 1px 2px rgba(23,32,56,.06), 0 12px 32px -18px rgba(23,32,56,.25); overflow: hidden; }
-  .head { background: #16233f; color: #fff; padding: 22px 22px 18px; }
-  .eyebrow { font-size: 10.5px; letter-spacing: .22em; color: #d9b45b; font-weight: 600; margin: 0 0 6px; }
-  h1 { font-family: Georgia, 'Times New Roman', serif; font-weight: 500; font-size: 30px; margin: 0 0 4px; }
-  .meta { font-size: 12.5px; color: #c6cddd; margin: 0; }
-  .body { padding: 20px 22px 24px; }
+  body { margin: 0; background: #efe5cf; background: linear-gradient(180deg, #f6efdd, #e9dcbe);
+         font: 15px/1.5 -apple-system, 'Segoe UI', Roboto, sans-serif; color: #33291f; }
+  .wrap { max-width: 460px; margin: 0 auto; padding: 24px 16px 44px; }
+  .card { background: #fdfaf2; border: 1px solid #d9c18a; border-radius: 8px;
+          box-shadow: 0 1px 2px rgba(61,26,22,.08), 0 16px 38px -18px rgba(61,26,22,.35); overflow: hidden; }
+  .ribbon { height: 8px; background: #8f1d2c; border-bottom: 2px solid #c89b3c; }
+  .head { background: radial-gradient(130% 100% at 50% 0%, #fffaec, #f6ecd4); text-align: center;
+          padding: 22px 20px 14px; border-bottom: 1px solid #e6d5aa; }
+  .head img { width: 86px; height: 86px; }
+  .eyebrow { font-size: 10.5px; letter-spacing: .26em; color: #8a6d2f; font-weight: 700; margin: 10px 0 1px; }
+  .years { font-size: 10.5px; letter-spacing: .2em; color: #8f1d2c; font-weight: 700; margin: 0; }
+  h1 { font-family: 'Great Vibes', 'Brush Script MT', Georgia, cursive; font-weight: 400;
+       font-size: 46px; line-height: 1.02; margin: 4px 0 8px; color: #8f1d2c; }
+  .meta { font-size: 13px; color: #5c4f3d; margin: 0 0 3px; }
+  .meta b { color: #33291f; }
+  .santa { background: #8f1d2c; color: #f3dfa0; text-align: center; font-size: 12.5px; font-weight: 700;
+           letter-spacing: .04em; padding: 8px 14px; }
+  .santa span { color: #fdf3dd; font-weight: 400; }
+  .body { padding: 18px 22px 22px; }
   .hi { margin: 0 0 14px; }
-  .saved { background: #f2f7f1; border: 1px solid #cfe0cc; color: #2c5a33; border-radius: 5px;
+  .saved { background: #f0f5ec; border: 1px solid #c8dcc0; color: #295233; border-radius: 6px;
            padding: 8px 12px; font-size: 13px; margin: 0 0 14px; }
   .choices { display: flex; gap: 8px; margin: 0 0 16px; }
-  .choice { flex: 1; text-align: center; padding: 12px 8px; border: 1.5px solid #d8d2c4; border-radius: 6px;
-            font-weight: 600; font-size: 15px; cursor: pointer; background: #fff; color: #444d61; }
+  .choice { flex: 1; text-align: center; padding: 12px 8px; border: 1.5px solid #d6c9a8; border-radius: 7px;
+            font-weight: 600; font-size: 15px; cursor: pointer; background: #fffdf7; color: #5c4f3d; position: relative; }
   .choice input { position: absolute; opacity: 0; }
-  .choice.on-yes { border-color: #1f5c33; background: #1f5c33; color: #fff; }
-  .choice.on-no { border-color: #8c2f2f; background: #8c2f2f; color: #fff; }
+  .choice.on-yes { border-color: #1f4a2e; background: #1f4a2e; color: #fdf3dd; }
+  .choice.on-no { border-color: #8f1d2c; background: #8f1d2c; color: #fdf3dd; }
   .fld { margin: 0 0 14px; }
-  .lbl { display: block; font-size: 10.5px; letter-spacing: .14em; font-weight: 700; color: #7a7363; margin: 0 0 5px; text-transform: uppercase; }
-  input[type=text] { width: 100%; font: inherit; padding: 9px 11px; border: 1px solid #d8d2c4; border-radius: 5px; background: #fdfcf9; }
+  .lbl { display: block; font-size: 10.5px; letter-spacing: .14em; font-weight: 700; color: #8a6d2f; margin: 0 0 5px; text-transform: uppercase; }
+  input[type=text] { width: 100%; font: inherit; padding: 9px 11px; border: 1px solid #d6c9a8; border-radius: 6px; background: #fffdf7; color: #33291f; }
   .step { display: flex; align-items: center; gap: 10px; }
-  .step button { width: 44px; height: 44px; font-size: 22px; border: 1px solid #d8d2c4; background: #fff;
-                 border-radius: 5px; cursor: pointer; color: #16233f; }
-  .step .n { font-size: 26px; font-weight: 700; min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
-  .step .hint { font-size: 12px; color: #7a7363; }
-  .go { width: 100%; font: inherit; font-size: 16px; font-weight: 700; color: #16233f; background: #d9b45b;
-        background: linear-gradient(180deg, #e3c272, #d0a848); border: 0; border-radius: 6px; padding: 13px; cursor: pointer; }
+  .step button { width: 44px; height: 44px; font-size: 22px; border: 1px solid #d6c9a8; background: #fffdf7;
+                 border-radius: 6px; cursor: pointer; color: #1f4a2e; }
+  .step .n { font-size: 26px; font-weight: 700; min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; color: #33291f; }
+  .step .hint { font-size: 12px; color: #8a7a5e; }
+  .go { width: 100%; font: inherit; font-size: 16px; font-weight: 700; color: #3d2a10; background: #d9b45b;
+        background: linear-gradient(180deg, #e8c879, #cfa441); border: 0; border-radius: 7px; padding: 13px;
+        cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,.4); }
   .go:disabled { opacity: .6; }
-  .foot { font-size: 11.5px; color: #8a8372; text-align: center; margin: 14px 4px 0; }
+  .tags { text-align: center; font-size: 10.5px; letter-spacing: .18em; color: #8a6d2f; font-weight: 700;
+          border-top: 1px solid #e6d5aa; padding: 12px 10px; background: #faf4e4; }
+  .foot { font-size: 11.5px; color: #8a7a5e; text-align: center; margin: 14px 4px 0; }
   .done { text-align: center; padding: 8px 0 4px; }
-  .done .big { font-family: Georgia, serif; font-size: 24px; margin: 6px 0 8px; color: #16233f; }
-  .done p { color: #444d61; margin: 0 0 6px; }
-  .again { display: inline-block; margin-top: 12px; font-size: 13.5px; color: #16233f; }
+  .done .big { font-family: 'Great Vibes', 'Brush Script MT', Georgia, cursive; font-size: 34px;
+               margin: 4px 0 8px; color: #1f4a2e; }
+  .done p { color: #5c4f3d; margin: 0 0 6px; }
+  .done .when { color: #33291f; font-weight: 600; }
+  .again { display: inline-block; margin-top: 12px; font-size: 13.5px; color: #8f1d2c; }
 `
 
 function pageShell(inner: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>WCEMS Christmas Party RSVP</title>
+<meta name="robots" content="noindex"><title>WCEMS Christmas Celebration RSVP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap" rel="stylesheet">
 <style>${PAGE_CSS}</style></head><body><div class="wrap"><div class="card">
-<div class="head"><p class="eyebrow">WALLER COUNTY EMS</p><h1>Christmas Party</h1>
-<p class="meta">${EVENT_DATE_TEXT} · RSVP by ${DEADLINE_TEXT}</p></div>
-<div class="body">${inner}</div></div>
+<div class="ribbon"></div>
+<div class="head">
+  <img src="${PATCH_URL}" alt="Waller County EMS" width="86" height="86">
+  <p class="eyebrow">WALLER COUNTY EMS</p>
+  <p class="years">30 YEARS OF SERVICE · 1996–2026</p>
+  <h1>Christmas Celebration</h1>
+  <p class="meta"><b>${EVENT_DATE_TEXT}</b> · ${EVENT_TIME_TEXT}</p>
+  <p class="meta">${VENUE_LINE}</p>
+  <p class="meta">Dressy attire · RSVP by ${DEADLINE_TEXT}</p>
+</div>
+<div class="santa">SANTA WILL BE JOINING US <span>— bring the kids for pictures and gifts</span></div>
+<div class="body">${inner}</div>
+<div class="tags">FOOD · FAMILY · CHRISTMAS CHEER · 30 WONDERFUL YEARS</div></div>
 <p class="foot">Your answer updates the party list automatically. Change it any time —
 just open this page again from your email.</p></div></body></html>`
 }
@@ -274,12 +308,13 @@ function formPage(row: RsvpRow, fullName: string, preset: 'yes' | 'no' | null, j
   if (justSaved) {
     const inner =
       row.attending
-        ? `<div class="done"><div class="big">You're on the list.</div>
+        ? `<div class="done"><div class="big">You're on the list!</div>
            <p><strong>${row.headcount}</strong> attending${row.headcount > 1 ? ' (including you)' : ''}.</p>
            ${row.guest_names ? `<p>Guests: ${escHtml(row.guest_names)}</p>` : ''}
-           <p>See you ${EVENT_DATE_TEXT}.</p>
+           <p class="when">${EVENT_DATE_TEXT} · ${EVENT_TIME_TEXT}<br>${VENUE_LINE}</p>
+           <p>We can't wait to celebrate with our WCEMS family.</p>
            <a class="again" href="?t=${row.token}">Change my answer</a></div>`
-        : `<div class="done"><div class="big">We'll miss you.</div>
+        : `<div class="done"><div class="big">We'll miss you</div>
            <p>You're marked as not attending.</p>
            <a class="again" href="?t=${row.token}&a=yes">Changed your mind? RSVP yes</a></div>`
     return pageShell(inner)
@@ -334,37 +369,48 @@ function formPage(row: RsvpRow, fullName: string, preset: 'yes' | 'no' | null, j
 function emailHtml(first: string, baseUrl: string, token: string): string {
   const yes = `${baseUrl}?t=${token}&a=yes`
   const no = `${baseUrl}?t=${token}&a=no`
-  return `<!doctype html><html><body style="margin:0;padding:0;background:#f1ede3;">
-<div style="display:none;max-height:0;overflow:hidden;">RSVP for the WCEMS Christmas Party — one tap updates the list.</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1ede3;padding:24px 10px;">
+  return `<!doctype html><html><body style="margin:0;padding:0;background:#ece1c6;">
+<div style="display:none;max-height:0;overflow:hidden;">RSVP for the WCEMS Christmas Celebration — one tap updates the list.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ece1c6;padding:24px 10px;">
 <tr><td align="center">
-<table role="presentation" width="440" cellpadding="0" cellspacing="0" style="max-width:440px;width:100%;background:#ffffff;border:1px solid #e0d9ca;border-radius:6px;overflow:hidden;">
-  <tr><td style="background:#16233f;padding:26px 28px 20px;">
-    <div style="font:600 10.5px/1 Arial,sans-serif;letter-spacing:3px;color:#d9b45b;">WALLER COUNTY EMS</div>
-    <div style="font:500 34px/1.15 Georgia,'Times New Roman',serif;color:#ffffff;margin-top:8px;">Christmas Party</div>
-    <div style="font:13px/1.5 Arial,sans-serif;color:#c6cddd;margin-top:6px;">${EVENT_DATE_TEXT}</div>
+<table role="presentation" width="460" cellpadding="0" cellspacing="0" style="max-width:460px;width:100%;background:#fdfaf2;border:1px solid #d9c18a;border-radius:8px;overflow:hidden;">
+  <tr><td style="height:8px;background:#8f1d2c;border-bottom:2px solid #c89b3c;font-size:0;line-height:0;">&nbsp;</td></tr>
+  <tr><td align="center" style="background:#f9f1dd;padding:24px 24px 14px;border-bottom:1px solid #e6d5aa;">
+    <img src="${PATCH_URL}" alt="Waller County EMS" width="84" height="84" style="display:block;margin:0 auto;">
+    <div style="font:700 10.5px/1.4 Arial,sans-serif;letter-spacing:4px;color:#8a6d2f;margin-top:10px;">WALLER COUNTY EMS</div>
+    <div style="font:700 10.5px/1.4 Arial,sans-serif;letter-spacing:3px;color:#8f1d2c;">30 YEARS OF SERVICE &middot; 1996&ndash;2026</div>
+    <div style="font:italic 500 36px/1.1 Georgia,'Times New Roman',serif;color:#8f1d2c;margin:8px 0 10px;">Christmas Celebration</div>
+    <div style="font:14px/1.5 Arial,sans-serif;color:#33291f;"><strong>${EVENT_DATE_TEXT}</strong> &middot; ${EVENT_TIME_TEXT}</div>
+    <div style="font:13px/1.5 Arial,sans-serif;color:#5c4f3d;">${VENUE_LINE}</div>
+    <div style="font:13px/1.5 Arial,sans-serif;color:#5c4f3d;">Dressy attire — let's celebrate this milestone together</div>
   </td></tr>
-  <tr><td style="padding:24px 28px 8px;font:15px/1.6 Arial,sans-serif;color:#2a3040;">
+  <tr><td align="center" style="background:#8f1d2c;padding:9px 16px;">
+    <span style="font:700 12.5px/1.4 Arial,sans-serif;letter-spacing:1px;color:#f3dfa0;">SANTA WILL BE JOINING US</span>
+    <span style="font:12.5px/1.4 Arial,sans-serif;color:#fdf3dd;"> — bring the kids for pictures and gifts!</span>
+  </td></tr>
+  <tr><td style="padding:22px 28px 6px;font:15px/1.6 Arial,sans-serif;color:#33291f;">
     Hi ${escHtml(first)},<br><br>
-    Are you joining us for the Christmas party? Tap an answer below — it updates the
-    RSVP list automatically, and if you're bringing family you can tell us how many
-    on the next screen.
+    Are you joining us? Tap an answer below — it updates the RSVP list automatically,
+    and if you're bringing family you can tell us how many on the next screen.
   </td></tr>
-  <tr><td style="padding:18px 28px 6px;" align="center">
-    <a href="${yes}" style="display:block;background:#1f5c33;border-radius:6px;color:#ffffff;
+  <tr><td style="padding:16px 28px 6px;" align="center">
+    <a href="${yes}" style="display:block;background:#1f4a2e;border-radius:7px;color:#fdf3dd;
        font:700 16px/1 Arial,sans-serif;text-decoration:none;padding:16px 10px;">YES — I'll be there</a>
   </td></tr>
-  <tr><td style="padding:10px 28px 22px;" align="center">
-    <a href="${no}" style="display:block;background:#ffffff;border:1.5px solid #c9c2b2;border-radius:6px;
-       color:#5a6170;font:700 15px/1 Arial,sans-serif;text-decoration:none;padding:14px 10px;">Can't make it</a>
+  <tr><td style="padding:10px 28px 20px;" align="center">
+    <a href="${no}" style="display:block;background:#fffdf7;border:1.5px solid #cbb98e;border-radius:7px;
+       color:#8f1d2c;font:700 15px/1 Arial,sans-serif;text-decoration:none;padding:14px 10px;">Can't make it</a>
   </td></tr>
-  <tr><td style="padding:0 28px 26px;font:12.5px/1.6 Arial,sans-serif;color:#8a8372;">
-    Please answer by <strong style="color:#5a6170;">${DEADLINE_TEXT}</strong> — you can change
+  <tr><td style="padding:0 28px 18px;font:12.5px/1.6 Arial,sans-serif;color:#8a7a5e;">
+    Please answer by <strong style="color:#5c4f3d;">${DEADLINE_TEXT}</strong> — you can change
     your RSVP any time before then by tapping either button again.
   </td></tr>
+  <tr><td align="center" style="border-top:1px solid #e6d5aa;background:#faf4e4;padding:12px 10px;">
+    <span style="font:700 10.5px/1.4 Arial,sans-serif;letter-spacing:2.5px;color:#8a6d2f;">FOOD &middot; FAMILY &middot; CHRISTMAS CHEER &middot; 30 WONDERFUL YEARS</span>
+  </td></tr>
 </table>
-<div style="font:11px/1.6 Arial,sans-serif;color:#9a9382;padding:14px 8px;">
-  Waller County EMS · sent from the Employee Portal</div>
+<div style="font:italic 13px/1.6 Georgia,serif;color:#6e5f49;padding:14px 8px 2px;">We can't wait to celebrate with our WCEMS family!</div>
+<div style="font:11px/1.6 Arial,sans-serif;color:#9a8d74;padding:4px 8px 14px;">Waller County EMS &middot; sent from the Employee Portal</div>
 </td></tr></table></body></html>`
 }
 
@@ -455,7 +501,7 @@ Deno.serve(async (req: Request) => {
           }
           try {
             const first = (u.full_name ?? '').split(' ')[0] || 'there'
-            await sendMail(email, `Christmas Party — RSVP by Nov 19`, emailHtml(first, baseUrl, row.token))
+            await sendMail(email, `Christmas Celebration — RSVP by Nov 19`, emailHtml(first, baseUrl, row.token))
             await sb.from('party_rsvps').update({ email_sent_at: new Date().toISOString() }).eq('token', row.token)
             sent++
           } catch (e) {
