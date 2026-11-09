@@ -69,7 +69,8 @@ function fmt(iso: string | null): string {
 const pdfBusy = ref<string | null>(null)
 async function makePdf(r: FtepReport) {
   return generateFtepReportPdf({
-    report: r,
+    // list rows carry no signatures (outage 11/09) — hydrate for the PDF
+    report: (await ftep.fetchReportFull(r.id)) ?? r,
     traineeName: nameOf(r.traineeId),
     evaluatorName: nameOf(r.evaluatorId),
     icrRequirement: icrRequirementPhrase(personById(r.traineeId)?.record),

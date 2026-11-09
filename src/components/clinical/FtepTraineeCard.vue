@@ -322,7 +322,8 @@ async function viewDor(reportId: string | null) {
   pdfBusy.value = true
   try {
     const doc = await generateFtepReportPdf({
-      report: r,
+      // list rows carry no signatures (outage 11/09) — hydrate for the PDF
+      report: (await ftep.fetchReportFull(r.id)) ?? r,
       traineeName: personById(r.traineeId)?.fullName ?? 'Trainee',
       evaluatorName: personById(r.evaluatorId)?.fullName ?? 'Evaluator',
       icrRequirement: icrRequirementPhrase(personById(r.traineeId)?.record),

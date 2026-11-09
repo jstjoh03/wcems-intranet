@@ -353,7 +353,8 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
   pdfBusy.value = r.id
   try {
     const doc = await generateFtepReportPdf({
-      report: r,
+      // list rows carry no signatures (outage 11/09) — hydrate for the PDF
+      report: (await ftep.fetchReportFull(r.id)) ?? r,
       traineeName: nameOf(r.traineeId),
       evaluatorName: nameOf(r.evaluatorId),
       icrRequirement: icrRequirementPhrase(personById(r.traineeId)?.record),

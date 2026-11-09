@@ -351,7 +351,8 @@ async function viewMyReport(reportId: string) {
   myPdfBusy.value = reportId
   try {
     const doc = await generateFtepReportPdf({
-      report: r,
+      // list rows carry no signatures (outage 11/09) — hydrate for the PDF
+      report: (await ftep.fetchReportFull(r.id)) ?? r,
       traineeName: myRecord.value.fullName,
       evaluatorName: evalNames.value[r.evaluatorId] ?? 'Evaluator',
       icrRequirement: icrRequirementPhrase(myRecord.value.record),

@@ -30,8 +30,16 @@ interface ReportRow {
   phase_key: string | null
 }
 
-const COLUMNS =
+const COLUMNS_FULL =
   'id, kind, trainee_id, evaluator_id, status, eval_date, payload, trainee_signature, evaluator_signature, submitted_at, reviewed_by, reviewed_at, updated_at, phase_key'
+
+/* List + realtime loads NEVER pull the signature columns: they're
+   base64 PNGs (the heaviest bytes on the row), and on 2026-11-09 a
+   full-table refetch storm of payload+signatures from a handful of
+   open FTEP pages saturated the Micro instance and took the whole
+   portal down. PDFs hydrate one report via fetchReportFull instead. */
+const COLUMNS_LIST =
+  'id, kind, trainee_id, evaluator_id, status, eval_date, payload, submitted_at, reviewed_by, reviewed_at, updated_at, phase_key'
 
 function fromRow(r: ReportRow): FtepReport {
   return {
@@ -42,8 +50,8 @@ function fromRow(r: ReportRow): FtepReport {
     status: r.status,
     evalDate: r.eval_date,
     payload: r.payload ?? {},
-    traineeSignature: r.trainee_signature,
-    evaluatorSignature: r.evaluator_signature,
+    traineeSignature: r.trainee_signature ?? null,
+    evaluatorSignature: r.evaluator_signature ?? null,
     submittedAt: r.submitted_at,
     reviewedBy: r.reviewed_by,
     reviewedAt: r.reviewed_at,
@@ -67,7 +75,7 @@ async function load() {
   }
   const { data, error } = await supabase
     .from('ftep_reports')
-    .select(COLUMNS)
+    .select(COLUMNS_LIST)
     .order('eval_date', { ascending: false })
   if (error) console.error('[ftep] load:', error.message)
   reports.value = (data ?? []).map((r) => fromRow(r as ReportRow))
@@ -75,21 +83,41 @@ async function load() {
 
   if (!realtimeSubscribed) {
     realtimeSubscribed = true
+    /* Change events collapse into ONE refetch (autosave fires several
+       per minute while a DOR is being written — refetching per event
+       multiplied by every open FTEP page is the 11/09 outage recipe). */
+    let refetchTimer: ReturnType<typeof setTimeout> | undefined
     supabase
       .channel('ftep-reports')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'ftep_reports' },
-        async () => {
-          const { data: rows } = await supabase
-            .from('ftep_reports')
-            .select(COLUMNS)
-            .order('eval_date', { ascending: false })
-          if (rows) reports.value = rows.map((r) => fromRow(r as ReportRow))
+        () => {
+          clearTimeout(refetchTimer)
+          refetchTimer = setTimeout(async () => {
+            const { data: rows } = await supabase
+              .from('ftep_reports')
+              .select(COLUMNS_LIST)
+              .order('eval_date', { ascending: false })
+            if (rows) reports.value = rows.map((r) => fromRow(r as ReportRow))
+          }, 2000)
         },
       )
       .subscribe()
   }
+}
+
+/** The one place signatures are read — list rows never carry them. */
+async function fetchReportFull(id: string): Promise<FtepReport | null> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return reports.value.find((r) => r.id === id) ?? null
+  const { data, error } = await supabase
+    .from('ftep_reports')
+    .select(COLUMNS_FULL)
+    .eq('id', id)
+    .maybeSingle()
+  if (error || !data) return null
+  return fromRow(data as ReportRow)
 }
 
 export function useFtep() {
@@ -187,7 +215,7 @@ export function useFtep() {
         .from('ftep_reports')
         .update({ payload: input.payload, eval_date: input.evalDate })
         .eq('id', input.id)
-        .select(COLUMNS)
+        .select(COLUMNS_FULL)
         .single()
       if (error) return { ok: false, error: error.message }
       const row = fromRow(data as ReportRow)
@@ -204,7 +232,7 @@ export function useFtep() {
         eval_date: input.evalDate,
         payload: input.payload,
       })
-      .select(COLUMNS)
+      .select(COLUMNS_FULL)
       .single()
     if (error) {
       /* One draft per evaluator+trainee+kind (unique partial index,
@@ -213,7 +241,7 @@ export function useFtep() {
       if (error.code === '23505') {
         const existing = await supabase
           .from('ftep_reports')
-          .select(COLUMNS)
+          .select(COLUMNS_FULL)
           .eq('evaluator_id', uid)
           .eq('trainee_id', input.traineeId)
           .eq('kind', input.kind)
@@ -271,7 +299,7 @@ export function useFtep() {
         ...(phaseKey ? { phase_key: phaseKey } : {}),
       })
       .eq('id', input.id)
-      .select(COLUMNS)
+      .select(COLUMNS_FULL)
       .single()
     if (error) return { ok: false, error: error.message }
     const row = fromRow(data as ReportRow)
@@ -317,7 +345,7 @@ export function useFtep() {
       .from('ftep_reports')
       .update({ payload })
       .eq('id', reportId)
-      .select(COLUMNS)
+      .select(COLUMNS_FULL)
       .single()
     if (error) return { ok: false, error: error.message }
     const row = fromRow(data as ReportRow)
@@ -345,7 +373,7 @@ export function useFtep() {
       .from('ftep_reports')
       .update({ payload })
       .eq('id', reportId)
-      .select(COLUMNS)
+      .select(COLUMNS_FULL)
       .single()
     if (error) return { ok: false, error: error.message }
     const row = fromRow(data as ReportRow)
@@ -390,7 +418,7 @@ export function useFtep() {
         },
         submitted_at: new Date().toISOString(),
       })
-      .select(COLUMNS)
+      .select(COLUMNS_FULL)
       .single()
     if (error) return { ok: false, error: error.message }
     reports.value = [fromRow(data as ReportRow), ...reports.value]
@@ -405,7 +433,7 @@ export function useFtep() {
       .from('ftep_reports')
       .update({ reviewed_by: uid, reviewed_at: new Date().toISOString() })
       .eq('id', id)
-      .select(COLUMNS)
+      .select(COLUMNS_FULL)
       .single()
     if (error) return { ok: false, error: error.message }
     const row = fromRow(data as ReportRow)
@@ -442,5 +470,6 @@ export function useFtep() {
     markReviewed,
     unreviewed,
     reportById,
+    fetchReportFull,
   }
 }

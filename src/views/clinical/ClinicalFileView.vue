@@ -412,7 +412,8 @@ async function ftepPdf(reportId: string, mode: 'view' | 'download' = 'download')
   try {
     const evaluator = personById(r.evaluatorId)?.fullName ?? 'Evaluator'
     const doc = await generateFtepReportPdf({
-      report: r,
+      // list rows carry no signatures (outage 11/09) — hydrate for the PDF
+      report: (await ftep.fetchReportFull(r.id)) ?? r,
       traineeName: p.fullName,
       evaluatorName: evaluator,
       icrRequirement: icrRequirementPhrase(p.record),
