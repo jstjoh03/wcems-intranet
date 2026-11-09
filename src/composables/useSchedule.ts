@@ -703,9 +703,11 @@ async function loadCore(): Promise<void> {
     loaded.value = true
     return
   }
-  // Post any missing pay-period accruals / anniversary write-offs
-  // (idempotent, SECURITY DEFINER) — balances stay current on any load.
-  void supabase.rpc('sched_leave_catchup')
+  // Leave accruals post from the daily pg_cron job
+  // (sched-leave-catchup-daily) as postgres. Do NOT call the RPC from
+  // here: as authenticated it hits the 8s statement_timeout once the
+  // schedule tables grow, cancels, and rolls back silently — accruals
+  // were stuck from 2026-09-26 to 2026-11-09 exactly this way.
   const [uRes, sRes, rRes, pRes, lvlRes, cRes, setRes, pipeRes, hlRes] = await Promise.all([
     supabase.from('sched_units').select('*').order('sort_order'),
     supabase.from('sched_seats').select('*').order('sort_order'),
