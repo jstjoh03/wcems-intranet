@@ -35,6 +35,11 @@ const EVENT_KEY = 'christmas-2026'
 const EVENT_DATE_TEXT = 'Friday, December 4th'
 const DEADLINE_TEXT = 'Wednesday, November 19th'
 const SENDER = 'office@wallercountyems.com'
+// Email links go through the portal-domain proxy (functions/rsvp.js on
+// Cloudflare Pages): the Supabase gateway force-rewrites HTML responses
+// on *.supabase.co to text/plain + CSP sandbox, so the page must be
+// served from our own domain.
+const PUBLIC_BASE = 'https://employee.wallercountyems.com/rsvp'
 // Laurel's tracker: christmas_party_attendance_tracker_filled.xlsx on her
 // OneDrive (resolved via Graph search 2026-11-09).
 const DRIVE_ID = 'b!4zU3Cq_yy0q1LsIu4MNfgMNyxkRySxNHiBNcYAYR9zJfKUsHwJO1Rpbvie6IgTEJ'
@@ -385,7 +390,7 @@ function htmlResp(html: string, status = 200): Response {
 Deno.serve(async (req: Request) => {
   const sb = createClient(SB_URL, SERVICE_KEY)
   const url = new URL(req.url)
-  const baseUrl = `${SB_URL}/functions/v1/party-rsvp`
+  const baseUrl = PUBLIC_BASE
 
   try {
     // ── system actions (JSON + x-sync-secret) ────────────────────────
