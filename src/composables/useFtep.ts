@@ -21,8 +21,10 @@ interface ReportRow {
   status: 'draft' | 'submitted'
   eval_date: string
   payload: FtepPayload
-  trainee_signature: string | null
-  evaluator_signature: string | null
+  trainee_signature?: string | null
+  evaluator_signature?: string | null
+  trainee_signed?: boolean
+  evaluator_signed?: boolean
   submitted_at: string | null
   reviewed_by: string | null
   reviewed_at: string | null
@@ -31,7 +33,7 @@ interface ReportRow {
 }
 
 const COLUMNS_FULL =
-  'id, kind, trainee_id, evaluator_id, status, eval_date, payload, trainee_signature, evaluator_signature, submitted_at, reviewed_by, reviewed_at, updated_at, phase_key'
+  'id, kind, trainee_id, evaluator_id, status, eval_date, payload, trainee_signature, evaluator_signature, trainee_signed, evaluator_signed, submitted_at, reviewed_by, reviewed_at, updated_at, phase_key'
 
 /* List + realtime loads NEVER pull the signature columns: they're
    base64 PNGs (the heaviest bytes on the row), and on 2026-11-09 a
@@ -39,7 +41,7 @@ const COLUMNS_FULL =
    open FTEP pages saturated the Micro instance and took the whole
    portal down. PDFs hydrate one report via fetchReportFull instead. */
 const COLUMNS_LIST =
-  'id, kind, trainee_id, evaluator_id, status, eval_date, payload, submitted_at, reviewed_by, reviewed_at, updated_at, phase_key'
+  'id, kind, trainee_id, evaluator_id, status, eval_date, payload, trainee_signed, evaluator_signed, submitted_at, reviewed_by, reviewed_at, updated_at, phase_key'
 
 function fromRow(r: ReportRow): FtepReport {
   return {
@@ -52,6 +54,9 @@ function fromRow(r: ReportRow): FtepReport {
     payload: r.payload ?? {},
     traineeSignature: r.trainee_signature ?? null,
     evaluatorSignature: r.evaluator_signature ?? null,
+    // list rows carry the booleans; full rows derive them from the blobs
+    traineeSigned: r.trainee_signed ?? r.trainee_signature != null,
+    evaluatorSigned: r.evaluator_signed ?? r.evaluator_signature != null,
     submittedAt: r.submitted_at,
     reviewedBy: r.reviewed_by,
     reviewedAt: r.reviewed_at,

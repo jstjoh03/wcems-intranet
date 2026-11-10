@@ -23,6 +23,8 @@ import { generateCompletedExamPdf } from '@/lib/examPrintPdf'
 import { supabase } from '@/lib/supabase'
 import { useSkillsDay } from '@/composables/useSkillsDay'
 import { useClinicalConversations } from '@/composables/useClinicalConversations'
+import { usePips } from '@/composables/usePips'
+import ClinicalPipPanel from '@/components/clinical/ClinicalPipPanel.vue'
 import { usePipeline } from '@/composables/usePipeline'
 import { requirementStatus, activeTransitionFor, ftepLadderKeyFor, icrRequirementPhrase, jurisprudenceStatus, ENROLLMENT_TRACKS } from '@/constants/pipelineGates'
 import { generateSkillsDayPacketPdf } from '@/lib/skillsDayPacketPdf'
@@ -374,6 +376,15 @@ watch(person, () => void buildTl(), { immediate: true })
 
 /* ── Clinical conversations — documentation log for this employee ──── */
 const convs = useClinicalConversations()
+
+/* PIPs: the section renders for PIP admins (always — they create) and
+   for anyone RLS already let see a plan for this person (the employee
+   on their own file, the named supervisor). Everyone else gets nothing,
+   not even the heading. */
+const pipsStore = usePips()
+const showPipSection = computed(
+  () => pipsStore.isAdmin.value || (person.value ? pipsStore.listFor(person.value.userId).length > 0 : false),
+)
 const myConversations = computed(() => (person.value ? convs.listFor(person.value.userId) : []))
 watch(
   person,
@@ -832,6 +843,11 @@ function fmtDateTime(iso: string): string {
               <span v-if="ftepTrackFor(person)" class="cf__trackchip">{{ ftepTrackFor(person)!.label }}</span>
             </div>
 
+            <div v-if="person.record.trainingHold" class="cf__holdbanner">
+              FTEP is on hold — development plan in progress. Training days and evaluations
+              pause until the hold is released.
+            </div>
+
             <FtepTraineeCard
               v-if="hasPhaseLadder(person) && activeTransitionFor(person.record)"
               :person="person"
@@ -917,7 +933,7 @@ function fmtDateTime(iso: string): string {
                       <template v-if="r.payload.average !== undefined">avg {{ r.payload.average?.toFixed(2) }} · </template>
                       <b v-if="r.payload.nrtFlagged" class="cf__st--bad">NRT · </b>by {{ personById(r.evaluatorId)?.fullName ?? '—' }}
                       <template v-if="r.kind === 'icr' && r.payload.countsToward10 === false"> · <b class="cf__st--bad">excluded</b></template>
-                      <b v-if="!r.traineeSignature" class="cf__st--soon"> · awaiting trainee signature</b>
+                      <b v-if="!r.traineeSigned" class="cf__st--soon"> · awaiting trainee signature</b>
                     </span>
                     <button type="button" class="cf__mini" :disabled="ftepPdfBusy === r.id" @click="ftepPdf(r.id, 'download')">
                       <Download :size="12" :stroke-width="2" /> PDF
@@ -1009,6 +1025,15 @@ function fmtDateTime(iso: string): string {
               </div>
             </div>
           </template>
+
+          <!-- Performance improvement plan (restricted — renders only for
+               PIP admins, the employee, and the plan's supervisor) -->
+          <ClinicalPipPanel
+            v-if="showPipSection"
+            :person-id="person.userId"
+            :person-name="person.fullName"
+            mode="manage"
+          />
 
           <!-- Skills (adaptive) -->
           <template v-if="myEvals.length">
@@ -1361,6 +1386,13 @@ function fmtDateTime(iso: string): string {
   scroll-margin-top: 80px;
 }
 .cf__sectitle::after { content: ''; flex: 1; height: 1px; background: var(--color-line); }
+
+.cf__holdbanner {
+  font-size: 12.5px; font-weight: 600; color: oklch(0.42 0.11 70);
+  background: oklch(0.97 0.03 85); border: 1px solid oklch(0.85 0.07 80);
+  border-left: 3px solid oklch(0.65 0.15 70); border-radius: 6px;
+  padding: 7px 11px; margin-bottom: 10px;
+}
 .cf__trackchip {
   font-size: 9.5px;
   font-weight: 800;

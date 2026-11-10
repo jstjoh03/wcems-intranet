@@ -61,6 +61,10 @@
 //         re-opens the assign notice on long-lived modules — treated
 //         as a deliberate re-nudge, not a bug. Membership rule must
 //         KEEP IN STEP with useRequiredTraining.loadEventRosters.
+//     PIP reminders ride the same tick: T-7/T-1 ahead of each pending
+//     pip_targets.due_on and of pips.ends_on — employee only, claims
+//     ckind 'pip', push+email, type key 'pip' (not in the matrix, so
+//     it cannot be switched off), copy carries no plan details.
 //     Verification prompts are push + email ONLY — never SMS (cost
 //     control; matrix key 'verify').
 //
@@ -1736,6 +1740,35 @@ Deno.serve(async (req: Request) => {
       const twoBack = addDaysIso(today, -2)
       const summaryDue: string | null = anchorDays(twoBack) === 13 && centralHour >= 7 ? twoBack : null
 
+      // ── PIP reminders — the affected employee only, at T-7 and T-1
+      //    ahead of each pending target date and of the plan's end date.
+      //    Copy stays generic (no plan details outside the portal).
+      const pipDue: { userId: string; ref: string; when: string; what: 'target' | 'end' }[] = []
+      {
+        const pR = await sb.from('pips').select('id, user_id, ends_on').eq('status', 'active')
+        const pipsA = pR.data ?? []
+        if (pipsA.length > 0) {
+          const tR = await sb
+            .from('pip_targets')
+            .select('id, pip_id, due_on, status')
+            .in('pip_id', pipsA.map((p) => p.id))
+            .eq('status', 'pending')
+          const byPip = new Map(pipsA.map((p) => [p.id, p]))
+          for (const t of tR.data ?? []) {
+            const p = byPip.get(t.pip_id)
+            if (!p) continue
+            const d = daysBetweenIso(today, t.due_on)
+            if (d >= 0 && d <= 1) pipDue.push({ userId: p.user_id, ref: `t1|${t.id}`, when: t.due_on, what: 'target' })
+            else if (d >= 2 && d <= 7) pipDue.push({ userId: p.user_id, ref: `t7|${t.id}`, when: t.due_on, what: 'target' })
+          }
+          for (const p of pipsA) {
+            const d = daysBetweenIso(today, p.ends_on)
+            if (d >= 0 && d <= 1) pipDue.push({ userId: p.user_id, ref: `e1|${p.id}`, when: p.ends_on, what: 'end' })
+            else if (d >= 2 && d <= 7) pipDue.push({ userId: p.user_id, ref: `e7|${p.id}`, when: p.ends_on, what: 'end' })
+          }
+        }
+      }
+
       if (dryRun) {
         return Response.json(
           {
@@ -1750,6 +1783,7 @@ Deno.serve(async (req: Request) => {
               ? { periodEnd: signoffPeriodEnd, stage: signoffSends[0]?.stage ?? null, unsigned: signoffSends.map((s) => s.name) }
               : null,
             summaryDue,
+            pip: pipDue.length,
           },
           { headers: CORS },
         )
@@ -2027,6 +2061,40 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // PIP reminders — exactly-once per (user, window|id); push + email
+      // only, never SMS, and the copy names no details: the portal page
+      // carries the plan. 'pip' is deliberately NOT in the settings
+      // matrix, so it can't be switched off.
+      for (const d of pipDue) {
+        if (!(await claim('pip', d.userId, d.ref))) continue
+        const line =
+          d.what === 'end'
+            ? `Your development plan window closes ${fmtDate(d.when)}.`
+            : `A target date on your development plan is coming up: ${fmtDate(d.when)}.`
+        const del = await deliver(
+          [d.userId],
+          'pip',
+          {
+            title: 'Development plan reminder',
+            body: `${line} Open Clinical Development in the portal to review.`,
+            tag: `pip-${d.userId}-${d.ref}`,
+            subject: 'WCEMS — development plan reminder',
+            emailLines: [
+              esc(line),
+              'Open <b>Clinical Development</b> in the Employee Portal to review your plan, target dates, and progress log.',
+            ],
+            sms: '',
+            url: '/clinical-development',
+            channels: { sms: false },
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        errors.push(...del.errors)
+      }
+
       // prune claims older than two weeks (both tables)
       await sb.from('sched_reminders_sent').delete().lt('sent_at', new Date(now - 14 * 86_400_000).toISOString())
       await sb.from('sched_notify_claims').delete().lt('sent_at', new Date(now - 14 * 86_400_000).toISOString())
@@ -2035,7 +2103,7 @@ Deno.serve(async (req: Request) => {
           ok: true, checked: main.blocks.size, due: due.length, eventEquip: eventEquipDue.length,
           rtAssign: rtAssignDue.length, rtRemind: rtRemindDue.length,
           verify: verifyDue.length, attest: attestPrompts.length, signoff: signoffSends.length,
-          sent, delivery, errors: errors.slice(0, 20),
+          pip: pipDue.length, sent, delivery, errors: errors.slice(0, 20),
         },
         { headers: CORS },
       )

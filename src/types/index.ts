@@ -457,6 +457,8 @@ export interface PipelineRecord {
   pipActive: boolean
   pipStartedAt: string | null
   pipReason: string | null
+  /** Generic hold flag maintained by the PIP flow — no reason attached. */
+  trainingHold: boolean
   inP3Process: boolean
   inAemtUpgrade: boolean
   /** Pre-FTEP-rebuild P1→P2 requirements (call evals instead of
@@ -530,6 +532,9 @@ export interface FtepReport {
   payload: import('@/constants/ftepForms').FtepPayload
   traineeSignature: string | null
   evaluatorSignature: string | null
+  /** From generated columns — list loads carry these without the blobs. */
+  traineeSigned: boolean
+  evaluatorSigned: boolean
   submittedAt: string | null
   reviewedBy: string | null
   reviewedAt: string | null

@@ -237,7 +237,9 @@ function fmt(iso: string | null): string {
         <template v-if="canEdit">
           <div v-if="record.coverageNote" class="pd__note"><b>Coverage impact:</b> {{ record.coverageNote }}</div>
           <div v-if="record.blockerNote" class="pd__note pd__note--bad"><b>Blocker:</b> {{ record.blockerNote }}</div>
-          <div v-if="record.pipActive && record.pipReason" class="pd__note pd__note--bad"><b>PIP:</b> {{ record.pipReason }}</div>
+          <!-- PIP details are restricted (employee file section); general
+               viewers get a reasonless hold flag only. -->
+          <div v-if="record.trainingHold" class="pd__note pd__note--bad"><b>Training hold</b> — development plan in progress</div>
           <div v-if="record.notes" class="pd__note"><b>Notes:</b> {{ record.notes }}</div>
         </template>
       </div>

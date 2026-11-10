@@ -356,6 +356,7 @@ const menuOpen = ref(false)
         >{{ person.fullName }}</button>
         <span v-else class="tc__name">{{ person.fullName }}</span>
         <span class="tc__sub">{{ person.record.certLevel }}<template v-if="person.record.ftoName"> · FTO {{ person.record.ftoName }}</template></span>
+        <span v-if="person.record.trainingHold" class="tc__holdpill"><i></i>FTEP ON HOLD — development plan in progress</span>
         <span class="tc__trackline">
           <span class="tc__track">{{ timeline?.transition === 'P1_P2' ? (timeline.accelerated ? 'P1 → P2 · accelerated' : 'P1 → P2 · 6-month cap') : 'P1C → P1 · 90-day cap' }}</span>
           <span v-if="headDates" class="tc__dates">{{ headDates }}</span>
@@ -581,6 +582,13 @@ const menuOpen = ref(false)
 .tc__hd { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
 .tc__id { min-width: 200px; display: flex; flex-direction: column; gap: 3px; flex: 1; }
 .tc__name { font-size: 14.5px; font-weight: 700; color: var(--color-ink); }
+.tc__holdpill {
+  display: inline-flex; align-items: center; gap: 5px; width: fit-content;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  color: oklch(0.45 0.12 70); border: 1px solid oklch(0.82 0.08 80);
+  border-radius: 4px; padding: 2px 7px; margin-top: 3px;
+}
+.tc__holdpill i { width: 6px; height: 6px; border-radius: 50%; background: oklch(0.65 0.15 70); }
 .tc__name--link {
   background: none; border: none; padding: 0; cursor: pointer;
   font-family: var(--font-sans); text-align: left; width: fit-content;

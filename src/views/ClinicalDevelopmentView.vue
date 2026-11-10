@@ -17,6 +17,8 @@ import {
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import FtepResourcesCard from '@/components/clinical/FtepResourcesCard.vue'
+import ClinicalPipPanel from '@/components/clinical/ClinicalPipPanel.vue'
+import { usePips } from '@/composables/usePips'
 import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.vue'
 import type { FtepReport } from '@/types'
 import {
@@ -375,7 +377,16 @@ function fmtDate(iso: string): string {
    was unavailable (asleep at shift change) — review & sign here,
    view-only. */
 const awaitingSign = computed(() =>
-  myFtepReports.value.filter((r) => !r.traineeSignature && !r.payload.legacyManual),
+  myFtepReports.value.filter((r) => !r.traineeSigned && !r.payload.legacyManual),
+)
+
+/* ── PIPs ── my own plan (read-only) + any plan I'm the named
+   supervisor on. RLS returns exactly those and nothing else. */
+const pipsStore = usePips()
+const supervisedPips = computed(() =>
+  pipsStore.pips.value.filter(
+    (p) => p.status === 'active' && p.supervisorUserId === auth.appUser?.id && p.userId !== auth.appUser?.id,
+  ),
 )
 
 const signTarget = ref<FtepReport | null>(null)
@@ -424,6 +435,11 @@ async function submitSign() {
           </button>
         </div>
       </header>
+
+      <!-- PIPs (restricted): this viewer's own plan, and plans they
+           supervise — RLS decides what exists here -->
+      <ClinicalPipPanel v-if="pipsStore.myPip.value" :person-id="pipsStore.myPip.value.userId" mode="self" />
+      <ClinicalPipPanel v-for="sp in supervisedPips" :key="sp.id" :person-id="sp.userId" mode="manage" />
 
       <!-- Editors management -->
       <section v-if="showEditors && canEdit" class="cd__editors">
@@ -540,6 +556,10 @@ async function submitSign() {
         if you think this is a mistake.
       </div>
       <template v-else>
+        <!-- PIPs (restricted): own plan + any plan this member supervises -->
+        <ClinicalPipPanel v-if="pipsStore.myPip.value" :person-id="pipsStore.myPip.value.userId" mode="self" />
+        <ClinicalPipPanel v-for="sp in supervisedPips" :key="sp.id" :person-id="sp.userId" mode="manage" />
+
         <!-- Deferred-signature prompt -->
         <div v-if="awaitingSign.length" class="cd__signbanner reveal">
           <b>{{ awaitingSign.length }} report{{ awaitingSign.length === 1 ? '' : 's' }} need{{ awaitingSign.length === 1 ? 's' : '' }} your signature.</b>
@@ -620,7 +640,7 @@ async function submitSign() {
               </template>
             </span>
             <span
-              v-if="!r.traineeSignature && !r.payload.legacyManual"
+              v-if="!r.traineeSigned && !r.payload.legacyManual"
               class="cd__signchip"
               role="button"
               tabindex="0"

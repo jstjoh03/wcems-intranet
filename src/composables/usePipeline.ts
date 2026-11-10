@@ -40,6 +40,7 @@ interface RecordRow {
   working_target_at: string | null
   pending: boolean
   pip_active: boolean
+  training_hold: boolean
   pip_started_at: string | null
   pip_reason: string | null
   in_p3_process: boolean
@@ -90,7 +91,7 @@ interface GateRow {
 
 const RECORD_SELECT =
   'id, user_id, cleared_phase, working_phase, working_started_at, working_target_at, ' +
-  'pending, pip_active, pip_started_at, pip_reason, in_p3_process, in_aemt_upgrade, legacy_track, p2_accelerated, ' +
+  'pending, pip_active, pip_started_at, pip_reason, training_hold, in_p3_process, in_aemt_upgrade, legacy_track, p2_accelerated, ' +
   'level, is_fto, fto_name, cert_level, tx_license_number, tx_license_expires_at, ' +
   'tx_jurisprudence_at, bloodborne_pathogen_at, op_iq_access, narc_safe_access, clinical_excluded, ' +
   'op_iq_granted_at, narc_safe_granted_at, ' +
@@ -111,6 +112,7 @@ function rowToRecord(r: RecordRow): PipelineRecord {
     workingTargetAt: r.working_target_at,
     pending: r.pending,
     pipActive: r.pip_active,
+    trainingHold: r.training_hold ?? false,
     pipStartedAt: r.pip_started_at,
     pipReason: r.pip_reason,
     inP3Process: r.in_p3_process,
@@ -180,6 +182,7 @@ function seedDevFixture() {
     workingTargetAt: null,
     pending: false,
     pipActive: false,
+    trainingHold: false,
     pipStartedAt: null,
     pipReason: null,
     inP3Process: false,
@@ -239,7 +242,7 @@ function seedDevFixture() {
       certLevel: 'LP', txLicenseExpiresAt: '2029-08-31',
     }),
     mk('dev-4', 'Cody Sholar', 'C', '231', {
-      clearedPhase: 'FinalRelease', pipActive: true, pipReason: 'Documentation quality',
+      clearedPhase: 'FinalRelease', pipActive: true, pipReason: 'Documentation quality', trainingHold: true,
       level: 'ADV', certLevel: 'ADV EMT', txLicenseExpiresAt: '2029-05-31',
     }),
     mk('dev-5', 'Tristan Murphy', 'A', '206', {

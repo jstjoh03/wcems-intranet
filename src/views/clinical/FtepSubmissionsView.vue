@@ -495,7 +495,7 @@ async function openPdf(r: FtepReport, mode: 'view' | 'download') {
               </template>
               <span v-if="r.reviewedAt" class="fs__reviewed"><Check :size="11" :stroke-width="2.5" /> reviewed</span>
               <span
-                v-if="!r.traineeSignature && !r.payload.legacyManual"
+                v-if="!r.traineeSigned && !r.payload.legacyManual"
                 class="fs__unsigned"
                 title="Submitted with the trainee signature deferred — they're prompted on My Progress"
               >awaiting trainee signature</span>
