@@ -55,6 +55,12 @@ const routes: RouteRecordRaw[] = [
     meta: { adminOnly: true },
   },
   {
+    path: '/admin/contact-cards',
+    name: 'admin-contact-cards',
+    component: () => import('@/views/admin/ManageContactCardsView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
     path: '/admin/hospitals',
     name: 'admin-hospitals',
     component: () => import('@/views/admin/ManageHospitalsView.vue'),

@@ -1,0 +1,259 @@
+// supabase/functions/contact-card/index.ts
+//
+// Public digital business cards (2026-11-10) — the page behind the QR
+// on printed cards. GET /<slug> renders a branded contact page; GET
+// /<slug>.vcf returns a live vCard (name/title/phones built from
+// app_users + contact_cards overrides at scan time, so reprints are
+// never needed for an info change). Photos ride the public
+// contact-cards bucket and are embedded into the vCard when small
+// enough, so saved contacts carry the face.
+//
+// Served through the Cloudflare Pages proxy at
+// employee.wallercountyems.com/card/<slug> (functions/card/[[path]].js)
+// because the Supabase gateway rewrites HTML on *.supabase.co to
+// text/plain + CSP sandbox. Deploy verify_jwt FALSE — scanners are
+// anonymous; cards are public by design.
+
+// @ts-expect-error resolved at runtime by the Edge Runtime
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+// @ts-expect-error Deno global available in Edge Runtime
+const env = Deno.env
+
+const SB_URL = env.get('SUPABASE_URL')!
+const SERVICE_KEY = env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const sb = createClient(SB_URL, SERVICE_KEY)
+
+const ORG = {
+  name: 'Waller County EMS',
+  office: '(979) 826-6063',
+  officeE164: '+19798266063',
+  fax: '+19792707170',
+  street: '1134 Austin St',
+  city: 'Hempstead',
+  state: 'TX',
+  zip: '77445',
+  web: 'https://www.wallercountyems.com',
+}
+const PATCH_URL = 'https://employee.wallercountyems.com/wcems-patch.png'
+
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function e164(phone: string | null): string | null {
+  if (!phone) return null
+  const d = phone.replace(/\D/g, '')
+  if (d.length === 10) return `+1${d}`
+  if (d.length === 11 && d.startsWith('1')) return `+${d}`
+  return null
+}
+
+function prettyPhone(phone: string): string {
+  const d = phone.replace(/\D/g, '').replace(/^1/, '')
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : phone
+}
+
+/** vCard text values: escape backslash, comma, semicolon, newlines. */
+function vEsc(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n')
+}
+
+interface Card {
+  slug: string
+  fullName: string
+  email: string
+  titleLines: string[]
+  vcardTitle: string
+  cell: string | null
+  showOffice: boolean
+  blurb: string | null
+  photoUrl: string | null
+}
+
+async function loadCard(slug: string): Promise<Card | null> {
+  const { data: row } = await sb
+    .from('contact_cards')
+    .select('slug, active, title_override, show_cell, cell_override, show_office, blurb, photo_path, user_id')
+    .eq('slug', slug)
+    .maybeSingle()
+  if (!row || !row.active) return null
+  const { data: u } = await sb
+    .from('app_users')
+    .select('full_name, email, phone, title, active')
+    .eq('id', row.user_id)
+    .maybeSingle()
+  if (!u || !u.active) return null
+  const rawTitle = (row.title_override as string | null) ?? (u.title as string | null) ?? ''
+  // roster titles read "Licensed Paramedic | Clinical Development
+  // Officer" — the pipe is a display line break on the card
+  const titleLines = rawTitle.split('|').map((t: string) => t.trim()).filter(Boolean)
+  const cellRaw = row.show_cell ? ((row.cell_override as string | null) || (u.phone as string | null)) : null
+  return {
+    slug: row.slug as string,
+    fullName: u.full_name as string,
+    email: (u.email as string) ?? '',
+    titleLines,
+    vcardTitle: titleLines.join(' · '),
+    cell: cellRaw ? e164(cellRaw) : null,
+    showOffice: row.show_office !== false,
+    blurb: (row.blurb as string | null) || null,
+    photoUrl: row.photo_path
+      ? `${SB_URL}/storage/v1/object/public/contact-cards/${row.photo_path}`
+      : null,
+  }
+}
+
+async function buildVcf(c: Card): Promise<string> {
+  const [first, ...rest] = c.fullName.split(/\s+/)
+  const last = rest.join(' ')
+  const lines = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    `N:${vEsc(last)};${vEsc(first)};;;`,
+    `FN:${vEsc(c.fullName)}`,
+    `ORG:${vEsc(ORG.name)}`,
+  ]
+  if (c.vcardTitle) lines.push(`TITLE:${vEsc(c.vcardTitle)}`)
+  if (c.cell) lines.push(`TEL;TYPE=CELL:${c.cell}`)
+  if (c.showOffice) {
+    lines.push(`TEL;TYPE=WORK,VOICE:${ORG.officeE164}`)
+    lines.push(`TEL;TYPE=WORK,FAX:${ORG.fax}`)
+  }
+  if (c.email) lines.push(`EMAIL;TYPE=WORK:${c.email}`)
+  lines.push(`ADR;TYPE=WORK:;;${vEsc(ORG.street)};${vEsc(ORG.city)};${ORG.state};${ORG.zip};United States`)
+  lines.push(`URL:${ORG.web}`)
+  if (c.photoUrl) {
+    try {
+      const res = await fetch(c.photoUrl)
+      if (res.ok) {
+        const buf = new Uint8Array(await res.arrayBuffer())
+        if (buf.length > 0 && buf.length <= 400_000) {
+          let bin = ''
+          for (let i = 0; i < buf.length; i += 0x8000) {
+            bin += String.fromCharCode(...buf.subarray(i, i + 0x8000))
+          }
+          const b64 = btoa(bin)
+          // fold the base64 payload (75-char lines, space continuation)
+          const folded = (`PHOTO;TYPE=JPEG;ENCODING=b:${b64}`).replace(/(.{75})/g, '$1\r\n ')
+          lines.push(folded.replace(/\r\n $/, ''))
+        }
+      }
+    } catch {
+      /* photo embed is a nicety — the card still saves without it */
+    }
+  }
+  lines.push('END:VCARD')
+  return lines.join('\r\n') + '\r\n'
+}
+
+function page(c: Card): string {
+  const cellPretty = c.cell ? prettyPhone(c.cell) : null
+  const rows: string[] = []
+  if (c.cell) {
+    rows.push(`<a class="row" href="tel:${c.cell}"><span class="k">Cell</span><span class="v">${cellPretty}</span></a>`)
+    rows.push(`<a class="row" href="sms:${c.cell}"><span class="k">Text</span><span class="v">${cellPretty}</span></a>`)
+  }
+  if (c.showOffice) {
+    rows.push(`<a class="row" href="tel:${ORG.officeE164}"><span class="k">Office</span><span class="v">${ORG.office}</span></a>`)
+  }
+  rows.push(`<a class="row" href="mailto:${esc(c.email)}"><span class="k">Email</span><span class="v">${esc(c.email)}</span></a>`)
+  rows.push(`<a class="row" href="${ORG.web}" target="_blank" rel="noopener"><span class="k">Web</span><span class="v">wallercountyems.com</span></a>`)
+  rows.push(`<a class="row" href="https://maps.google.com/?q=${encodeURIComponent(`${ORG.street}, ${ORG.city}, ${ORG.state} ${ORG.zip}`)}" target="_blank" rel="noopener"><span class="k">Office</span><span class="v">${ORG.street} · ${ORG.city}, ${ORG.state}</span></a>`)
+
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${esc(c.fullName)} — Waller County EMS</title>
+<link rel="icon" href="${PATCH_URL}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&display=swap" rel="stylesheet">
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: #0f1b33 linear-gradient(180deg, #16233f 0%, #0f1b33 60%);
+         font: 15px/1.5 -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1d2433;
+         min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 28px 16px 44px; }
+  .card { width: 100%; max-width: 420px; background: #fdfaf2; border-radius: 10px; overflow: hidden;
+          box-shadow: 0 2px 6px rgba(0,0,0,.35), 0 24px 60px -24px rgba(0,0,0,.6); }
+  .head { background: #16233f; text-align: center; padding: 28px 22px 22px; position: relative; }
+  .head::after { content: ''; display: block; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+                 background: linear-gradient(90deg, #c89b3c, #e3c272 55%, #c89b3c); }
+  .avatar { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; border: 3px solid #d9b45b; display: block; margin: 0 auto 12px; background: #fff; }
+  .patch { width: 72px; height: 72px; display: block; margin: 0 auto 12px; }
+  .name { font-family: 'Instrument Serif', Georgia, serif; font-size: 32px; font-weight: 400; color: #fff; line-height: 1.1; }
+  .title { font-size: 12.5px; color: #d9b45b; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; margin-top: 7px; }
+  .title2 { font-size: 12px; color: #c6cddd; margin-top: 2px; }
+  .org { font-size: 11px; letter-spacing: .22em; color: #8e99b5; font-weight: 600; margin-top: 10px; }
+  .body { padding: 18px 18px 22px; }
+  .blurb { font-size: 13.5px; color: #5c4f3d; text-align: center; margin: 0 4px 14px; }
+  .save { display: block; text-align: center; font-size: 16px; font-weight: 700; color: #16233f; text-decoration: none;
+          background: linear-gradient(180deg, #e8c879, #cfa441); border-radius: 8px; padding: 14px 10px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.4); margin-bottom: 14px; }
+  .row { display: flex; align-items: baseline; gap: 12px; padding: 11px 6px; text-decoration: none;
+         border-bottom: 1px solid #ece4d2; }
+  .row:last-child { border-bottom: 0; }
+  .k { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; color: #8a6d2f; text-transform: uppercase; width: 52px; flex: none; }
+  .v { font-size: 15px; color: #16233f; font-weight: 500; overflow-wrap: anywhere; }
+  .foot { text-align: center; font-size: 10.5px; letter-spacing: .14em; color: #9a8d74; font-weight: 600;
+          border-top: 1px solid #ece4d2; padding: 12px 8px; background: #faf4e4; }
+</style></head><body>
+<div class="card">
+  <div class="head">
+    ${c.photoUrl ? `<img class="avatar" src="${esc(c.photoUrl)}" alt="">` : `<img class="patch" src="${PATCH_URL}" alt="Waller County EMS">`}
+    <div class="name">${esc(c.fullName)}</div>
+    ${c.titleLines[c.titleLines.length - 1] ? `<div class="title">${esc(c.titleLines[c.titleLines.length - 1])}</div>` : ''}
+    ${c.titleLines.length > 1 ? `<div class="title2">${esc(c.titleLines.slice(0, -1).join(' · '))}</div>` : ''}
+    <div class="org">WALLER COUNTY EMS</div>
+  </div>
+  <div class="body">
+    ${c.blurb ? `<p class="blurb">${esc(c.blurb)}</p>` : ''}
+    <a class="save" href="/card/${c.slug}.vcf">Save my contact</a>
+    ${rows.join('\n    ')}
+  </div>
+  <div class="foot">EST 1996 · HEMPSTEAD, TEXAS</div>
+</div>
+</body></html>`
+}
+
+// @ts-expect-error Deno.serve available in Edge Runtime
+Deno.serve(async (req: Request) => {
+  if (req.method !== 'GET') return new Response('GET only', { status: 405 })
+  try {
+    const url = new URL(req.url)
+    // path after the function name: /contact-card/<slug>[.vcf]
+    const tail = url.pathname.split('/contact-card/')[1] ?? ''
+    const wantVcf = tail.endsWith('.vcf')
+    const slug = (wantVcf ? tail.slice(0, -4) : tail).toLowerCase().replace(/[^a-z0-9-]/g, '')
+    if (!slug) return new Response('Not found', { status: 404 })
+
+    const card = await loadCard(slug)
+    if (!card) {
+      return new Response(
+        `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><body style="font-family:sans-serif;padding:40px;text-align:center;"><p>This card isn't active.</p><p><a href="${ORG.web}">wallercountyems.com</a></p></body>`,
+        { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+      )
+    }
+
+    if (wantVcf) {
+      const vcf = await buildVcf(card)
+      return new Response(vcf, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/vcard; charset=utf-8',
+          'Content-Disposition': `inline; filename="${card.slug}.vcf"`,
+          'Cache-Control': 'no-store',
+        },
+      })
+    }
+
+    return new Response(page(card), {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
+    })
+  } catch (e) {
+    console.error('[contact-card]', e instanceof Error ? e.message : e)
+    return new Response('Error', { status: 500 })
+  }
+})
