@@ -161,10 +161,18 @@ function page(c: Card): string {
   if (c.showOffice) {
     rows.push(`<a class="row" href="tel:${ORG.officeE164}"><span class="k">Office</span><span class="v">${ORG.office}</span></a>`)
   }
-  rows.push(`<a class="row" href="mailto:${esc(c.email)}"><span class="k">Email</span><span class="v">${esc(c.email)}</span></a>`)
+  // <wbr> before the @ so long addresses wrap there, not mid-word
+  rows.push(`<a class="row" href="mailto:${esc(c.email)}"><span class="k">Email</span><span class="v">${esc(c.email).replace('@', '<wbr>@')}</span></a>`)
   rows.push(`<a class="row" href="${ORG.web}" target="_blank" rel="noopener"><span class="k">Web</span><span class="v">wallercountyems.com</span></a>`)
-  rows.push(`<a class="row" href="https://maps.google.com/?q=${encodeURIComponent(`${ORG.street}, ${ORG.city}, ${ORG.state} ${ORG.zip}`)}" target="_blank" rel="noopener"><span class="k">Office</span><span class="v">${ORG.street} · ${ORG.city}, ${ORG.state}</span></a>`)
+  rows.push(`<a class="row" href="https://maps.google.com/?q=${encodeURIComponent(`${ORG.street}, ${ORG.city}, ${ORG.state} ${ORG.zip}`)}" target="_blank" rel="noopener"><span class="k">Visit</span><span class="v">${ORG.street} · ${ORG.city}, ${ORG.state}</span></a>`)
 
+  /* Mirrors the portal dashboard hero (Hero.vue): the "lit surface"
+     navy — three radial highlights over the 135° brand gradient — with
+     the gold eyebrow, white Instrument Serif name, a gold-haloed
+     photo/patch in the right slot, the feathered gold seam, and the
+     content below on the warm canvas. Token values are the portal's
+     oklch tokens converted to sRGB (no oklch: older phone browsers
+     scanning a printed card must render this). */
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
@@ -172,52 +180,73 @@ function page(c: Card): string {
 <link rel="icon" href="${PATCH_URL}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Instrument+Serif&display=swap" rel="stylesheet">
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; margin: 0; }
-  body { background: #0f1b33 linear-gradient(180deg, #16233f 0%, #0f1b33 60%);
-         font: 15px/1.5 -apple-system, 'Segoe UI', Roboto, sans-serif; color: #1d2433;
-         min-height: 100vh; display: flex; align-items: flex-start; justify-content: center; padding: 28px 16px 44px; }
-  .card { width: 100%; max-width: 420px; background: #fdfaf2; border-radius: 10px; overflow: hidden;
-          box-shadow: 0 2px 6px rgba(0,0,0,.35), 0 24px 60px -24px rgba(0,0,0,.6); }
-  .head { background: #16233f; text-align: center; padding: 28px 22px 22px; position: relative; }
-  .head::after { content: ''; display: block; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
-                 background: linear-gradient(90deg, #c89b3c, #e3c272 55%, #c89b3c); }
-  .avatar { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; border: 3px solid #d9b45b; display: block; margin: 0 auto 12px; background: #fff; }
-  .patch { width: 72px; height: 72px; display: block; margin: 0 auto 12px; }
-  .name { font-family: 'Instrument Serif', Georgia, serif; font-size: 32px; font-weight: 400; color: #fff; line-height: 1.1; }
-  .title { font-size: 12.5px; color: #d9b45b; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; margin-top: 7px; }
-  .title2 { font-size: 12px; color: #c6cddd; margin-top: 2px; }
-  .org { font-size: 11px; letter-spacing: .22em; color: #8e99b5; font-weight: 600; margin-top: 10px; }
-  .body { padding: 18px 18px 22px; }
-  .blurb { font-size: 13.5px; color: #5c4f3d; text-align: center; margin: 0 4px 14px; }
+  body { background: #fafaf9; color: #0e1218; min-height: 100vh;
+         font: 15px/1.5 'Geist', -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  .hero { background:
+            radial-gradient(ellipse 90% 70% at 15% 0%, rgba(0,72,138,.55), transparent 60%),
+            radial-gradient(ellipse 70% 60% at 85% 100%, rgba(0,50,108,.5), transparent 60%),
+            radial-gradient(ellipse 50% 45% at 70% 20%, rgba(14,87,148,.28), transparent 65%),
+            linear-gradient(135deg, #002760, #000c29); }
+  .hero__wrap { max-width: 560px; margin: 0 auto; padding: 38px 22px 30px;
+                display: flex; align-items: center; justify-content: space-between; gap: 20px; min-width: 0; }
+  .hero__main { flex: 1; min-width: 0; }
+  .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: #c2a86b; }
+  .name { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: 36px;
+          line-height: 1.06; letter-spacing: -.01em; color: #fff; margin-top: 9px; }
+  .role { font-size: 12.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #d9b45b; margin-top: 10px; }
+  .role2 { font-size: 12.5px; color: #b0c0d1; margin-top: 3px; }
+  .mark { position: relative; flex: none; width: 96px; height: 96px; }
+  .mark::before { content: ''; position: absolute; inset: -20px; border-radius: 50%; pointer-events: none;
+                  background: radial-gradient(circle at center, rgba(200,164,77,.22) 0%, rgba(200,164,77,.07) 40%, transparent 68%); }
+  .avatar { position: relative; width: 96px; height: 96px; border-radius: 50%; object-fit: cover;
+            border: 2.5px solid #d9b45b; background: #fff;
+            box-shadow: 0 1px 1px rgba(0,6,20,.5), 0 10px 24px -8px rgba(0,6,20,.55); }
+  .patch { position: relative; width: 96px; height: 96px; object-fit: contain;
+           filter: drop-shadow(0 1px 1px rgba(0,6,20,.5)) drop-shadow(0 8px 20px rgba(0,4,16,.45)); }
+  .seam { height: 2px; background: linear-gradient(90deg, transparent, rgba(200,164,77,.55) 18%, #e8cb72 50%, rgba(200,164,77,.55) 82%, transparent); }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 20px 14px; }
+  .blurb { font-size: 14px; color: #5c5244; text-align: center; margin: 0 6px 18px; }
   .save { display: block; text-align: center; font-size: 16px; font-weight: 700; color: #16233f; text-decoration: none;
-          background: linear-gradient(180deg, #e8c879, #cfa441); border-radius: 8px; padding: 14px 10px;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.4); margin-bottom: 14px; }
-  .row { display: flex; align-items: baseline; gap: 12px; padding: 11px 6px; text-decoration: none;
-         border-bottom: 1px solid #ece4d2; }
+          background: linear-gradient(180deg, #e8c879, #cfa441); border-radius: 10px; padding: 15px 10px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 10px 26px -14px rgba(146,112,38,.75); margin-bottom: 20px; }
+  .save:active { filter: brightness(.96); }
+  .rows { background: #fff; border: 1px solid #e7e4dd; border-radius: 12px; overflow: hidden;
+          box-shadow: 0 1px 2px rgba(0,12,41,.05), 0 18px 40px -24px rgba(0,12,41,.22); }
+  .row { display: flex; align-items: baseline; gap: 14px; padding: 13px 16px; text-decoration: none;
+         border-bottom: 1px solid #efece4; }
   .row:last-child { border-bottom: 0; }
-  .k { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; color: #8a6d2f; text-transform: uppercase; width: 52px; flex: none; }
+  .row:hover { background: #faf8f2; }
+  .k { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; color: #8a6d2f; text-transform: uppercase; width: 54px; flex: none; }
   .v { font-size: 15px; color: #16233f; font-weight: 500; overflow-wrap: anywhere; }
-  .foot { text-align: center; font-size: 10.5px; letter-spacing: .14em; color: #9a8d74; font-weight: 600;
-          border-top: 1px solid #ece4d2; padding: 12px 8px; background: #faf4e4; }
+  .foot { text-align: center; font-size: 10.5px; letter-spacing: .18em; color: #9a9281; font-weight: 600; padding: 26px 8px 34px; }
+  @media (max-width: 374px) { .mark, .avatar, .patch { width: 78px; height: 78px; } .name { font-size: 31px; } }
 </style></head><body>
-<div class="card">
-  <div class="head">
-    ${c.photoUrl ? `<img class="avatar" src="${esc(c.photoUrl)}" alt="">` : `<img class="patch" src="${PATCH_URL}" alt="Waller County EMS">`}
-    <div class="name">${esc(c.fullName)}</div>
-    ${c.titleLines[c.titleLines.length - 1] ? `<div class="title">${esc(c.titleLines[c.titleLines.length - 1])}</div>` : ''}
-    ${c.titleLines.length > 1 ? `<div class="title2">${esc(c.titleLines.slice(0, -1).join(' · '))}</div>` : ''}
-    <div class="org">WALLER COUNTY EMS</div>
+<header class="hero">
+  <div class="hero__wrap">
+    <div class="hero__main">
+      <div class="eyebrow">Waller County EMS</div>
+      <h1 class="name">${esc(c.fullName)}</h1>
+      ${c.titleLines[c.titleLines.length - 1] ? `<div class="role">${esc(c.titleLines[c.titleLines.length - 1])}</div>` : ''}
+      ${c.titleLines.length > 1 ? `<div class="role2">${esc(c.titleLines.slice(0, -1).join(' · '))}</div>` : ''}
+    </div>
+    <div class="mark">
+      ${c.photoUrl ? `<img class="avatar" src="${esc(c.photoUrl)}" alt="">` : `<img class="patch" src="${PATCH_URL}" alt="Waller County EMS">`}
+    </div>
   </div>
-  <div class="body">
-    ${c.blurb ? `<p class="blurb">${esc(c.blurb)}</p>` : ''}
-    <a class="save" href="/card/${c.slug}.vcf">Save my contact</a>
+  <div class="seam"></div>
+</header>
+<main>
+  ${c.blurb ? `<p class="blurb">${esc(c.blurb)}</p>` : ''}
+  <a class="save" href="/card/${c.slug}.vcf">Save my contact</a>
+  <div class="rows">
     ${rows.join('\n    ')}
   </div>
-  <div class="foot">EST 1996 · HEMPSTEAD, TEXAS</div>
-</div>
+</main>
+<div class="foot">EST 1996 · HEMPSTEAD, TEXAS</div>
 </body></html>`
 }
 
