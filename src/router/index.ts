@@ -234,6 +234,14 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/clinical/ClinicalFileView.vue'),
   },
   {
+    /* Full-page PIP builder/record. No role gate: five-party RLS decides
+       what renders, so the named supervisor can reach it from their
+       Clinical Development card without being a clinical board viewer. */
+    path: '/clinical/pip/:userId',
+    name: 'clinical-pip',
+    component: () => import('@/views/clinical/ClinicalPipView.vue'),
+  },
+  {
     /* Push/email landing for FTEP message threads — one link fanned to
        every recipient; the view redirects per role. */
     path: '/clinical/thread/:recordId',

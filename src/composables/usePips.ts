@@ -54,7 +54,14 @@ export interface Pip {
   status: PipStatus
   startsOn: string
   endsOn: string
+  lengthDays: number | null
   summary: string
+  areasOfConcern: string | null
+  goals: string | null
+  expectations: string | null
+  requirements: string | null
+  successCriteria: string | null
+  consequences: string | null
   ftepHold: boolean
   outcomeNote: string | null
   createdBy: string | null
@@ -63,7 +70,7 @@ export interface Pip {
 }
 
 const PIP_COLUMNS =
-  'id, user_id, supervisor_user_id, status, starts_on, ends_on, summary, ftep_hold, outcome_note, created_by, created_at, closed_at'
+  'id, user_id, supervisor_user_id, status, starts_on, ends_on, length_days, summary, areas_of_concern, goals, expectations, requirements, success_criteria, consequences, ftep_hold, outcome_note, created_by, created_at, closed_at'
 
 interface PipRow {
   id: string
@@ -72,7 +79,14 @@ interface PipRow {
   status: PipStatus
   starts_on: string
   ends_on: string
+  length_days: number | null
   summary: string
+  areas_of_concern: string | null
+  goals: string | null
+  expectations: string | null
+  requirements: string | null
+  success_criteria: string | null
+  consequences: string | null
   ftep_hold: boolean
   outcome_note: string | null
   created_by: string | null
@@ -88,13 +102,31 @@ function pipFromRow(r: PipRow): Pip {
     status: r.status,
     startsOn: r.starts_on,
     endsOn: r.ends_on,
+    lengthDays: r.length_days,
     summary: r.summary,
+    areasOfConcern: r.areas_of_concern,
+    goals: r.goals,
+    expectations: r.expectations,
+    requirements: r.requirements,
+    successCriteria: r.success_criteria,
+    consequences: r.consequences,
     ftepHold: r.ftep_hold,
     outcomeNote: r.outcome_note,
     createdBy: r.created_by,
     createdAt: r.created_at,
     closedAt: r.closed_at,
   }
+}
+
+/** Section fields shared by create and edit. */
+export interface PipSections {
+  summary: string
+  areasOfConcern: string
+  goals: string
+  expectations: string
+  requirements: string
+  successCriteria: string
+  consequences: string
 }
 
 const pips = ref<Pip[]>([])
@@ -219,10 +251,13 @@ export function usePips() {
     supervisorUserId: string | null
     startsOn: string
     endsOn: string
-    summary: string
+    lengthDays: number | null
     ftepHold: boolean
+    sections: PipSections
+    targets: Array<{ dueOn: string; title: string; detail: string }>
   }): Promise<IdResult> {
     if (!live.value) return { ok: false, error: 'Not available in the dev preview.' }
+    const s = input.sections
     const { data, error } = await supabase
       .from('pips')
       .insert({
@@ -230,21 +265,45 @@ export function usePips() {
         supervisor_user_id: input.supervisorUserId,
         starts_on: input.startsOn,
         ends_on: input.endsOn,
-        summary: input.summary,
+        length_days: input.lengthDays,
+        summary: s.summary.trim(),
+        areas_of_concern: s.areasOfConcern.trim() || null,
+        goals: s.goals.trim() || null,
+        expectations: s.expectations.trim() || null,
+        requirements: s.requirements.trim() || null,
+        success_criteria: s.successCriteria.trim() || null,
+        consequences: s.consequences.trim() || null,
         ftep_hold: input.ftepHold,
         created_by: auth.appUser?.id ?? null,
       })
       .select('id')
       .single()
     if (error) return { ok: false, error: error.message }
+    const pipId = data.id as string
+    const tRows = input.targets
+      .filter((t) => t.dueOn && t.title.trim())
+      .map((t, i) => ({ pip_id: pipId, due_on: t.dueOn, title: t.title.trim(), detail: t.detail.trim() || null, sort: i }))
+    if (tRows.length > 0) {
+      const tIns = await supabase.from('pip_targets').insert(tRows)
+      if (tIns.error) {
+        await reload()
+        return { ok: false, error: `Plan saved, but checkpoints failed: ${tIns.error.message}` }
+      }
+    }
     if (input.ftepHold) await supabase.rpc('pip_set_hold', { p_user: input.userId, p_on: true })
     await reload()
-    return { ok: true, id: data.id as string }
+    return { ok: true, id: pipId }
   }
 
   async function updatePip(
     id: string,
-    patch: Partial<{ supervisorUserId: string | null; startsOn: string; endsOn: string; summary: string; ftepHold: boolean }>,
+    patch: Partial<{
+      supervisorUserId: string | null
+      startsOn: string
+      endsOn: string
+      lengthDays: number | null
+      ftepHold: boolean
+    }> & { sections?: Partial<PipSections> },
   ): Promise<Result> {
     if (!live.value) return { ok: false, error: 'Not available in the dev preview.' }
     const p = pips.value.find((x) => x.id === id)
@@ -252,8 +311,18 @@ export function usePips() {
     if ('supervisorUserId' in patch) row.supervisor_user_id = patch.supervisorUserId
     if (patch.startsOn !== undefined) row.starts_on = patch.startsOn
     if (patch.endsOn !== undefined) row.ends_on = patch.endsOn
-    if (patch.summary !== undefined) row.summary = patch.summary
+    if (patch.lengthDays !== undefined) row.length_days = patch.lengthDays
     if (patch.ftepHold !== undefined) row.ftep_hold = patch.ftepHold
+    const s = patch.sections
+    if (s) {
+      if (s.summary !== undefined) row.summary = s.summary.trim()
+      if (s.areasOfConcern !== undefined) row.areas_of_concern = s.areasOfConcern.trim() || null
+      if (s.goals !== undefined) row.goals = s.goals.trim() || null
+      if (s.expectations !== undefined) row.expectations = s.expectations.trim() || null
+      if (s.requirements !== undefined) row.requirements = s.requirements.trim() || null
+      if (s.successCriteria !== undefined) row.success_criteria = s.successCriteria.trim() || null
+      if (s.consequences !== undefined) row.consequences = s.consequences.trim() || null
+    }
     const { error } = await supabase.from('pips').update(row).eq('id', id)
     if (error) return { ok: false, error: error.message }
     if (patch.ftepHold !== undefined && p) {
@@ -261,6 +330,10 @@ export function usePips() {
     }
     await reload()
     return { ok: true }
+  }
+
+  function nextTargetFor(pipId: string): PipTarget | null {
+    return targetsFor(pipId).filter((t) => t.status === 'pending').sort((a, b) => a.dueOn.localeCompare(b.dueOn))[0] ?? null
   }
 
   /** Closing always releases the FTEP hold. */
@@ -369,9 +442,14 @@ export function usePips() {
   }
 
   /* ── access list (pip_admins) ────────────────────────────────────── */
-  async function listAdmins(): Promise<Array<{ userId: string }>> {
-    const { data } = await supabase.from('pip_admins').select('user_id')
-    return (data ?? []).map((r) => ({ userId: r.user_id as string }))
+  async function listAdmins(): Promise<Array<{ userId: string; notify: boolean }>> {
+    const { data } = await supabase.from('pip_admins').select('user_id, notify')
+    return (data ?? []).map((r) => ({ userId: r.user_id as string, notify: r.notify === true }))
+  }
+  /** Whether this admin gets copies of the T-7/T-1 reminders. */
+  async function setAdminNotify(userId: string, on: boolean): Promise<Result> {
+    const { error } = await supabase.from('pip_admins').update({ notify: on }).eq('user_id', userId)
+    return error ? { ok: false, error: error.message } : { ok: true }
   }
   async function addAdmin(userId: string): Promise<Result> {
     const { error } = await supabase
@@ -392,6 +470,7 @@ export function usePips() {
     listFor,
     activeFor,
     targetsFor,
+    nextTargetFor,
     entriesFor,
     documentsFor,
     reload,
@@ -409,5 +488,6 @@ export function usePips() {
     listAdmins,
     addAdmin,
     removeAdmin,
+    setAdminNotify,
   }
 }

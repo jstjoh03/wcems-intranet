@@ -56,6 +56,7 @@ const ADMIN_CHILDREN: NavChild[] = [
   { label: 'Manage Quick Links', to: '/admin/quick-links' },
   { label: 'Kudos', to: '/admin/kudos' },
   { label: 'Badge Maker', to: '/admin/badge-maker' },
+  { label: 'Business Cards', to: '/admin/contact-cards' },
   { label: 'Usage', to: '/admin/usage' },
   { label: 'Assistant', to: '/admin/assistant' },
   /* MD-session tool, hosted as a Claude artifact — private to the CDO's

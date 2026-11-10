@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Contact, Copy, Download, ExternalLink, Plus, Upload, X } from 'lucide-vue-next'
+import { Contact, Copy, Download, ExternalLink, Plus, QrCode, Upload, X } from 'lucide-vue-next'
 import QRCode from 'qrcode'
-import Eyebrow from '@/components/primitives/Eyebrow.vue'
-import AppCard from '@/components/primitives/AppCard.vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 
@@ -167,35 +165,58 @@ async function removeCard(c: CardRow) {
 }
 
 /* ── photo ─────────────────────────────────────────────────────────── */
+/**
+ * Every upload goes through the canvas: max 800px, JPEG. Phones only
+ * get the photo if it rides INSIDE the vCard, and the vCard skips
+ * photos past ~900KB — a raw 1.7MB roster PNG is exactly how the saved
+ * contact lost its picture.
+ */
+async function compressPhoto(f: File): Promise<Blob> {
+  const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' })
+  const MAX = 800
+  const scale = Math.min(1, MAX / Math.max(bmp.width, bmp.height))
+  const w = Math.max(1, Math.round(bmp.width * scale))
+  const h = Math.max(1, Math.round(bmp.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Could not process the image in this browser.')
+  ctx.drawImage(bmp, 0, 0, w, h)
+  bmp.close()
+  return await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not compress the photo.'))), 'image/jpeg', 0.85),
+  )
+}
 async function onPhoto(c: CardRow, ev: Event) {
-  const f = (ev.target as HTMLInputElement).files?.[0]
+  const input = ev.target as HTMLInputElement
+  const f = input.files?.[0]
   if (!f) return
-  if (f.size > 4 * 1024 * 1024) {
-    err.value = 'Photo too large — keep it under 4 MB.'
+  if (f.size > 12 * 1024 * 1024) {
+    err.value = 'Photo too large — keep it under 12 MB.'
     return
   }
   busy.value = true
   err.value = null
-  const ext = (f.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
-  const path = `${c.userId}-${Date.now()}.${ext}`
-  const up = await supabase.storage.from('contact-cards').upload(path, f, { upsert: false })
-  if (up.error) {
-    busy.value = false
-    err.value = up.error.message
-    return
+  try {
+    const blob = await compressPhoto(f)
+    const path = `${c.userId}-${Date.now()}.jpg`
+    const up = await supabase.storage
+      .from('contact-cards')
+      .upload(path, blob, { upsert: false, contentType: 'image/jpeg' })
+    if (up.error) throw new Error(up.error.message)
+    if (c.photoPath) await supabase.storage.from('contact-cards').remove([c.photoPath])
+    const { error } = await supabase
+      .from('contact_cards')
+      .update({ photo_path: path, updated_at: new Date().toISOString() })
+      .eq('user_id', c.userId)
+    if (error) throw new Error(error.message)
+    input.value = ''
+    await load()
+  } catch (e) {
+    err.value = (e as Error).message
   }
-  if (c.photoPath) await supabase.storage.from('contact-cards').remove([c.photoPath])
-  const { error } = await supabase
-    .from('contact_cards')
-    .update({ photo_path: path, updated_at: new Date().toISOString() })
-    .eq('user_id', c.userId)
   busy.value = false
-  if (error) {
-    err.value = error.message
-    return
-  }
-  ;(ev.target as HTMLInputElement).value = ''
-  await load()
 }
 async function removePhoto(c: CardRow) {
   if (!c.photoPath) return
@@ -249,23 +270,26 @@ async function copyUrl(c: CardRow) {
 </script>
 
 <template>
-  <div class="mcc page-wrap">
-    <header class="mcc__head">
-      <div>
-        <Eyebrow>Admin · Business cards</Eyebrow>
-        <h1 class="display mcc__title"><Contact :size="22" :stroke-width="1.9" /> Digital contact cards</h1>
+  <div class="mcc">
+    <!-- Navy lit-surface band, same treatment as the portal home hero -->
+    <header class="mcc__hero">
+      <div class="mcc__heromain">
+        <div class="mcc__eyebrow">Admin · Business cards</div>
+        <h1 class="display mcc__title">Digital contact cards</h1>
         <p class="mcc__sub">
           Each card is a public page + live vCard at <code>…/card/&lt;slug&gt;</code>. Enter the
           person's info, drop their QR into the Canva design, and send it to print — info changes
           later update the page, never the printed code.
         </p>
       </div>
+      <div class="mcc__heromark" aria-hidden="true"><QrCode :size="64" :stroke-width="1.1" /></div>
+      <div class="mcc__goldseam" aria-hidden="true"></div>
     </header>
 
     <p v-if="err" class="mcc__err">{{ err }}</p>
-    <p v-if="auth.usingDevStub" class="mcc__sub">Not available in the dev preview.</p>
+    <p v-if="auth.usingDevStub" class="mcc__quiet">Not available in the dev preview.</p>
 
-    <AppCard v-if="!auth.usingDevStub && ready" class="mcc__card">
+    <template v-if="!auth.usingDevStub && ready">
       <div class="mcc__addrow">
         <select v-model="newPersonId" class="mcc__input">
           <option value="">Add a card for…</option>
@@ -292,11 +316,11 @@ async function copyUrl(c: CardRow) {
         </div>
 
         <div class="mcc__actions">
-          <button type="button" class="mcc__mini" title="QR as SVG (best for print)" @click="downloadQrSvg(c)">
-            <Download :size="12" /> SVG
+          <button type="button" class="mcc__qrbtn" title="QR as SVG (best for print)" @click="downloadQrSvg(c)">
+            <Download :size="12" /> QR · SVG
           </button>
-          <button type="button" class="mcc__mini" title="QR as PNG 2048px" @click="downloadQrPng(c)">
-            <Download :size="12" /> PNG
+          <button type="button" class="mcc__qrbtn" title="QR as PNG 2048px" @click="downloadQrPng(c)">
+            <Download :size="12" /> QR · PNG
           </button>
           <button type="button" class="mcc__mini" @click="copyUrl(c)">
             <Copy :size="12" /> {{ copied === c.userId ? 'Copied' : 'URL' }}
@@ -325,6 +349,7 @@ async function copyUrl(c: CardRow) {
             <label class="mcc__upload"><Upload :size="12" /> {{ c.photoPath ? 'Replace photo' : 'Add photo' }}
               <input type="file" accept="image/*" hidden @change="onPhoto(c, $event)" />
             </label>
+            <span class="mcc__hint">Photos are resized automatically so they save into the contact.</span>
             <button v-if="c.photoPath" type="button" class="mcc__mini" @click="removePhoto(c)"><X :size="12" /> Remove photo</button>
             <span style="flex: 1"></span>
             <button type="button" class="mcc__mini mcc__mini--danger" @click="removeCard(c)">
@@ -335,38 +360,108 @@ async function copyUrl(c: CardRow) {
         </div>
       </div>
 
-      <p v-if="cards.length === 0" class="mcc__sub" style="padding: 10px 2px">No cards yet — add the first one above.</p>
-    </AppCard>
+      <p v-if="cards.length === 0" class="mcc__quiet" style="padding: 10px 2px">No cards yet — add the first one above.</p>
+
+      <div class="mcc__footnote"><Contact :size="12" :stroke-width="2" /> Printed QRs point at the URL, not the data — edit anyone's card anytime and every card already in circulation picks it up.</div>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.mcc__head { margin: 18px 0 14px; }
-.mcc__title { display: flex; align-items: center; gap: 9px; font-size: 26px; margin: 4px 0 6px; }
-.mcc__sub { font-size: 13.5px; color: var(--color-muted); max-width: 640px; }
-.mcc__sub code { font-size: 12px; }
+.mcc { padding-bottom: 48px; max-width: 920px; }
+
+/* ── Hero band: the home page's lit-surface navy + gold seam ── */
+.mcc__hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin: 16px 0 20px;
+  padding: 26px 26px 24px;
+  border-radius: 12px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 90% 70% at 15% 0%, oklch(0.4 0.13 250 / 0.55), transparent 60%),
+    radial-gradient(ellipse 70% 60% at 85% 100%, oklch(0.32 0.12 250 / 0.5), transparent 60%),
+    radial-gradient(ellipse 50% 45% at 70% 20%, oklch(0.45 0.12 250 / 0.28), transparent 65%),
+    linear-gradient(135deg, var(--color-brand-700), var(--color-brand-900));
+  box-shadow: 0 10px 30px oklch(0.18 0.05 255 / 0.25), inset 0 1px 0 oklch(1 0 0 / 0.07);
+}
+.mcc__heromain { flex: 1; min-width: 0; }
+.mcc__eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--color-accent-on-dark); opacity: 0.9; margin-bottom: 4px;
+}
+.mcc__title { font-size: 27px; color: #fff; margin: 0 0 7px; }
+.mcc__sub { font-size: 13px; line-height: 1.55; color: oklch(0.88 0.02 250); max-width: 560px; }
+.mcc__sub code { font-size: 12px; color: var(--color-accent-on-dark); background: oklch(1 0 0 / 0.08); padding: 1px 5px; border-radius: 4px; }
+.mcc__heromark { color: oklch(1 0 0 / 0.16); flex: none; padding-right: 6px; }
+.mcc__goldseam {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: linear-gradient(90deg, var(--color-accent-700, #a8842c), var(--color-accent-500, #d9b45b) 45%, oklch(0.78 0.11 85 / 0.35));
+}
+@media (max-width: 560px) {
+  .mcc__heromark { display: none; }
+}
+
 .mcc__err { font-size: 13px; color: var(--color-danger-600, oklch(0.5 0.19 27)); margin: 8px 0; }
-.mcc__card { padding: 14px 16px; }
-.mcc__addrow { display: flex; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--color-line); flex-wrap: wrap; }
-.mcc__row { display: flex; align-items: center; gap: 12px; padding: 11px 2px; border-bottom: 1px solid var(--color-line-soft, var(--color-line)); flex-wrap: wrap; }
+.mcc__quiet { font-size: 13px; color: var(--color-muted); }
+
+.mcc__addrow { display: flex; gap: 8px; padding-bottom: 14px; flex-wrap: wrap; }
+
+/* ── Person rows: surface cards with a gold hover accent ── */
+.mcc__row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; margin-bottom: 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-left: 3px solid var(--color-line);
+  border-radius: 8px;
+  flex-wrap: wrap;
+  transition: border-color 140ms var(--ease-out, ease), box-shadow 140ms var(--ease-out, ease);
+}
+.mcc__row:hover { border-left-color: var(--color-accent-strong, #a8842c); box-shadow: 0 3px 14px oklch(0.3 0.05 255 / 0.08); }
 .mcc__row--off { opacity: 0.6; }
-.mcc__thumb { width: 42px; height: 42px; border-radius: 50%; object-fit: cover; border: 2px solid var(--color-line); flex: none; }
-.mcc__thumb--empty { display: flex; align-items: center; justify-content: center; background: var(--color-canvas); color: var(--color-muted); font-weight: 700; }
+.mcc__thumb { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 2px solid var(--color-accent-500, #d9b45b); flex: none; }
+.mcc__thumb--empty {
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(160deg, var(--color-brand-700), var(--color-brand-900));
+  color: var(--color-accent-on-dark); font-weight: 700; font-size: 16px;
+  border-color: var(--color-line);
+}
 .mcc__main { flex: 1; min-width: 200px; }
-.mcc__name { font-weight: 650; font-size: 14.5px; display: flex; align-items: center; gap: 8px; }
+.mcc__name { font-weight: 650; font-size: 14.5px; display: flex; align-items: center; gap: 8px; color: var(--color-ink); }
 .mcc__offpill { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-muted); border: 1px solid var(--color-line); border-radius: 4px; padding: 1px 6px; }
 .mcc__meta { font-size: 12px; color: var(--color-muted); overflow-wrap: anywhere; }
-.mcc__lnk { color: var(--color-brand-700); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; }
+.mcc__lnk { color: var(--color-brand-700); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; font-weight: 600; }
+.mcc__lnk:hover { text-decoration: underline; text-underline-offset: 3px; }
+
 .mcc__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+/* The QR downloads are THE job of this page — navy primaries */
+.mcc__qrbtn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: inherit; font-size: 11.5px; font-weight: 650; letter-spacing: 0.01em;
+  padding: 5px 11px; border: 0; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800));
+  color: #fff;
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.12);
+}
+.mcc__qrbtn:hover { background: linear-gradient(180deg, var(--color-brand-700), var(--color-brand-900)); color: var(--color-accent-on-dark); }
 .mcc__mini { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 11.5px; font-weight: 600; padding: 4px 9px; border: 1px solid var(--color-line); border-radius: 5px; background: var(--color-surface); color: var(--color-ink-soft); cursor: pointer; white-space: nowrap; }
+.mcc__mini:hover { border-color: var(--color-accent-strong, #a8842c); color: var(--color-ink); }
 .mcc__mini--danger { color: var(--color-danger-600, oklch(0.5 0.19 27)); }
 .mcc__btn { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; font-weight: 600; padding: 7px 13px; border: 0; border-radius: 6px; background: linear-gradient(180deg, var(--color-brand-600), var(--color-brand-800)); color: #fff; cursor: pointer; }
 .mcc__btn:disabled { opacity: 0.55; cursor: default; }
 .mcc__input { font: inherit; font-size: 13px; padding: 6px 9px; border: 1px solid var(--color-line); border-radius: 6px; background: var(--color-surface); color: var(--color-ink); min-width: 160px; }
-.mcc__edit { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 0 4px; border-top: 1px dashed var(--color-line); margin-top: 6px; }
-.mcc__fld { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-muted); }
+
+.mcc__edit { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 10px; padding: 12px 0 4px; border-top: 1px dashed var(--color-accent-500, #d9b45b); margin-top: 8px; }
+.mcc__fld { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #8a6d2f; }
 .mcc__fld--wide { flex: 1 1 100%; }
 .mcc__check { display: flex; align-items: center; gap: 6px; font-size: 13px; align-self: end; padding-bottom: 6px; }
 .mcc__editrow { flex-basis: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mcc__upload { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--color-brand-700); border: 1px dashed var(--color-line); border-radius: 6px; padding: 6px 11px; cursor: pointer; }
+.mcc__upload:hover { border-color: var(--color-accent-strong, #a8842c); }
+.mcc__hint { font-size: 11px; color: var(--color-muted); }
+
+.mcc__footnote { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-muted); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--color-line); }
 </style>

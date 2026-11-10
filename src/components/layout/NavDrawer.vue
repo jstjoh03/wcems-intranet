@@ -30,6 +30,7 @@ import {
   ExternalLink,
   Boxes,
   MessageCircleQuestion,
+  QrCode,
   Radio,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
@@ -140,6 +141,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
   { label: 'Kudos', to: '/admin/kudos', icon: Heart },
   { label: 'Badge Maker', to: '/admin/badge-maker', icon: IdCard },
+  { label: 'Business Cards', to: '/admin/contact-cards', icon: QrCode },
   { label: 'Usage', to: '/admin/usage', icon: Activity },
   { label: 'Assistant', to: '/admin/assistant', icon: MessageCircleQuestion },
   /* MD-session tool, hosted as a Claude artifact — private to the CDO's

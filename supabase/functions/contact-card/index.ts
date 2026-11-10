@@ -128,14 +128,18 @@ async function buildVcf(c: Card): Promise<string> {
       const res = await fetch(c.photoUrl)
       if (res.ok) {
         const buf = new Uint8Array(await res.arrayBuffer())
-        if (buf.length > 0 && buf.length <= 400_000) {
+        /* 900KB cap: phones choke on multi-MB vCards. The admin uploader
+           compresses every photo to ~800px JPEG, so real uploads land
+           far under this — the cap only guards strays. */
+        if (buf.length > 0 && buf.length <= 900_000) {
           let bin = ''
           for (let i = 0; i < buf.length; i += 0x8000) {
             bin += String.fromCharCode(...buf.subarray(i, i + 0x8000))
           }
           const b64 = btoa(bin)
+          const ptype = c.photoUrl.toLowerCase().endsWith('.png') ? 'PNG' : 'JPEG'
           // fold the base64 payload (75-char lines, space continuation)
-          const folded = (`PHOTO;TYPE=JPEG;ENCODING=b:${b64}`).replace(/(.{75})/g, '$1\r\n ')
+          const folded = (`PHOTO;TYPE=${ptype};ENCODING=b:${b64}`).replace(/(.{75})/g, '$1\r\n ')
           lines.push(folded.replace(/\r\n $/, ''))
         }
       }

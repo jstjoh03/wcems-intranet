@@ -62,9 +62,13 @@
 //         as a deliberate re-nudge, not a bug. Membership rule must
 //         KEEP IN STEP with useRequiredTraining.loadEventRosters.
 //     PIP reminders ride the same tick: T-7/T-1 ahead of each pending
-//     pip_targets.due_on and of pips.ends_on — employee only, claims
-//     ckind 'pip', push+email, type key 'pip' (not in the matrix, so
-//     it cannot be switched off), copy carries no plan details.
+//     pip_targets.due_on and of pips.ends_on — the employee (generic
+//     copy, no plan details) plus NAMED copies to pip_admins rows with
+//     notify=true (Justin + Heather today; editable on the PIP page).
+//     Claims ckind 'pip' (employee) / 'pip_adm' (per admin; target and
+//     pip ids are globally unique so d.ref alone is the ref). Push +
+//     email, type key 'pip' (not in the matrix, so it cannot be
+//     switched off).
 //     Verification prompts are push + email ONLY — never SMS (cost
 //     control; matrix key 'verify').
 //
@@ -1769,6 +1773,21 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // Opted-in PIP admins get named copies of the same reminders
+      // (pip_admins.notify — seeded true for Justin + Heather, editable
+      // on the PIP page's access list).
+      let pipAdminIds: string[] = []
+      const pipNameById = new Map<string, string>()
+      if (pipDue.length > 0) {
+        const aR = await sb.from('pip_admins').select('user_id').eq('notify', true)
+        pipAdminIds = (aR.data ?? []).map((r) => r.user_id as string)
+        if (pipAdminIds.length > 0) {
+          const uids = [...new Set(pipDue.map((d) => d.userId))]
+          const nR = await sb.from('app_users').select('id, full_name').in('id', uids)
+          for (const r of nR.data ?? []) pipNameById.set(r.id as string, (r.full_name as string) ?? 'an employee')
+        }
+      }
+
       if (dryRun) {
         return Response.json(
           {
@@ -1784,6 +1803,7 @@ Deno.serve(async (req: Request) => {
               : null,
             summaryDue,
             pip: pipDue.length,
+            pipNotifyAdmins: pipAdminIds.length,
           },
           { headers: CORS },
         )
@@ -2085,6 +2105,46 @@ Deno.serve(async (req: Request) => {
             ],
             sms: '',
             url: '/clinical-development',
+            channels: { sms: false },
+          },
+          null,
+        )
+        sent++
+        delivery.push += del.push
+        delivery.email += del.email
+        errors.push(...del.errors)
+      }
+
+      // …and the named copies to opted-in PIP admins. The copy names
+      // the employee and links straight to the plan page; the employee
+      // never appears in their own admin fan-out.
+      for (const d of pipDue) {
+        if (pipAdminIds.length === 0) break
+        const who = pipNameById.get(d.userId) ?? 'an employee'
+        const line =
+          d.what === 'end'
+            ? `${who}'s development plan window closes ${fmtDate(d.when)}.`
+            : `A checkpoint on ${who}'s development plan is due ${fmtDate(d.when)}.`
+        const to: string[] = []
+        for (const adminId of pipAdminIds) {
+          if (adminId === d.userId) continue
+          if (await claim('pip_adm', adminId, d.ref)) to.push(adminId)
+        }
+        if (to.length === 0) continue
+        const del = await deliver(
+          to,
+          'pip',
+          {
+            title: 'Development plan reminder',
+            body: line,
+            tag: `pip-adm-${d.ref}`,
+            subject: 'WCEMS — development plan reminder',
+            emailLines: [
+              esc(line),
+              'Open the plan in the portal to review checkpoints and the progress log.',
+            ],
+            sms: '',
+            url: `/clinical/pip/${d.userId}`,
             channels: { sms: false },
           },
           null,
