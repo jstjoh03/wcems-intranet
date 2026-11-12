@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth'
 
@@ -723,7 +723,14 @@ async function loadCore(): Promise<void> {
   if (auth.usingDevStub) {
     // Dev stub: anon can't read the RLS'd sched_* tables, so seed the
     // real unit/seat layout locally. Rotation stays empty (all open).
-    level.value = auth.isAdmin ? 'global_admin' : auth.isSupervisor ? 'supervisor' : 'member'
+    // The level FOLLOWS the topbar dev role switcher (2026-11-12) —
+    // it used to stick at whatever role the module first loaded under,
+    // which made the member request form unpreviewable in dev.
+    const deriveDevLevel = () => {
+      level.value = auth.isAdmin ? 'global_admin' : auth.isSupervisor ? 'supervisor' : 'member'
+    }
+    deriveDevLevel()
+    watch(() => auth.appUser?.role, deriveDevLevel)
     if (units.value.length === 0) seedDevStub()
     loaded.value = true
     return
@@ -2865,7 +2872,7 @@ async function hoursCheck(
 ): Promise<HoursInfo> {
   const zero: HoursInfo = { weekHours: 0, periodHours: 0, consecutiveHours: 0, warnings: [] }
   const auth = useAuthStore()
-  if (auth.usingDevStub || adds.length === 0) return zero
+  if (adds.length === 0) return zero
   const t = warningThresholds()
   const anchor = adds[0].dateIso
   const weekStart = addDaysIso(anchor, -new Date(`${anchor}T00:00:00`).getDay())
@@ -2876,25 +2883,33 @@ async function hoursCheck(
   const fetchEnd = [weekEnd, period.end, addDaysIso(sortedDates[sortedDates.length - 1], 5)]
     .sort()
     .pop()!
-  const res = await supabase
-    .from('sched_entries')
-    .select('*')
-    .gte('work_date', fetchStart)
-    .lte('work_date', fetchEnd)
-  if (res.error) {
-    return {
-      ...zero,
-      warnings: [
-        {
-          code: 'check_failed',
-          hours: 0,
-          limit: 0,
-          message: 'Hour totals could not be verified (connection error) — thresholds were not checked.',
-        },
-      ],
+  /* Dev stub runs the SAME math against the locally-seeded entries —
+     the check used to no-op in dev, which left the overlap guard and
+     the warning UI untestable (2026-11-12). */
+  let rows: SchedEntry[]
+  if (auth.usingDevStub) {
+    rows = entries.value.filter((e) => e.workDate >= fetchStart && e.workDate <= fetchEnd)
+  } else {
+    const res = await supabase
+      .from('sched_entries')
+      .select('*')
+      .gte('work_date', fetchStart)
+      .lte('work_date', fetchEnd)
+    if (res.error) {
+      return {
+        ...zero,
+        warnings: [
+          {
+            code: 'check_failed',
+            hours: 0,
+            limit: 0,
+            message: 'Hour totals could not be verified (connection error) — thresholds were not checked.',
+          },
+        ],
+      }
     }
+    rows = (res.data ?? []).map(mapEntry)
   }
-  const rows = (res.data ?? []).map(mapEntry)
   // union of existing + added segments, bucketed by work date
   const byDate = new Map<string, Seg[]>()
   for (let iso = fetchStart; iso <= fetchEnd; iso = addDaysIso(iso, 1)) {

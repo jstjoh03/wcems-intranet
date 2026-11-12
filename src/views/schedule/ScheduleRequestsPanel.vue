@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import TimeSelect24 from '@/components/primitives/TimeSelect24.vue'
 import ScheduleSpinner from './ScheduleSpinner.vue'
 import {
@@ -180,7 +180,15 @@ watch(exEndDate, () => {
 })
 
 const hourWarnConfirm = computed(() =>
-  (hourWarn.value ?? []).some((w) => w.code === 'consecutive_confirm' || w.code === 'overlap'),
+  (hourWarn.value ?? []).some((w) => w.code === 'consecutive_confirm'),
+)
+
+/** Overlapping windows are a HARD STOP for members (Justin, 2026-11-12:
+ *  "stop it at the source") — there is no submit-anyway: the hours
+ *  would pay nothing. The prompt carries the corrected date and a
+ *  one-tap move-and-submit; editing the fields above also clears it. */
+const hourWarnBlocked = computed(() =>
+  (hourWarn.value ?? []).some((w) => w.code === 'overlap' || w.code === 'overlap_partial'),
 )
 
 /** First warning that carries a corrected filing (the overlap guard) —
@@ -197,15 +205,19 @@ function fmtSuggestDay(iso: string): string {
   })
 }
 
-function applySuggest() {
+/** Move the form to the suggested filing and submit in one tap. The
+ *  submit path re-checks the corrected window from scratch, so if the
+ *  new dates have their own problem it stops again honestly. */
+async function submitSuggested() {
   const s = warnSuggest.value
-  if (!s) return
+  if (!s || formBusy.value) return
   exDate.value = s.dateIso
   exFrom.value = s.from
   exUntil.value = s.until
   exEndDate.value = s.endDateIso
-  hourWarn.value = null // fresh check against the corrected window on submit
-  formDone.value = null
+  await nextTick() // the field watch fires (clears warnings, settles the end date)
+  hourWarn.value = null
+  await submit()
 }
 
 function pickForm(kind: FormKind) {
@@ -256,6 +268,10 @@ async function submit() {
           }
         }
         if (!awaitingAck) hourWarn.value = []
+      } else if (hourWarnBlocked.value) {
+        /* hard stop — an overlapping window never submits; the prompt's
+           move-and-submit button (or editing the dates) is the way on */
+        awaitingAck = true
       }
       if (!awaitingAck) {
         err = await sched.createExtraRequest({
@@ -1064,25 +1080,36 @@ async function cancel(r: SchedRequest) {
             />
           </label>
 
-          <div v-if="hourWarn && hourWarn.length" class="rq__warnbox">
-            <p class="rq__warnhead">Before you submit:</p>
+          <div v-if="hourWarn && hourWarn.length" class="rq__warnbox" :class="{ 'rq__warnbox--block': hourWarnBlocked }">
+            <p class="rq__warnhead">
+              {{ hourWarnBlocked ? "This can't go in as entered — the overlapping hours wouldn't pay:" : 'Before you submit:' }}
+            </p>
             <ul class="rq__warnlist">
               <li v-for="(w, i) in hourWarn" :key="i">{{ w.message }}</li>
             </ul>
-            <button v-if="warnSuggest" type="button" class="rq__fixbtn" @click="applySuggest">
-              Fix it for me — {{ fmtSuggestDay(warnSuggest.dateIso) }}, {{ warnSuggest.from }} – {{ warnSuggest.until }}
+            <button
+              v-if="hourWarnBlocked && warnSuggest"
+              type="button"
+              class="rq__fixbtn"
+              :disabled="formBusy"
+              @click="submitSuggested"
+            >
+              {{ formBusy ? 'Submitting…' : `Move it to ${fmtSuggestDay(warnSuggest.dateIso)}, ${warnSuggest.from} – ${warnSuggest.until} and submit` }}
             </button>
+            <p v-if="hourWarnBlocked" class="rq__blockhint">…or change the dates above and submit again.</p>
           </div>
 
-          <button type="submit" class="rq__submit" :disabled="formBusy">
+          <button type="submit" class="rq__submit" :disabled="formBusy || hourWarnBlocked">
             {{
               formBusy
                 ? 'Submitting…'
-                : hourWarn && hourWarn.length
-                  ? hourWarnConfirm
-                    ? 'I understand — request admin approval'
-                    : 'Submit anyway'
-                  : 'Submit request'
+                : hourWarnBlocked
+                  ? 'Fix the dates to submit'
+                  : hourWarn && hourWarn.length
+                    ? hourWarnConfirm
+                      ? 'I understand — request admin approval'
+                      : 'Submit anyway'
+                    : 'Submit request'
             }}
           </button>
         </template>
@@ -2043,6 +2070,22 @@ async function cancel(r: SchedRequest) {
   background: var(--color-warning-50);
   border-radius: 9px;
   padding: 0.5rem 0.7rem;
+}
+
+/* hard stop (overlap): red register — this one is not a "submit anyway" */
+.rq__warnbox--block {
+  border-color: oklch(0.8 0.1 27);
+  background: oklch(0.97 0.02 27);
+}
+
+.rq__warnbox--block .rq__warnhead {
+  color: var(--color-danger-500);
+}
+
+.rq__blockhint {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: var(--color-muted);
 }
 
 .rq__warnhead {
