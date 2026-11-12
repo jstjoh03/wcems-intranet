@@ -187,9 +187,11 @@ function icon(k: string): string {
 
 function page(c: Card): string {
   const cellPretty = c.cell ? prettyPhone(c.cell) : null
-  /* valueHtml arrives pre-escaped by the caller */
+  /* Ledger rows, Sortren register: label eyebrow · value · a small
+     muted utility glyph at the right (no badge circles — gold lives in
+     rules, not fills). valueHtml arrives pre-escaped by the caller. */
   const row = (href: string, ic: string, label: string, valueHtml: string, ext = false) =>
-    `<a class="row" href="${href}"${ext ? ' target="_blank" rel="noopener"' : ''}><span class="rbadge">${icon(ic)}</span><span class="rtxt"><span class="k">${label}</span><span class="v">${valueHtml}</span></span><span class="chev" aria-hidden="true">›</span></a>`
+    `<a class="row" href="${href}"${ext ? ' target="_blank" rel="noopener"' : ''}><span class="k">${label}</span><span class="v">${valueHtml}</span><span class="ric" aria-hidden="true">${icon(ic)}</span></a>`
   const rows: string[] = []
   if (c.cell) {
     rows.push(row(`tel:${c.cell}`, 'cell', 'Cell', cellPretty!))
@@ -203,13 +205,15 @@ function page(c: Card): string {
   rows.push(row(ORG.web, 'web', 'Web', 'wallercountyems.com', true))
   rows.push(row(`https://maps.google.com/?q=${encodeURIComponent(`${ORG.street}, ${ORG.city}, ${ORG.state} ${ORG.zip}`)}`, 'map', 'Visit', `${ORG.street} · ${ORG.city}, ${ORG.state}`, true))
 
-  /* Mirrors the portal dashboard hero (Hero.vue): the "lit surface"
-     navy — radial highlights over the 135° brand gradient — with the
-     patch + wordmark lockup, white Instrument Serif name, a gold-haloed
-     photo at right, the feathered gold seam, and the content below on
-     the warm canvas. Token values are the portal's oklch tokens
-     converted to sRGB (no oklch: older phone browsers scanning a
-     printed card must render this). */
+  /* Sortren register (supply portal LoginView/main.css, Justin
+     2026-11-12: "sortren style enterprise"): editorial masthead — patch
+     + tracked gold eyebrow, one-direction gold hairline, serif name
+     with the gold-period accent — over the lit navy (gold spotlight +
+     two cool radials on the 135° brand base), framed by the feathered
+     3px top rule and 1px soft bottom wash. Below: flat NAVY primary
+     button (gold is for rules, never fills), hairline ledger rows,
+     Geist with 'cv11'/'ss01' + antialiasing. All oklch tokens
+     pre-converted to sRGB — old phone browsers must render this. */
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
@@ -217,88 +221,97 @@ function page(c: Card): string {
 <link rel="icon" href="${PATCH_URL}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Instrument+Serif&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; margin: 0; }
-  body { background: #f8f5ee; color: #0e1218; min-height: 100vh;
-         font: 15px/1.5 'Geist', -apple-system, 'Segoe UI', Roboto, sans-serif; }
-  .hero { background:
-            radial-gradient(ellipse 90% 70% at 15% 0%, rgba(0,72,138,.62), transparent 60%),
-            radial-gradient(ellipse 70% 60% at 85% 100%, rgba(0,50,108,.55), transparent 60%),
-            radial-gradient(ellipse 45% 55% at 86% 14%, rgba(200,164,77,.15), transparent 62%),
-            radial-gradient(ellipse 50% 45% at 70% 20%, rgba(14,87,148,.34), transparent 65%),
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+         text-rendering: optimizeLegibility; font-feature-settings: 'cv11', 'ss01'; }
+  body { background: #fafaf9; color: #0e1218; min-height: 100vh;
+         font: 15px/1.55 'Geist', ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  .hero { position: relative;
+          background:
+            radial-gradient(ellipse 60% 55% at 72% 40%, rgba(200,164,77,.16), rgba(200,164,77,.07) 35%, transparent 70%),
+            radial-gradient(circle at 15% 18%, rgba(0,67,131,.55), transparent 50%),
+            radial-gradient(circle at 85% 85%, rgba(0,50,108,.65), transparent 55%),
             linear-gradient(135deg, #002760, #000c29); }
-  .hero__wrap { max-width: 560px; margin: 0 auto; padding: 26px 22px 30px; min-width: 0; }
-  .brand { display: flex; align-items: center; gap: 11px; }
-  .brand__patch { width: 38px; height: 38px; object-fit: contain;
-                  filter: drop-shadow(0 1px 1px rgba(0,6,20,.5)) drop-shadow(0 4px 10px rgba(0,4,16,.4)); }
-  .brand__word { font-size: 11.5px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #c2a86b; }
-  .hero__row { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 20px; min-width: 0; }
+  .rule-top { position: absolute; top: 0; left: 0; right: 0; height: 3px; pointer-events: none;
+              background: linear-gradient(90deg, transparent 0%, #c8a44d 18%, #e8cb72 50%, #c8a44d 82%, transparent 100%); }
+  .rule-soft { position: absolute; bottom: 0; left: 0; right: 0; height: 1px; pointer-events: none;
+               background: linear-gradient(90deg, transparent, rgba(200,164,77,.38), transparent); }
+  .hero__wrap { max-width: 560px; margin: 0 auto; padding: 32px 22px 34px; min-width: 0; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand__patch { width: 40px; height: 40px; object-fit: contain;
+                  filter: drop-shadow(0 4px 12px rgba(0,0,0,.45)); }
+  .brand__word { font-size: 10.5px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase;
+                 color: #c8a44d; opacity: .88; }
+  .brand__rule { width: 64px; height: 1px; margin: 16px 0 0;
+                 background: linear-gradient(90deg, #c8a44d, rgba(200,164,77,.15) 80%, transparent); }
+  .hero__row { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 22px; min-width: 0; }
   .hero__main { flex: 1; min-width: 0; }
-  .name { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: 37px;
-          line-height: 1.06; letter-spacing: -.01em; color: #fff; }
-  .role { font-size: 12.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #d9b45b; margin-top: 10px; }
-  .role2 { font-size: 12.5px; color: #b0c0d1; margin-top: 3px; }
-  .mark { position: relative; flex: none; width: 100px; height: 100px; }
-  .mark::before { content: ''; position: absolute; inset: -22px; border-radius: 50%; pointer-events: none;
-                  background: radial-gradient(circle at center, rgba(200,164,77,.26) 0%, rgba(200,164,77,.08) 42%, transparent 68%); }
-  .avatar { position: relative; width: 100px; height: 100px; border-radius: 50%; object-fit: cover;
-            border: 2.5px solid #d9b45b; background: #fff;
-            box-shadow: 0 0 0 5px rgba(200,164,77,.14), 0 1px 1px rgba(0,6,20,.5), 0 10px 26px -8px rgba(0,6,20,.6); }
-  .seam { height: 3px; background: linear-gradient(90deg, transparent, rgba(200,164,77,.6) 15%, #f0d488 50%, rgba(200,164,77,.6) 85%, transparent); }
-  main { max-width: 560px; margin: 0 auto; padding: 24px 20px 10px; }
-  .blurb { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; font-size: 17px;
-           color: #4c4536; text-align: center; margin: 0 10px 18px; line-height: 1.45; }
-  .save { display: flex; align-items: center; justify-content: center; gap: 10px;
-          font-size: 16px; font-weight: 750; color: #1b2440; text-decoration: none;
-          background: linear-gradient(180deg, rgba(255,255,255,.32), rgba(255,255,255,0) 42%),
-                      linear-gradient(180deg, #ecca76, #c89b3c);
-          border: 1px solid #a8842c; border-radius: 13px; padding: 15px 12px; margin-bottom: 20px;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 -1px 0 rgba(118,88,24,.35),
-                      0 2px 4px rgba(120,92,30,.22), 0 14px 30px -12px rgba(146,112,38,.65);
-          transition: transform 80ms ease, box-shadow 80ms ease; }
-  .save svg { width: 19px; height: 19px; }
-  .save:active { transform: translateY(1px);
-                 box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -1px 0 rgba(118,88,24,.3),
-                             0 1px 2px rgba(120,92,30,.2), 0 8px 18px -10px rgba(146,112,38,.55); }
-  .rows { background: #fff; border: 1px solid #e7dfcc; border-radius: 15px; overflow: hidden;
-          box-shadow: 0 1px 2px rgba(32,26,10,.05), 0 20px 46px -26px rgba(32,26,10,.3); }
-  .row { display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 13px;
-         padding: 11px 15px; text-decoration: none; border-bottom: 1px solid #f0ead9; }
+  .name { font-family: 'Instrument Serif', ui-serif, Georgia, serif; font-weight: 400; font-size: 42px;
+          line-height: 0.98; letter-spacing: -.02em; color: #fff; }
+  .name i { font-style: normal; color: #c8a44d; font-weight: 500; }
+  .role { font-size: 10.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+          color: #c8a44d; opacity: .88; margin-top: 16px; }
+  .role2 { font-size: 13px; color: rgba(255,255,255,.62); margin-top: 5px; letter-spacing: .005em; }
+  .mark { flex: none; }
+  .avatar { display: block; width: 92px; height: 92px; border-radius: 50%; object-fit: cover; background: #fff;
+            border: 1px solid rgba(200,164,77,.55); box-shadow: 0 6px 18px rgba(0,0,0,.55); }
+  main { max-width: 560px; margin: 0 auto; padding: 26px 20px 8px; }
+  .blurb { font-family: 'Instrument Serif', ui-serif, Georgia, serif; font-style: italic; font-size: 18px;
+           color: #373b41; text-align: center; margin: 2px 8px 16px; line-height: 1.4; letter-spacing: -.01em; }
+  .blurb-rule { width: 120px; height: 1.5px; margin: 0 auto 22px;
+                background: linear-gradient(90deg, transparent 0%, #c8a44d 25%, #e8cb72 50%, #c8a44d 75%, transparent 100%); }
+  .save { display: flex; align-items: center; justify-content: center; gap: 9px;
+          font-size: 15px; font-weight: 500; letter-spacing: -.005em; color: #fff; text-decoration: none;
+          background: #00397f; border-radius: 8px; padding: 13px 16px; margin-bottom: 18px;
+          box-shadow: 0 1px 2px -1px rgba(14,18,24,.08);
+          transition: background 150ms cubic-bezier(.16,1,.3,1), box-shadow 150ms cubic-bezier(.16,1,.3,1); }
+  .save svg { width: 18px; height: 18px; }
+  .save:hover { background: #002760;
+                box-shadow: 0 2px 4px -2px rgba(14,18,24,.06), 0 4px 8px -2px rgba(14,18,24,.08); }
+  .save:active { background: #002760; box-shadow: 0 1px 2px -1px rgba(14,18,24,.08); }
+  .card { background: #fff; border: 1px solid #d5d8db; border-radius: 12px; overflow: hidden;
+          box-shadow: 0 1px 2px -1px rgba(14,18,24,.08); }
+  .row { display: grid; grid-template-columns: 64px 1fr 20px; align-items: center; gap: 14px;
+         padding: 13px 16px; text-decoration: none; border-bottom: 1px solid #e6e8ea;
+         transition: background 120ms cubic-bezier(.16,1,.3,1); }
   .row:last-child { border-bottom: 0; }
-  .row:hover, .row:active { background: #faf6ea; }
-  .rbadge { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            background: linear-gradient(180deg, #fdf7e6, #f3e6c6); border: 1px solid #e6d5a4; color: #8a6d2f; }
-  .rbadge svg { width: 17px; height: 17px; }
-  .rtxt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-  .k { font-size: 10px; font-weight: 750; letter-spacing: .13em; color: #9b7c36; text-transform: uppercase; }
-  .v { font-size: 15px; color: #16233f; font-weight: 600; overflow-wrap: anywhere; line-height: 1.3; }
-  .chev { color: #cdbf98; font-size: 19px; font-weight: 600; line-height: 1; padding-right: 2px; }
-  .foot { text-align: center; font-size: 10.5px; letter-spacing: .18em; color: #9a8c6e; font-weight: 650; padding: 26px 8px 34px; }
-  @media (max-width: 374px) { .mark, .avatar { width: 82px; height: 82px; } .name { font-size: 31px; } }
+  .row:hover, .row:active { background: #f6f5f2; }
+  .k { font-size: 11px; font-weight: 600; letter-spacing: .08em; color: #606369; text-transform: uppercase; }
+  .v { font-size: 15px; color: #0e1218; font-weight: 500; letter-spacing: -.005em;
+       overflow-wrap: anywhere; line-height: 1.35; font-variant-numeric: tabular-nums; }
+  .ric { display: flex; color: #95989d; transition: color 120ms; }
+  .ric svg { width: 17px; height: 17px; }
+  .row:hover .ric { color: #00397f; }
+  .foot { text-align: center; font-size: 10px; font-weight: 600; letter-spacing: .18em;
+          text-transform: uppercase; color: #95989d; padding: 26px 8px 34px; }
+  @media (max-width: 374px) { .avatar { width: 76px; height: 76px; } .name { font-size: 34px; } }
 </style></head><body>
 <header class="hero">
+  <div class="rule-top" aria-hidden="true"></div>
   <div class="hero__wrap">
     <div class="brand">
       <img class="brand__patch" src="${PATCH_URL}" alt="Waller County EMS patch">
       <span class="brand__word">Waller County EMS</span>
     </div>
+    <div class="brand__rule" aria-hidden="true"></div>
     <div class="hero__row">
       <div class="hero__main">
-        <h1 class="name">${esc(c.fullName)}</h1>
+        <h1 class="name">${esc(c.fullName)}<i>.</i></h1>
         ${c.titleLines[c.titleLines.length - 1] ? `<div class="role">${esc(c.titleLines[c.titleLines.length - 1])}</div>` : ''}
         ${c.titleLines.length > 1 ? `<div class="role2">${esc(c.titleLines.slice(0, -1).join(' · '))}</div>` : ''}
       </div>
       ${c.photoUrl ? `<div class="mark"><img class="avatar" src="${esc(photoRender(c.photoUrl, 240))}" onerror="this.onerror=null;this.src='${esc(c.photoUrl)}'" alt=""></div>` : ''}
     </div>
   </div>
-  <div class="seam"></div>
+  <div class="rule-soft" aria-hidden="true"></div>
 </header>
 <main>
-  ${c.blurb ? `<p class="blurb">${esc(c.blurb)}</p>` : ''}
+  ${c.blurb ? `<p class="blurb">${esc(c.blurb)}</p><div class="blurb-rule" aria-hidden="true"></div>` : ''}
   <a class="save" href="/card/${c.slug}.vcf">${icon('save')} Save my contact</a>
-  <div class="rows">
+  <div class="card">
     ${rows.join('\n    ')}
   </div>
 </main>
