@@ -125,19 +125,26 @@ async function buildVcf(c: Card): Promise<string> {
   lines.push(`URL:${ORG.web}`)
   if (c.photoUrl) {
     try {
-      const res = await fetch(c.photoUrl)
+      /* Server-side downscale via Supabase image transforms (verified
+         enabled on this project, 2026-11-12): a 480px render of ANY
+         upload fits the embed cap — Justin's original 1.7MB roster PNG
+         served a vCard with no photo at all, and relying on members
+         re-uploading was the gap. Raw object stays the fallback if the
+         render endpoint ever refuses. */
+      let res = await fetch(photoRender(c.photoUrl, 480))
+      if (!res.ok) res = await fetch(c.photoUrl)
       if (res.ok) {
         const buf = new Uint8Array(await res.arrayBuffer())
-        /* 900KB cap: phones choke on multi-MB vCards. The admin uploader
-           compresses every photo to ~800px JPEG, so real uploads land
-           far under this — the cap only guards strays. */
+        // 900KB cap: phones choke on multi-MB vCards.
         if (buf.length > 0 && buf.length <= 900_000) {
           let bin = ''
           for (let i = 0; i < buf.length; i += 0x8000) {
             bin += String.fromCharCode(...buf.subarray(i, i + 0x8000))
           }
           const b64 = btoa(bin)
-          const ptype = c.photoUrl.toLowerCase().endsWith('.png') ? 'PNG' : 'JPEG'
+          // type from the actual bytes — the render keeps the origin
+          // format, so the file extension can lie
+          const ptype = buf[0] === 0x89 && buf[1] === 0x50 ? 'PNG' : 'JPEG'
           // fold the base64 payload (75-char lines, space continuation)
           const folded = (`PHOTO;TYPE=${ptype};ENCODING=b:${b64}`).replace(/(.{75})/g, '$1\r\n ')
           lines.push(folded.replace(/\r\n $/, ''))
@@ -151,28 +158,58 @@ async function buildVcf(c: Card): Promise<string> {
   return lines.join('\r\n') + '\r\n'
 }
 
+/** Supabase image-transform URL for a public storage object — the
+ *  render endpoint downscales on the fly; format=origin keeps PNG/JPEG
+ *  (the auto format can hand back WebP, which contact apps reject).
+ *  BOTH dimensions + resize=contain, always: width alone DISTORTS
+ *  (1600×2000 came back 240×2000 — squeezed width, original height;
+ *  verified live 2026-11-12). contain in a square box keeps the ratio. */
+function photoRender(publicUrl: string, box: number): string {
+  return `${publicUrl.replace('/object/public/', '/render/image/public/')}?width=${box}&height=${box}&resize=contain&quality=80&format=origin`
+}
+
+/* Hand-rolled lucide-style outlines (24-grid, stroke 1.8) — the page is
+   standalone HTML with no icon library, and bare text rows read flat
+   (Justin, 2026-11-12: "the buttons need to look more polished"). */
+const ICONS: Record<string, string> = {
+  cell: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
+  text: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.37-.25-3.4-.7L3 21l1.7-5.1A8.5 8.5 0 1 1 21 11.5Z"/>',
+  office: '<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92Z"/>',
+  email: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/>',
+  web: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/>',
+  map: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+  save: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/>',
+}
+
+function icon(k: string): string {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`
+}
+
 function page(c: Card): string {
   const cellPretty = c.cell ? prettyPhone(c.cell) : null
+  /* valueHtml arrives pre-escaped by the caller */
+  const row = (href: string, ic: string, label: string, valueHtml: string, ext = false) =>
+    `<a class="row" href="${href}"${ext ? ' target="_blank" rel="noopener"' : ''}><span class="rbadge">${icon(ic)}</span><span class="rtxt"><span class="k">${label}</span><span class="v">${valueHtml}</span></span><span class="chev" aria-hidden="true">›</span></a>`
   const rows: string[] = []
   if (c.cell) {
-    rows.push(`<a class="row" href="tel:${c.cell}"><span class="k">Cell</span><span class="v">${cellPretty}</span></a>`)
-    rows.push(`<a class="row" href="sms:${c.cell}"><span class="k">Text</span><span class="v">${cellPretty}</span></a>`)
+    rows.push(row(`tel:${c.cell}`, 'cell', 'Cell', cellPretty!))
+    rows.push(row(`sms:${c.cell}`, 'text', 'Text', cellPretty!))
   }
   if (c.showOffice) {
-    rows.push(`<a class="row" href="tel:${ORG.officeE164}"><span class="k">Office</span><span class="v">${ORG.office}</span></a>`)
+    rows.push(row(`tel:${ORG.officeE164}`, 'office', 'Office', ORG.office))
   }
   // <wbr> before the @ so long addresses wrap there, not mid-word
-  rows.push(`<a class="row" href="mailto:${esc(c.email)}"><span class="k">Email</span><span class="v">${esc(c.email).replace('@', '<wbr>@')}</span></a>`)
-  rows.push(`<a class="row" href="${ORG.web}" target="_blank" rel="noopener"><span class="k">Web</span><span class="v">wallercountyems.com</span></a>`)
-  rows.push(`<a class="row" href="https://maps.google.com/?q=${encodeURIComponent(`${ORG.street}, ${ORG.city}, ${ORG.state} ${ORG.zip}`)}" target="_blank" rel="noopener"><span class="k">Visit</span><span class="v">${ORG.street} · ${ORG.city}, ${ORG.state}</span></a>`)
+  rows.push(row(`mailto:${esc(c.email)}`, 'email', 'Email', esc(c.email).replace('@', '<wbr>@')))
+  rows.push(row(ORG.web, 'web', 'Web', 'wallercountyems.com', true))
+  rows.push(row(`https://maps.google.com/?q=${encodeURIComponent(`${ORG.street}, ${ORG.city}, ${ORG.state} ${ORG.zip}`)}`, 'map', 'Visit', `${ORG.street} · ${ORG.city}, ${ORG.state}`, true))
 
   /* Mirrors the portal dashboard hero (Hero.vue): the "lit surface"
-     navy — three radial highlights over the 135° brand gradient — with
-     the gold eyebrow, white Instrument Serif name, a gold-haloed
-     photo/patch in the right slot, the feathered gold seam, and the
-     content below on the warm canvas. Token values are the portal's
-     oklch tokens converted to sRGB (no oklch: older phone browsers
-     scanning a printed card must render this). */
+     navy — radial highlights over the 135° brand gradient — with the
+     patch + wordmark lockup, white Instrument Serif name, a gold-haloed
+     photo at right, the feathered gold seam, and the content below on
+     the warm canvas. Token values are the portal's oklch tokens
+     converted to sRGB (no oklch: older phone browsers scanning a
+     printed card must render this). */
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
@@ -184,64 +221,83 @@ function page(c: Card): string {
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; margin: 0; }
-  body { background: #fafaf9; color: #0e1218; min-height: 100vh;
+  body { background: #f8f5ee; color: #0e1218; min-height: 100vh;
          font: 15px/1.5 'Geist', -apple-system, 'Segoe UI', Roboto, sans-serif; }
   .hero { background:
-            radial-gradient(ellipse 90% 70% at 15% 0%, rgba(0,72,138,.55), transparent 60%),
-            radial-gradient(ellipse 70% 60% at 85% 100%, rgba(0,50,108,.5), transparent 60%),
-            radial-gradient(ellipse 50% 45% at 70% 20%, rgba(14,87,148,.28), transparent 65%),
+            radial-gradient(ellipse 90% 70% at 15% 0%, rgba(0,72,138,.62), transparent 60%),
+            radial-gradient(ellipse 70% 60% at 85% 100%, rgba(0,50,108,.55), transparent 60%),
+            radial-gradient(ellipse 45% 55% at 86% 14%, rgba(200,164,77,.15), transparent 62%),
+            radial-gradient(ellipse 50% 45% at 70% 20%, rgba(14,87,148,.34), transparent 65%),
             linear-gradient(135deg, #002760, #000c29); }
-  .hero__wrap { max-width: 560px; margin: 0 auto; padding: 38px 22px 30px;
-                display: flex; align-items: center; justify-content: space-between; gap: 20px; min-width: 0; }
+  .hero__wrap { max-width: 560px; margin: 0 auto; padding: 26px 22px 30px; min-width: 0; }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .brand__patch { width: 38px; height: 38px; object-fit: contain;
+                  filter: drop-shadow(0 1px 1px rgba(0,6,20,.5)) drop-shadow(0 4px 10px rgba(0,4,16,.4)); }
+  .brand__word { font-size: 11.5px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #c2a86b; }
+  .hero__row { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 20px; min-width: 0; }
   .hero__main { flex: 1; min-width: 0; }
-  .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: #c2a86b; }
-  .name { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: 36px;
-          line-height: 1.06; letter-spacing: -.01em; color: #fff; margin-top: 9px; }
+  .name { font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-size: 37px;
+          line-height: 1.06; letter-spacing: -.01em; color: #fff; }
   .role { font-size: 12.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: #d9b45b; margin-top: 10px; }
   .role2 { font-size: 12.5px; color: #b0c0d1; margin-top: 3px; }
-  .mark { position: relative; flex: none; width: 96px; height: 96px; }
-  .mark::before { content: ''; position: absolute; inset: -20px; border-radius: 50%; pointer-events: none;
-                  background: radial-gradient(circle at center, rgba(200,164,77,.22) 0%, rgba(200,164,77,.07) 40%, transparent 68%); }
-  .avatar { position: relative; width: 96px; height: 96px; border-radius: 50%; object-fit: cover;
+  .mark { position: relative; flex: none; width: 100px; height: 100px; }
+  .mark::before { content: ''; position: absolute; inset: -22px; border-radius: 50%; pointer-events: none;
+                  background: radial-gradient(circle at center, rgba(200,164,77,.26) 0%, rgba(200,164,77,.08) 42%, transparent 68%); }
+  .avatar { position: relative; width: 100px; height: 100px; border-radius: 50%; object-fit: cover;
             border: 2.5px solid #d9b45b; background: #fff;
-            box-shadow: 0 1px 1px rgba(0,6,20,.5), 0 10px 24px -8px rgba(0,6,20,.55); }
-  .patch { position: relative; width: 96px; height: 96px; object-fit: contain;
-           filter: drop-shadow(0 1px 1px rgba(0,6,20,.5)) drop-shadow(0 8px 20px rgba(0,4,16,.45)); }
-  .seam { height: 2px; background: linear-gradient(90deg, transparent, rgba(200,164,77,.55) 18%, #e8cb72 50%, rgba(200,164,77,.55) 82%, transparent); }
-  main { max-width: 560px; margin: 0 auto; padding: 24px 20px 14px; }
-  .blurb { font-size: 14px; color: #5c5244; text-align: center; margin: 0 6px 18px; }
-  .save { display: block; text-align: center; font-size: 16px; font-weight: 700; color: #16233f; text-decoration: none;
-          background: linear-gradient(180deg, #e8c879, #cfa441); border-radius: 10px; padding: 15px 10px;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,.45), 0 10px 26px -14px rgba(146,112,38,.75); margin-bottom: 20px; }
-  .save:active { filter: brightness(.96); }
-  .rows { background: #fff; border: 1px solid #e7e4dd; border-radius: 12px; overflow: hidden;
-          box-shadow: 0 1px 2px rgba(0,12,41,.05), 0 18px 40px -24px rgba(0,12,41,.22); }
-  .row { display: flex; align-items: baseline; gap: 14px; padding: 13px 16px; text-decoration: none;
-         border-bottom: 1px solid #efece4; }
+            box-shadow: 0 0 0 5px rgba(200,164,77,.14), 0 1px 1px rgba(0,6,20,.5), 0 10px 26px -8px rgba(0,6,20,.6); }
+  .seam { height: 3px; background: linear-gradient(90deg, transparent, rgba(200,164,77,.6) 15%, #f0d488 50%, rgba(200,164,77,.6) 85%, transparent); }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 20px 10px; }
+  .blurb { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; font-size: 17px;
+           color: #4c4536; text-align: center; margin: 0 10px 18px; line-height: 1.45; }
+  .save { display: flex; align-items: center; justify-content: center; gap: 10px;
+          font-size: 16px; font-weight: 750; color: #1b2440; text-decoration: none;
+          background: linear-gradient(180deg, rgba(255,255,255,.32), rgba(255,255,255,0) 42%),
+                      linear-gradient(180deg, #ecca76, #c89b3c);
+          border: 1px solid #a8842c; border-radius: 13px; padding: 15px 12px; margin-bottom: 20px;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 -1px 0 rgba(118,88,24,.35),
+                      0 2px 4px rgba(120,92,30,.22), 0 14px 30px -12px rgba(146,112,38,.65);
+          transition: transform 80ms ease, box-shadow 80ms ease; }
+  .save svg { width: 19px; height: 19px; }
+  .save:active { transform: translateY(1px);
+                 box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -1px 0 rgba(118,88,24,.3),
+                             0 1px 2px rgba(120,92,30,.2), 0 8px 18px -10px rgba(146,112,38,.55); }
+  .rows { background: #fff; border: 1px solid #e7dfcc; border-radius: 15px; overflow: hidden;
+          box-shadow: 0 1px 2px rgba(32,26,10,.05), 0 20px 46px -26px rgba(32,26,10,.3); }
+  .row { display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 13px;
+         padding: 11px 15px; text-decoration: none; border-bottom: 1px solid #f0ead9; }
   .row:last-child { border-bottom: 0; }
-  .row:hover { background: #faf8f2; }
-  .k { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; color: #8a6d2f; text-transform: uppercase; width: 54px; flex: none; }
-  .v { font-size: 15px; color: #16233f; font-weight: 500; overflow-wrap: anywhere; }
-  .foot { text-align: center; font-size: 10.5px; letter-spacing: .18em; color: #9a9281; font-weight: 600; padding: 26px 8px 34px; }
-  @media (max-width: 374px) { .mark, .avatar, .patch { width: 78px; height: 78px; } .name { font-size: 31px; } }
+  .row:hover, .row:active { background: #faf6ea; }
+  .rbadge { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(180deg, #fdf7e6, #f3e6c6); border: 1px solid #e6d5a4; color: #8a6d2f; }
+  .rbadge svg { width: 17px; height: 17px; }
+  .rtxt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .k { font-size: 10px; font-weight: 750; letter-spacing: .13em; color: #9b7c36; text-transform: uppercase; }
+  .v { font-size: 15px; color: #16233f; font-weight: 600; overflow-wrap: anywhere; line-height: 1.3; }
+  .chev { color: #cdbf98; font-size: 19px; font-weight: 600; line-height: 1; padding-right: 2px; }
+  .foot { text-align: center; font-size: 10.5px; letter-spacing: .18em; color: #9a8c6e; font-weight: 650; padding: 26px 8px 34px; }
+  @media (max-width: 374px) { .mark, .avatar { width: 82px; height: 82px; } .name { font-size: 31px; } }
 </style></head><body>
 <header class="hero">
   <div class="hero__wrap">
-    <div class="hero__main">
-      <div class="eyebrow">Waller County EMS</div>
-      <h1 class="name">${esc(c.fullName)}</h1>
-      ${c.titleLines[c.titleLines.length - 1] ? `<div class="role">${esc(c.titleLines[c.titleLines.length - 1])}</div>` : ''}
-      ${c.titleLines.length > 1 ? `<div class="role2">${esc(c.titleLines.slice(0, -1).join(' · '))}</div>` : ''}
+    <div class="brand">
+      <img class="brand__patch" src="${PATCH_URL}" alt="Waller County EMS patch">
+      <span class="brand__word">Waller County EMS</span>
     </div>
-    <div class="mark">
-      ${c.photoUrl ? `<img class="avatar" src="${esc(c.photoUrl)}" alt="">` : `<img class="patch" src="${PATCH_URL}" alt="Waller County EMS">`}
+    <div class="hero__row">
+      <div class="hero__main">
+        <h1 class="name">${esc(c.fullName)}</h1>
+        ${c.titleLines[c.titleLines.length - 1] ? `<div class="role">${esc(c.titleLines[c.titleLines.length - 1])}</div>` : ''}
+        ${c.titleLines.length > 1 ? `<div class="role2">${esc(c.titleLines.slice(0, -1).join(' · '))}</div>` : ''}
+      </div>
+      ${c.photoUrl ? `<div class="mark"><img class="avatar" src="${esc(photoRender(c.photoUrl, 240))}" onerror="this.onerror=null;this.src='${esc(c.photoUrl)}'" alt=""></div>` : ''}
     </div>
   </div>
   <div class="seam"></div>
 </header>
 <main>
   ${c.blurb ? `<p class="blurb">${esc(c.blurb)}</p>` : ''}
-  <a class="save" href="/card/${c.slug}.vcf">Save my contact</a>
+  <a class="save" href="/card/${c.slug}.vcf">${icon('save')} Save my contact</a>
   <div class="rows">
     ${rows.join('\n    ')}
   </div>
