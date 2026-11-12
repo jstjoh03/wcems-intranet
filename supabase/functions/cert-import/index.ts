@@ -56,6 +56,8 @@ const ALIASES: Record<string, string> = {
   'mary shannon mcconaty': 'mary mcconaty',
   'timothy friedel': 'tim friedel',
   'tzee kwang perry tong': 'perry tong',
+  /* HR/Admin — portal uses the nickname (Justin, 2026-11-12). */
+  'victoria bell': 'tori bell',
 }
 const SUFFIX_TOKENS = new Set(['m', 'd', 'md', 'do', 'jr', 'sr', 'ii', 'iii', 'iv', 'rn', 'lp', 'np', 'pa'])
 
@@ -209,6 +211,7 @@ Deno.serve(async (req: Request) => {
     const reqNameByLower = new Map((reqs ?? []).map((r) => [r.name.toLowerCase(), r.name]))
 
     const unmatched = new Set<string>()
+    const inactiveSkipped = new Set<string>()
     const skippedCerts = new Set<string>()
     const missingStart: string[] = []
     const dshsManualVerify: string[] = []
@@ -234,6 +237,12 @@ Deno.serve(async (req: Request) => {
         unmatched.add(`${first} ${last}`)
         continue
       }
+      /* Former employees linger in Paycom exports (Carothers, 2026-11-12)
+         — an inactive portal account neither imports nor makes noise. */
+      if (!person.active) {
+        inactiveSkipped.add(person.fullName)
+        continue
+      }
       const start = toDate(row['Start_Date'])
       const endRaw = toDate(row['End_Date'])
 
@@ -245,7 +254,12 @@ Deno.serve(async (req: Request) => {
         if (rec && endRaw) {
           const stored = rec.tx_license_expires_at
           if (stored && stored !== endRaw && endOfMonth(stored) !== endOfMonth(endRaw)) {
-            dshsMismatch.push(`${person.fullName}: pipeline has ${stored}, Paycom has ${endRaw}`)
+            /* NEVER auto-written: the HR roster List owns this field and
+               roster-sync re-copies it daily — a Paycom write here would
+               silently revert on the next sync. Fix it at the source. */
+            dshsMismatch.push(
+              `${person.fullName}: pipeline has ${stored}, Paycom has ${endRaw} — if Paycom is right, update the TX license expiration in the HR roster workbook (the List owns this field; roster-sync carries it to the portal)`,
+            )
           }
         }
         continue
@@ -314,6 +328,7 @@ Deno.serve(async (req: Request) => {
       written,
       perRequirement: perReq,
       unmatchedPeople: [...unmatched].sort(),
+      inactiveSkipped: [...inactiveSkipped].sort(),
       skippedCertTypes: [...skippedCerts].sort(),
       dshsManualVerify,
       dshsMismatch,
@@ -331,6 +346,7 @@ Deno.serve(async (req: Request) => {
 
   const JURIS_PLACEHOLDER = '2026-07-01'
   const unmatched = new Set<string>()
+  const inactiveSkipped = new Set<string>()
   const updates: { userId: string; field: string; from: string | null; to: string; who: string }[] = []
   const unchanged: string[] = []
   let passedRows = 0
@@ -358,6 +374,10 @@ Deno.serve(async (req: Request) => {
     const person = byName.get(normName(flipped))
     if (!person) {
       unmatched.add(rawName)
+      continue
+    }
+    if (!person.active) {
+      inactiveSkipped.add(person.fullName)
       continue
     }
     const rec = recByUser.get(person.id)
@@ -397,5 +417,6 @@ Deno.serve(async (req: Request) => {
     updates: updates.map((u) => `${u.who}: ${u.field} ${u.from ?? '—'} → ${u.to}`),
     unchanged,
     unmatchedPeople: [...unmatched].sort(),
+    inactiveSkipped: [...inactiveSkipped].sort(),
   })
 })
