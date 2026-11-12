@@ -85,6 +85,11 @@ const CERT_MAP: Record<string, string> = {
      Paycom lists an ALERRT slot for everyone; only rows with a date are
      completions — the rest fall into missingStart and are skipped. */
   'alerrt': 'ALERRT',
+  /* HEART training (Justin, 2026-11-12: new in Paycom, rows were
+     skipped because this map didn't know the label). Explicit although
+     the name-fallback below now catches identical names — the map
+     documents every known Paycom label. */
+  'heart training': 'HEART Training',
 }
 const DSHS_NAMES = new Set(['texas department of state health services'])
 
@@ -197,6 +202,11 @@ Deno.serve(async (req: Request) => {
       .select('id, name, cycle')
     if (qErr) return json({ ok: false, error: qErr.message }, 500)
     const reqByName = new Map((reqs ?? []).map((r) => [r.name, { id: r.id, cycle: r.cycle }]))
+    /* Fallback matching: a Paycom label that isn't in CERT_MAP still
+       imports when a requirement row carries the SAME name (case-
+       insensitive). A cert added to both Paycom and the portal under
+       one name needs no code change — the HEART lesson (2026-11-12). */
+    const reqNameByLower = new Map((reqs ?? []).map((r) => [r.name.toLowerCase(), r.name]))
 
     const unmatched = new Set<string>()
     const skippedCerts = new Set<string>()
@@ -241,7 +251,7 @@ Deno.serve(async (req: Request) => {
         continue
       }
 
-      const reqName = CERT_MAP[certKey]
+      const reqName = CERT_MAP[certKey] ?? reqNameByLower.get(certKey)
       if (!reqName) {
         skippedCerts.add(certRaw)
         continue
