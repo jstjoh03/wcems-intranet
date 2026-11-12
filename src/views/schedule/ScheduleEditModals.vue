@@ -1112,6 +1112,37 @@ watch([axDate, axFrom, axUntil], () => {
   axEndDate.value = axUntil.value <= axFrom.value ? addDaysIso(axDate.value, 1) : axDate.value
 })
 
+/* Live hour/overlap warnings for the direct booking — the admin twin of
+   the request-form check (Justin, 2026-11-12: Sarah Reyes' stay-late was
+   hand-booked onto a day she was already scheduled and the export
+   absorbed it). Non-blocking: admins can still book anything, but they
+   see it. */
+const axWarn = ref<HoursWarning[]>([])
+let axWarnTimer: number | undefined
+watch([axUser, axDate, axEndDate, axFrom, axUntil], () => {
+  axWarn.value = []
+  window.clearTimeout(axWarnTimer)
+  if (!axUser.value || !axDate.value) return
+  const snapshot = `${axUser.value}|${axDate.value}|${axEndDate.value}|${axFrom.value}|${axUntil.value}`
+  axWarnTimer = window.setTimeout(async () => {
+    const name = sched.personById.value.get(axUser.value)?.fullName ?? 'They'
+    const info = await sched.hoursCheckWindow(
+      axUser.value, axDate.value, axFrom.value, axUntil.value, name, axEndDate.value || null,
+    )
+    const still = `${axUser.value}|${axDate.value}|${axEndDate.value}|${axFrom.value}|${axUntil.value}`
+    if (still === snapshot) axWarn.value = info.warnings
+  }, 450)
+})
+
+function axApplySuggest() {
+  const s = axWarn.value.find((w) => w.suggest)?.suggest
+  if (!s) return
+  axDate.value = s.dateIso
+  axFrom.value = s.from
+  axUntil.value = s.until
+  axEndDate.value = s.endDateIso
+}
+
 /** Time-type choices: the built-ins plus Deployment and any custom pay
  *  categories from Setup. */
 const timeTypeOptions = computed(() => sched.extraTimeTypes())
@@ -2411,6 +2442,20 @@ async function reqCancel() {
             <span>Comment (optional)</span>
             <input v-model="axNote" type="text" class="em__input" placeholder="e.g. Held over on a late call" />
           </label>
+          <div v-if="axWarn.length" class="em__warnbox">
+            <p class="em__warnhead">Before you book this:</p>
+            <ul class="em__warnlist">
+              <li v-for="(w, i) in axWarn" :key="i">{{ w.message }}</li>
+            </ul>
+            <button
+              v-if="axWarn.some((w) => w.suggest)"
+              type="button"
+              class="em__btn em__btn--ghost"
+              @click="axApplySuggest"
+            >
+              Fix the dates for me
+            </button>
+          </div>
           <button class="em__btn em__btn--primary" :disabled="busy || !axUser" @click="submitAddExtra">
             {{ busy ? 'Working…' : 'Record extra hours' }}
           </button>

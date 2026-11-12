@@ -12,6 +12,7 @@ import {
   type UpcomingShift,
   type Availability,
   type HoursWarning,
+  type AuditRow,
 } from '@/composables/useSchedule'
 import { useScheduleEditor } from '@/composables/useScheduleEditor'
 
@@ -179,8 +180,33 @@ watch(exEndDate, () => {
 })
 
 const hourWarnConfirm = computed(() =>
-  (hourWarn.value ?? []).some((w) => w.code === 'consecutive_confirm'),
+  (hourWarn.value ?? []).some((w) => w.code === 'consecutive_confirm' || w.code === 'overlap'),
 )
+
+/** First warning that carries a corrected filing (the overlap guard) —
+ *  one tap moves the form to the dates where the hours actually count. */
+const warnSuggest = computed(
+  () => (hourWarn.value ?? []).find((w) => w.suggest)?.suggest ?? null,
+)
+
+function fmtSuggestDay(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function applySuggest() {
+  const s = warnSuggest.value
+  if (!s) return
+  exDate.value = s.dateIso
+  exFrom.value = s.from
+  exUntil.value = s.until
+  exEndDate.value = s.endDateIso
+  hourWarn.value = null // fresh check against the corrected window on submit
+  formDone.value = null
+}
 
 function pickForm(kind: FormKind) {
   formKind.value = kind
@@ -309,7 +335,16 @@ function requesterName(r: SchedRequest): string {
 }
 
 const myRequests = computed(() =>
-  sched.requests.value.filter((r) => r.requesterId === sched.myUserId.value),
+  sched.requests.value
+    .filter((r) => r.requesterId === sched.myUserId.value)
+    .slice()
+    .sort((a, b) => (b.workDate ?? b.createdAt).localeCompare(a.workDate ?? a.createdAt)),
+)
+
+/** The member's own requests in the same pay-period/month buckets,
+ *  newest period first. */
+const myGroups = computed<QueueGroup[]>(() =>
+  groupRows(myRequests.value).sort((a, b) => b.key.localeCompare(a.key)),
 )
 
 /* ACTIONABLE queue only: trades/giveaways don't belong here until both
@@ -389,11 +424,14 @@ function periodPair(r: SchedRequest): string {
 
 /* A 26-deep queue shouldn't bury the page — show the first few, expand
    on demand. */
-/* Workbench toolbar (redesign 2026-09-23): search, type filter with
-   counts, and sort — warnings float first by default. */
+/* Workbench toolbar (redesign 2026-09-23; regrouped 2026-11-12 —
+   Justin: "I need requests separated either by pay period or by month
+   and to show when they were entered"): search, type filter with
+   counts, and a pay-period/month group toggle. Within a group,
+   needs-attention rows float first, then shift date. */
 const qFilter = ref('')
 const qType = ref<'all' | 'time_off' | 'pickup' | 'extra_hours' | 'swap' | 'discrepancy'>('all')
-const qSort = ref<'attention' | 'oldest' | 'shift'>('attention')
+const qGroup = ref<'period' | 'month'>('period')
 
 const typeCounts = computed(() => {
   const c = { all: pendingQueue.value.length, time_off: 0, pickup: 0, extra_hours: 0, swap: 0, discrepancy: 0 }
@@ -411,7 +449,45 @@ function needsAttention(r: SchedRequest): boolean {
   return cardChips(r).length > 0 || crossesPayPeriods(r)
 }
 
-const visibleQueue = computed(() => {
+/** Group bucket for a request — keyed on the SHIFT date (that's what a
+ *  pay period is about); dateless rows gather at the end. */
+function groupFor(r: SchedRequest): { key: string; label: string; current: boolean } {
+  const d = r.workDate
+  if (!d) return { key: 'zzzz-none', label: 'No shift date', current: false }
+  if (qGroup.value === 'month') {
+    const key = d.slice(0, 7)
+    return {
+      key,
+      label: new Date(`${d}T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      current: key === todayCentralIso().slice(0, 7),
+    }
+  }
+  const p = payPeriodFor(d)
+  return {
+    key: p.start,
+    label: `Pay period · ${p.label}`,
+    current: p.start === payPeriodFor(todayCentralIso()).start,
+  }
+}
+
+interface QueueGroup {
+  key: string
+  label: string
+  current: boolean
+  rows: SchedRequest[]
+}
+
+function groupRows(list: SchedRequest[]): QueueGroup[] {
+  const m = new Map<string, QueueGroup>()
+  for (const r of list) {
+    const g = groupFor(r)
+    if (!m.has(g.key)) m.set(g.key, { ...g, rows: [] })
+    m.get(g.key)!.rows.push(r)
+  }
+  return [...m.values()].sort((a, b) => a.key.localeCompare(b.key))
+}
+
+const queueGroups = computed<QueueGroup[]>(() => {
   const q = qFilter.value.trim().toLowerCase()
   const list = pendingQueue.value.filter((r) => {
     if (qType.value === 'time_off' && r.type !== 'time_off') return false
@@ -422,21 +498,92 @@ const visibleQueue = computed(() => {
     if (q && !requesterName(r).toLowerCase().includes(q)) return false
     return true
   })
-  const sorted = [...list]
-  if (qSort.value === 'attention') {
-    sorted.sort((a, b) => Number(needsAttention(b)) - Number(needsAttention(a)) || a.createdAt.localeCompare(b.createdAt))
-  } else if (qSort.value === 'oldest') {
-    sorted.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  } else {
-    sorted.sort((a, b) => (a.workDate ?? '9999').localeCompare(b.workDate ?? '9999'))
+  const groups = groupRows(list)
+  for (const g of groups) {
+    g.rows.sort(
+      (a, b) =>
+        Number(needsAttention(b)) - Number(needsAttention(a)) ||
+        (a.workDate ?? '9999').localeCompare(b.workDate ?? '9999') ||
+        a.createdAt.localeCompare(b.createdAt),
+    )
   }
-  return sorted
+  return groups
 })
+
+const visibleQueueCount = computed(() => queueGroups.value.reduce((t, g) => t + g.rows.length, 0))
+
+/** "Submitted Nov 9" — the entry stamp Justin asked to see at a glance;
+ *  the full timestamp rides the hover and the expanded detail. */
+function submittedShort(r: SchedRequest): string {
+  return new Date(r.createdAt).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'America/Chicago',
+  })
+}
+
+function submittedFull(r: SchedRequest): string {
+  return new Date(r.createdAt).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/Chicago',
+  })
+}
 
 /** Collapsed rows show one line; the chevron opens the rest. */
 const openReq = ref<string | null>(null)
 function toggleReq(id: string) {
-  openReq.value = openReq.value === id ? null : id
+  const opening = openReq.value !== id
+  openReq.value = opening ? id : null
+  if (opening && sched.canEdit.value && trails.value[id] === undefined) void loadTrail(id)
+}
+
+// ── per-request action trail (sched_audit, editors) ──────────────────
+
+const trails = ref<Record<string, AuditRow[] | 'loading'>>({})
+
+async function loadTrail(id: string) {
+  trails.value = { ...trails.value, [id]: 'loading' }
+  const rows = await sched.fetchRequestTrail(id)
+  trails.value = { ...trails.value, [id]: rows }
+}
+
+function fmtTrailTs(at: string): string {
+  return new Date(at).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/Chicago',
+  })
+}
+
+const SUBMIT_ACTIONS = new Set([
+  'request.time_off',
+  'request.extra',
+  'request.pickup',
+  'request.giveaway',
+  'request.trade',
+])
+
+/** Filed → … → decided, one line per step. The filed line is
+ *  synthesized from the request itself when the audit log predates
+ *  entity-tagged submits. */
+function trailLines(r: SchedRequest): string[] {
+  const t = trails.value[r.id]
+  const rows = Array.isArray(t) ? t : []
+  const out: string[] = []
+  if (!rows.some((a) => SUBMIT_ACTIONS.has(a.action))) {
+    out.push(`Filed by ${requesterName(r)} · ${submittedFull(r)}`)
+  }
+  for (const a of rows) {
+    const who = a.actorId ? (sched.personById.value.get(a.actorId)?.fullName ?? 'Unknown') : 'System'
+    out.push(`${a.summary} — ${who} · ${fmtTrailTs(a.at)}`)
+  }
+  return out
 }
 function rowOpen(r: SchedRequest): boolean {
   return openReq.value === r.id || confirmApprove.value === r.id || editTimesFor.value === r.id
@@ -522,6 +669,12 @@ const visibleHistory = computed(() =>
   showAllHistory.value ? decided.value : decided.value.slice(0, HISTORY_PREVIEW),
 )
 
+/** History in the same pay-period/month buckets as the queue, newest
+ *  period first; order inside a bucket stays newest-decided first. */
+const historyGroups = computed<QueueGroup[]>(() =>
+  groupRows(visibleHistory.value).sort((a, b) => b.key.localeCompare(a.key)),
+)
+
 function decidedLine(r: SchedRequest): string {
   const by = r.decidedBy ? (sched.personById.value.get(r.decidedBy)?.fullName ?? 'admin') : null
   const at = r.decidedAt
@@ -534,6 +687,15 @@ function decidedLine(r: SchedRequest): string {
       })
     : null
   return [by ? `by ${by}` : null, at].filter(Boolean).join(' · ')
+}
+
+/* History rows load their trail on demand — a "Trail" link, not an
+   auto-fetch for every decided request on the page. */
+const histTrail = ref<string | null>(null)
+
+function toggleHistTrail(r: SchedRequest) {
+  histTrail.value = histTrail.value === r.id ? null : r.id
+  if (histTrail.value === r.id && trails.value[r.id] === undefined) void loadTrail(r.id)
 }
 
 const reopenArm = ref<string | null>(null)
@@ -567,6 +729,9 @@ function chipText(w: HoursWarning): string {
   if (w.code === 'started') return 'Shift already started'
   if (w.code === 'not_p2_cleared') return 'Not P2-cleared — no safe access'
   if (w.code === 'crew_minimum') return 'Below AEMT/EMT crew minimum'
+  if (w.code === 'overlap') return 'Inside scheduled shift — adds 0h'
+  if (w.code === 'overlap_partial') return `${w.hours}h overlaps their shift`
+  if (w.code === 'long_window') return `${w.hours}h window — check dates`
   return 'Hours unverified'
 }
 
@@ -682,8 +847,11 @@ function approveClicked(r: SchedRequest) {
   openReq.value = r.id
 
   const chips = cardChips(r)
+  /* 'overlap' joins the hard-confirm set (2026-11-12): approving a
+     window that sits inside the member's scheduled shift pays nothing —
+     the Chief gets one explicit "approve anyway" beat to catch it. */
   const needsConfirm = chips.some(
-    (w) => w.code === 'consecutive_confirm' || w.code === 'check_failed',
+    (w) => w.code === 'consecutive_confirm' || w.code === 'check_failed' || w.code === 'overlap',
   )
   if (needsConfirm && confirmApprove.value !== r.id) {
     confirmApprove.value = r.id
@@ -901,6 +1069,9 @@ async function cancel(r: SchedRequest) {
             <ul class="rq__warnlist">
               <li v-for="(w, i) in hourWarn" :key="i">{{ w.message }}</li>
             </ul>
+            <button v-if="warnSuggest" type="button" class="rq__fixbtn" @click="applySuggest">
+              Fix it for me — {{ fmtSuggestDay(warnSuggest.dateIso) }}, {{ warnSuggest.from }} – {{ warnSuggest.until }}
+            </button>
           </div>
 
           <button type="submit" class="rq__submit" :disabled="formBusy">
@@ -932,26 +1103,31 @@ async function cancel(r: SchedRequest) {
       </div>
       <div v-if="pendingQueue.length > 0" class="rq__filterrow">
         <input v-model="qFilter" type="search" class="rq__search" placeholder="Search people…" aria-label="Search requests by person" />
-        <select v-model="qSort" class="rq__sort" aria-label="Sort pending requests">
-          <option value="attention">Sort: needs attention</option>
-          <option value="oldest">Sort: oldest first</option>
-          <option value="shift">Sort: shift date</option>
-        </select>
+        <div class="rq__grouptoggle" role="group" aria-label="Group requests by">
+          <button class="rq__gt" :class="{ 'rq__gt--on': qGroup === 'period' }" @click="qGroup = 'period'">Pay period</button>
+          <button class="rq__gt" :class="{ 'rq__gt--on': qGroup === 'month' }" @click="qGroup = 'month'">Month</button>
+        </div>
       </div>
-      <p v-if="pendingQueue.length > 0 && visibleQueue.length === 0" class="rq__muted">No pending requests match.</p>
-      <table v-if="visibleQueue.length > 0" class="rq__table">
+      <p v-if="pendingQueue.length > 0 && visibleQueueCount === 0" class="rq__muted">No pending requests match.</p>
+      <template v-for="g in queueGroups" :key="g.key">
+      <h3 class="rq__period">
+        {{ g.label }}
+        <span v-if="g.current" class="rq__nowtag">current</span>
+        <i>{{ g.rows.length }}</i>
+      </h3>
+      <table class="rq__table">
         <thead>
           <tr>
             <th class="rq__thchev"></th>
             <th>Request</th>
             <th>Shift</th>
             <th>Flags</th>
-            <th class="rq__thage">Waiting</th>
+            <th class="rq__thage">Submitted</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <template v-for="r in visibleQueue" :key="r.id">
+          <template v-for="r in g.rows" :key="r.id">
             <tr class="rq__row" :class="{ 'rq__row--att': needsAttention(r), 'rq__row--open': rowOpen(r) }">
               <td class="rq__chevcell">
                 <button class="rq__chev" :class="{ 'rq__chev--open': rowOpen(r) }" :aria-expanded="rowOpen(r)" aria-label="Show detail" @click="toggleReq(r.id)">▸</button>
@@ -968,7 +1144,10 @@ async function cancel(r: SchedRequest) {
                 <span v-if="crossesPayPeriods(r)" class="rq__chip" data-code="period" :title="`Swap crosses pay periods: ${periodPair(r)} — your call.`">Crosses pay periods</span>
                 <span v-for="(w, i) in cardChips(r)" :key="i" class="rq__chip" :data-code="w.code" :title="w.message">{{ chipText(w) }}</span>
               </td>
-              <td class="rq__agecell" :title="'Submitted ' + new Date(r.createdAt).toLocaleString()">{{ waitingAge(r) }}</td>
+              <td class="rq__agecell" :title="'Submitted ' + submittedFull(r)">
+                <span class="rq__sub1">{{ submittedShort(r) }}</span>
+                <span class="rq__sub2">waiting {{ waitingAge(r) }}</span>
+              </td>
               <td class="rq__actcell">
                 <!-- a discrepancy has nothing to apply: fix by hand,
                      then close the flag — or dismiss it outright -->
@@ -1005,8 +1184,23 @@ async function cancel(r: SchedRequest) {
                 <p v-else class="rq__card-line">{{ requestLine(r) }}</p>
                 <p v-for="(line, i) in cardHours[r.id]?.lines ?? []" :key="i" class="rq__hoursline">{{ line }}</p>
                 <p v-if="r.comments" class="rq__card-comments">"{{ r.comments }}"</p>
+                <p
+                  v-for="(w, i) in cardChips(r).filter((x) => x.code === 'overlap' || x.code === 'overlap_partial' || x.code === 'long_window')"
+                  :key="'ow' + i"
+                  class="rq__overlapnote"
+                >
+                  {{ w.message }}
+                </p>
+                <div class="rq__trail">
+                  <p v-for="(line, i) in trailLines(r)" :key="'tr' + i" class="rq__trailline">{{ line }}</p>
+                  <p v-if="trails[r.id] === 'loading'" class="rq__trailline rq__trailline--dim">Loading the trail…</p>
+                </div>
                 <p v-if="confirmApprove === r.id" class="rq__confirmnote">
-                  This crosses an hour threshold that needs admin sign-off — approve anyway?
+                  {{
+                    cardChips(r).some((w) => w.code === 'overlap')
+                      ? 'This window sits inside hours already on their schedule — approving adds NOTHING to the export. Fix the dates (Edit times, or have them refile on the right day) or approve anyway?'
+                      : 'This crosses an hour threshold that needs admin sign-off — approve anyway?'
+                  }}
                 </p>
                 <div v-if="editTimesFor === r.id" class="rq__edittimes">
                   <label>From <TimeSelect24 v-model="editFrom" class="rq__input rq__input--time" /></label>
@@ -1020,6 +1214,7 @@ async function cancel(r: SchedRequest) {
           </template>
         </tbody>
       </table>
+      </template>
 
 
       <template v-if="negotiating.length > 0">
@@ -1042,7 +1237,13 @@ async function cancel(r: SchedRequest) {
       </div>
       <template v-if="showHistory">
         <p v-if="decided.length === 0" class="rq__muted">No decided requests yet.</p>
-        <div v-for="r in visibleHistory" :key="r.id" class="rq__card rq__card--hist">
+        <template v-for="g in historyGroups" :key="'h' + g.key">
+        <h3 class="rq__period">
+          {{ g.label }}
+          <span v-if="g.current" class="rq__nowtag">current</span>
+          <i>{{ g.rows.length }}</i>
+        </h3>
+        <div v-for="r in g.rows" :key="r.id" class="rq__card rq__card--hist">
           <div class="rq__card-main">
             <p class="rq__card-title">
               {{ TYPE_LABELS[r.type] }} — {{ requesterName(r) }}<template v-if="r.counterpartyId">
@@ -1055,8 +1256,16 @@ async function cancel(r: SchedRequest) {
             <p class="rq__histmeta">
               <span class="rq__status" :data-status="r.status">{{ STATUS_LABELS[r.status] }}</span>
               <span v-if="decidedLine(r)" class="rq__muted">{{ decidedLine(r) }}</span>
+              <span class="rq__muted">· submitted {{ submittedFull(r) }}</span>
+              <button class="rq__btn rq__btn--trail" @click="toggleHistTrail(r)">
+                {{ histTrail === r.id ? 'Hide trail' : 'Trail' }}
+              </button>
             </p>
             <p v-if="r.decisionNote" class="rq__card-comments">"{{ r.decisionNote }}"</p>
+            <div v-if="histTrail === r.id" class="rq__trail">
+              <p v-for="(line, i) in trailLines(r)" :key="'tr' + i" class="rq__trailline">{{ line }}</p>
+              <p v-if="trails[r.id] === 'loading'" class="rq__trailline rq__trailline--dim">Loading the trail…</p>
+            </div>
             <p v-if="reopenArm === r.id" class="rq__confirmnote">
               {{
                 r.status === 'approved'
@@ -1072,6 +1281,7 @@ async function cancel(r: SchedRequest) {
             <button v-if="reopenArm === r.id" class="rq__btn" @click="reopenArm = null">Back</button>
           </div>
         </div>
+        </template>
         <button
           v-if="decided.length > HISTORY_PREVIEW"
           class="rq__btn rq__expander"
@@ -1085,10 +1295,21 @@ async function cancel(r: SchedRequest) {
     <section class="rq__section">
       <h2 class="rq__h">My requests</h2>
       <p v-if="myRequests.length === 0" class="rq__muted">None yet.</p>
-      <div v-for="r in myRequests" :key="r.id" class="rq__card">
+      <template v-for="g in myGroups" :key="'m' + g.key">
+      <h3 class="rq__period">
+        {{ g.label }}
+        <span v-if="g.current" class="rq__nowtag">current</span>
+        <i>{{ g.rows.length }}</i>
+      </h3>
+      <div v-for="r in g.rows" :key="r.id" class="rq__card">
         <div class="rq__card-main">
           <p class="rq__card-title">{{ TYPE_LABELS[r.type] }}</p>
           <p class="rq__card-line">{{ requestLine(r) }}</p>
+          <p class="rq__card-line">
+            Submitted {{ submittedFull(r) }}<template v-if="r.status !== 'pending' && r.status !== 'partner_accepted' && decidedLine(r)">
+              · {{ STATUS_LABELS[r.status].toLowerCase() }} {{ decidedLine(r) }}</template>
+          </p>
+          <p v-if="r.decisionNote" class="rq__card-comments">"{{ r.decisionNote }}"</p>
           <div v-if="reqWarnings(r).length" class="rq__chips">
             <span
               v-for="(w, i) in reqWarnings(r)"
@@ -1113,6 +1334,7 @@ async function cancel(r: SchedRequest) {
           </button>
         </div>
       </div>
+      </template>
     </section>
     </template>
   </div>
@@ -1180,6 +1402,121 @@ async function cancel(r: SchedRequest) {
   align-items: center;
   gap: 8px;
   margin-bottom: 0.6rem;
+}
+
+/* ── pay-period / month group chrome (2026-11-12) ──────────────────── */
+.rq__grouptoggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  margin-left: auto;
+}
+
+.rq__gt {
+  border: 1px solid transparent;
+  background: none;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rq__gt--on {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.06);
+  color: var(--color-ink);
+}
+
+.rq__period {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent-700);
+  margin: 1.1rem 0 0.35rem;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.rq__period i {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rq__nowtag {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--color-accent-500, #c8a44d);
+  color: var(--color-accent-700);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.rq__sub1 {
+  display: block;
+  color: var(--color-ink-soft);
+  font-weight: 600;
+}
+
+.rq__sub2 {
+  display: block;
+  font-size: 0.68rem;
+  margin-top: 1px;
+}
+
+.rq__trail {
+  margin-top: 0.45rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 2px solid var(--color-line);
+}
+
+.rq__trailline {
+  font-size: 0.75rem;
+  color: var(--color-ink-soft);
+  margin: 0.12rem 0;
+}
+
+.rq__trailline--dim {
+  color: var(--color-muted);
+}
+
+.rq__overlapnote {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: oklch(0.45 0.15 30);
+  margin: 0.3rem 0 0;
+  max-width: 68ch;
+}
+
+.rq__fixbtn {
+  margin-top: 0.5rem;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.4rem 0.9rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-brand-700);
+  color: white;
+  cursor: pointer;
+}
+
+.rq__btn--trail {
+  font-size: 0.74rem;
+  font-weight: 600;
 }
 
 .rq__table {
@@ -1754,7 +2091,8 @@ async function cancel(r: SchedRequest) {
 .rq__chip[data-code='consecutive_confirm'],
 .rq__chip[data-code='check_failed'],
 .rq__chip[data-code='not_p2_cleared'],
-.rq__chip[data-code='crew_minimum'] {
+.rq__chip[data-code='crew_minimum'],
+.rq__chip[data-code='overlap'] {
   border-color: oklch(0.8 0.1 27);
   background: oklch(0.97 0.02 27);
   color: var(--color-danger-500);
@@ -1849,8 +2187,19 @@ async function cancel(r: SchedRequest) {
     text-align: left;
   }
 
-  .rq__agecell::before {
-    content: 'Waiting ';
+  .rq__agecell .rq__sub1::before {
+    content: 'Submitted ';
+    color: var(--color-muted);
+    font-weight: 500;
+  }
+
+  .rq__agecell .rq__sub1,
+  .rq__agecell .rq__sub2 {
+    display: inline;
+  }
+
+  .rq__agecell .rq__sub2::before {
+    content: ' · ';
   }
 
   .rq__actcell {

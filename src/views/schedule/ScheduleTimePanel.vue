@@ -536,6 +536,59 @@ const uncodedEventHours = computed(() => {
   return round2(h)
 })
 
+/** Extra-hours entries that overlap the member's OTHER scheduled
+ *  coverage in this range. The Paycom punch builder merges a member's
+ *  same-day same-code segments, so the overlapped portion pays NOTHING
+ *  — and the hours report double-counts it the other way. Either way
+ *  the entry is on the wrong day: a stay-late belongs on the calendar
+ *  day the shift actually ends (Sarah Reyes' 11/5, Justin 2026-11-12). */
+const absorbedExtras = computed(() => {
+  const byUser = new Map<string, TimeSegment[]>()
+  for (const s of worked.value) {
+    if (!byUser.has(s.userId)) byUser.set(s.userId, [])
+    byUser.get(s.userId)!.push(s)
+  }
+  const out: { name: string; dateIso: string; hours: number; absorbed: number; full: boolean }[] = []
+  for (const [userId, list] of byUser) {
+    for (const s of list) {
+      if (s.kind !== 'extra') continue
+      // merge the other segments' overlaps with this extra so stacked
+      // covers don't double-count the same minutes
+      const cuts: { s: number; e: number }[] = []
+      for (const o of list) {
+        if (o === s) continue
+        const os = Math.max(s.startMs, o.startMs)
+        const oe = Math.min(s.endMs, o.endMs)
+        if (oe - os >= 60_000) cuts.push({ s: os, e: oe })
+      }
+      if (cuts.length === 0) continue
+      cuts.sort((a, b) => a.s - b.s)
+      let overlapMs = 0
+      let curS = cuts[0].s
+      let curE = cuts[0].e
+      for (const o of cuts.slice(1)) {
+        if (o.s <= curE) curE = Math.max(curE, o.e)
+        else {
+          overlapMs += curE - curS
+          curS = o.s
+          curE = o.e
+        }
+      }
+      overlapMs += curE - curS
+      if (overlapMs < 60_000) continue
+      const span = s.endMs - s.startMs
+      out.push({
+        name: sched.personById.value.get(userId)?.fullName ?? 'Unknown',
+        dateIso: s.dateIso,
+        hours: round2(span / 3_600_000),
+        absorbed: round2(overlapMs / 3_600_000),
+        full: span - overlapMs < 60_000,
+      })
+    }
+  }
+  return out.sort((a, b) => byLast(a.name, b.name) || a.dateIso.localeCompare(b.dateIso))
+})
+
 /** Approved paid time off with no earning code — NOT exported at all
  *  (unpaid time off is expected to stay uncoded and isn't flagged).
  *  Itemized per member per date: a bare "Time Off 48h" total sent
@@ -817,7 +870,8 @@ const exportFlagCount = computed(
     uncodedHolidays.value.length +
     (uncodedEventHours.value > 0 ? 1 : 0) +
     uncodedOffRows.value.length +
-    manualEntries.value.length,
+    manualEntries.value.length +
+    absorbedExtras.value.length,
 )
 /* Anything needing attention opens the detail on its own — the count
    alone doesn't say who or what to fix. */
@@ -1043,6 +1097,19 @@ function downloadPaycom(onlySelected = false): void {
     </p>
     <p v-if="err" class="tm__error">{{ err }}</p>
 
+    <!-- extra hours booked on a day the member is already scheduled pay
+         NOTHING in the Paycom export (the punch merge absorbs them) and
+         inflate this report — flag them wherever hours are read -->
+    <div v-if="absorbedExtras.length" class="tm__absorbed">
+      <p class="tm__absorbed-head">
+        Extra hours overlapping a scheduled shift — these pay $0 in the export and inflate the totals below:
+      </p>
+      <p v-for="(a, i) in absorbedExtras" :key="i" class="tm__absorbed-line">
+        {{ a.name }} — {{ fmtDay(a.dateIso) }}: {{ a.full ? `${a.hours}h extra sits entirely inside their shift` : `${a.absorbed}h of a ${a.hours}h extra overlaps their shift` }}.
+        Move the entry to the day the shift ends.
+      </p>
+    </div>
+
     <div class="tm__scroll">
       <table class="tm__table">
         <thead>
@@ -1162,6 +1229,14 @@ function downloadPaycom(onlySelected = false): void {
                 <td class="tm__amut">{{ fmtDay(o.dateIso) }}</td>
                 <td>{{ o.hours }} hrs {{ o.label }} — NOT in the file (no earning code)</td>
                 <td class="tm__amut">Set the {{ o.label }} code in Setup → Payroll, or key it in manually</td>
+              </tr>
+              <tr v-for="(a, i) in absorbedExtras" :key="'abs' + i">
+                <td class="tm__aname">{{ a.name }}</td>
+                <td class="tm__amut">{{ fmtDay(a.dateIso) }}</td>
+                <td>
+                  {{ a.full ? `${a.hours}h extra sits INSIDE their scheduled shift — the punch merge absorbs it, so it pays 0` : `${a.absorbed}h of a ${a.hours}h extra overlaps their scheduled shift and pays 0` }}
+                </td>
+                <td class="tm__amut">A stay-late belongs on the day the shift ends — move the extra entry to the next calendar day</td>
               </tr>
               <tr v-for="(m, i) in manualEntries" :key="'man' + i">
                 <td class="tm__aname">{{ m.name }}</td>
@@ -1627,6 +1702,27 @@ function downloadPaycom(onlySelected = false): void {
 .tm__error {
   color: var(--color-danger-500);
   font-size: 0.85rem;
+}
+
+.tm__absorbed {
+  border: 1px solid oklch(0.8 0.1 27);
+  background: oklch(0.97 0.02 27);
+  border-radius: 9px;
+  padding: 0.55rem 0.8rem;
+  margin: 0 0 0.8rem;
+}
+
+.tm__absorbed-head {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-danger-500);
+  margin: 0 0 0.25rem;
+}
+
+.tm__absorbed-line {
+  font-size: 0.8rem;
+  color: var(--color-ink-soft);
+  margin: 0.12rem 0;
 }
 
 .tm__muted {

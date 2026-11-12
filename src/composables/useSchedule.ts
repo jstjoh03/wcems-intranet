@@ -677,6 +677,31 @@ async function fetchAuditLog(beforeId?: number): Promise<AuditRow[]> {
   }))
 }
 
+/** Editors: the full action trail for ONE request, oldest first —
+ *  filed/retimed/decided/reopened/cancelled, by whom and when. Drives
+ *  the per-request "trail" in the queue and decision history (Justin,
+ *  2026-11-12). RLS returns nothing for non-editors; callers render
+ *  the request's own stamps as the fallback. */
+async function fetchRequestTrail(requestId: string): Promise<AuditRow[]> {
+  const auth = useAuthStore()
+  if (auth.usingDevStub) return []
+  const res = await supabase
+    .from('sched_audit')
+    .select('id, at, actor_id, action, detail')
+    .eq('entity', 'request')
+    .eq('entity_id', requestId)
+    .order('id', { ascending: true })
+    .limit(50)
+  if (res.error) return []
+  return (res.data ?? []).map((r) => ({
+    id: r.id as number,
+    at: r.at as string,
+    actorId: (r.actor_id as string | null) ?? null,
+    action: r.action as string,
+    summary: (r.detail as { summary?: string } | null)?.summary ?? (r.action as string),
+  }))
+}
+
 /** Fire-and-forget call to the sched-notify edge function — push /
  *  email / text fan-out with recipients resolved server-side against
  *  each member's notification matrix. Never blocks the mutation. */
@@ -889,6 +914,13 @@ function seedDevStub(): void {
     timeType: null, warnings: [] as unknown[], decidedBy: null, decidedAt: null,
     decisionNote: null, createdAt: new Date().toISOString(),
   }
+  /* Requests-queue fixtures (2026-11-12): the pay-period grouping, the
+     submitted stamps, the overlap chip + its one-tap fix, and the
+     decision history were untestable in dev. Rows land in different pay
+     periods on purpose; the extra-hours one carries a stored overlap
+     warning exactly as the live guard stamps it. */
+  const today = todayCentralIso()
+  const nextPeriodDay = addDaysIso(today, 15)
   requests.value = [
     {
       ...blankReq, id: 'dev-r-1', type: 'trade', status: 'pending', requesterId: 'dev-p-1',
@@ -901,6 +933,33 @@ function seedDevStub(): void {
       seatId: 'dev-s-M281-1', workDate: devDay2, startAt: centralTs(devDay2, '06:00'),
       endAt: centralTs(addDaysIso(devDay2, 1), '06:00'), unitCode: 'M281',
       positionLabel: 'Attendant', comments: null,
+    },
+    {
+      ...blankReq, id: 'dev-r-3', type: 'extra_hours', status: 'pending', requesterId: 'dev-p-2',
+      seatId: null, workDate: today, startAt: centralTs(today, '06:00'),
+      endAt: centralTs(today, '07:45'), unitCode: 'M281', positionLabel: null,
+      timeType: 'regular', comments: 'Late call — stayed through shift change.',
+      createdAt: new Date(Date.now() - 26 * 3600e3).toISOString(),
+      warnings: [{
+        code: 'overlap', hours: 1.8, limit: 0,
+        message: 'Sample Attendant is already scheduled for this window — it sits entirely inside that shift, so it adds 0 hours to the timecard and the Paycom export. Hours after a shift change belong to the NEXT calendar day.',
+        suggest: { dateIso: addDaysIso(today, 1), endDateIso: addDaysIso(today, 1), from: '06:00', until: '07:45' },
+      }],
+    },
+    {
+      ...blankReq, id: 'dev-r-4', type: 'time_off', status: 'pending', requesterId: 'dev-p-1',
+      seatId: null, workDate: nextPeriodDay, startAt: centralTs(nextPeriodDay, '06:00'),
+      endAt: centralTs(addDaysIso(nextPeriodDay, 1), '06:00'), unitCode: null,
+      positionLabel: null, offType: 'vacation', comments: 'Family trip.',
+      createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(),
+    },
+    {
+      ...blankReq, id: 'dev-r-5', type: 'extra_hours', status: 'approved', requesterId: 'dev-p-1',
+      seatId: null, workDate: addDaysIso(today, -3), startAt: centralTs(addDaysIso(today, -3), '18:00'),
+      endAt: centralTs(addDaysIso(today, -3), '19:30'), unitCode: 'M211', positionLabel: null,
+      timeType: 'regular', comments: 'FTO meeting ran long.',
+      createdAt: new Date(Date.now() - 4 * 86400e3).toISOString(),
+      decidedBy: 'dev-p-2', decidedAt: new Date(Date.now() - 2 * 86400e3).toISOString(),
     },
   ]
   rotation.value = (['A', 'B', 'C'] as const).map((pl) => ({
@@ -2605,9 +2664,22 @@ export interface HoursWarning {
     | 'started'
     | 'not_p2_cleared'
     | 'crew_minimum'
+    /** Window sits entirely inside hours already scheduled — the Paycom
+     *  punch merge absorbs it, so it pays NOTHING (Sarah Reyes' 11/5
+     *  stay-late, Justin 2026-11-12). */
+    | 'overlap'
+    /** Window partly covers already-scheduled hours — only the part
+     *  outside the shift actually adds. */
+    | 'overlap_partial'
+    /** Longer than a full 24-hour shift — almost always a date typo. */
+    | 'long_window'
   hours: number
   limit: number
   message: string
+  /** Machine-readable corrected filing (overlap warnings): same clock
+   *  times moved to where the hours actually land, offered to the
+   *  member as a one-tap fix. */
+  suggest?: { dateIso: string; endDateIso: string; from: string; until: string }
 }
 
 export interface HoursInfo {
@@ -2828,6 +2900,9 @@ async function hoursCheck(
   for (let iso = fetchStart; iso <= fetchEnd; iso = addDaysIso(iso, 1)) {
     byDate.set(iso, segsForUserOnDate(iso, userId, rows))
   }
+  /* Snapshot of what's ALREADY scheduled (merged runs), taken before the
+     adds land — the overlap guard below compares each add against this. */
+  const existingRuns = mergeSegs([...byDate.values()].flat())
   for (const a of adds) {
     const list = byDate.get(a.dateIso) ?? []
     list.push({ start: tsMs(a.startAt), end: tsMs(a.endAt) })
@@ -2882,6 +2957,82 @@ async function hoursCheck(
       limit: t.weeklyWarn,
       message: `${subjectName} would be at ${wk} hours that week (over ${t.weeklyWarn}).`,
     })
+  }
+
+  /* ── overlap guard (Sarah Reyes' 11/5 stay-late, Justin 2026-11-12) ──
+     An extra window that covers hours the member is ALREADY scheduled
+     for pays nothing: the Paycom punch builder merges a user's same-day
+     same-code segments, so the overlap is absorbed and the export never
+     grows. Staying late after a shift belongs on the NEXT calendar day
+     (the day the shift actually ends), so the warning carries that
+     exact corrected filing as a one-tap suggestion. */
+  const dateOfMs = (ms: number) =>
+    new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'America/Chicago',
+    }).format(new Date(ms))
+  const clockOfMs = (ms: number) =>
+    new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Chicago',
+    }).format(new Date(ms))
+  const stampOfMs = (ms: number) =>
+    `${new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/Chicago' })} ${clockOfMs(ms).replace(':', '')}`
+  const fmtDay = (iso: string) =>
+    new Date(`${iso}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const subjIs = subjectName === 'You' ? 'You are' : `${subjectName} is`
+  const subjPoss = subjectName === 'You' ? 'your' : `${subjectName}'s`
+  for (const a of adds) {
+    const s = tsMs(a.startAt)
+    const en = tsMs(a.endAt)
+    const spanH = (en - s) / 3_600_000
+    if (spanH > 24.05) {
+      warnings.push({
+        code: 'long_window',
+        hours: round1(spanH),
+        limit: 24,
+        message: `This window is ${round1(spanH)} hours long — longer than a full 24-hour shift. Double-check the start and end dates.`,
+      })
+    }
+    let overlapMs = 0
+    let host: Seg | null = null
+    let hostOverlap = 0
+    for (const r of existingRuns) {
+      const o = Math.min(en, r.end) - Math.max(s, r.start)
+      if (o < MIN_SEG_MS) continue
+      overlapMs += o
+      if (o > hostOverlap) {
+        hostOverlap = o
+        host = r
+      }
+    }
+    if (!host || overlapMs < MIN_SEG_MS) continue
+    const overlapH = round1(overlapMs / 3_600_000)
+    const hostRange = `${stampOfMs(host.start)} → ${stampOfMs(host.end)}`
+    /* Corrected filing: for a fully-absorbed window, the same clock
+       times on the calendar day the scheduled run ENDS (the "next
+       calendar day" rule); for a partial overlap, start when the
+       shift actually ends. */
+    const fullyInside = s >= host.start && en <= host.end
+    const suggDate = dateOfMs(host.end)
+    const suggFrom = fullyInside ? clockOfMs(s) : clockOfMs(host.end)
+    const suggUntil = clockOfMs(en)
+    const suggEndDate = suggUntil <= suggFrom ? addDaysIso(suggDate, 1) : suggDate
+    if (fullyInside) {
+      warnings.push({
+        code: 'overlap',
+        hours: overlapH,
+        limit: 0,
+        message: `${subjIs} already scheduled ${hostRange} — this window sits entirely inside that shift, so it adds 0 hours to the timecard and the Paycom export. Hours after a shift change belong to the NEXT calendar day: file this as ${fmtDay(suggDate)}, ${suggFrom}–${suggUntil}.`,
+        suggest: { dateIso: suggDate, endDateIso: suggEndDate, from: suggFrom, until: suggUntil },
+      })
+    } else {
+      warnings.push({
+        code: 'overlap_partial',
+        hours: overlapH,
+        limit: 0,
+        message: `${overlapH} of these ${round1(spanH)} hours fall inside ${subjPoss} scheduled shift (${hostRange}) and will NOT add to the timecard — only ${round1(spanH - overlapH)}h actually adds. If this is a stay-late, it should start when the shift ends: ${fmtDay(suggDate)} at ${suggFrom}.`,
+        suggest: { dateIso: suggDate, endDateIso: suggEndDate, from: suggFrom, until: suggUntil },
+      })
+    }
   }
   return { weekHours: wk, periodHours: round1(periodHours), consecutiveHours: cons, warnings }
 }
@@ -3251,8 +3402,9 @@ async function createTimeOffRequests(
   }
   const res = await supabase.from('sched_requests').insert(rows).select('id')
   if (res.error) return res.error.message
-  notify('request_submitted', { requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id) })
-  audit('request.time_off', `Requested ${OFF_LABELS[offType] ?? offType} time off — ${daysReq.length === 1 ? daysReq[0].dateIso : `${daysReq.length} days from ${daysReq[0].dateIso}`}`, { entity: 'request' })
+  const newIds = ((res.data ?? []) as { id: string }[]).map((r) => r.id)
+  notify('request_submitted', { requestIds: newIds })
+  audit('request.time_off', `Requested ${OFF_LABELS[offType] ?? offType} time off — ${daysReq.length === 1 ? daysReq[0].dateIso : `${daysReq.length} days from ${daysReq[0].dateIso}`}`, { entity: 'request', entityId: newIds[0] ?? null, detail: { requestIds: newIds } })
   await loadRequests()
   return null
 }
@@ -3301,8 +3453,9 @@ async function createExtraRequest(opts: {
     warnings: opts.warnings ?? [],
   }).select('id')
   if (res.error) return res.error.message
-  notify('request_submitted', { requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id) })
-  audit('request.extra', `Requested extra hours ${opts.dateIso} ${opts.from}–${opts.until}${unit ? ` on ${unit.code}` : ''} (${opts.timeType})`, { entity: 'request' })
+  const newIds = ((res.data ?? []) as { id: string }[]).map((r) => r.id)
+  notify('request_submitted', { requestIds: newIds })
+  audit('request.extra', `Requested extra hours ${opts.dateIso} ${opts.from}–${opts.until}${unit ? ` on ${unit.code}` : ''} (${opts.timeType})`, { entity: 'request', entityId: newIds[0] ?? null })
   await loadRequests()
   return null
 }
@@ -3367,8 +3520,9 @@ async function createPickupRequest(opts: {
     warnings: [...(opts.warnings ?? []), ...qw],
   }).select('id')
   if (res.error) return res.error.message
-  notify('request_submitted', { requestIds: ((res.data ?? []) as { id: string }[]).map((r) => r.id) })
-  audit('request.pickup', `Requested pickup — ${unit?.code ?? 'event/rider slot'}${seat ? ` ${seat.label}` : ''} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'request' })
+  const newIds = ((res.data ?? []) as { id: string }[]).map((r) => r.id)
+  notify('request_submitted', { requestIds: newIds })
+  audit('request.pickup', `Requested pickup — ${unit?.code ?? 'event/rider slot'}${seat ? ` ${seat.label}` : ''} ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'request', entityId: newIds[0] ?? null })
   await loadRequests()
   return null
 }
@@ -5310,9 +5464,22 @@ async function cancelRequest(
   id: string,
   opts?: { forMember?: boolean },
 ): Promise<string | null> {
+  const auth = useAuthStore()
+  /* Cancels are dispositions too — stamp who/when so the decision
+     history never shows a bare "Cancelled" with no trail (Justin,
+     2026-11-12: "the audit trail needs to clearly show how those
+     requests were dispositioned, by whom, and when"). */
   const res = await supabase
     .from('sched_requests')
-    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .update({
+      status: 'cancelled',
+      decided_by: auth.appUser?.id ?? null,
+      decided_at: new Date().toISOString(),
+      decision_note: opts?.forMember
+        ? 'Cancelled by the scheduler — the posting was moot.'
+        : 'Cancelled by the requester.',
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id)
     .eq('status', 'pending')
   if (res.error) return res.error.message
@@ -6933,6 +7100,7 @@ export function useSchedule() {
     projectedLeaveBalance,
     fetchAccessList,
     fetchAuditLog,
+    fetchRequestTrail,
     findOpenShifts,
     assignedUserIdsOn,
     fetchOpenEntryInfo,

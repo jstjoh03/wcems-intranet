@@ -487,7 +487,7 @@ function pendingLine(r: SchedRequest): string {
       <h3 class="my__h my__h--pend">Your pending requests</h3>
       <div v-for="r in myPending" :key="r.id" class="my__pendrow">
         <span class="my__pendtype">{{ TYPE_LABELS[r.type] ?? r.type }}</span>
-        <span class="my__pendline">{{ pendingLine(r) }}</span>
+        <span class="my__pendline">{{ pendingLine(r) }} <i class="my__pendfiled">· filed {{ new Date(r.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' }) }}</i></span>
         <span class="my__chip">{{ r.status === 'partner_accepted' ? 'Awaiting approval' : 'Pending' }}</span>
       </div>
     </section>
@@ -797,6 +797,12 @@ function pendingLine(r: SchedRequest): string {
   color: var(--color-ink-soft);
   font-variant-numeric: tabular-nums;
   min-width: 0;
+}
+
+.my__pendfiled {
+  font-style: normal;
+  color: var(--color-muted);
+  font-size: 0.92em;
 }
 
 .my__chip {
