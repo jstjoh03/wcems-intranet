@@ -24,6 +24,11 @@
 //     a Trainee Evaluation of FTO (auto on a protocol-test pass or a
 //     final-eval FTO change). Recipient = the trainee only; links the
 //     prefilled form. Push + email, matrix 'clinical'.
+//   { kind: 'ftep_sign_needed', reportId }  ← the FTO submitted a DOR/ICR
+//     with the trainee's signature deferred (Justin, 2026-11-11). Caller
+//     must be that report's evaluator; recipient = the trainee ("review,
+//     add your comments, and sign on My Progress"); no-ops once signed.
+//     Push + email, matrix 'clinical'.
 //   { kind: 'rt_test_pending',   trainingId, dryRun? }  ← one-shot blast
 //     to everyone in a filter-audience required-training module's
 //     audience whose knowledge test is unpassed (signed people too —
@@ -1101,6 +1106,50 @@ Deno.serve(async (req: Request) => {
           ],
           sms: '',
           url: `/clinical-development/conversation/${conv.id}`,
+          channels: { sms: false },
+          brand: 'clinical',
+        },
+        caller.id,
+      )
+      return Response.json({ ok: true, delivery: d }, { headers: CORS })
+    }
+
+    // ── clinical: deferred trainee signature on a DOR/ICR ─────────────
+    /* Fired by the submitting FTO when the trainee was unavailable to
+     * sign at review — the trainee gets a push/email pointing at the
+     * "needs your signature" prompt on My Progress. Only the report's
+     * own evaluator can trigger it, and it quietly no-ops once signed. */
+    if (kind === 'ftep_sign_needed') {
+      if (!caller.id)
+        return Response.json({ ok: false, error: 'User call required' }, { status: 403, headers: CORS })
+      const reportId = String(body.reportId ?? '')
+      const { data: rep, error: rErr } = await sb
+        .from('ftep_reports')
+        .select('id, kind, trainee_id, evaluator_id, eval_date, status, trainee_signed')
+        .eq('id', reportId)
+        .maybeSingle()
+      if (rErr || !rep)
+        return Response.json({ ok: false, error: rErr?.message ?? 'Report not found' }, { status: 404, headers: CORS })
+      if (rep.evaluator_id !== caller.id)
+        return Response.json({ ok: false, error: 'Not your report' }, { status: 403, headers: CORS })
+      if (rep.status !== 'submitted' || rep.trainee_signed)
+        return Response.json({ ok: true, skipped: true }, { headers: CORS })
+
+      const label = rep.kind === 'dor' ? 'DOR' : 'ICR'
+      const d = await deliver(
+        [rep.trainee_id as string],
+        'clinical',
+        {
+          title: 'A report needs your signature',
+          body: `${caller.name} submitted your ${label} from ${fmtDate(rep.eval_date as string)} — review it and sign on My Progress.`,
+          tag: `ftep-sign-${rep.id}`,
+          subject: 'WCEMS Clinical — a report needs your signature',
+          emailLines: [
+            `<b>${esc(caller.name)}</b> submitted your ${label} from ${fmtDate(rep.eval_date as string)} while you were unavailable to sign.`,
+            'Open My Progress to review the finished report, add any comments of your own, and sign. The report itself can&rsquo;t be changed.',
+          ],
+          sms: '',
+          url: '/clinical-development',
           channels: { sms: false },
           brand: 'clinical',
         },

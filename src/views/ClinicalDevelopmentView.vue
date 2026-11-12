@@ -391,12 +391,14 @@ const supervisedPips = computed(() =>
 
 const signTarget = ref<FtepReport | null>(null)
 const signSig = ref<string | null>(null)
+const signComment = ref('')
 const signBusy = ref(false)
 const signError = ref<string | null>(null)
 
 function openSign(r: FtepReport) {
   signTarget.value = r
   signSig.value = null
+  signComment.value = ''
   signError.value = null
 }
 
@@ -404,7 +406,7 @@ async function submitSign() {
   if (!signTarget.value || !signSig.value || signBusy.value) return
   signBusy.value = true
   signError.value = null
-  const res = await ftep.signAsTrainee(signTarget.value.id, signSig.value)
+  const res = await ftep.signAsTrainee(signTarget.value.id, signSig.value, signComment.value)
   signBusy.value = false
   if (!res.ok) {
     signError.value = res.error
@@ -733,13 +735,21 @@ async function submitSign() {
             </h2>
             <p class="cd__signmodal-sub">
               Submitted by {{ evalNames[signTarget.evaluatorId] ?? 'your FTO' }}<template v-if="signTarget.payload.average !== undefined"> · shift average {{ signTarget.payload.average?.toFixed(2) }}</template>.
-              Review the finished report, then sign — your signature attests you reviewed it; the
-              report itself can't be changed.
+              Review the finished report, add any comments of your own, then sign — your signature
+              attests you reviewed it; the report itself can't be changed.
             </p>
             <button type="button" class="btn cd__signmodal-view" :disabled="myPdfBusy === signTarget.id" @click="viewMyReport(signTarget.id)">
               <FileText :size="14" :stroke-width="2" />
               {{ myPdfBusy === signTarget.id ? 'Opening…' : 'View the report (PDF)' }}
             </button>
+            <label class="cd__signmodal-comment">
+              <span>Your comments <i>optional — saved onto the report in your own words</i></span>
+              <textarea
+                v-model="signComment"
+                rows="3"
+                placeholder="Anything you want on the record about this shift or the ratings."
+              ></textarea>
+            </label>
             <div class="cd__signmodal-pad">
               <div class="cd__signmodal-padlabel">Trainee — {{ myRecord?.fullName }}</div>
               <SignaturePad :height="110" @change="(v: string) => (signSig = v || null)" />
@@ -998,6 +1008,21 @@ async function submitSign() {
 .cd__signmodal-title { font-size: 20px; color: var(--color-brand-800); }
 .cd__signmodal-sub { font-size: 12.5px; line-height: 1.55; color: var(--color-ink-soft); }
 .cd__signmodal-view { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; }
+.cd__signmodal-comment { display: flex; flex-direction: column; gap: 5px; }
+.cd__signmodal-comment > span {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.cd__signmodal-comment > span i { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.cd__signmodal-comment textarea {
+  font-family: var(--font-sans); font-size: 13px; line-height: 1.5; color: var(--color-ink);
+  border: 1.5px solid var(--color-line); border-radius: 9px; padding: 9px 11px;
+  background: var(--color-surface); resize: vertical;
+}
+.cd__signmodal-comment textarea:focus { outline: none; border-color: var(--color-brand-600); }
 .cd__signmodal-padlabel {
   font-size: 10.5px;
   font-weight: 700;

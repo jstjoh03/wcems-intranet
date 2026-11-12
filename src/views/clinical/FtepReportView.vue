@@ -258,6 +258,9 @@ const blockers = computed<string[]>(() => {
 /* ── Sign & submit ───────────────────────────────────────────────── */
 const signing = ref(false)
 const traineeSig = ref<string | null>(null)
+/* The trainee's own words, typed by them at the live review. Deferred
+   reports collect this on My Progress instead, with their signature. */
+const traineeComment = ref('')
 const evaluatorSig = ref<string | null>(null)
 const submitting = ref(false)
 const submitError = ref<string | null>(null)
@@ -288,6 +291,8 @@ async function onSubmit() {
   }
   payload.average = average.value ?? undefined
   payload.nrtFlagged = nrtFlagged.value || undefined
+  if (!deferTrainee.value && traineeComment.value.trim())
+    payload.traineeComment = traineeComment.value.trim()
   const res = await ftep.submitReport({
     id: reportId.value!,
     evalDate: evalDate.value,
@@ -526,12 +531,23 @@ function fmtSaveState(): string {
               : 'This ICR was reviewed with the trainee. Both signatures attest the ratings reflect performance on this call.' }}
           </p>
           <div class="fr__pads">
-            <div v-if="!deferTrainee"><div class="fr__pad-label">Trainee — {{ trainee.fullName }}</div>
-              <SignaturePad :height="100" @change="(v: string) => (traineeSig = v || null)" /></div>
+            <div v-if="!deferTrainee">
+              <div class="fr__pad-label">Trainee — {{ trainee.fullName }}</div>
+              <SignaturePad :height="100" @change="(v: string) => (traineeSig = v || null)" />
+              <label class="fr__trainee-comment">
+                <span>Trainee comments <span class="fr__optional">optional — their own words</span></span>
+                <textarea
+                  v-model="traineeComment"
+                  rows="2"
+                  placeholder="Hand the device to the trainee — anything they want on the record about this report."
+                ></textarea>
+              </label>
+            </div>
             <div v-else class="fr__defer-note">
               <b>Trainee signature deferred.</b>
-              {{ trainee.fullName.split(' ')[0] }} will see a "needs your signature" prompt on
-              My Progress and can review the finished report and sign there — they can't edit it.
+              {{ trainee.fullName.split(' ')[0] }} will get a notification and a "needs your
+              signature" prompt on My Progress — they review the finished report, can add their
+              own comments, and sign there. They can't edit the report itself.
             </div>
             <div><div class="fr__pad-label">Evaluator — {{ auth.appUser?.fullName }}</div>
               <SignaturePad :height="100" @change="(v: string) => (evaluatorSig = v || null)" /></div>
@@ -706,6 +722,14 @@ function fmtSaveState(): string {
 .fr__pads { display: grid; grid-template-columns: 1fr; gap: 12px; }
 @media (min-width: 560px) { .fr__pads { grid-template-columns: 1fr 1fr; } }
 .fr__pad-label { font-size: 11.5px; font-weight: 700; color: var(--color-muted); margin-bottom: 4px; }
+.fr__trainee-comment { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.fr__trainee-comment > span { font-size: 11.5px; font-weight: 700; color: var(--color-muted); }
+.fr__trainee-comment textarea {
+  font-family: var(--font-sans); font-size: 13px; line-height: 1.5; color: var(--color-ink);
+  border: 1.5px solid var(--color-line); border-radius: 9px; padding: 8px 10px;
+  background: var(--color-surface); resize: vertical;
+}
+.fr__trainee-comment textarea:focus { outline: none; border-color: var(--color-brand-600); }
 .fr__error { font-size: 13px; color: oklch(0.5 0.16 30); }
 .fr__sign-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .fr__defer {

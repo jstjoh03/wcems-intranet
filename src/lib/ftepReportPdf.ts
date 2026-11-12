@@ -307,6 +307,13 @@ export async function generateFtepReportPdf(input: FtepPdfInput): Promise<jsPDF>
     }
   }
 
+  /* ── Trainee comments (both kinds) — their own words, captured at the
+     live review or added with a deferred signature ──────────────────── */
+  if (p.traineeComment?.trim()) {
+    sectionRule('Trainee comments')
+    para('', p.traineeComment)
+  }
+
   /* ── Signatures ──────────────────────────────────────────────────── */
   ensureSpace(130)
   y += 6

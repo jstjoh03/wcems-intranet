@@ -309,24 +309,43 @@ export function useFtep() {
     if (error) return { ok: false, error: error.message }
     const row = fromRow(data as ReportRow)
     reports.value = [row, ...reports.value.filter((r) => r.id !== row.id)]
+    /* Deferred trainee signature → push/email them a "needs your
+       signature" prompt now instead of waiting for them to wander onto
+       My Progress. Fire-and-forget: a notify hiccup never fails the
+       submit. */
+    if (input.traineeSignature === null) {
+      void supabase.functions.invoke('sched-notify', {
+        body: { kind: 'ftep_sign_needed', reportId: input.id },
+      })
+    }
     return { ok: true }
   }
 
-  /** Trainee adds their deferred signature (view-only flow — the RPC
-   *  only accepts their own submitted, still-unsigned report). */
+  /** Trainee adds their deferred signature — and optionally their own
+   *  comments — (view-only flow; the RPC only accepts their own
+   *  submitted, still-unsigned report). */
   async function signAsTrainee(
     reportId: string,
     signature: string,
+    comment?: string | null,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!isLive.value) return { ok: true }
     const { data, error } = await supabase.rpc('ftep_sign_report', {
       p_report_id: reportId,
       p_signature: signature,
+      p_comment: comment?.trim() || null,
     })
     if (error) return { ok: false, error: error.message }
     if (!data) return { ok: false, error: 'This report can no longer be signed.' }
     reports.value = reports.value.map((r) =>
-      r.id === reportId ? { ...r, traineeSignature: signature } : r,
+      r.id === reportId
+        ? {
+            ...r,
+            traineeSignature: signature,
+            traineeSigned: true,
+            payload: comment?.trim() ? { ...r.payload, traineeComment: comment.trim() } : r.payload,
+          }
+        : r,
     )
     return { ok: true }
   }

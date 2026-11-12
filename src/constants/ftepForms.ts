@@ -381,6 +381,10 @@ export interface FtepPayload {
   explanation?: string
   /** Optional FTO narrative — anything relevant to the call. */
   callNotes?: string
+  /** The trainee's own words (both kinds) — typed at live review on the
+   *  FTO's device, or added with their deferred signature on My
+   *  Progress (ftep_sign_report stamps it into the payload). */
+  traineeComment?: string
   /* Legacy-track call evals recorded manually from Jotform until the
      webhook lands — no ratings/signatures, just the count + context. */
   legacyManual?: boolean
