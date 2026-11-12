@@ -14,12 +14,15 @@
 //     and any specific (non-EOM) DSHS date is flagged for manual
 //     verification.
 //
-//   mode=ems1 — EMS1/Lexipol "Courses Report" (header on row 4).
-//     "Passed" rows update pipeline_records.tx_jurisprudence_at /
-//     bloodborne_pathogen_at, but only when the stored value is empty,
-//     the 2026-07-01 jurisprudence placeholder, or older than the
-//     report's date. People who completed jurisprudence elsewhere are
-//     untouched (their real dates enter via the person modal).
+//   mode=ems1 — EMS1/Lexipol courses report, xlsx OR csv (the site's
+//     native download). Columns are found BY NAME from whichever row
+//     carries 'Full Name' (legacy xlsx: row 4; csv: row 1 with
+//     Email/Group columns in between). "Passed" rows update
+//     pipeline_records.tx_jurisprudence_at / bloodborne_pathogen_at,
+//     but only when the stored value is empty, the 2026-07-01
+//     jurisprudence placeholder, or older than the report's date.
+//     People who completed jurisprudence elsewhere are untouched
+//     (their real dates enter via the person modal).
 //
 // Auth: x-sync-secret, or a signed-in admin's / pipeline editor's JWT.
 
@@ -172,9 +175,19 @@ Deno.serve(async (req: Request) => {
   try {
     const buf = await req.arrayBuffer()
     if (buf.byteLength < 100) throw new Error('empty body')
-    wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true })
+    const bytes = new Uint8Array(buf)
+    /* Route by magic bytes instead of SheetJS's sniffing: xlsx is a ZIP
+       ("PK…"); anything else is treated as CSV text (EMS1's native
+       download — the sniffer mis-read it and the header was "not
+       found", Justin 2026-11-12). BOM stripped either way. */
+    if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+      wb = XLSX.read(bytes, { type: 'array', cellDates: true })
+    } else {
+      const text = new TextDecoder('utf-8').decode(bytes).replace(/^﻿/, '')
+      wb = XLSX.read(text, { type: 'string', cellDates: true })
+    }
   } catch (e) {
-    return json({ ok: false, error: `could not parse xlsx: ${(e as Error).message}` }, 400)
+    return json({ ok: false, error: `could not parse the file: ${(e as Error).message}` }, 400)
   }
 
   /* People lookup: legal-normalized full name → app_user id. */
@@ -339,10 +352,24 @@ Deno.serve(async (req: Request) => {
   /* ── mode=ems1 ───────────────────────────────────────────────────── */
   const ws = wb.Sheets['Courses Report'] ?? wb.Sheets[wb.SheetNames[0]]
   const rows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null })
-  /* Header lives on row 4 (index 3): Full Name | User Positions |
-     Course Title | Completion Status | Date Completed | Credit */
-  const headerIdx = rows.findIndex((r) => String(r?.[0] ?? '').trim() === 'Full Name')
-  if (headerIdx < 0) return json({ ok: false, error: 'header row not found' }, 400)
+  /* Columns by NAME from whichever row carries 'Full Name' (2026-11-12):
+     the legacy xlsx put the header on row 4 with fixed positions; the
+     CSV download puts it on row 1 with Email/Personal ID/Group columns
+     in between — fixed indices silently read the wrong cells. */
+  const cellStr = (v: unknown) => String(v ?? '').replace(/^﻿/, '').trim()
+  const headerIdx = rows.findIndex((r) => (r ?? []).some((c) => cellStr(c) === 'Full Name'))
+  if (headerIdx < 0) {
+    return json({ ok: false, error: "header row not found — expected a 'Full Name' column (EMS1 courses report, xlsx or csv)" }, 400)
+  }
+  const header = (rows[headerIdx] ?? []).map(cellStr)
+  const col = (name: string) => header.findIndex((h) => h.toLowerCase() === name.toLowerCase())
+  const cName = col('Full Name')
+  const cCourse = col('Course Title')
+  const cStatus = col('Completion Status')
+  const cDate = col('Date Completed')
+  if (cCourse < 0 || cStatus < 0 || cDate < 0) {
+    return json({ ok: false, error: `missing expected columns (Course Title / Completion Status / Date Completed) — found: ${header.filter(Boolean).join(', ')}` }, 400)
+  }
 
   const JURIS_PLACEHOLDER = '2026-07-01'
   const unmatched = new Set<string>()
@@ -352,11 +379,11 @@ Deno.serve(async (req: Request) => {
   let passedRows = 0
 
   for (const r of rows.slice(headerIdx + 1)) {
-    const rawName = String(r?.[0] ?? '').trim()
+    const rawName = cellStr(r?.[cName])
     if (!rawName) continue
-    const course = String(r?.[2] ?? '')
-    const status = String(r?.[3] ?? '').trim().toLowerCase()
-    const date = toDate(r?.[4])
+    const course = cellStr(r?.[cCourse])
+    const status = cellStr(r?.[cStatus]).toLowerCase()
+    const date = toDate(r?.[cDate])
     if (status !== 'passed' || !date) continue
     passedRows++
 

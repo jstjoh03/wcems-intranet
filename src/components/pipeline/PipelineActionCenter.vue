@@ -508,9 +508,9 @@ const reportLines = computed<string[]>(() => {
         <div class="ac__imp-row">
           <div class="ac__imp-copy">
             <strong>EMS1 jurisprudence / BBP report</strong>
-            <span>Passed courses → jurisprudence and bloodborne pathogen dates. Real dates are never overwritten with older ones.</span>
+            <span>Passed courses → jurisprudence and bloodborne pathogen dates. Takes the site's CSV download or xlsx. Real dates are never overwritten with older ones.</span>
           </div>
-          <input type="file" accept=".xlsx" @change="onImportFile('ems1', $event)" />
+          <input type="file" accept=".xlsx,.csv" @change="onImportFile('ems1', $event)" />
           <div class="ac__imp-btns">
             <button type="button" class="btn" :disabled="!importFiles.ems1 || importBusy" @click="runImport('ems1', false)">Preview</button>
             <button type="button" class="btn btn--primary" :disabled="!importFiles.ems1 || importBusy" @click="runImport('ems1', true)">Import</button>
