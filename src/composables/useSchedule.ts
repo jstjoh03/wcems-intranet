@@ -5532,6 +5532,43 @@ async function updateRequestWindow(
   return null
 }
 
+/** Editors: move a mis-dated PENDING request onto its corrected filing
+ *  (the overlap guard's suggestion) — the one-click "approve it on the
+ *  right day" path (Justin, 2026-11-12: "clicking approve on the
+ *  incorrect request will put it on the correct date"). Returns the
+ *  patched request for the decide call that follows. */
+async function moveRequestWindow(
+  req: SchedRequest,
+  s: { dateIso: string; endDateIso: string; from: string; until: string },
+): Promise<{ req: SchedRequest | null; error: string | null }> {
+  if (req.status !== 'pending') return { req: null, error: 'Only pending requests can be moved.' }
+  const startAt = centralTs(s.dateIso, s.from)
+  const endAt = centralTs(s.endDateIso, s.until)
+  if (tsMs(endAt) <= tsMs(startAt)) return { req: null, error: 'The corrected window ends before it starts — check the dates.' }
+  const res = await supabase
+    .from('sched_requests')
+    .update({
+      work_date: s.dateIso,
+      start_at: startAt,
+      end_at: endAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', req.id)
+    .eq('status', 'pending')
+    .select('id')
+  if (res.error) return { req: null, error: res.error.message }
+  if (!res.data || res.data.length === 0) {
+    await loadRequests()
+    return { req: null, error: 'This request changed while you were deciding it — the queue has been refreshed.' }
+  }
+  audit(
+    'request.move',
+    `Moved ${displayName(req.requesterId).name}'s ${(REQ_TYPE_LABELS[req.type] ?? req.type).toLowerCase()} to the corrected day before deciding: ${req.workDate ?? '—'} → ${s.dateIso} ${s.from}–${s.until} (the filed window overlapped their scheduled shift)`,
+    { entity: 'request', entityId: req.id },
+  )
+  return { req: { ...req, workDate: s.dateIso, startAt, endAt }, error: null }
+}
+
 /** Editors: reopen a decided request so the decision (or its times) can
  *  be redone. Reopening an APPROVED request first deletes every calendar
  *  row the approval wrote (rows tagged with this request id) —
@@ -7137,6 +7174,7 @@ export function useSchedule() {
     cancelRequest,
     decideRequest,
     updateRequestWindow,
+    moveRequestWindow,
     reopenRequest,
     // day editor + availability
     dayMarkOff,

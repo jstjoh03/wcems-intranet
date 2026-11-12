@@ -859,6 +859,47 @@ const busyId = ref<string | null>(null)
 const decideError = ref<string | null>(null)
 const confirmApprove = ref<string | null>(null)
 
+/** The corrected filing attached to an extra-hours request's overlap
+ *  flag — live warnings first (recomputed at review), stored ones as
+ *  the fallback. Non-null means the confirm step offers "Approve on
+ *  <the right day>" as the primary action. */
+function overlapSuggest(r: SchedRequest) {
+  if (r.type !== 'extra_hours') return null
+  return (
+    cardChips(r).find((w) => (w.code === 'overlap' || w.code === 'overlap_partial') && w.suggest)
+      ?.suggest ?? null
+  )
+}
+
+function correctedLabel(r: SchedRequest): string {
+  const s = overlapSuggest(r)
+  return s ? `Approve on ${fmtD(s.dateIso)}` : ''
+}
+
+/** One click: move the request to the day the hours actually pay, then
+ *  approve it there — the calendar entry lands on the corrected date
+ *  and the decision note spells out what moved. */
+async function approveCorrected(r: SchedRequest) {
+  const s = overlapSuggest(r)
+  if (!s || busyId.value === r.id) return
+  confirmApprove.value = null
+  decideError.value = null
+  busyId.value = r.id
+  const moved = await sched.moveRequestWindow(r, s)
+  if (moved.error || !moved.req) {
+    busyId.value = null
+    decideError.value = moved.error ?? 'Could not move the request.'
+    return
+  }
+  const err = await sched.decideRequest(
+    moved.req,
+    true,
+    `Approved on the corrected day — filed for ${r.workDate ? fmtD(r.workDate) : 'the wrong day'}, moved to ${fmtD(s.dateIso)} ${s.from}–${s.until} (the filed window overlapped the scheduled shift and would have paid nothing).`,
+  )
+  busyId.value = null
+  if (err) decideError.value = err
+}
+
 function approveClicked(r: SchedRequest) {
   openReq.value = r.id
 
@@ -1184,6 +1225,23 @@ async function cancel(r: SchedRequest) {
                   </button>
                   <button class="rq__btn rq__btn--deny" :disabled="busyId === r.id" @click="decide(r, false)">Dismiss</button>
                 </template>
+                <template v-else-if="confirmApprove === r.id && overlapSuggest(r)">
+                  <!-- mis-dated extra hours: the primary approve MOVES it
+                       to the day the hours actually pay (Justin,
+                       2026-11-12); as-filed stays available but demoted -->
+                  <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="approveCorrected(r)">
+                    {{ correctedLabel(r) }}
+                  </button>
+                  <button
+                    class="rq__btn rq__btn--quiet"
+                    :disabled="busyId === r.id"
+                    title="Writes the entry exactly as filed — the overlapping hours will add nothing to the export"
+                    @click="decide(r, true)"
+                  >
+                    Approve as filed
+                  </button>
+                  <button class="rq__btn" @click="confirmApprove = null">Back</button>
+                </template>
                 <template v-else>
                   <button class="rq__btn rq__btn--approve" :disabled="busyId === r.id" @click="approveClicked(r)">
                     {{ confirmApprove === r.id ? 'Approve anyway' : 'Approve' }}
@@ -1224,9 +1282,11 @@ async function cancel(r: SchedRequest) {
                 </div>
                 <p v-if="confirmApprove === r.id" class="rq__confirmnote">
                   {{
-                    cardChips(r).some((w) => w.code === 'overlap')
-                      ? 'This window sits inside hours already on their schedule — approving adds NOTHING to the export. Fix the dates (Edit times, or have them refile on the right day) or approve anyway?'
-                      : 'This crosses an hour threshold that needs admin sign-off — approve anyway?'
+                    overlapSuggest(r)
+                      ? `This window sits inside hours already on their schedule — approved as filed it adds NOTHING to the export. "${correctedLabel(r)}" moves it to where the hours actually pay and approves it there.`
+                      : cardChips(r).some((w) => w.code === 'overlap')
+                        ? 'This window sits inside hours already on their schedule — approving adds NOTHING to the export. Fix the dates or approve anyway?'
+                        : 'This crosses an hour threshold that needs admin sign-off — approve anyway?'
                   }}
                 </p>
                 <div v-if="editTimesFor === r.id" class="rq__edittimes">
