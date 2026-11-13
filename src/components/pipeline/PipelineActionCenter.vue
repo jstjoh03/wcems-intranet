@@ -36,6 +36,7 @@ const {
   completionsFor,
   addRequirement,
   setRequirementActive,
+  updateRequirement,
   refresh,
 } = usePipeline()
 
@@ -220,6 +221,59 @@ async function submitRequirement() {
     newReq.name = ''
   } finally {
     newReq.busy = false
+  }
+}
+
+/* Inline editor for one catalog row. Level scoping: an empty set means
+   the item applies to everyone — but only people with a completion on
+   file get nagged (per-cycle items with levels are the exception: the
+   license window flags them even with nothing on file). */
+const LEVEL_OPTIONS = ['EMT-B', 'ADV EMT', 'EMT-P', 'LP']
+const editReq = reactive({
+  id: null as string | null,
+  name: '',
+  cycle: 'annual' as RequirementCycle,
+  levels: [] as string[],
+  sort: 100,
+  notes: '',
+  busy: false,
+  error: null as string | null,
+})
+
+function startEditReq(req: { id: string; name: string; cycle: RequirementCycle; requiredLevels: string[]; sort: number; notes: string | null }) {
+  editReq.id = req.id
+  editReq.name = req.name
+  editReq.cycle = req.cycle
+  editReq.levels = [...req.requiredLevels]
+  editReq.sort = req.sort
+  editReq.notes = req.notes ?? ''
+  editReq.error = null
+}
+
+function toggleEditLevel(level: string) {
+  const next = new Set(editReq.levels)
+  if (next.has(level)) next.delete(level)
+  else next.add(level)
+  editReq.levels = LEVEL_OPTIONS.filter((l) => next.has(l))
+}
+
+async function saveEditReq() {
+  if (!editReq.id || !editReq.name.trim()) return
+  editReq.busy = true
+  editReq.error = null
+  try {
+    await updateRequirement(editReq.id, {
+      name: editReq.name.trim(),
+      cycle: editReq.cycle,
+      requiredLevels: [...editReq.levels],
+      sort: Number.isFinite(editReq.sort) ? editReq.sort : 100,
+      notes: editReq.notes.trim() || null,
+    })
+    editReq.id = null
+  } catch (e) {
+    editReq.error = (e as Error).message
+  } finally {
+    editReq.busy = false
   }
 }
 
@@ -443,13 +497,64 @@ const reportLines = computed<string[]>(() => {
     <div v-if="!collapsed" class="ac__body">
       <!-- Requirement catalog manager -->
       <div v-if="showManage && canEdit" class="ac__catalog">
-        <div v-for="req in requirements" :key="req.id" class="ac__cat-row" :class="{ 'ac__cat-row--off': !req.active }">
-          <span class="ac__cat-name">{{ req.name }}</span>
-          <span class="ac__cat-cycle">{{ { annual: 'annual', per_cert_cycle: 'per cycle', certification: 'card', one_time: 'one-time' }[req.cycle] }}</span>
-          <button type="button" class="ac__cat-toggle" @click="setRequirementActive(req.id, !req.active)">
-            {{ req.active ? 'Archive' : 'Restore' }}
-          </button>
-        </div>
+        <template v-for="req in requirements" :key="req.id">
+          <div class="ac__cat-row" :class="{ 'ac__cat-row--off': !req.active }">
+            <span class="ac__cat-name">{{ req.name }}</span>
+            <span class="ac__cat-cycle">
+              {{ { annual: 'annual', per_cert_cycle: 'per cycle', certification: 'card', one_time: 'one-time' }[req.cycle] }}<template v-if="req.requiredLevels.length"> · {{ req.requiredLevels.join(', ') }}</template>
+            </span>
+            <button type="button" class="ac__cat-toggle" @click="editReq.id === req.id ? (editReq.id = null) : startEditReq(req)">
+              {{ editReq.id === req.id ? 'Close' : 'Edit' }}
+            </button>
+            <button type="button" class="ac__cat-toggle" @click="setRequirementActive(req.id, !req.active)">
+              {{ req.active ? 'Archive' : 'Restore' }}
+            </button>
+          </div>
+          <div v-if="editReq.id === req.id" class="ac__cat-edit">
+            <div class="ac__cat-edit-row">
+              <label class="ac__cat-field ac__cat-field--grow">
+                <span>Name</span>
+                <input v-model="editReq.name" type="text" />
+              </label>
+              <label class="ac__cat-field">
+                <span>Renews</span>
+                <select v-model="editReq.cycle">
+                  <option value="annual">Annual</option>
+                  <option value="per_cert_cycle">Per licensure cycle</option>
+                  <option value="certification">Card (own expiry)</option>
+                  <option value="one_time">One-time</option>
+                </select>
+              </label>
+              <label class="ac__cat-field">
+                <span>Order</span>
+                <input v-model.number="editReq.sort" type="number" min="0" step="5" class="ac__cat-sort" />
+              </label>
+            </div>
+            <div class="ac__cat-levels">
+              <span class="ac__cat-levels-label">Required for</span>
+              <button
+                v-for="lvl in LEVEL_OPTIONS"
+                :key="lvl"
+                type="button"
+                class="ac__cat-chip"
+                :class="{ 'ac__cat-chip--on': editReq.levels.includes(lvl) }"
+                @click="toggleEditLevel(lvl)"
+              >{{ lvl }}</button>
+              <span v-if="!editReq.levels.length" class="ac__cat-hint">No levels — tracked for everyone, required of no one.</span>
+            </div>
+            <label class="ac__cat-field">
+              <span>Notes</span>
+              <input v-model="editReq.notes" type="text" placeholder="Context for admins — shown in this list only" />
+            </label>
+            <div class="ac__cat-edit-actions">
+              <span v-if="editReq.error" class="ac__cat-err">{{ editReq.error }}</span>
+              <button type="button" class="btn" @click="editReq.id = null">Cancel</button>
+              <button type="button" class="btn btn--primary" :disabled="editReq.busy || !editReq.name.trim()" @click="saveEditReq">
+                {{ editReq.busy ? 'Saving…' : 'Save' }}
+              </button>
+            </div>
+          </div>
+        </template>
         <div class="ac__cat-add">
           <input v-model="newReq.name" type="text" placeholder="New tracked item (e.g. Active Shooter)" @keydown.enter="submitRequirement" />
           <select v-model="newReq.cycle">
@@ -836,8 +941,12 @@ const reportLines = computed<string[]>(() => {
 }
 .ac__cat-add {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 10px;
+}
+.ac__cat-add input {
+  min-width: 150px;
 }
 .ac__cat-add input {
   flex: 1;
@@ -855,5 +964,87 @@ const reportLines = computed<string[]>(() => {
   border-radius: 8px;
   background: var(--color-surface);
   color: var(--color-ink);
+}
+.ac__cat-edit {
+  display: grid;
+  gap: 9px;
+  padding: 10px 0 13px;
+  border-bottom: 1px solid var(--color-line-soft);
+}
+.ac__cat-edit-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ac__cat-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.ac__cat-field > span {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.ac__cat-field input,
+.ac__cat-field select {
+  font-size: 12.5px;
+  padding: 6px 9px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+.ac__cat-field--grow {
+  flex: 1 1 180px;
+}
+.ac__cat-sort {
+  width: 72px;
+}
+.ac__cat-levels {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ac__cat-levels-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin-right: 2px;
+}
+.ac__cat-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.ac__cat-chip--on {
+  border-color: var(--color-brand-600);
+  background: var(--color-brand-600);
+  color: var(--color-surface);
+}
+.ac__cat-hint {
+  font-size: 11px;
+  color: var(--color-muted-soft);
+}
+.ac__cat-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.ac__cat-err {
+  font-size: 11.5px;
+  color: var(--color-danger-500);
+  margin-right: auto;
 }
 </style>

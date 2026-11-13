@@ -257,6 +257,22 @@ function seedDevFixture() {
     }),
   ]
   editorIds.value = ['dev-admin']
+  /* Mirror of the live catalog so the manager + person modal render in dev. */
+  const req = (
+    id: string,
+    name: string,
+    cycle: RequirementCycle,
+    sort: number,
+    requiredLevels: string[],
+    notes: string | null = null,
+  ): PipelineRequirement => ({ id, name, cycle, active: true, sort, notes, requiredLevels })
+  requirements.value = [
+    req('dev-req-1', 'BLS Provider', 'certification', 10, ['EMT-B', 'ADV EMT', 'EMT-P', 'LP'], 'AHA card — expirations tracked in Paycom'),
+    req('dev-req-2', 'ACLS Provider', 'certification', 20, ['EMT-P', 'LP']),
+    req('dev-req-3', 'Annual Protocol Test', 'annual', 50, []),
+    req('dev-req-4', 'ALERRT', 'annual', 55, ['EMT-B', 'ADV EMT', 'EMT-P', 'LP']),
+    req('dev-req-5', 'HEART Training', 'annual', 100, ['EMT-B', 'ADV EMT', 'EMT-P', 'LP'], 'Required annually by agency policy'),
+  ]
   allPeople.value = people.value
   lastFetchedAt.value = new Date()
 }
@@ -600,6 +616,30 @@ export function usePipeline() {
     await loadAll()
   }
 
+  /** Edit a catalog row in place — name, renewal cycle, level scoping,
+   *  display order, notes. Only the fields present in the patch change. */
+  async function updateRequirement(
+    id: string,
+    patch: {
+      name?: string
+      cycle?: RequirementCycle
+      requiredLevels?: string[]
+      sort?: number
+      notes?: string | null
+    },
+  ) {
+    if (!isLive) return
+    const row: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    if (patch.name !== undefined) row.name = patch.name
+    if (patch.cycle !== undefined) row.cycle = patch.cycle
+    if (patch.requiredLevels !== undefined) row.required_levels = patch.requiredLevels
+    if (patch.sort !== undefined) row.sort = patch.sort
+    if (patch.notes !== undefined) row.notes = patch.notes
+    const { error } = await supabase.from('pipeline_requirements').update(row).eq('id', id)
+    if (error) throw error
+    await loadAll()
+  }
+
   function phasesFor(recordId: string): FtepPhaseProgress[] {
     return phaseProgress.value.filter((p) => p.recordId === recordId)
   }
@@ -694,6 +734,7 @@ export function usePipeline() {
     removeCompletion,
     addRequirement,
     setRequirementActive,
+    updateRequirement,
     addEditor,
     removeEditor,
   }
