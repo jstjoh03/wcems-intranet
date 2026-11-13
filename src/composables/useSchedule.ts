@@ -248,6 +248,9 @@ export interface SeatRow {
 export interface SeatModel {
   seat: SchedSeat
   rows: SeatRow[]
+  /** Set when a 'vacated' mask row holds this (extra) seat off the day
+   *  — the day board renders editors a whisper row to undo it. */
+  vacatedEntryId: string | null
 }
 
 export interface UnitModel {
@@ -977,6 +980,20 @@ function seedDevStub(): void {
     effectiveFrom: '2026-01-01',
     effectiveTo: null,
   }))
+  /* Vacated-day fixture (2026-11-13, Traylor Dec 6–7): the M271 extra
+     seat carries a rotation rider for two fixture days; day one holds a
+     'vacated' mask — the board must show NOTHING there (editors get the
+     whisper row), while day two renders the rider normally. */
+  rotation.value.push(
+    ...(['A', 'B', 'C'] as const).map((pl) => ({
+      id: `dev-rot-x-${pl}`,
+      seatId: 'dev-s-M271-2',
+      platoon: pl,
+      userId: 'dev-p-1',
+      effectiveFrom: devDay,
+      effectiveTo: devDay2,
+    })),
+  )
 
   /* One staffed special event (2026-10-20): lets the Manage-event
      modal — including the per-row Retime flow — render in dev. Writes
@@ -1028,6 +1045,16 @@ function seedDevStub(): void {
       startAt: centralTs(devDay, '16:00'), endAt: centralTs(addDaysIso(devDay, 1), '06:00'),
       kind: 'blocked', status: 'off', offType: null, timeType: 'regular',
       eventId: null, studentProgram: null, unitId: 'dev-u-M231',
+      note: null, sourceRequest: null,
+    },
+    /* Vacated-day fixture (2026-11-13): masks the extra-seat rider on
+       devDay — M271 3rd Rider renders nothing (whisper row for editors);
+       devDay2 shows the rider from rotation. */
+    {
+      id: 'dev-e-vac1', workDate: devDay, seatId: 'dev-s-M271-2', userId: null,
+      startAt: centralTs(devDay, '06:00'), endAt: centralTs(addDaysIso(devDay, 1), '06:00'),
+      kind: 'vacated', status: 'scheduled', offType: null, timeType: 'regular',
+      eventId: null, studentProgram: null, unitId: 'dev-u-M271',
       note: null, sourceRequest: null,
     },
   ]
@@ -1657,6 +1684,15 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
       const overrides = dayEntries
         .filter((e) => e.seatId === seat.id && e.kind !== 'timeoff' && e.status !== 'off')
         .sort((a, b) => a.startAt.localeCompare(b.startAt))
+      /* VACATED day (optional seats, 2026-11-13): the Chief took this
+         extra seat off the day. The user-null 'vacated' row is an
+         override like any other — its presence alone keeps the
+         rotation fallback below from re-seating the rider (Traylor,
+         Dec 6–7) — but it must render nothing: not a row, not an
+         open. The day board shows editors a whisper row through
+         vacatedEntryId so the removal stays visible and reversible. */
+      const vacated = overrides.find((e) => e.kind === 'vacated')
+      const liveOverrides = vacated ? overrides.filter((e) => e.kind !== 'vacated') : overrides
       /* raw coverage in ms first, so occupant time off can be carved
          out before the display mapping */
       interface RawRow {
@@ -1670,7 +1706,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
       }
       let raw: RawRow[]
       if (overrides.length > 0) {
-        raw = overrides.map((e) => ({
+        raw = liveOverrides.map((e) => ({
           entryId: e.id,
           userId: e.userId,
           s: tsMs(e.startAt),
@@ -1828,7 +1864,7 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
         rows = rows.filter((r) => (r.open && !hideOpen) || r.userId === onlyFor)
       }
       openCount += rows.filter((r) => r.open).length
-      seatModels.push({ seat, rows })
+      seatModels.push({ seat, rows, vacatedEntryId: vacated?.id ?? null })
     }
 
     // Students and extra RIDER seats ride inside the unit block;
@@ -4517,18 +4553,34 @@ async function dayOpenWindow(opts: {
     await reloadRangeIfLoaded()
     return 'They are not scheduled on that seat during that window.'
   }
+  /* OPTIONAL seats (extra = 3rd riders, students): removing the rider
+     leaves the window EMPTY, never open — an optional seat demands no
+     backfill (d7da685), and the user-null 'vacated' row keeps the
+     rotation from re-seating them on render (Traylor, Dec 6–7). */
+  const isExtra = seats.value.find((s2) => s2.id === opts.seatId)?.extra === true
   const rows = segs.map((seg) => ({
     work_date: opts.dateIso, seat_id: opts.seatId, user_id: null,
     start_at: new Date(seg.start).toISOString(), end_at: new Date(seg.end).toISOString(),
-    kind: 'rotation', status: 'open',
+    kind: isExtra ? 'vacated' : 'rotation', status: isExtra ? 'scheduled' : 'open',
   }))
   const ins = await supabase.from('sched_entries').insert(rows)
   if (ins.error) return ins.error.message
-  // a freshly opened window next to an existing open reads as ONE seat
-  const co = await coalesceSeatOpens(opts.dateIso, opts.seatId)
-  if (co) return co
-  audit('day.open', `Opened ${displayName(opts.userId).name}'s seat ${opts.dateIso} ${opts.from}–${opts.until}`, { entity: 'entry' })
-  notify('schedule_change', { userId: opts.userId, summary: `You were taken off your seat on ${opts.dateIso} ${opts.from}–${opts.until}; the window is posted open.` })
+  if (!isExtra) {
+    // a freshly opened window next to an existing open reads as ONE seat
+    const co = await coalesceSeatOpens(opts.dateIso, opts.seatId)
+    if (co) return co
+  }
+  audit(
+    isExtra ? 'day.vacate' : 'day.open',
+    `${isExtra ? 'Removed' : 'Opened'} ${displayName(opts.userId).name}'s seat ${opts.dateIso} ${opts.from}–${opts.until}${isExtra ? ' — optional seat left empty, nothing posted open' : ''}`,
+    { entity: 'entry' },
+  )
+  notify('schedule_change', {
+    userId: opts.userId,
+    summary: isExtra
+      ? `You were taken off your rider seat on ${opts.dateIso} ${opts.from}–${opts.until}.`
+      : `You were taken off your seat on ${opts.dateIso} ${opts.from}–${opts.until}; the window is posted open.`,
+  })
   await reloadRangeIfLoaded()
   return null
 }
@@ -5214,7 +5266,7 @@ async function removeEntry(entryId: string): Promise<string | null> {
     if (!rem.error) {
       const others = (rem.data ?? [])
         .map(mapEntry)
-        .filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
+        .filter((r) => r.kind !== 'timeoff' && r.status !== 'off' && r.kind !== 'vacated')
       if (others.length > 0) {
         let pieces: Seg[] = [{ start: tsMs(gone.start_at), end: tsMs(gone.end_at) }]
         for (const r of others) pieces = cutSegs(pieces, tsMs(r.startAt), tsMs(r.endAt))
@@ -5230,6 +5282,39 @@ async function removeEntry(entryId: string): Promise<string | null> {
         }
         const co = await coalesceSeatOpens(gone.work_date, gone.seat_id)
         if (co) return co
+      }
+    }
+  }
+
+  /* OPTIONAL seats never resurrect their rider: when this delete left
+     an EXTRA seat rowless on a day its rotation still assigns someone,
+     write the vacated mask in the same motion — deleting the posted
+     open on a 3rd-rider seat means "the seat's gone today", not "put
+     the rider back on" (Traylor, Dec 6–7). Deleting the mask itself is
+     the deliberate undo (the day board's whisper row), so that skips
+     this and lets rotation resume. */
+  if (gone && gone.seat_id && gone.kind !== 'vacated') {
+    const seatRec = seats.value.find((s2) => s2.id === gone.seat_id)
+    if (seatRec?.extra && seatRotationOccupant(gone.seat_id, gone.work_date) !== null) {
+      const rem2 = await supabase
+        .from('sched_entries')
+        .select('*')
+        .eq('work_date', gone.work_date)
+        .eq('seat_id', gone.seat_id)
+      if (!rem2.error) {
+        const live = (rem2.data ?? [])
+          .map(mapEntry)
+          .filter((r) => r.kind !== 'timeoff' && r.status !== 'off')
+        if (live.length === 0) {
+          const unitRec = units.value.find((u) => u.id === seatRec.unitId)
+          const uw = unitDayWindow(unitRec, gone.work_date)
+          const ins2 = await supabase.from('sched_entries').insert({
+            work_date: gone.work_date, seat_id: gone.seat_id, user_id: null,
+            start_at: uw.startTs, end_at: uw.endTs, kind: 'vacated', status: 'scheduled',
+          })
+          if (ins2.error) return ins2.error.message
+          audit('day.vacate', `Kept ${unitRec?.code ?? '?'} ${seatRec.label} empty on ${gone.work_date} — optional seat, rotation not re-seated`, { entity: 'entry' })
+        }
       }
     }
   }

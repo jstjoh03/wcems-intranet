@@ -73,6 +73,23 @@ async function tapBlocked(entryId: string | null): Promise<void> {
   await clearRow(entryId)
 }
 
+/* Vacated optional seats: same two-tap pattern — deleting the mask row
+   is the explicit "put the rotation rider back on this day". */
+const armedVacated = ref<string | null>(null)
+let armedVacTimer: ReturnType<typeof setTimeout> | null = null
+async function tapVacated(entryId: string | null): Promise<void> {
+  if (!entryId) return
+  if (armedVacated.value !== entryId) {
+    armedVacated.value = entryId
+    if (armedVacTimer) clearTimeout(armedVacTimer)
+    armedVacTimer = setTimeout(() => { armedVacated.value = null }, 4000)
+    return
+  }
+  if (armedVacTimer) clearTimeout(armedVacTimer)
+  armedVacated.value = null
+  await clearRow(entryId)
+}
+
 async function removeNote(id: string) {
   if (busy.value) return
   busy.value = true
@@ -207,6 +224,23 @@ function fixBalance(b: DayImbalance): void {
               <span v-if="row.isRotation" class="db__rot" title="Regular rotation">R</span>
             </span>
             <span class="db__time">{{ row.start }} – {{ row.end }}</span>
+          </div>
+          <!-- Vacated optional seat: editors see the removal (and can
+               undo it); everyone else sees nothing — the seat is simply
+               off the day. -->
+          <div
+            v-if="sm.rows.length === 0 && sm.vacatedEntryId && sched.canEdit.value"
+            class="db__row db__row--vacated"
+          >
+            <span class="db__seat">{{ sm.seat.label }}</span>
+            <button
+              class="db__name db__name--vacated db__name--btn"
+              :class="{ 'db__name--armed': armedVacated === sm.vacatedEntryId }"
+              :title="armedVacated === sm.vacatedEntryId ? 'Tap again — the rotation rider comes back on this day' : 'Seat removed for this day — tap twice to restore the rotation rider'"
+              @click="tapVacated(sm.vacatedEntryId)"
+            >
+              {{ armedVacated === sm.vacatedEntryId ? 'Put the rider back? Tap again' : 'Removed for this day' }}
+            </button>
           </div>
         </template>
 
@@ -637,6 +671,15 @@ function fixBalance(b: DayImbalance): void {
 
 .db__name--blocked {
   color: var(--color-muted);
+  font-style: italic;
+}
+
+/* vacated optional seat — a whisper only editors see */
+.db__row--vacated {
+  opacity: 0.75;
+}
+.db__name--vacated {
+  color: var(--color-muted-soft, var(--color-muted));
   font-style: italic;
 }
 

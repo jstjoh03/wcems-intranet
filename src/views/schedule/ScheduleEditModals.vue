@@ -366,6 +366,13 @@ watch(editMoveTo, () => {
   }
 })
 
+/* Removing from an EXTRA (optional) seat empties it for the day
+   instead of posting open — the remove panel says which it will do. */
+const removeSeatIsExtra = computed(() => {
+  const p = editor.person.value
+  return p ? sched.seats.value.find((s) => s.id === p.seatId)?.extra === true : false
+})
+
 /* Every scheduled row this person holds on this seat today. More than
    one means duplicate coverage left behind by re-seating churn (the
    Chief triple-assigned DeLany on S201 10/31 filling stray opens) —
@@ -2223,6 +2230,11 @@ async function reqCancel() {
             <label><input v-model="editScope" type="radio" value="day" /> This day only</label>
             <label><input v-model="editScope" type="radio" value="permanent" /> Permanent from this date (template change)</label>
           </div>
+          <p class="em__notetext">
+            {{ removeSeatIsExtra
+              ? 'Optional rider seat — the seat comes off the day entirely. Nothing posts open, and the rotation rider resumes on their next scheduled day.'
+              : 'The hours they held post as open on the seat.' }}
+          </p>
         </template>
 
         <template v-else-if="editAction === 'move'">
