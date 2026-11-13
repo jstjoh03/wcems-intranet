@@ -82,10 +82,15 @@ export function useClinical() {
   function missingRequired(p: PipelinePerson): PipelineRequirement[] {
     if (p.record.pending) return []
     const comps = completionsFor(p.userId)
+    /* A future rollout deadline (initial_due_at) keeps a brand-new card
+       class out of the missing-card alarm until it passes —
+       requirementStatus shows it as "required before <date>" instead. */
+    const todayIso = new Date().toISOString().slice(0, 10)
     return requirements.value.filter(
       (r) =>
         r.active &&
         r.cycle === 'certification' &&
+        (!r.initialDueAt || r.initialDueAt < todayIso) &&
         r.requiredLevels.length > 0 &&
         !!p.record.certLevel &&
         r.requiredLevels.includes(p.record.certLevel) &&
@@ -117,6 +122,8 @@ export function useClinical() {
           items.push({ person: p, detail: `${req.name} — required before ${st.dueAt ?? 'license renewal'}`, severity: 'due' })
         else if (st.latest)
           items.push({ person: p, detail: `${req.name} — expired/due`, severity: 'due' })
+        else if (req.initialDueAt)
+          items.push({ person: p, detail: `${req.name} — required by ${st.dueAt ?? req.initialDueAt}`, severity: 'due' })
       } else if (st.state === 'expiring' && st.latest) {
         items.push({ person: p, detail: `${req.name} — expires ${st.dueAt}`, severity: 'warn' })
       }
@@ -213,7 +220,7 @@ export function useClinical() {
       for (const req of requirementsFor(p)) {
         const st = requirementStatus(req, completionsFor(p.userId), p.record)
         if (st.state === 'expiring' && st.dueAt)
-          out.push({ person: p, when: st.dueAt, detail: `${p.fullName} — ${req.name} expires` })
+          out.push({ person: p, when: st.dueAt, detail: `${p.fullName} — ${req.name} ${st.latest ? 'expires' : 'required'}` })
       }
       const target = p.record.workingTargetAt
       if (p.record.workingPhase && target) {

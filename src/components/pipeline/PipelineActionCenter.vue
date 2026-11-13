@@ -119,7 +119,14 @@ const groups = computed<ActionGroup[]>(() => {
           bucket.push({ person: p, item: req.name, status: 'required before', when: st.dueAt, severity: 'due' })
         continue
       }
-      if (!st.latest) continue
+      if (!st.latest) {
+        /* Rollout deadline (initial_due_at) approaching or passed —
+           surface it like a per-cycle "required before" item. With no
+           deadline set, nothing-on-file stays quiet (the ALERRT rule). */
+        if (req.initialDueAt && (st.state === 'due' || st.state === 'expiring'))
+          bucket.push({ person: p, item: req.name, status: 'required before', when: st.dueAt, severity: st.state === 'due' ? 'due' : 'warn' })
+        continue
+      }
       if (st.state === 'due') {
         bucket.push({ person: p, item: req.name, status: 'expired', when: st.dueAt, severity: 'due' })
       } else if (st.state === 'expiring') {
@@ -141,6 +148,13 @@ const groups = computed<ActionGroup[]>(() => {
       if (!lvl || !req.requiredLevels.includes(lvl)) continue
       const st = requirementStatus(req, completionsFor(p.userId), p.record, today)
       if (!st.latest) {
+        /* A future rollout deadline keeps a brand-new card class out of
+           the red list until it passes (warn row inside 60 days). */
+        if (req.initialDueAt && st.state !== 'due') {
+          if (st.state === 'expiring')
+            missing.push({ person: p, item: req.name, status: 'required before', when: st.dueAt, severity: 'warn' })
+          continue
+        }
         missing.push({ person: p, item: req.name, status: 'no card on file', when: null, severity: 'due' })
       }
     }
@@ -236,17 +250,19 @@ const editReq = reactive({
   levels: [] as string[],
   sort: 100,
   notes: '',
+  initialDue: '',
   busy: false,
   error: null as string | null,
 })
 
-function startEditReq(req: { id: string; name: string; cycle: RequirementCycle; requiredLevels: string[]; sort: number; notes: string | null }) {
+function startEditReq(req: { id: string; name: string; cycle: RequirementCycle; requiredLevels: string[]; sort: number; notes: string | null; initialDueAt: string | null }) {
   editReq.id = req.id
   editReq.name = req.name
   editReq.cycle = req.cycle
   editReq.levels = [...req.requiredLevels]
   editReq.sort = req.sort
   editReq.notes = req.notes ?? ''
+  editReq.initialDue = req.initialDueAt ?? ''
   editReq.error = null
 }
 
@@ -268,6 +284,7 @@ async function saveEditReq() {
       requiredLevels: [...editReq.levels],
       sort: Number.isFinite(editReq.sort) ? editReq.sort : 100,
       notes: editReq.notes.trim() || null,
+      initialDueAt: editReq.initialDue || null,
     })
     editReq.id = null
   } catch (e) {
@@ -501,7 +518,7 @@ const reportLines = computed<string[]>(() => {
           <div class="ac__cat-row" :class="{ 'ac__cat-row--off': !req.active }">
             <span class="ac__cat-name">{{ req.name }}</span>
             <span class="ac__cat-cycle">
-              {{ { annual: 'annual', per_cert_cycle: 'per cycle', certification: 'card', one_time: 'one-time' }[req.cycle] }}<template v-if="req.requiredLevels.length"> · {{ req.requiredLevels.join(', ') }}</template>
+              {{ { annual: 'annual', per_cert_cycle: 'per cycle', certification: 'card', one_time: 'one-time' }[req.cycle] }}<template v-if="req.requiredLevels.length"> · {{ req.requiredLevels.join(', ') }}</template><template v-if="req.initialDueAt"> · first due {{ new Date(`${req.initialDueAt}T00:00:00`).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' }) }}</template>
             </span>
             <button type="button" class="ac__cat-toggle" @click="editReq.id === req.id ? (editReq.id = null) : startEditReq(req)">
               {{ editReq.id === req.id ? 'Close' : 'Edit' }}
@@ -529,6 +546,13 @@ const reportLines = computed<string[]>(() => {
                 <span>Order</span>
                 <input v-model.number="editReq.sort" type="number" min="0" step="5" class="ac__cat-sort" />
               </label>
+              <label class="ac__cat-field">
+                <span>First due</span>
+                <input v-model="editReq.initialDue" type="date" class="ac__cat-date" />
+              </label>
+            </div>
+            <div v-if="editReq.initialDue" class="ac__cat-hint">
+              Rollout deadline — no one shows past due for this item before {{ new Date(`${editReq.initialDue}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }}.
             </div>
             <div class="ac__cat-levels">
               <span class="ac__cat-levels-label">Required for</span>

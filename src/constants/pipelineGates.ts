@@ -702,8 +702,29 @@ export interface RequirementStatus {
  *                   before license expiry, then 'due'
  *  certification  — the completion's own expires_at governs; expiring
  *                   = within 60 days
- *  one_time       — any completion ever satisfies it */
+ *  one_time       — any completion ever satisfies it
+ *
+ *  A requirement's initialDueAt is a FLOOR on all of the above: the
+ *  effective due date is never earlier, so nobody shows past due
+ *  before a rollout deadline (HEART uploads due 2027-01-31 — Justin,
+ *  2026-11-13). Inside 60 days of the floor the state is 'expiring';
+ *  before that it's the quiet 'required' tag. */
 export function requirementStatus(
+  req: PipelineRequirement,
+  completions: PipelineRequirementCompletion[],
+  record: PipelineRecord | null,
+  today = new Date(),
+): RequirementStatus {
+  const res = baseRequirementStatus(req, completions, record, today)
+  const init = req.initialDueAt
+  if (!init || res.state === 'ok') return res
+  const dueAt = !res.dueAt || res.dueAt < init ? init : res.dueAt
+  if (dueAt === res.dueAt) return res
+  const days = Math.ceil((new Date(`${dueAt}T00:00:00`).getTime() - today.getTime()) / 86_400_000)
+  return { state: days < 0 ? 'due' : days <= 60 ? 'expiring' : 'required', dueAt, latest: res.latest }
+}
+
+function baseRequirementStatus(
   req: PipelineRequirement,
   completions: PipelineRequirementCompletion[],
   record: PipelineRecord | null,

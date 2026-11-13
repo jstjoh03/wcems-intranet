@@ -265,13 +265,14 @@ function seedDevFixture() {
     sort: number,
     requiredLevels: string[],
     notes: string | null = null,
-  ): PipelineRequirement => ({ id, name, cycle, active: true, sort, notes, requiredLevels })
+    initialDueAt: string | null = null,
+  ): PipelineRequirement => ({ id, name, cycle, active: true, sort, notes, requiredLevels, initialDueAt })
   requirements.value = [
     req('dev-req-1', 'BLS Provider', 'certification', 10, ['EMT-B', 'ADV EMT', 'EMT-P', 'LP'], 'AHA card — expirations tracked in Paycom'),
     req('dev-req-2', 'ACLS Provider', 'certification', 20, ['EMT-P', 'LP']),
     req('dev-req-3', 'Annual Protocol Test', 'annual', 50, []),
     req('dev-req-4', 'ALERRT', 'annual', 55, ['EMT-B', 'ADV EMT', 'EMT-P', 'LP']),
-    req('dev-req-5', 'HEART Training', 'annual', 100, ['EMT-B', 'ADV EMT', 'EMT-P', 'LP'], 'Required annually by agency policy'),
+    req('dev-req-5', 'HEART Training', 'annual', 100, ['EMT-B', 'ADV EMT', 'EMT-P', 'LP'], 'Required annually by agency policy', '2027-01-31'),
   ]
   allPeople.value = people.value
   lastFetchedAt.value = new Date()
@@ -286,7 +287,7 @@ async function loadAll() {
     supabase.from('pipeline_editors').select('user_id'),
     supabase
       .from('pipeline_requirements')
-      .select('id, name, cycle, active, sort, notes, required_levels')
+      .select('id, name, cycle, active, sort, notes, required_levels, initial_due_at')
       .order('sort'),
     supabase
       .from('pipeline_requirement_completions')
@@ -333,6 +334,7 @@ async function loadAll() {
     sort: r.sort as number,
     notes: (r.notes ?? null) as string | null,
     requiredLevels: ((r.required_levels ?? []) as string[]),
+    initialDueAt: (r.initial_due_at ?? null) as string | null,
   }))
   completions.value = (compRes.data ?? []).map((c) => ({
     id: c.id as string,
@@ -626,6 +628,7 @@ export function usePipeline() {
       requiredLevels?: string[]
       sort?: number
       notes?: string | null
+      initialDueAt?: string | null
     },
   ) {
     if (!isLive) return
@@ -635,6 +638,7 @@ export function usePipeline() {
     if (patch.requiredLevels !== undefined) row.required_levels = patch.requiredLevels
     if (patch.sort !== undefined) row.sort = patch.sort
     if (patch.notes !== undefined) row.notes = patch.notes
+    if (patch.initialDueAt !== undefined) row.initial_due_at = patch.initialDueAt
     const { error } = await supabase.from('pipeline_requirements').update(row).eq('id', id)
     if (error) throw error
     await loadAll()

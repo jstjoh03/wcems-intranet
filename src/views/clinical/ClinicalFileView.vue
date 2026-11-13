@@ -139,11 +139,14 @@ function reqFileRow(req: PipelineRequirement): FileRow {
     target: { kind: 'requirement', req } as DrawerTarget,
   }
   if (!st.latest) {
+    /* 'expiring' with nothing on file = a rollout deadline inside its
+       60-day window — same "by <date>" treatment as the quiet tag. */
+    const pending = st.state === 'required' || st.state === 'expiring'
     return {
       ...base,
       dates: 'no record on file',
-      state: required ? 'req' : st.state === 'required' ? 'soon' : 'bad',
-      stLabel: required ? 'REQUIRED' : st.state === 'required' ? (st.dueAt ? `by ${fmtMY(st.dueAt)}` : 'this cycle') : 'due',
+      state: required ? 'req' : pending ? 'soon' : 'bad',
+      stLabel: required ? 'REQUIRED' : pending ? (st.dueAt ? `by ${fmtMY(st.dueAt)}` : 'this cycle') : 'due',
     }
   }
   const dates =

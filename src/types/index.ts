@@ -568,6 +568,9 @@ export interface PipelineRequirement {
   /** cert_level values this requirement is REQUIRED for (empty =
    *  tracked-only, never flagged missing). */
   requiredLevels: string[]
+  /** Rollout deadline: nobody shows past due before this date — the
+   *  effective due date is never earlier than it. Null = no floor. */
+  initialDueAt: string | null
 }
 
 export interface PipelineRequirementCompletion {
