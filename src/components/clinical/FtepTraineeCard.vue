@@ -4,11 +4,21 @@ import { useRouter } from 'vue-router'
 import { ChevronDown, FileText, Check } from 'lucide-vue-next'
 import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.vue'
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
+import PipelineGateRow from '@/components/pipeline/PipelineGateRow.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
+import { usePipeline } from '@/composables/usePipeline'
 import { todayCentralIso } from '@/composables/useSchedule'
 import { useFtepDayOverrides } from '@/composables/useFtepDayOverrides'
-import { gateItemsFor, icrRequirementPhrase, petitionItemsFor, TRANSITIONS } from '@/constants/pipelineGates'
+import { useAuthStore } from '@/stores/auth'
+import {
+  activeTransitionFor,
+  gateItemsFor,
+  icrRequirementPhrase,
+  petitionItemsFor,
+  TRANSITIONS,
+  type GateItem,
+} from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, FTEP_DAY_STANDARDS } from '@/constants/ftepForms'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
 import type { FtepTimeline, FtepDayRow } from '@/composables/useFtepTimeline'
@@ -195,6 +205,61 @@ const gateItems = computed(() =>
 const petItems = computed(() =>
   petitionItemsFor(props.person.record, gatesFor(props.person.record.id)),
 )
+
+/* ── In-line gate check-off (same writes as the Pipeline screen, so
+   nobody has to go hunting — Justin, 2026-11-16). Computed gates keep
+   self-completing; these handle the manual ones. ─────────────────── */
+const pipeline = usePipeline()
+const auth = useAuthStore()
+const activeTransition = computed(() => activeTransitionFor(props.person.record))
+const gateError = ref<string | null>(null)
+
+async function cycleGate(item: GateItem) {
+  if (!props.canEdit || !activeTransition.value) return
+  gateError.value = null
+  try {
+    if (item.kind === 'access') {
+      const key = item.key === 'op_iq' ? 'opIqAccess' : 'narcSafeAccess'
+      await pipeline.saveRecord({ userId: props.person.userId, [key]: item.status !== 'complete' })
+      return
+    }
+    const next = item.status === 'complete' ? 'na' : item.status === 'na' ? 'pending' : 'complete'
+    await pipeline.setGate(props.person.record.id, activeTransition.value, item.key, next, item.value)
+  } catch (err) {
+    gateError.value = (err as Error).message
+  }
+}
+
+async function setGateValue(item: GateItem, value: string) {
+  if (!props.canEdit || !activeTransition.value) return
+  gateError.value = null
+  const status =
+    item.status === 'untracked' ? 'pending'
+    : item.status === 'complete' || item.status === 'na' ? item.status
+    : 'pending'
+  try {
+    await pipeline.setGate(props.person.record.id, activeTransition.value, item.key, status, value || null)
+  } catch (err) {
+    gateError.value = (err as Error).message
+  }
+}
+
+async function togglePetition(p: GateItem) {
+  if (!props.canEdit || !activeTransition.value) return
+  gateError.value = null
+  try {
+    if (p.status === 'complete') {
+      await pipeline.clearGate(props.person.record.id, activeTransition.value, p.key)
+    } else {
+      await pipeline.setGate(
+        props.person.record.id, activeTransition.value, p.key, 'complete',
+        auth.appUser?.fullName ?? null,
+      )
+    }
+  } catch (err) {
+    gateError.value = (err as Error).message
+  }
+}
 const gatesCell = computed(() => {
   const items = gateItems.value
   const done = items.filter((i) => i.status === 'complete' || i.status === 'na')
@@ -568,23 +633,42 @@ const menuOpen = ref(false)
       <ClinicalMessageThread :record-id="person.record.id" :trainee-user-id="person.userId" />
     </div>
 
-    <!-- Open gates -->
+    <!-- Advancement gates — full checklist, checkable in place -->
     <div v-if="openBlock === 'needs'" class="tc__block" @click.stop>
-      <div class="tc__needs-hd">Still needed to advance</div>
-      <template v-if="gatesCell.open.length || petItems.filter((i) => i.status !== 'complete').length">
-        <div v-for="i in gatesCell.open" :key="i.key" class="tc__needs-row">
-          <span class="tc__needs-dot"></span>
-          <span>{{ i.label }}</span>
-          <span v-if="i.hint || i.value" class="tc__needs-hint">{{ i.value ?? i.hint }}</span>
+      <div class="tc__needs-hd">
+        Advancement gates<template v-if="activeTransition"> — {{ TRANSITIONS[activeTransition].label }}</template>
+        <span v-if="canEdit" class="tc__needs-sub">tap the circle to check off · counts &amp; dates self-complete</span>
+      </div>
+      <p v-if="gateError" class="tc__gate-err">{{ gateError }}</p>
+      <template v-if="gateItems.length">
+        <PipelineGateRow
+          v-for="i in gateItems"
+          :key="i.key"
+          :item="i"
+          :editable="canEdit"
+          @cycle="cycleGate(i)"
+          @set-value="(v: string) => setGateValue(i, v)"
+        />
+        <div v-if="petItems.length" class="tc__pets">
+          <button
+            v-for="p in petItems"
+            :key="p.key"
+            type="button"
+            class="tc__pet"
+            :class="{ 'tc__pet--ok': p.status === 'complete' }"
+            :disabled="!canEdit"
+            :title="canEdit ? (p.status === 'complete' ? 'Tap to clear this signature' : 'Tap to sign as yourself') : undefined"
+            @click="togglePetition(p)"
+          >
+            <span class="tc__pet-role">{{ p.label }}</span>
+            <span class="tc__pet-state">{{ p.status === 'complete' ? `✓ ${p.value || 'Signed'}` : '— needs signature' }}</span>
+          </button>
         </div>
-        <div v-for="i in petItems.filter((x) => x.status !== 'complete')" :key="i.key" class="tc__needs-row">
-          <span class="tc__needs-dot"></span>
-          <span>Petition signature — {{ i.label }}</span>
+        <div v-if="!gatesCell.open.length && petItems.every((x) => x.status === 'complete')" class="tc__needs-row tc__needs-row--done">
+          <Check :size="13" :stroke-width="2.5" /> All tracked requirements complete.
         </div>
       </template>
-      <div v-else class="tc__needs-row tc__needs-row--done">
-        <Check :size="13" :stroke-width="2.5" /> All tracked requirements complete.
-      </div>
+      <div v-else class="tc__needs-row tc__needs-row--done">No tracked requirements for this step.</div>
     </div>
 
     <!-- Manual phase editor (the stepper keeps full control) -->
@@ -779,4 +863,21 @@ const menuOpen = ref(false)
 }
 .tc__needs-hint { margin-left: auto; font-size: 11px; color: var(--color-muted-soft); font-variant-numeric: tabular-nums; }
 .tc__needs-row--done { color: var(--color-success-500); font-weight: 600; }
+.tc__needs-sub {
+  display: block; font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  text-transform: none; color: var(--color-muted-soft); margin-top: 1px;
+}
+.tc__gate-err { font-size: 12px; color: oklch(0.5 0.16 30); margin: 2px 0 6px; }
+.tc__pets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.tc__pet {
+  display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  font-family: var(--font-sans); font-size: 11.5px;
+  border: 1px dashed var(--color-line); border-radius: 8px; padding: 6px 10px;
+  background: none; color: var(--color-ink-soft); cursor: pointer; text-align: left;
+}
+.tc__pet:disabled { cursor: default; }
+.tc__pet:hover:not(:disabled) { border-color: var(--color-accent-strong, #a8842c); }
+.tc__pet--ok { border-style: solid; border-color: var(--color-success-500); }
+.tc__pet-role { font-weight: 800; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-muted); }
+.tc__pet--ok .tc__pet-state { color: var(--color-success-500); font-weight: 650; }
 </style>

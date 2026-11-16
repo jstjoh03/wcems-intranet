@@ -361,8 +361,10 @@ export function allCategories(kind: FtepKind, variant?: IcrVariant): FtepCategor
 
 /** One rated category inside a report payload. */
 export interface FtepRating {
-  /** 1–5, or 'NO' for not observed. */
-  score: number | 'NO'
+  /** 1–5, or 'NO' for not observed. Absent only in drafts where the
+   *  evaluator opened a comment before scoring the category — submit
+   *  still requires every category scored. */
+  score?: number | 'NO'
   /** DOR only: not-responding-to-training flag (notifies the CDO). */
   nrt?: boolean
   /** Required when score < 3. */

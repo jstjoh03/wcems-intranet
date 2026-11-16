@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, reactive, watch, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, AlertTriangle, Check, Save } from 'lucide-vue-next'
+import { ArrowLeft, AlertTriangle, Check, MessageSquarePlus, Save } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import SignaturePad from '@/components/primitives/SignaturePad.vue'
 import { useClinical } from '@/composables/useClinical'
@@ -121,10 +121,16 @@ function hydrateFromDraft() {
 watch([() => ftep.ready.value, trainee], ([r]) => { if (r && trainee.value) hydrateFromDraft() }, { immediate: true })
 
 function buildPayload(): FtepPayload {
+  /* Drop entries that are nothing but an opened-then-abandoned comment
+     box — no score, no text, no NRT. */
+  const kept: Record<string, FtepRating> = {}
+  for (const [k, v] of Object.entries(ratings)) {
+    if (v.score !== undefined || v.comment?.trim() || v.nrt) kept[k] = v
+  }
   const base: FtepPayload = {
     tierPhase: meta.tierPhase || undefined,
     unit: meta.unit || undefined,
-    ratings: JSON.parse(JSON.stringify(ratings)),
+    ratings: JSON.parse(JSON.stringify(kept)),
   }
   if (isDor.value) {
     base.trainingDayNo = meta.trainingDayNo || undefined
@@ -220,10 +226,40 @@ async function saveAndExit() {
 function setScore(no: number, score: number | 'NO') {
   const k = String(no)
   const cur = ratings[k]
-  if (cur && cur.score === score) delete ratings[k]
-  else ratings[k] = { ...(cur ?? {}), score }
-  if (ratings[k] && typeof ratings[k].score === 'number' && (ratings[k].score as number) < 3)
-    commentOpen[k] = true
+  if (cur && cur.score === score) {
+    /* Tapping the same pip clears the score but never a typed comment. */
+    delete cur.score
+    if (!cur.comment?.trim() && !cur.nrt && !commentOpen[k]) delete ratings[k]
+  } else ratings[k] = { ...(cur ?? {}), score }
+  const r = ratings[k]
+  if (r && typeof r.score === 'number' && r.score < 3) commentOpen[k] = true
+}
+
+/* Comments are open to every category at any score — FTOs add them as
+   they go; a rating below 3 pins the box open (comment required). */
+function commentShown(no: number): boolean {
+  const k = String(no)
+  const r = ratings[k]
+  if (!r) return false
+  return (
+    commentOpen[k] === true ||
+    !!r.comment?.trim() ||
+    (typeof r.score === 'number' && r.score < 3)
+  )
+}
+function toggleComment(no: number) {
+  const k = String(no)
+  const r = ratings[k]
+  if (commentShown(no)) {
+    /* A typed comment or a below-3 score pins the box — no collapsing
+       text that would still go on the record. */
+    if (r && (r.comment?.trim() || (typeof r.score === 'number' && r.score < 3))) return
+    commentOpen[k] = false
+    if (r && r.score === undefined && !r.nrt && !r.comment?.trim()) delete ratings[k]
+    return
+  }
+  if (!ratings[k]) ratings[k] = {}
+  commentOpen[k] = true
 }
 function toggleNrt(no: number) {
   const k = String(no)
@@ -232,7 +268,18 @@ function toggleNrt(no: number) {
 }
 
 const cats = computed(() => allCategories(kind.value, icrVariant.value))
-const ratedCount = computed(() => cats.value.filter((c) => ratings[String(c.no)]).length)
+const ratedCount = computed(
+  () => cats.value.filter((c) => ratings[String(c.no)]?.score !== undefined).length,
+)
+/** Per-category comments compiled in form order — the bottom-of-form
+ *  recap, so nobody retypes them into the narrative. */
+const commentRecap = computed(() =>
+  cats.value.flatMap((c) => {
+    const r = ratings[String(c.no)]
+    const comment = r?.comment?.trim()
+    return comment ? [{ no: c.no, label: c.label, score: r?.score, comment }] : []
+  }),
+)
 const average = computed(() => ratingAverage(ratings))
 const nrtFlagged = computed(() => Object.values(ratings).some((r) => r.nrt))
 const hasOne = computed(() => Object.values(ratings).some((r) => r.score === 1))
@@ -441,6 +488,13 @@ function fmtSaveState(): string {
                   title="Not responding to training — flags the CDO"
                   @click="toggleNrt(cat.no)"
                 >NRT</button>
+                <button
+                  type="button"
+                  class="fr__cbtn"
+                  :class="{ 'fr__cbtn--on': commentShown(cat.no) }"
+                  :title="commentShown(cat.no) ? 'Comment open below' : 'Add a comment for this category'"
+                  @click="toggleComment(cat.no)"
+                ><MessageSquarePlus :size="15" :stroke-width="2" /></button>
               </span>
             </div>
             <div
@@ -451,14 +505,32 @@ function fmtSaveState(): string {
               Rating below 3 — describe the specific behavior, the call, and the standard expected.
             </div>
             <textarea
-              v-if="commentOpen[String(cat.no)] || (ratings[String(cat.no)] && typeof ratings[String(cat.no)].score === 'number' && (ratings[String(cat.no)].score as number) < 3)"
+              v-if="commentShown(cat.no)"
               v-model="ratings[String(cat.no)].comment"
               class="fr__comment"
               rows="2"
-              :placeholder="`Comment for category ${cat.no}`"
+              :placeholder="`Comment for category ${cat.no} — compiled at the bottom of the form`"
             ></textarea>
           </div>
         </template>
+      </div>
+
+      <!-- Compiled category comments — saves retyping them below -->
+      <div v-if="commentRecap.length" class="fr__card">
+        <div class="fr__card-hd">
+          Category comments — compiled
+          <span class="fr__optional">already on the record · no need to retype below</span>
+        </div>
+        <div class="fr__recap">
+          <div v-for="c in commentRecap" :key="c.no" class="fr__recap-row">
+            <span class="fr__recap-no">#{{ c.no }}</span>
+            <span class="fr__recap-body">
+              <b>{{ c.label }}</b>
+              <template v-if="c.score !== undefined"> · rated {{ c.score === 'NO' ? 'N.O.' : c.score }}</template>
+              <span class="fr__recap-text">{{ c.comment }}</span>
+            </span>
+          </div>
+        </div>
       </div>
 
       <!-- Narratives -->
@@ -659,6 +731,30 @@ function fmtSaveState(): string {
   border-radius: 8px; padding: 8px 10px; resize: vertical;
 }
 .fr__comment:focus { outline: none; border-color: var(--color-brand-600); }
+.fr__cbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 32px; margin-left: 4px;
+  border: 1.5px dashed var(--color-line); border-radius: 8px;
+  background: none; color: var(--color-muted); cursor: pointer;
+}
+.fr__cbtn:hover { border-color: var(--color-accent-strong, #a8842c); color: var(--color-ink); }
+.fr__cbtn--on {
+  border-style: solid; border-color: var(--color-brand-600);
+  background: var(--color-surface-soft); color: var(--color-brand-600);
+}
+.fr__recap { padding: 6px 16px 12px; }
+.fr__recap-row {
+  display: flex; gap: 10px; padding: 8px 0;
+  border-bottom: 1px solid var(--color-surface-soft);
+  font-size: 12.5px; line-height: 1.5; color: var(--color-ink);
+}
+.fr__recap-row:last-child { border-bottom: none; }
+.fr__recap-no {
+  flex-shrink: 0; font-weight: 800; font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
+}
+.fr__recap-body b { font-weight: 700; }
+.fr__recap-text { display: block; color: var(--color-ink-soft); white-space: pre-wrap; }
 
 .fr__narratives { display: flex; flex-direction: column; gap: 14px; padding: 14px 16px; }
 .fr__narratives label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--color-ink-soft); }
