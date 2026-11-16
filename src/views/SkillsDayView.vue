@@ -31,6 +31,7 @@ const {
   stationsForDay,
   candidatesForDay,
   appliesTo,
+  stationsForCandidate,
 } = useSkillsDay()
 
 const tab = ref<'stations' | 'board' | 'setup'>('stations')
@@ -133,12 +134,17 @@ const generatingFor = ref<string | null>(null)
 async function downloadPacket(candidateId: string) {
   generatingFor.value = candidateId
   try {
-    /* Packets always cover every active station, not just the
-       selected day's. */
+    /* The packet covers the stations that PERTAIN to this trainee:
+       everything recorded for them, plus anything scheduled for them
+       that's still owed (NOT RECORDED). Stations never scheduled for
+       them — e.g. BLS variants on a medic — stay off the record. */
+    const mine = evaluations.value.filter((e) => e.candidateId === candidateId)
+    const scheduled = stationsForCandidate(candidateId)
+    const recorded = new Set(mine.map((e) => e.checkoffId))
     const doc = await generateSkillsDayPacketPdf({
       candidateName: nameFor(candidateId),
-      checkoffs: checkoffs.value,
-      evaluations: evaluations.value.filter((e) => e.candidateId === candidateId),
+      checkoffs: checkoffs.value.filter((c) => recorded.has(c.id) || scheduled.has(c.id)),
+      evaluations: mine,
       nameFor,
     })
     const safe = nameFor(candidateId).replace(/\s+/g, '_').replace(/[^\w-]/g, '')

@@ -617,10 +617,16 @@ async function downloadPacket() {
   if (!p || packetBusy.value) return
   packetBusy.value = true
   try {
+    /* Only the stations that pertain to this person: recorded ones plus
+       any still owed from their scheduled Skills Days — never the
+       catalog's other variants as NOT RECORDED. */
+    const mine = skills.evaluations.value.filter((e) => e.candidateId === p.userId)
+    const scheduled = skills.stationsForCandidate(p.userId)
+    const recorded = new Set(mine.map((e) => e.checkoffId))
     const doc = await generateSkillsDayPacketPdf({
       candidateName: p.fullName,
-      checkoffs: skills.checkoffs.value,
-      evaluations: skills.evaluations.value.filter((e) => e.candidateId === p.userId),
+      checkoffs: skills.checkoffs.value.filter((c) => recorded.has(c.id) || scheduled.has(c.id)),
+      evaluations: mine,
       nameFor: skills.nameFor,
     })
     const safe = p.fullName.replace(/\s+/g, '_').replace(/[^\w-]/g, '')

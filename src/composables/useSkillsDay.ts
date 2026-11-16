@@ -391,6 +391,22 @@ export function useSkillsDay() {
     return entry.stationIds === null || entry.stationIds.includes(checkoffId)
   }
 
+  /* Every station that pertains to a trainee, unioned across all the
+     Skills Days they are rostered on (a per-trainee scoped roster entry
+     counts its own list; an unscoped one counts the whole day's
+     schedule). Drives the packet PDF so it never prints NOT RECORDED
+     for stations that were never theirs — a medic's packet doesn't list
+     the BLS variants (Justin, 2026-11-16). */
+  function stationsForCandidate(userId: string): Set<string> {
+    const out = new Set<string>()
+    for (const d of days.value) {
+      const entry = (dayCandidates.value[d.id] ?? []).find((e) => e.userId === userId)
+      if (!entry) continue
+      for (const id of entry.stationIds ?? dayStationIds.value[d.id] ?? []) out.add(id)
+    }
+    return out
+  }
+
   /* Admin: create/update a Skills Day with its station schedule and
      trainee roster in one save. */
   async function saveDayFull(input: {
@@ -794,6 +810,7 @@ export function useSkillsDay() {
     stationsForDay,
     candidatesForDay,
     appliesTo,
+    stationsForCandidate,
     redoKeys,
     submitEvaluation,
     submitRecheck,
