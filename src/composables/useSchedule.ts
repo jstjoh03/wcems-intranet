@@ -2462,21 +2462,32 @@ async function fetchTimeSegments(
 ): Promise<{ segs: TimeSegment[]; error: string | null }> {
   const auth = useAuthStore()
   if (auth.usingDevStub) return { segs: [], error: null }
-  const [res, evRes] = await Promise.all([
-    supabase
+  /* Supabase caps every select at 1,000 rows. Long windows (the FTEP
+     timeline reads −240…+112 days) silently lost whatever fell past
+     the cap — recent rider entries first, which un-counted trainees'
+     training days (Samantha Martinez, 2026-11-16). Page until done. */
+  const PAGE = 1000
+  const entryRows: Record<string, unknown>[] = []
+  for (let from = 0; ; from += PAGE) {
+    const page = await supabase
       .from('sched_entries')
       .select('*')
       .gte('work_date', startIso)
-      .lte('work_date', endIso),
-    supabase
-      .from('sched_events')
-      .select('label, on_date, double_time')
-      .gte('on_date', startIso)
-      .lte('on_date', endIso),
-  ])
-  if (res.error) return { segs: [], error: res.error.message }
+      .lte('work_date', endIso)
+      .order('work_date')
+      .order('id')
+      .range(from, from + PAGE - 1)
+    if (page.error) return { segs: [], error: page.error.message }
+    entryRows.push(...((page.data ?? []) as Record<string, unknown>[]))
+    if ((page.data ?? []).length < PAGE) break
+  }
+  const evRes = await supabase
+    .from('sched_events')
+    .select('label, on_date, double_time')
+    .gte('on_date', startIso)
+    .lte('on_date', endIso)
   if (evRes.error) return { segs: [], error: evRes.error.message }
-  const rows = (res.data ?? []).map(mapEntry)
+  const rows = entryRows.map(mapEntry)
   const eventDoubleByKey = new Map(
     ((evRes.data ?? []) as { label: string; on_date: string; double_time: boolean | null }[]).map(
       (r) => [`${r.on_date}|${r.label}`, r.double_time ?? true] as [string, boolean],
