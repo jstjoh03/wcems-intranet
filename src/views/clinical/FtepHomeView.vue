@@ -18,6 +18,7 @@ import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForm
 import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
 import { buildFtepTimeline, type FtepTimeline } from '@/composables/useFtepTimeline'
 import { runFtepAutoAdvance } from '@/composables/useFtepAutoAdvance'
+import ScheduleSpinner from '@/views/schedule/ScheduleSpinner.vue'
 import { useSchedule, todayCentralIso, type TimeSegment } from '@/composables/useSchedule'
 import { usePipeline } from '@/composables/usePipeline'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
@@ -248,12 +249,16 @@ const missingDorRows = computed(() => {
    missing-DOR reminders all read from this map. Rebuilt (from the
    cached segs) when a card corrects a day or phase rows change. */
 const timelines = ref<Record<string, FtepTimeline>>({})
+/** First build done — the page paints once, complete, behind the
+ *  spinner instead of flashing half-loaded cards (Justin, 2026-11-16). */
+const timelinesLoaded = ref(false)
 let segsCache: TimeSegment[] | null = null
 
 async function loadTimelines(refetch = false) {
   const elig = clinicalPeople.value.filter((q) => ftepLadderKeyFor(q.record) !== null)
   if (!elig.length) {
     timelines.value = {}
+    timelinesLoaded.value = true
     return
   }
   const sched = useSchedule()
@@ -266,7 +271,12 @@ async function loadTimelines(refetch = false) {
       return d.toISOString().slice(0, 10)
     }
     const res = await sched.fetchTimeSegments(addD(-240), addD(112))
-    if (res.error) return
+    if (res.error) {
+      /* Show the page rather than spin forever — cards fall back to
+         their no-timeline rendering and the next rebuild retries. */
+      timelinesLoaded.value = true
+      return
+    }
     segsCache = res.segs
   }
   const out: Record<string, FtepTimeline> = {}
@@ -279,6 +289,7 @@ async function loadTimelines(refetch = false) {
     }
   }
   timelines.value = out
+  timelinesLoaded.value = true
   /* Intra-transition phases advance themselves at the standard (days +
      acceptable DORs) — the write triggers loadAll/realtime, which runs
      the rebuild watcher, re-allocates days to the opened phase, and
@@ -539,7 +550,12 @@ async function review(r: FtepReport) {
       </button>
     </header>
 
-    <div v-if="!ready || !ftep.ready.value" class="fh__empty">Loading…</div>
+    <!-- One complete paint: wait out the pipeline, the reports, AND the
+         schedule-linked timelines (board viewers) — no half-loaded cards. -->
+    <ScheduleSpinner
+      v-if="!ready || !ftep.ready.value || (canViewBoard && !timelinesLoaded)"
+      label="Loading trainees & schedule…"
+    />
 
     <template v-else>
       <!-- Status strip — iOS-badge glance; the lists live one tap away -->
