@@ -47,6 +47,8 @@ const emit = defineEmits<{
   report: [kind: 'dor' | 'icr']
   /** Program phases complete — move to the test/checklist/credential step. */
   credential: []
+  /** Advancement recommendation letter (2 required for in-charge). */
+  recommend: []
 }>()
 
 const router = useRouter()
@@ -212,6 +214,10 @@ const petItems = computed(() =>
 const pipeline = usePipeline()
 const auth = useAuthStore()
 const activeTransition = computed(() => activeTransitionFor(props.person.record))
+/** This step takes recommendation letters (the in-charge credential). */
+const recLettersApply = computed(
+  () => !!activeTransition.value && TRANSITIONS[activeTransition.value].gates.some((g) => g.key === 'rec_letters'),
+)
 const gateError = ref<string | null>(null)
 
 async function cycleGate(item: GateItem) {
@@ -468,6 +474,10 @@ const menuOpen = ref(false)
               <button v-if="track?.icrTarget" type="button" @click="emit('report', 'icr')">
                 <FileText :size="13" :stroke-width="2" />
                 {{ icrDraft ? 'Resume ICR draft' : 'New Individual Call Report' }}
+              </button>
+              <button v-if="recLettersApply" type="button" @click="emit('recommend')">
+                <FileText :size="13" :stroke-width="2" />
+                Advancement recommendation (2 needed)
               </button>
               <button type="button" @click="emit('quickview')">Quick view — schedule &amp; progress</button>
               <button v-if="canEdit" type="button" @click="toggle('phases')">

@@ -1,6 +1,7 @@
 import { computed } from 'vue'
 import { usePipeline } from '@/composables/usePipeline'
 import { useFtep } from '@/composables/useFtep'
+import { useFtepRecommendations } from '@/composables/useFtepRecommendations'
 import {
   activeTransitionFor,
   isEmtBasic,
@@ -285,10 +286,14 @@ export function useClinical() {
    *  measured on DORs from THAT program, never leftover P1C ones. */
   function gateStatsFor(p: PipelinePerson) {
     const ftep = useFtep()
+    const recs = useFtepRecommendations()
+    void recs.load() /* idempotent — counts fill in reactively */
     const track = ftepTrackFor(p)
     if (!track) return {}
+    const activeT = activeTransitionFor(p.record)
+    const recLetters = activeT ? recs.countFor(p.userId, activeT) : 0
     if (track.key === 'legacy')
-      return { callEvals: ftep.icrCount(p.userId, track.legacyPhase) }
+      return { callEvals: ftep.icrCount(p.userId, track.legacyPhase), recLetters }
     if (!track.dorTracked) return {}
 
     const t = activeTransitionFor(p.record)
@@ -325,6 +330,7 @@ export function useClinical() {
       ...(track.icrTarget ? { scoredIcrs: ftep.icrCount(p.userId) } : {}),
       dorAvg,
       dorBelowThree,
+      recLetters,
     }
   }
 

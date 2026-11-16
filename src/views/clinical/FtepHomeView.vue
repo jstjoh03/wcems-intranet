@@ -13,7 +13,7 @@ import { useClinicalDocs } from '@/composables/useClinicalDocs'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
 import { useAuthStore } from '@/stores/auth'
-import { activeTransitionFor, ftepLadderKeyFor, gateItemsFor, icrRequirementPhrase, icrTargetFor, petitionItemsFor, phaseLabel } from '@/constants/pipelineGates'
+import { activeTransitionFor, ftepLadderKeyFor, gateItemsFor, icrRequirementPhrase, icrTargetFor, petitionItemsFor, phaseLabel, TRANSITIONS } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
 import { buildFtepTimeline, type FtepTimeline } from '@/composables/useFtepTimeline'
@@ -197,6 +197,16 @@ function openQuickview(p: PipelinePerson, e: MouseEvent) {
 function startReport(p: PipelinePerson, kind: 'dor' | 'icr') {
   openMenu.value = null
   router.push(`/clinical/ftep/${kind}/${p.userId}`)
+}
+
+/** This person's active step takes recommendation letters (in-charge). */
+function recLettersApply(p: PipelinePerson): boolean {
+  const t = activeTransitionFor(p.record)
+  return !!t && TRANSITIONS[t].gates.some((g) => g.key === 'rec_letters')
+}
+function startRecommendation(p: PipelinePerson) {
+  openMenu.value = null
+  router.push(`/clinical/ftep/recommend/${p.userId}`)
 }
 
 function initials(name: string): string {
@@ -768,6 +778,7 @@ async function review(r: FtepReport) {
           @quickview="quickview = p"
           @refresh="loadTimelines()"
           @report="(k) => startReport(p, k)"
+          @recommend="startRecommendation(p)"
           @credential="router.push(`/clinical/people/${p.userId}`)"
         />
         <div
@@ -827,6 +838,10 @@ async function review(r: FtepReport) {
                   {{ statsFor(p).icrDraft ? 'Resume ICR draft' : 'New Individual Call Report' }}
                 </button>
               </template>
+              <button v-if="recLettersApply(p)" type="button" @click="startRecommendation(p)">
+                <FileText :size="13" :stroke-width="2" />
+                Advancement recommendation (2 needed)
+              </button>
               <button type="button" @click="quickview = p">
                 Quick view — schedule &amp; progress
               </button>

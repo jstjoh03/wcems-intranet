@@ -400,6 +400,9 @@ export interface GateStats {
    *  until the window is full) + categories below 3 inside it. */
   dorAvg?: number | null
   dorBelowThree?: number
+  /** In-portal advancement recommendation letters on file for the
+   *  active transition (ftep_recommendations) — 2 complete the gate. */
+  recLetters?: number
 }
 
 export function gateItemsFor(
@@ -460,6 +463,8 @@ export function gateItemsForTransition(
       const n = row?.value?.match(/\d+/)
       if (n && parseInt(n[0], 10) >= 2) status = 'complete'
     }
+    /* …and in-portal recommendation letters self-complete it at two. */
+    if (g.key === 'rec_letters' && open && (stats?.recLetters ?? 0) >= 2) status = 'complete'
     /* Call-eval / ICR gates self-complete from the live report counts.
        The EC track needs 5 scored ICRs; every medic rung needs 10. */
     const icrTarget = transition === 'EC_EMT' ? 5 : 10
@@ -488,7 +493,9 @@ export function gateItemsForTransition(
             ? `${stats.scoredIcrs}/${icrTarget}`
             : g.key === 'dor_avg' && stats?.dorAvg != null
               ? `avg ${stats.dorAvg.toFixed(2)}`
-              : null),
+              : g.key === 'rec_letters' && stats?.recLetters != null
+                ? `${stats.recLetters}/2`
+                : null),
       completedAt: row?.completedAt ?? null,
       completedByName: row?.completedByName ?? null,
     }
