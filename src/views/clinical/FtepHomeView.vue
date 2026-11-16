@@ -17,6 +17,7 @@ import { activeTransitionFor, ftepLadderKeyFor, gateItemsFor, icrRequirementPhra
 import { FTEP_PROGRAM_PHASES, type FtepProgramPhase } from '@/constants/ftepForms'
 import { buildDorDateSet, missingDorDays } from '@/lib/ftepSchedule'
 import { buildFtepTimeline, type FtepTimeline } from '@/composables/useFtepTimeline'
+import { runFtepAutoAdvance } from '@/composables/useFtepAutoAdvance'
 import { useSchedule, todayCentralIso, type TimeSegment } from '@/composables/useSchedule'
 import { usePipeline } from '@/composables/usePipeline'
 import { generateFtepReportPdf } from '@/lib/ftepReportPdf'
@@ -278,6 +279,11 @@ async function loadTimelines(refetch = false) {
     }
   }
   timelines.value = out
+  /* Intra-transition phases advance themselves at the standard (days +
+     acceptable DORs) — the write triggers loadAll/realtime, which runs
+     the rebuild watcher, re-allocates days to the opened phase, and
+     cascades until nothing qualifies. Editors only (RLS). */
+  if (canEdit.value) void runFtepAutoAdvance(elig, out)
 }
 
 /* Plan ahead — final evaluations: the last phase must run under an
