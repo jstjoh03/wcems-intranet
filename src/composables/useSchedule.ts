@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue'
 import { supabase } from '@/lib/supabase'
+import { allRows } from '@/lib/pagedSelect'
 import { useAuthStore } from '@/stores/auth'
 
 /**
@@ -1349,14 +1350,31 @@ async function loadRange(startIso: string, endIso: string): Promise<void> {
     rangeEnd.value = endIso
     return
   }
+  /* Entries and availability grow without bound — page them past the
+     1,000-row cap (notes/events stay small; see pagedSelect). */
   const [eRes, nRes, aRes, evRes] = await Promise.all([
-    supabase
-      .from('sched_entries')
-      .select('*')
-      .gte('work_date', startIso)
-      .lte('work_date', endIso),
+    allRows<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('sched_entries')
+        .select('*')
+        .gte('work_date', startIso)
+        .lte('work_date', endIso)
+        .order('work_date')
+        .order('id')
+        .range(from, to),
+    ),
     supabase.from('sched_day_notes').select('*').gte('on_date', startIso).lte('on_date', endIso),
-    supabase.from('sched_availability').select('*').gte('on_date', startIso).lte('on_date', endIso),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    allRows<any>((from, to) =>
+      supabase
+        .from('sched_availability')
+        .select('*')
+        .gte('on_date', startIso)
+        .lte('on_date', endIso)
+        .order('on_date')
+        .order('id')
+        .range(from, to),
+    ),
     supabase.from('sched_events').select('*').gte('on_date', startIso).lte('on_date', endIso),
   ])
   const err = eRes.error ?? nRes.error ?? aRes.error ?? evRes.error
@@ -1374,7 +1392,7 @@ async function loadRange(startIso: string, endIso: string): Promise<void> {
     location: r.location ?? null,
     doubleTime: r.double_time ?? true,
   }))
-  entries.value = (eRes.data ?? []).map(mapEntry)
+  entries.value = eRes.rows.map(mapEntry)
   dayNotes.value = (nRes.data ?? []).map((r) => ({
     id: r.id,
     onDate: r.on_date,
@@ -1382,7 +1400,7 @@ async function loadRange(startIso: string, endIso: string): Promise<void> {
     note: r.note,
     includeInReminders: r.include_in_reminders,
   }))
-  availability.value = (aRes.data ?? []).map((r) => ({
+  availability.value = aRes.rows.map((r) => ({
     id: r.id,
     userId: r.user_id,
     onDate: r.on_date,
@@ -2318,7 +2336,16 @@ async function fetchMySchedule(
   const fromIso = todayCentralIso()
   const endIso = addDaysIso(fromIso, days - 1)
   const [eRes, aRes] = await Promise.all([
-    supabase.from('sched_entries').select('*').gte('work_date', fromIso).lte('work_date', endIso),
+    allRows<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('sched_entries')
+        .select('*')
+        .gte('work_date', fromIso)
+        .lte('work_date', endIso)
+        .order('work_date')
+        .order('id')
+        .range(from, to),
+    ),
     supabase
       .from('sched_availability')
       .select('*')
@@ -2327,7 +2354,7 @@ async function fetchMySchedule(
       .lte('on_date', endIso),
   ])
   if (eRes.error) return { items: [], error: eRes.error.message }
-  const rows = (eRes.data ?? []).map(mapEntry)
+  const rows = eRes.rows.map(mapEntry)
   const unitById = new Map(units.value.map((u) => [u.id, u]))
   const items: MyScheduleItem[] = []
   for (let iso = fromIso; iso <= endIso; iso = addDaysIso(iso, 1)) {
@@ -2462,32 +2489,30 @@ async function fetchTimeSegments(
 ): Promise<{ segs: TimeSegment[]; error: string | null }> {
   const auth = useAuthStore()
   if (auth.usingDevStub) return { segs: [], error: null }
-  /* Supabase caps every select at 1,000 rows. Long windows (the FTEP
-     timeline reads −240…+112 days) silently lost whatever fell past
-     the cap — recent rider entries first, which un-counted trainees'
-     training days (Samantha Martinez, 2026-11-16). Page until done. */
-  const PAGE = 1000
-  const entryRows: Record<string, unknown>[] = []
-  for (let from = 0; ; from += PAGE) {
-    const page = await supabase
-      .from('sched_entries')
-      .select('*')
-      .gte('work_date', startIso)
-      .lte('work_date', endIso)
-      .order('work_date')
-      .order('id')
-      .range(from, from + PAGE - 1)
-    if (page.error) return { segs: [], error: page.error.message }
-    entryRows.push(...((page.data ?? []) as Record<string, unknown>[]))
-    if ((page.data ?? []).length < PAGE) break
-  }
-  const evRes = await supabase
-    .from('sched_events')
-    .select('label, on_date, double_time')
-    .gte('on_date', startIso)
-    .lte('on_date', endIso)
+  /* Long windows (the FTEP timeline reads −240…+112 days) silently
+     lost whatever fell past Supabase's 1,000-row cap — recent rider
+     entries first, which un-counted trainees' training days (Samantha
+     Martinez, 2026-11-16). Page until done. */
+  const [res, evRes] = await Promise.all([
+    allRows<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('sched_entries')
+        .select('*')
+        .gte('work_date', startIso)
+        .lte('work_date', endIso)
+        .order('work_date')
+        .order('id')
+        .range(from, to),
+    ),
+    supabase
+      .from('sched_events')
+      .select('label, on_date, double_time')
+      .gte('on_date', startIso)
+      .lte('on_date', endIso),
+  ])
+  if (res.error) return { segs: [], error: res.error.message }
   if (evRes.error) return { segs: [], error: evRes.error.message }
-  const rows = entryRows.map(mapEntry)
+  const rows = res.rows.map(mapEntry)
   const eventDoubleByKey = new Map(
     ((evRes.data ?? []) as { label: string; on_date: string; double_time: boolean | null }[]).map(
       (r) => [`${r.on_date}|${r.label}`, r.double_time ?? true] as [string, boolean],
@@ -2937,11 +2962,16 @@ async function hoursCheck(
   if (auth.usingDevStub) {
     rows = entries.value.filter((e) => e.workDate >= fetchStart && e.workDate <= fetchEnd)
   } else {
-    const res = await supabase
-      .from('sched_entries')
-      .select('*')
-      .gte('work_date', fetchStart)
-      .lte('work_date', fetchEnd)
+    const res = await allRows<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('sched_entries')
+        .select('*')
+        .gte('work_date', fetchStart)
+        .lte('work_date', fetchEnd)
+        .order('work_date')
+        .order('id')
+        .range(from, to),
+    )
     if (res.error) {
       return {
         ...zero,
@@ -2955,7 +2985,7 @@ async function hoursCheck(
         ],
       }
     }
-    rows = (res.data ?? []).map(mapEntry)
+    rows = res.rows.map(mapEntry)
   }
   // union of existing + added segments, bucketed by work date
   const byDate = new Map<string, Seg[]>()
@@ -3233,18 +3263,22 @@ async function fetchLeaveLedger(userId: string): Promise<{ kind: string; hours: 
  *  sched_leave_used view sums. One member's history, or the whole
  *  roster when userId is omitted (the HR Balances table). */
 async function fetchLeaveTaken(userId?: string): Promise<LeaveTaken[]> {
-  let q = supabase
-    .from('sched_entries')
-    .select('user_id, off_type, work_date, start_at, end_at')
-    .eq('kind', 'timeoff')
-    .in('off_type', ['vacation', 'sick'])
-    .not('user_id', 'is', null)
-    .gt('work_date', LEAVE_OPENING_ASOF)
-    .order('work_date', { ascending: true })
-  if (userId) q = q.eq('user_id', userId)
-  const res = await q
+  /* Whole-roster time-off history grows without bound — paged. */
+  const res = await allRows<Record<string, unknown>>((from, to) => {
+    let q = supabase
+      .from('sched_entries')
+      .select('user_id, off_type, work_date, start_at, end_at')
+      .eq('kind', 'timeoff')
+      .in('off_type', ['vacation', 'sick'])
+      .not('user_id', 'is', null)
+      .gt('work_date', LEAVE_OPENING_ASOF)
+      .order('work_date', { ascending: true })
+      .order('id')
+    if (userId) q = q.eq('user_id', userId)
+    return q.range(from, to)
+  })
   if (res.error) return []
-  return ((res.data ?? []) as Record<string, unknown>[]).map((r) => ({
+  return (res.rows as Record<string, unknown>[]).map((r) => ({
     userId: r.user_id as string,
     kind: r.off_type as 'vacation' | 'sick',
     dateIso: r.work_date as string,
@@ -6722,13 +6756,18 @@ export interface SignoffPending {
 }
 
 async function fetchEntriesFresh(startIso: string, endIso: string): Promise<SchedEntry[] | null> {
-  const res = await supabase
-    .from('sched_entries')
-    .select('*')
-    .gte('work_date', startIso)
-    .lte('work_date', endIso)
+  const res = await allRows<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('sched_entries')
+      .select('*')
+      .gte('work_date', startIso)
+      .lte('work_date', endIso)
+      .order('work_date')
+      .order('id')
+      .range(from, to),
+  )
   if (res.error) return null
-  return (res.data ?? []).map(mapEntry)
+  return res.rows.map(mapEntry)
 }
 
 /** The most recently CLOSED pay period — the one sign-off targets. */

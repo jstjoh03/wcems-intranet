@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { supabase } from '@/lib/supabase'
+import { allRows } from '@/lib/pagedSelect'
 import { useAuthStore } from '@/stores/auth'
 import { ratingAverage, type FtepKind, type FtepPayload } from '@/constants/ftepForms'
 import type { FtepReport } from '@/types'
@@ -78,12 +79,18 @@ async function load() {
     ready.value = true
     return
   }
-  const { data, error } = await supabase
-    .from('ftep_reports')
-    .select(COLUMNS_LIST)
-    .order('eval_date', { ascending: false })
+  /* The whole report history loads here and grows forever — paged
+     past Supabase's 1,000-row cap (489 rows as of 2026-11-16). */
+  const { rows, error } = await allRows<Record<string, unknown>>((from, to) =>
+    supabase
+      .from('ftep_reports')
+      .select(COLUMNS_LIST)
+      .order('eval_date', { ascending: false })
+      .order('id')
+      .range(from, to),
+  )
   if (error) console.error('[ftep] load:', error.message)
-  reports.value = (data ?? []).map((r) => fromRow(r as ReportRow))
+  reports.value = rows.map((r) => fromRow(r as unknown as ReportRow))
   ready.value = true
 
   if (!realtimeSubscribed) {
@@ -100,11 +107,15 @@ async function load() {
         () => {
           clearTimeout(refetchTimer)
           refetchTimer = setTimeout(async () => {
-            const { data: rows } = await supabase
-              .from('ftep_reports')
-              .select(COLUMNS_LIST)
-              .order('eval_date', { ascending: false })
-            if (rows) reports.value = rows.map((r) => fromRow(r as ReportRow))
+            const { rows, error: e } = await allRows<Record<string, unknown>>((from, to) =>
+              supabase
+                .from('ftep_reports')
+                .select(COLUMNS_LIST)
+                .order('eval_date', { ascending: false })
+                .order('id')
+                .range(from, to),
+            )
+            if (!e) reports.value = rows.map((r) => fromRow(r as unknown as ReportRow))
           }, 2000)
         },
       )

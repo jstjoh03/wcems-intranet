@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { supabase } from '@/lib/supabase'
+import { allRows } from '@/lib/pagedSelect'
 import { useAuthStore } from '@/stores/auth'
 import type {
   EmploymentType,
@@ -149,21 +150,28 @@ async function loadEventRosters(list: RequiredTraining[]): Promise<void> {
   for (const t of eventModules) {
     const from = t.audienceEventFrom ?? '1970-01-01'
     const to = t.audienceEventTo ?? '2999-12-31'
-    const res = await supabase
-      .from('sched_entries')
-      .select('user_id, note, event:sched_events(label)')
-      .eq('kind', 'event')
-      .eq('status', 'scheduled')
-      .not('user_id', 'is', null)
-      .gte('work_date', from)
-      .lte('work_date', to)
+    /* Unbounded default window ('1970'→'2999') — paged past the
+       1,000-row cap so old event rosters never silently truncate. */
+    const res = await allRows<Record<string, unknown>>((lo, hi) =>
+      supabase
+        .from('sched_entries')
+        .select('user_id, note, event:sched_events(label)')
+        .eq('kind', 'event')
+        .eq('status', 'scheduled')
+        .not('user_id', 'is', null)
+        .gte('work_date', from)
+        .lte('work_date', to)
+        .order('work_date')
+        .order('id')
+        .range(lo, hi),
+    )
     if (res.error) {
       next[t.id] = []
       continue
     }
     const label = t.audienceEventLabel
     const ids = new Set<string>()
-    for (const r of (res.data ?? []) as Array<{
+    for (const r of res.rows as Array<{
       user_id: string
       note: string | null
       event: { label: string | null } | { label: string | null }[] | null

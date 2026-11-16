@@ -167,12 +167,32 @@ Deno.serve(async (req: Request) => {
     const dates: string[] = []
     for (let i = -33; i <= 182; i++) dates.push(addDaysIso(today, i))
 
+    /* Supabase caps selects at 1,000 rows; the ~216-day feed window
+       held 654 entries on 2026-11-16 and keeps growing, so the entry
+       fetch pages until a short page — a capped fetch would silently
+       drop shifts from members' phone calendars. */
+    const fetchEntriesPaged = async () => {
+      const all: Record<string, unknown>[] = []
+      for (let from = 0; ; from += 1000) {
+        const page = await sb
+          .from('sched_entries')
+          .select('work_date, seat_id, user_id, kind, status, start_at, end_at, note')
+          .gte('work_date', dates[0])
+          .lte('work_date', dates[dates.length - 1])
+          .order('work_date')
+          .order('id')
+          .range(from, from + 999)
+        if (page.error) return { data: null, error: page.error }
+        all.push(...(page.data ?? []))
+        if ((page.data ?? []).length < 1000) break
+      }
+      return { data: all, error: null }
+    }
     const [uR, sR, rR, eR] = await Promise.all([
       sb.from('sched_units').select('id, code, active, effective_from, rotation_pattern, rotation_anchor, shift_start, shift_end'),
       sb.from('sched_seats').select('id, unit_id, label, active'),
       sb.from('sched_rotation_assignments').select('seat_id, platoon, user_id, effective_from, effective_to'),
-      sb.from('sched_entries').select('work_date, seat_id, user_id, kind, status, start_at, end_at, note')
-        .gte('work_date', dates[0]).lte('work_date', dates[dates.length - 1]),
+      fetchEntriesPaged(),
     ])
     const err0 = uR.error ?? sR.error ?? rR.error ?? eR.error
     if (err0) return plain('Schedule load failed.', 500)
