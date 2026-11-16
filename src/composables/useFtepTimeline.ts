@@ -6,6 +6,7 @@ import { activeTransitionFor, ftepLadderKeyFor } from '@/constants/pipelineGates
 import {
   FTEP_PROGRAM_PHASES,
   FTEP_DAY_STANDARDS,
+  FTEP_CALENDAR_RULES,
   type PhaseDayStandard,
 } from '@/constants/ftepForms'
 import type { PipelinePerson } from '@/types'
@@ -81,6 +82,11 @@ export interface FtepTimeline {
   notCounting: FtepDayRow[]
   estTestStd: string | null
   estTestMin: string | null
+  /** Guide v1.2 §4 calendar window from the track's anchor date:
+   *  earliest the trainee may test (null = no floor for this track)
+   *  and the calendar cap (past it needs Clinical review). */
+  floorAt: string | null
+  capAt: string | null
   /** Every FTO who has trained this person so far (phase rows + day
    *  log) — the final evaluation must be run by someone NOT here. */
   ftosUsed: string[]
@@ -98,6 +104,29 @@ function addDaysIso(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00Z`)
   d.setUTCDate(d.getUTCDate() + days)
   return d.toISOString().slice(0, 10)
+}
+
+function addMonthsIso(iso: string, months: number): string {
+  const d = new Date(`${iso}T12:00:00Z`)
+  d.setUTCMonth(d.getUTCMonth() + months)
+  return d.toISOString().slice(0, 10)
+}
+
+function shiftIso(iso: string, by: { days?: number; months?: number }): string {
+  return by.months ? addMonthsIso(iso, by.months) : addDaysIso(iso, by.days ?? 0)
+}
+
+/** Mean spacing between consecutive dates, whole days, at least 1. */
+function meanGapDays(dates: string[]): number | null {
+  if (dates.length < 2) return null
+  let sum = 0
+  for (let i = 1; i < dates.length; i++) {
+    sum +=
+      (new Date(`${dates[i]}T00:00:00Z`).getTime() -
+        new Date(`${dates[i - 1]}T00:00:00Z`).getTime()) /
+      86_400_000
+  }
+  return Math.max(1, Math.round(sum / (dates.length - 1)))
 }
 
 export async function buildFtepTimeline(
@@ -293,31 +322,37 @@ export async function buildFtepTimeline(
     if (!d.future) d.phaseKey = phaseFor(d.dateIso)
   }
 
-  /* Projection: walk the future qualifying days; extrapolate at the
-     observed cadence once the loaded horizon runs out. */
+  /* Projection: walk the trainee's REAL scheduled days (Guide v1.2 —
+     training is "ridden on the trainee's normal schedule with their
+     FTO"). FTO-paired days count as themselves; scheduled workdays
+     past the last FTO assignment count too, since FTO pairings simply
+     haven't been entered that far out — but a workday WITHOUT an FTO
+     before that point was deliberately left untrained and is skipped.
+     Past the loaded horizon, extrapolate at the trainee's own rotation
+     (mean gap of scheduled days — a 48/96 alternates 1/5 ≈ every 3rd
+     day), falling back to their recent worked cadence, then 3. */
   const futureQual = dayRows.filter((d) => d.future && d.counts).map((d) => d.dateIso)
-  let cadence = 3
-  if (futureQual.length >= 2) {
-    const gaps: number[] = []
-    for (let i = 1; i < futureQual.length; i++) {
-      gaps.push(
-        (new Date(`${futureQual[i]}T00:00:00Z`).getTime() -
-          new Date(`${futureQual[i - 1]}T00:00:00Z`).getTime()) /
-          86_400_000,
-      )
-    }
-    gaps.sort((a, b) => a - b)
-    cadence = Math.max(1, Math.round(gaps[Math.floor(gaps.length / 2)]!))
-  }
+  const lastFtoAssigned = futureQual.length ? futureQual[futureQual.length - 1]! : null
+  const futurePlan = dayRows
+    .filter(
+      (d) =>
+        d.future && (d.counts || lastFtoAssigned === null || d.dateIso > lastFtoAssigned),
+    )
+    .map((d) => d.dateIso)
+  const pastWorked = dayRows
+    .filter((d) => !d.future)
+    .map((d) => d.dateIso)
+    .slice(-10)
+  const cadence = meanGapDays(futurePlan) ?? meanGapDays(pastWorked) ?? 3
   function makeWalker() {
     let idx = 0
-    let last = futureQual.length ? null : today
+    let last = futurePlan.length ? null : today
     return (count: number): { first: string | null; last: string | null } => {
       let first: string | null = null
       let d: string | null = null
       for (let i = 0; i < count; i++) {
-        if (idx < futureQual.length) {
-          d = futureQual[idx]!
+        if (idx < futurePlan.length) {
+          d = futurePlan[idx]!
           last = d
           idx++
         } else {
@@ -408,6 +443,22 @@ export async function buildFtepTimeline(
     .sort()
   const programStartedAt = phaseStarts[0] ?? person.record.workingStartedAt ?? null
 
+  /* Calendar window (Guide v1.2 §4): P1→P2 counts from enrollment in
+     the P2 process; the new-hire tracks from the first field day after
+     academy. The floor is a hard earliest-test date — a projection may
+     never land before it, however fast the days accrue. */
+  const calRules = FTEP_CALENDAR_RULES[accelerated ? 'P1_P2_ACCEL' : transition]
+  const calAnchor =
+    transition === 'P1_P2'
+      ? (person.record.workingStartedAt ?? programStartedAt)
+      : programStartedAt
+  const floorAt = calAnchor && calRules.floor ? shiftIso(calAnchor, calRules.floor) : null
+  const capAt = calAnchor ? shiftIso(calAnchor, calRules.cap) : null
+  if (floorAt) {
+    if (estTestMin && estTestMin < floorAt) estTestMin = floorAt
+    if (estTestStd && estTestStd < floorAt) estTestStd = floorAt
+  }
+
   return {
     transition,
     accelerated,
@@ -420,6 +471,8 @@ export async function buildFtepTimeline(
     notCounting: dayRows.filter((d) => !d.future && !d.counts && d.phaseKey !== null),
     estTestStd,
     estTestMin,
+    floorAt,
+    capAt,
     gates,
     unanchored,
   }

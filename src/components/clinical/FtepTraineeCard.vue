@@ -6,6 +6,7 @@ import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.v
 import FtepPhaseStepper from '@/components/clinical/FtepPhaseStepper.vue'
 import { useClinical } from '@/composables/useClinical'
 import { useFtep } from '@/composables/useFtep'
+import { todayCentralIso } from '@/composables/useSchedule'
 import { useFtepDayOverrides } from '@/composables/useFtepDayOverrides'
 import { gateItemsFor, icrRequirementPhrase, petitionItemsFor, TRANSITIONS } from '@/constants/pipelineGates'
 import { FTEP_PROGRAM_PHASES, FTEP_DAY_STANDARDS } from '@/constants/ftepForms'
@@ -65,7 +66,10 @@ const allComplete = computed(
 )
 
 /** Rail segments — widths proportional to the Guide's standard days
- *  (classroom phase0 uses its published day count). */
+ *  (classroom phase0 uses its published day count). Only the COMPLETED
+ *  portion is shaded: a finished phase fills whole, the current phase
+ *  fills by days actually ridden over its standard, so the bar reads
+ *  as real progress at a glance (Justin, 2026-11-15). */
 const rail = computed(() => {
   const tl = props.timeline
   if (!tl || !allPhases.value.length) return []
@@ -81,6 +85,9 @@ const rail = computed(() => {
       state = curIdx >= 0 || tl.phases.some((x) => x.status !== 'upcoming') ? 'done' : 'rest'
     } else if (row?.status === 'complete') state = 'done'
     else if (row?.status === 'current') state = 'cur'
+    let fill = 0
+    if (state === 'done') fill = 100
+    else if (state === 'cur') fill = Math.min(100, ((row?.actual ?? 0) / (stds[i]! || 1)) * 100)
     const short = p.label
       .replace('NEOP Academy', 'Academy')
       .replace('EMT Orientation', 'Orient.')
@@ -90,7 +97,7 @@ const rail = computed(() => {
       .replace('P2 Development', 'Development')
       .replace('Ghost Phase', 'Ghost')
       .replace('P2 Final Evaluation', 'Final')
-    return { key: p.key, label: short, pct: (stds[i]! / total) * 100, state }
+    return { key: p.key, label: short, pct: (stds[i]! / total) * 100, state, fill }
   })
 })
 
@@ -117,8 +124,13 @@ const headDates = computed(() => {
   const bits: string[] = []
   if (tl.programStartedAt)
     bits.push(`started ${fmt(tl.programStartedAt)}${tl.impliedStart ? ' (enrollment)' : ''}`)
-  if (allComplete.value) bits.push('ready to test now')
-  else if (tl.estTestStd) bits.push(`ready to test ≈ ${fmt(tl.estTestStd)}`)
+  const todayIso = todayCentralIso()
+  if (allComplete.value) {
+    /* The calendar floor gates testing even when every phase is done
+       (Guide v1.2 — traditional P2 "three months as the floor"). */
+    if (tl.floorAt && tl.floorAt > todayIso) bits.push(`ready to test ${fmt(tl.floorAt)} (window floor)`)
+    else bits.push('ready to test now')
+  } else if (tl.estTestStd) bits.push(`ready to test ≈ ${fmt(tl.estTestStd)}`)
   return bits.join(' · ')
 })
 
@@ -211,33 +223,44 @@ function shortGate(label: string): string {
     .replace('Operative IQ access', 'OpIQ')
 }
 
+/** Eligible-to-test (Guide v1.2 §4/§8): the earliest date the trainee
+ *  may test — minimum-day pace on their real schedule, never before
+ *  the track's calendar floor. The standard-pace PLAN date rides in
+ *  the subtext; blowing the calendar cap warns (Clinical review). */
 const eligibleCell = computed(() => {
   const tl = props.timeline
   const toLabel = TRANSITIONS[tl?.transition ?? 'P1C_P1']?.toLabel ?? ''
   if (!tl || tl.unanchored)
     return { v: '—', sub: 'anchor a phase start to project', warn: true, ok: false }
-  if (allComplete.value)
+  const todayIso = todayCentralIso()
+  const floorOpen = !tl.floorAt || tl.floorAt <= todayIso
+  if (allComplete.value) {
+    if (!floorOpen)
+      return { v: fmt(tl.floorAt), sub: `phases done — window opens ${fmt(tl.floorAt)}`, warn: false, ok: false }
     return { v: 'Now', sub: `phases complete — credential as ${toLabel}`, warn: false, ok: true }
+  }
   const cur = currentPhase.value
   const remStd = tl.phases
     .filter((p) => p.status !== 'complete')
     .reduce((a, p) => a + Math.max(0, (p.standard?.std ?? 0) - (p.status === 'current' ? p.actual : 0)), 0)
-  if (remStd === 0 && gatesCell.value.open.length === 0)
+  if (remStd === 0 && gatesCell.value.open.length === 0 && floorOpen)
     return { v: 'Now', sub: `all days + gates met → ${toLabel}`, warn: false, ok: true }
+  const overCap = !!tl.capAt && !!tl.estTestStd && tl.estTestStd > tl.capAt
+  const capBit = overCap ? ` · past cap ${fmt(tl.capAt)}` : ''
   const isFinal = cur?.key === tl.finalPhaseKey
   if (isFinal) {
     const rem = Math.max(0, (cur?.standard?.std ?? 0) - (cur?.actual ?? 0))
     return {
-      v: fmt(tl.estTestStd),
-      sub: `Final Eval ${rem} day${rem === 1 ? '' : 's'} → ${toLabel} ~${fmt(tl.estTestStd)}`,
-      warn: false,
+      v: fmt(tl.estTestMin),
+      sub: `Final Eval ${rem} day${rem === 1 ? '' : 's'} → ${toLabel} ~${fmt(tl.estTestStd)}${capBit}`,
+      warn: overCap,
       ok: false,
     }
   }
   return {
-    v: fmt(tl.estTestStd),
-    sub: `std pace · min pace ${fmt(tl.estTestMin)}`,
-    warn: false,
+    v: fmt(tl.estTestMin),
+    sub: `earliest per Guide · plan ≈ ${fmt(tl.estTestStd)}${capBit}`,
+    warn: overCap,
     ok: false,
   }
 })
@@ -424,7 +447,9 @@ const menuOpen = ref(false)
     <!-- Phase rail -->
     <template v-if="rail.length">
       <div class="tc__rail">
-        <i v-for="s in rail" :key="s.key" :class="`tc__rb tc__rb--${s.state}`" :style="{ width: s.pct + '%' }"></i>
+        <span v-for="s in rail" :key="s.key" :class="`tc__rb tc__rb--${s.state}`" :style="{ width: s.pct + '%' }">
+          <i v-if="s.fill > 0" class="tc__rbfill" :style="{ width: s.fill + '%' }"></i>
+        </span>
       </div>
       <div class="tc__raillbls">
         <span v-for="s in rail" :key="s.key" :style="{ width: s.pct + '%' }">{{ s.label }}</span>
@@ -650,16 +675,17 @@ const menuOpen = ref(false)
   margin: 12px 0 0; border: 1px solid oklch(0.82 0.015 255);
   box-shadow: inset 0 1px 3px oklch(0.2 0.03 260 / 0.1);
 }
-.tc__rb { display: block; height: 100%; }
-.tc__rb--done {
+/* Only completed work is shaded green — the current phase fills by the
+   days actually ridden; its gold outline says "you are here" without
+   reading as done. */
+.tc__rb { display: block; height: 100%; background: oklch(0.9 0.012 255); }
+.tc__rb:not(:last-child) { border-right: 1px solid var(--color-surface); }
+.tc__rbfill {
+  display: block; height: 100%;
   background: linear-gradient(180deg, oklch(0.6 0.14 150), oklch(0.52 0.13 150));
   box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.2);
 }
-.tc__rb--cur {
-  background: repeating-linear-gradient(45deg, oklch(0.734 0.114 86.8), oklch(0.734 0.114 86.8) 6px, oklch(0.8 0.108 86.8) 6px, oklch(0.8 0.108 86.8) 12px);
-  box-shadow: inset 0 0 0 2px oklch(0.55 0.11 86.8);
-}
-.tc__rb--rest { background: oklch(0.9 0.012 255); }
+.tc__rb--cur { box-shadow: inset 0 0 0 2px oklch(0.734 0.114 86.8); }
 .tc__raillbls { display: flex; margin-top: 3px; }
 .tc__raillbls > span {
   font-size: 9px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;

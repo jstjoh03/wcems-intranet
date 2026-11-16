@@ -285,6 +285,28 @@ export const FTEP_DAY_STANDARDS: Record<
   },
 }
 
+/* ── Calendar windows (FTEP Program Guide v1.2 §4) ────────────────────
+   Each track is counted from its anchor — the first field training day
+   after academy for new hires, enrollment in the P2 process for P1→P2.
+   The floor is the earliest the trainee may test regardless of day
+   counts ("three months as the floor" for traditional P2; the 30-day
+   window open for accelerated); the cap needs Clinical review to pass. */
+
+export interface FtepCalendarRule {
+  floor: { days?: number; months?: number } | null
+  cap: { days?: number; months?: number }
+}
+
+export const FTEP_CALENDAR_RULES: Record<
+  'P1C_P1' | 'P1_P2' | 'P1_P2_ACCEL' | 'EC_EMT',
+  FtepCalendarRule
+> = {
+  P1C_P1: { floor: null, cap: { days: 90 } },
+  P1_P2: { floor: { months: 3 }, cap: { months: 6 } },
+  P1_P2_ACCEL: { floor: { days: 30 }, cap: { days: 90 } },
+  EC_EMT: { floor: null, cap: { days: 90 } },
+}
+
 /* ── Trainee Evaluation of FTO (paper form v1.0, 1:1) ─────────────────
    Completed at each phase transition · submitted to the CDO — not the
    FTO. Feedback reaches FTOs in aggregate and without attribution

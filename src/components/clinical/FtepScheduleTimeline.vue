@@ -80,7 +80,7 @@ function fmtY(iso: string | null): string {
         <div class="ftl__est-main">
           <span class="ftl__est-label">Estimated ready to test{{ tl.transition === 'P1C_P1' ? ' (P1)' : ' (P2)' }}</span>
           <span class="ftl__est-date">{{ fmtY(tl.estTestStd) }}</span>
-          <span class="ftl__est-sub">standard pace · minimum {{ fmtY(tl.estTestMin) }}</span>
+          <span class="ftl__est-sub">standard pace · minimum {{ fmtY(tl.estTestMin) }}<template v-if="tl.capAt"> · calendar cap {{ fmtY(tl.capAt) }}</template></span>
           <span v-if="tl.accelerated" class="ftl__accel">Accelerated pathway</span>
         </div>
         <div class="ftl__gates">
