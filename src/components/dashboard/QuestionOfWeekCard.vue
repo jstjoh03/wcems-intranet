@@ -50,6 +50,10 @@ const iCommented = computed(() =>
 const answered = computed(() => mine.value !== null || iCommented.value)
 /* A loaded key means this is a QUIZ — the vote is locked. */
 const locked = computed(() => mine.value !== null && !!revealKey.value)
+/* Results stay hidden until YOU answer, so the crowd can't steer your
+   pick (Justin, 2026-11-17). Kiosks never answer, so they never show
+   the spread — the station TV just advertises the question. */
+const showResults = computed(() => answered.value)
 
 async function castVote(i: number) {
   const q = current.value
@@ -165,7 +169,7 @@ function weekLabel(iso: string | null): string {
           :disabled="locked || auth.isKiosk"
           @click="castVote(i)"
         >
-          <span class="qw__opt-bar" :style="{ width: `${pct(i)}%` }"></span>
+          <span v-if="showResults" class="qw__opt-bar" :style="{ width: `${pct(i)}%` }"></span>
           <span class="qw__opt-label">{{ opt }}</span>
           <span v-if="showReveal && revealKey?.correctOption === i" class="qw__opt-mark qw__opt-mark--right">
             <Check :size="14" :stroke-width="2.6" />
@@ -173,13 +177,13 @@ function weekLabel(iso: string | null): string {
           <span v-else-if="showReveal && mine === i && revealKey?.correctOption != null" class="qw__opt-mark qw__opt-mark--wrong">
             <X :size="14" :stroke-width="2.6" />
           </span>
-          <span class="qw__opt-count">{{ voteCounts[i] ?? 0 }} · {{ pct(i) }}%</span>
+          <span v-if="showResults" class="qw__opt-count">{{ voteCounts[i] ?? 0 }} · {{ pct(i) }}%</span>
         </button>
         <div class="qw__poll-foot">
           <template v-if="auth.isKiosk">Voting is personal — sign in with your own account.</template>
           <template v-else-if="locked">Answer locked in — see how you did below.</template>
           <template v-else-if="mine !== null">You voted — tap another option to change.</template>
-          <template v-else>Tap an option to lock in your answer.</template>
+          <template v-else>Tap an option to lock in your answer — results show after you do.</template>
         </div>
       </div>
 
