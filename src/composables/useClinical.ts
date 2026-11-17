@@ -313,7 +313,10 @@ export function useClinical() {
       .slice(0, window)
     let dorAvg: number | null = null
     let dorBelowThree = 0
-    if (finalFour.length >= window) {
+    /* Running average from the FIRST DOR on — the gate shows progress
+       ("avg 3.75 · 2 of 4 DORs") but only self-completes on a full
+       window (gateItemsForTransition checks dorCount >= dorWindow). */
+    if (finalFour.length > 0) {
       const avgs = finalFour
         .map((r) => r.payload.average)
         .filter((x): x is number => typeof x === 'number')
@@ -330,6 +333,8 @@ export function useClinical() {
       ...(track.icrTarget ? { scoredIcrs: ftep.icrCount(p.userId) } : {}),
       dorAvg,
       dorBelowThree,
+      dorCount: finalFour.length,
+      dorWindow: window,
       recLetters,
     }
   }

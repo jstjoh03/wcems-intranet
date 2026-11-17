@@ -400,6 +400,11 @@ export interface GateStats {
    *  until the window is full) + categories below 3 inside it. */
   dorAvg?: number | null
   dorBelowThree?: number
+  /** DORs inside the window so far / the window size — the average is
+   *  a running number until dorCount reaches dorWindow, and the gate
+   *  only self-completes on a FULL window. */
+  dorCount?: number
+  dorWindow?: number
   /** In-portal advancement recommendation letters on file for the
    *  active transition (ftep_recommendations) — 2 complete the gate. */
   recLetters?: number
@@ -479,8 +484,14 @@ export function gateItemsForTransition(
       status = 'complete'
     /* The DOR average self-completes once the credential-scoped final
        four meet the floor with no category below 3 (Guide standard):
-       P1C→P1 floor 3.5 · P1→P2 floor 4.0. */
-    if (g.key === 'dor_avg' && open && stats?.dorAvg != null) {
+       P1C→P1 floor 3.5 · P1→P2 floor 4.0. Requires a FULL window —
+       a running average over fewer DORs shows but never completes. */
+    if (
+      g.key === 'dor_avg' &&
+      open &&
+      stats?.dorAvg != null &&
+      (stats.dorCount ?? 0) >= (stats.dorWindow ?? 4)
+    ) {
       const floor = transition === 'P1_P2' ? 4.0 : 3.5
       if (stats.dorAvg >= floor && (stats.dorBelowThree ?? 0) === 0) status = 'complete'
     }
@@ -497,8 +508,12 @@ export function gateItemsForTransition(
           : g.key === 'scored_icrs' && stats?.scoredIcrs != null
             ? `${stats.scoredIcrs}/${icrTarget}`
             : g.key === 'dor_avg' && stats?.dorAvg != null
-              ? `avg ${stats.dorAvg.toFixed(2)}`
-              : g.key === 'rec_letters' && stats?.recLetters != null
+              ? (stats.dorCount ?? 0) >= (stats.dorWindow ?? 4)
+                ? `avg ${stats.dorAvg.toFixed(2)}`
+                : `avg ${stats.dorAvg.toFixed(2)} · ${stats.dorCount} of ${stats.dorWindow} DORs`
+              : g.key === 'dor_avg' && stats?.dorWindow != null
+                ? `0 of ${stats.dorWindow} DORs`
+                : g.key === 'rec_letters' && stats?.recLetters != null
                 ? `${stats.recLetters}/2`
                 : g.key === 'neop_skills' && !row
                   ? 'signed off in academy'
