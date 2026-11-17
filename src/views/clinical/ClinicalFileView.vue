@@ -9,6 +9,7 @@ import AdvancementRecordDrawer from '@/components/clinical/AdvancementRecordDraw
 import ClinicalCredentialChecklist from '@/components/clinical/ClinicalCredentialChecklist.vue'
 import ClinicalRecordDrawer, { type DrawerTarget } from '@/components/clinical/ClinicalRecordDrawer.vue'
 import PipelinePersonDetail from '@/components/pipeline/PipelinePersonDetail.vue'
+import RecommendationLetters from '@/components/clinical/RecommendationLetters.vue'
 import PipelinePersonModal from '@/components/pipeline/PipelinePersonModal.vue'
 import ClinicalMessageThread from '@/components/clinical/ClinicalMessageThread.vue'
 import { useExamCertAutoFile } from '@/composables/useExamCertAutoFile'
@@ -951,6 +952,9 @@ function fmtDateTime(iso: string): string {
                 </div>
               </template>
             </div>
+
+            <!-- Advancement recommendation letters (renders only when any exist) -->
+            <RecommendationLetters :person="person" />
 
             <!-- Gates & record detail -->
             <div class="cf__panel cf__panel--pad">
