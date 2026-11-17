@@ -1861,6 +1861,39 @@ export function dayModel(dateIso: string, onlyFor?: string | null, hideOpen = fa
         dedup.sort((a, b) => a.s - b.s)
         final = dedup
       }
+      /* SAME-PERSON COALESCE (Justin, 2026-11-17): one person holding
+         back-to-back or overlapping windows on the seat renders as ONE
+         row spanning the union — two partial pickups (Sholar 11/17
+         0600-2200 + 2200-0600) and rotation-half + assigned-pickup
+         (Roberts 11/17) were each listing twice. The ENTRIES stay
+         separate on purpose (provenance: rotation vs pickup vs trade,
+         audit, source_request links); this is display only. Safe for
+         editing because the person modal's actions are day-scoped per
+         (date, seat, user), never per entry, and it already lists the
+         underlying rows when there is more than one. */
+      if (final.length > 1) {
+        const merged: RawRow[] = []
+        for (const r of final) {
+          const prev = merged[merged.length - 1]
+          if (
+            prev &&
+            !r.open &&
+            !prev.open &&
+            r.kind !== 'blocked' &&
+            prev.kind !== 'blocked' &&
+            r.userId !== null &&
+            r.userId === prev.userId &&
+            r.s <= prev.e + MIN_SEG_MS
+          ) {
+            prev.e = Math.max(prev.e, r.e)
+            prev.isRotation = prev.isRotation || r.isRotation
+            if (r.kind === 'rotation') prev.kind = 'rotation'
+          } else {
+            merged.push({ ...r })
+          }
+        }
+        final = merged
+      }
       const blockedNote = new Map(blockedWins.map((b) => [b.id, b.note]))
       let rows: SeatRow[] = final.map((r) => {
         const who = displayName(r.userId)
