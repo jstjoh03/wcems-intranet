@@ -157,6 +157,9 @@ const ftCount = computed(
 const ptCount = computed(
   () => users.value.filter((u) => (u as AppUser & { active: boolean }).active && u.employmentType === 'part_time').length,
 )
+const volCount = computed(
+  () => users.value.filter((u) => (u as AppUser & { active: boolean }).active && u.employmentType === 'volunteer').length,
+)
 
 function userToDraft(u: AppUser & { active: boolean }): DraftUser {
   return {
@@ -359,6 +362,14 @@ onMounted(load)
           >
             Part-Time <span class="me-view__chip-count">{{ ptCount }}</span>
           </button>
+          <button
+            type="button"
+            class="me-view__chip"
+            :class="{ 'me-view__chip--on': employmentFilter === 'volunteer' }"
+            @click="employmentFilter = 'volunteer'"
+          >
+            Volunteer <span class="me-view__chip-count">{{ volCount }}</span>
+          </button>
         </div>
         <label class="me-view__toggle">
           <input v-model="showInactive" type="checkbox" />
@@ -451,6 +462,7 @@ onMounted(load)
             <select v-model="draft.employmentType" class="me-form__input">
               <option value="full_time">Full-Time</option>
               <option value="part_time">Part-Time</option>
+              <option value="volunteer">Volunteer</option>
             </select>
           </label>
           <label class="me-form__field">
@@ -527,7 +539,7 @@ onMounted(load)
                 class="me-row__et"
                 :class="`me-row__et--${u.employmentType}`"
               >
-                {{ u.employmentType === 'full_time' ? 'FT' : 'PT' }}
+                {{ u.employmentType === 'full_time' ? 'FT' : u.employmentType === 'volunteer' ? 'VOL' : 'PT' }}
               </span>
               <span v-else class="me-row__kiosk-chip">Station kiosk</span>
               <span v-if="!u.active" class="me-row__inactive-chip">Inactive</span>
@@ -699,6 +711,11 @@ onMounted(load)
   color: oklch(0.45 0.13 75);
   border-color: oklch(0.85 0.09 75);
   background: oklch(0.97 0.05 80);
+}
+.me-row__et--volunteer {
+  color: oklch(0.42 0.1 150);
+  border-color: oklch(0.85 0.06 150);
+  background: oklch(0.96 0.03 150);
 }
 
 .me-view__empty {

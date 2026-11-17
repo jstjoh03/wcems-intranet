@@ -172,15 +172,6 @@ const PAGE_ROUTES: SearchResult[] = [
     to: '/',
     hash: '#stations',
   },
-  {
-    id: 'page:my-certs',
-    title: 'My Certifications',
-    subtitle: 'Your cert wallet — cards, dates, reminders',
-    category: 'page',
-    icon: Settings,
-    to: '/my-certs',
-    keywords: 'certs certifications cards license expiration bls acls cpr upload wallet',
-  },
 ]
 
 /** Admin-only page routes — only surfaced if the user is admin. */
@@ -227,6 +218,20 @@ export function useGlobalSearch() {
         to: '/schedule',
         keywords:
           'schedule shift shifts trade trades swap giveaway time off vacation calendar roster rotation pay period payday',
+      })
+    }
+
+    /* Volunteers manage certs in the portal; paid staff use Paycom, so
+       the entry would only confuse them. */
+    if (auth.appUser?.employmentType === 'volunteer') {
+      results.push({
+        id: 'page:my-certs',
+        title: 'My Certifications',
+        subtitle: 'Your cert wallet — cards, dates, reminders',
+        category: 'page',
+        icon: Settings,
+        to: '/my-certs',
+        keywords: 'certs certifications cards license expiration bls acls cpr upload wallet',
       })
     }
 

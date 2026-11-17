@@ -171,6 +171,17 @@ async function onDelete(c: EmployeeCert) {
       Certifications are personal — sign in with your own account to manage yours.
     </div>
 
+    <!-- Volunteers only — paid staff keep their certs in Paycom so there
+         is exactly ONE place per person (Justin, 2026-11-17). -->
+    <div v-else-if="auth.appUser?.employmentType !== 'volunteer'" class="mc__gate">
+      <p><b>Paid staff certifications live in Paycom.</b></p>
+      <p class="mc__gate-sub">
+        This wallet is for volunteers. Upload and manage your cards in
+        <a href="https://www.paycomonline.net/v4/ee/web.php/app/login" target="_blank" rel="noopener">Paycom</a>
+        — Education &amp; Certifications.
+      </p>
+    </div>
+
     <template v-else>
       <div class="mc__toolbar">
         <button v-if="!formOpen" type="button" class="mc__btn mc__btn--primary" @click="startAdd">
@@ -279,6 +290,9 @@ async function onDelete(c: EmployeeCert) {
 .mc__title { font-size: 24px; color: var(--color-ink); }
 .mc__sub { margin-top: 6px; font-size: 13px; line-height: 1.55; color: var(--color-muted); max-width: 620px; }
 .mc__gate { padding: 40px 0; text-align: center; color: var(--color-muted); }
+.mc__gate b { color: var(--color-ink); }
+.mc__gate-sub { margin-top: 6px; font-size: 13px; }
+.mc__gate a { color: var(--color-brand-600); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
 .mc__toolbar { margin-bottom: 14px; }
 .mc__empty { font-size: 13px; color: var(--color-muted); padding: 18px 2px; }
 .mc__error { font-size: 12.5px; color: oklch(0.5 0.16 28); }

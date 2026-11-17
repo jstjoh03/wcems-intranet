@@ -53,7 +53,7 @@ async function loadImageAsBase64(url: string): Promise<string | null> {
 export interface SignOffEntry {
   fullName: string
   /** Used to drive the FT / PT grouping in the PDF. */
-  employmentType: 'full_time' | 'part_time'
+  employmentType: 'full_time' | 'part_time' | 'volunteer'
   status: 'signed' | 'in_progress' | 'not_started'
   signedMethod: 'self' | 'admin_marked' | null
   completedAt: string | null
@@ -144,8 +144,10 @@ export async function generateRequiredTrainingSignOffPdf(
   const ftEntries = input.entries
     .filter((e) => e.employmentType === 'full_time')
     .sort((a, b) => lastNameKey(a.fullName).localeCompare(lastNameKey(b.fullName)))
+  /* Volunteers (rarely on these rosters — audiences are FT/PT) print
+     with the PT group rather than silently dropping off the PDF. */
   const ptEntries = input.entries
-    .filter((e) => e.employmentType === 'part_time')
+    .filter((e) => e.employmentType !== 'full_time')
     .sort((a, b) => lastNameKey(a.fullName).localeCompare(lastNameKey(b.fullName)))
 
   const signedCount = input.entries.filter((e) => e.status === 'signed').length

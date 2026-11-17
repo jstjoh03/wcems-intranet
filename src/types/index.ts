@@ -4,7 +4,7 @@
 
 export type Role = 'crew' | 'supervisor' | 'admin'
 export type ShiftLetter = 'A' | 'B' | 'C'
-export type EmploymentType = 'full_time' | 'part_time'
+export type EmploymentType = 'full_time' | 'part_time' | 'volunteer'
 /** Distinguishes a real human account from a shared station/rig
  *  mailbox kiosk (medic###@…, s###@…). Kiosks get read-only
  *  treatment — see migration 0051. */
