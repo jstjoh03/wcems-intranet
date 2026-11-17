@@ -11,6 +11,7 @@ import {
 } from 'lucide-vue-next'
 import AppCard from '@/components/primitives/AppCard.vue'
 import Eyebrow from '@/components/primitives/Eyebrow.vue'
+import QotwResponses from '@/components/admin/QotwResponses.vue'
 import { useAuthStore } from '@/stores/auth'
 import { supabase } from '@/lib/supabase'
 
@@ -102,17 +103,37 @@ async function load() {
 onMounted(load)
 
 /* ── Create / edit ──────────────────────────────────────────────── */
-const draft = ref<{ id: string | null; prompt: string; kind: 'text' | 'poll'; options: string[] } | null>(null)
+const draft = ref<{
+  id: string | null
+  prompt: string
+  kind: 'text' | 'poll'
+  options: string[]
+  /** '' = opinion question (no right answer, votes stay changeable). */
+  correctOption: number | ''
+  teachingPoint: string
+} | null>(null)
 
 function startCreate() {
-  draft.value = { id: null, prompt: '', kind: 'text', options: ['', ''] }
+  draft.value = { id: null, prompt: '', kind: 'text', options: ['', ''], correctOption: '', teachingPoint: '' }
 }
-function startEdit(r: QRow) {
+async function startEdit(r: QRow) {
   draft.value = {
     id: r.id,
     prompt: r.prompt,
     kind: r.kind,
     options: r.options ? [...r.options] : ['', ''],
+    correctOption: '',
+    teachingPoint: '',
+  }
+  if (auth.usingDevStub) return
+  const { data } = await supabase
+    .from('qotw_answer_keys')
+    .select('correct_option, teaching_point')
+    .eq('question_id', r.id)
+    .maybeSingle()
+  if (data && draft.value?.id === r.id) {
+    draft.value.correctOption = (data as { correct_option: number | null }).correct_option ?? ''
+    draft.value.teachingPoint = (data as { teaching_point: string | null }).teaching_point ?? ''
   }
 }
 function addOption() {
@@ -142,20 +163,109 @@ async function saveDraft() {
     kind: d.kind,
     options: d.kind === 'poll' ? d.options.map((o) => o.trim()).filter(Boolean) : null,
   }
-  const res = d.id
-    ? await supabase.from('qotw_questions').update(payload).eq('id', d.id)
-    : await supabase.from('qotw_questions').insert({
+  let qid = d.id
+  if (qid) {
+    const res = await supabase.from('qotw_questions').update(payload).eq('id', qid)
+    if (res.error) {
+      busy.value = false
+      actionError.value = res.error.message
+      return
+    }
+  } else {
+    const res = await supabase
+      .from('qotw_questions')
+      .insert({
         ...payload,
         position: (queued.value.at(-1)?.position ?? -1) + 1,
         created_by: auth.appUser?.id ?? null,
       })
+      .select('id')
+      .single()
+    if (res.error) {
+      busy.value = false
+      actionError.value = res.error.message
+      return
+    }
+    qid = (res.data as { id: string }).id
+  }
+  /* Answer key: upsert when either field is set, clear when both empty.
+     The correct option only applies to polls. */
+  const correct = d.kind === 'poll' && d.correctOption !== '' ? d.correctOption : null
+  const teach = d.teachingPoint.trim() || null
+  const keyRes =
+    correct != null || teach
+      ? await supabase
+          .from('qotw_answer_keys')
+          .upsert({ question_id: qid, correct_option: correct, teaching_point: teach, updated_at: new Date().toISOString() })
+      : await supabase.from('qotw_answer_keys').delete().eq('question_id', qid)
   busy.value = false
-  if (res.error) {
-    actionError.value = res.error.message
+  if (keyRes.error) {
+    actionError.value = `Question saved, but the answer key failed: ${keyRes.error.message}`
     return
   }
   draft.value = null
   await load()
+}
+
+/* ── Who answered what — the retraining breakdown ───────────────── */
+const expandedId = ref<string | null>(null)
+interface Breakdown {
+  key: { correctOption: number | null; teachingPoint: string | null } | null
+  ballots: { name: string; optionIndex: number }[]
+  answers: { name: string; body: string }[]
+}
+const breakdowns = ref<Record<string, Breakdown>>({})
+
+async function toggleResponses(r: QRow) {
+  if (expandedId.value === r.id) {
+    expandedId.value = null
+    return
+  }
+  expandedId.value = r.id
+  if (breakdowns.value[r.id] || auth.usingDevStub) return
+  const [v, c, k] = await Promise.all([
+    supabase
+      .from('qotw_votes')
+      .select('option_index, app_users:app_users!qotw_votes_user_id_fkey(full_name)')
+      .eq('question_id', r.id),
+    supabase
+      .from('qotw_comments')
+      .select('body, app_users:app_users!qotw_comments_user_id_fkey(full_name)')
+      .eq('question_id', r.id)
+      .order('created_at'),
+    supabase.from('qotw_answer_keys').select('correct_option, teaching_point').eq('question_id', r.id).maybeSingle(),
+  ])
+  breakdowns.value = {
+    ...breakdowns.value,
+    [r.id]: {
+      key: k.data
+        ? {
+            correctOption: (k.data as { correct_option: number | null }).correct_option,
+            teachingPoint: (k.data as { teaching_point: string | null }).teaching_point,
+          }
+        : null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ballots: ((v.data ?? []) as any[]).map((row) => ({
+        name: row.app_users?.full_name ?? '—',
+        optionIndex: row.option_index,
+      })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      answers: ((c.data ?? []) as any[]).map((row) => ({
+        name: row.app_users?.full_name ?? '—',
+        body: row.body,
+      })),
+    },
+  }
+}
+
+function ballotsByOption(r: QRow): { label: string; correct: boolean; names: string[] }[] {
+  const b = breakdowns.value[r.id]
+  if (!b || r.kind !== 'poll') return []
+  return (r.options ?? []).map((label, i) => ({
+    label,
+    correct: b.key?.correctOption === i,
+    names: b.ballots.filter((x) => x.optionIndex === i).map((x) => x.name).sort(),
+  }))
 }
 
 /* ── Reorder ────────────────────────────────────────────────────── */
@@ -254,7 +364,11 @@ function kindLabel(r: QRow): string {
           <div class="mq__meta">
             {{ kindLabel(published) }} · published {{ fmt(published.published_at) }}
             · {{ published.comment_count ?? 0 }} answers<template v-if="published.kind === 'poll'"> · {{ published.vote_count ?? 0 }} votes</template>
+            · <button type="button" class="mq__linkbtn" @click="toggleResponses(published)">
+              {{ expandedId === published.id ? 'hide responses' : 'who answered what' }}
+            </button>
           </div>
+          <QotwResponses v-if="expandedId === published.id" :groups="ballotsByOption(published)" :answers="breakdowns[published.id]?.answers ?? []" />
         </div>
         <div v-else class="mq__empty">Nothing live yet.</div>
       </AppCard>
@@ -302,7 +416,20 @@ function kindLabel(r: QRow): string {
             <button v-if="draft.options.length < 4" type="button" class="mq__btn mq__btn--ghost" @click="addOption">
               <Plus :size="13" :stroke-width="2" /> Add option
             </button>
+            <label class="mq__field">
+              <span class="mq__label">Correct answer <em class="mq__opt-note">optional — set it and votes lock with an instant reveal; leave unset for opinion polls</em></span>
+              <select v-model="draft.correctOption" class="mq__input mq__input--select">
+                <option value="">No right answer (opinion poll)</option>
+                <option v-for="(o, i) in draft.options" :key="i" :value="i" :disabled="!o.trim()">
+                  {{ o.trim() || `Option ${i + 1}` }}
+                </option>
+              </select>
+            </label>
           </div>
+          <label class="mq__field">
+            <span class="mq__label">Teaching point <em class="mq__opt-note">optional — shows with the reveal after someone answers</em></span>
+            <textarea v-model="draft.teachingPoint" rows="3" maxlength="2000" class="mq__input" placeholder="The why behind the answer — protocol reference, pearls, what crews get wrong."></textarea>
+          </label>
           <div class="mq__formfoot">
             <button type="button" class="mq__btn" @click="draft = null">Cancel</button>
             <button type="submit" class="mq__btn mq__btn--primary" :disabled="!draftValid || busy">
@@ -354,7 +481,11 @@ function kindLabel(r: QRow): string {
             <div class="mq__meta">
               {{ kindLabel(r) }} · week of {{ fmt(r.week_of) }}
               · {{ r.comment_count ?? 0 }} answers<template v-if="r.kind === 'poll'"> · {{ r.vote_count ?? 0 }} votes</template>
+              · <button type="button" class="mq__linkbtn" @click="toggleResponses(r)">
+                {{ expandedId === r.id ? 'hide responses' : 'who answered what' }}
+              </button>
             </div>
+            <QotwResponses v-if="expandedId === r.id" :groups="ballotsByOption(r)" :answers="breakdowns[r.id]?.answers ?? []" />
           </div>
           <button
             type="button"
@@ -384,6 +515,15 @@ function kindLabel(r: QRow): string {
 
 .mq__live-prompt { font-size: 15.5px; font-weight: 650; color: var(--color-ink); line-height: 1.4; }
 .mq__meta { margin-top: 3px; font-size: 11.5px; color: var(--color-muted); }
+.mq__linkbtn {
+  font: inherit; background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--color-brand-600); font-weight: 650; text-decoration: underline; text-underline-offset: 2px;
+}
+.mq__opt-note {
+  font-style: normal; font-weight: 500; letter-spacing: 0; text-transform: none;
+  color: var(--color-muted-soft);
+}
+.mq__input--select { max-width: 420px; }
 
 .mq__btn {
   display: inline-flex; align-items: center; gap: 6px;

@@ -135,6 +135,16 @@ export function useQotwVotes() {
     return Object.keys(state.value[questionId] ?? {}).length
   }
 
+  /** Everyone who voted on a question (the participation layer). */
+  function votersFor(questionId: string): string[] {
+    return Object.keys(state.value[questionId] ?? {})
+  }
+
+  /** userId -> optionIndex for a question — the admin breakdown. */
+  function ballotsFor(questionId: string): Record<string, number> {
+    return state.value[questionId] ?? {}
+  }
+
   function myVote(questionId: string): number | null {
     const id = currentId()
     if (!id) return null
@@ -168,5 +178,5 @@ export function useQotwVotes() {
     }
   }
 
-  return { counts, totalVotes, myVote, vote, ready }
+  return { counts, totalVotes, myVote, vote, votersFor, ballotsFor, ready }
 }
