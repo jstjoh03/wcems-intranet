@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { ClipboardList } from 'lucide-vue-next'
+import { ClipboardList, Paperclip } from 'lucide-vue-next'
 import type { PipelinePerson, RequirementCycle } from '@/types'
 import {
   activeTransitionFor,
@@ -312,20 +312,39 @@ function onImportFile(mode: ImportMode, e: Event) {
   importError.value = null
 }
 
+/* A long-open tab can hold an EXPIRED access token — background-tab
+   timer throttling stalls supabase-js's auto-refresh, and these raw
+   fetches don't refresh anything, so cert-import answered
+   "unauthorized" to an admin (Justin, 2026-11-17). Refresh when the
+   token is stale, and retry once on a 401 with a forced refresh. */
+async function freshToken(force = false): Promise<string> {
+  if (!force) {
+    const { data } = await supabase.auth.getSession()
+    const s = data.session
+    if (s?.access_token && (s.expires_at ?? 0) * 1000 - Date.now() > 60_000) {
+      return s.access_token
+    }
+  }
+  const { data: r, error } = await supabase.auth.refreshSession()
+  if (error || !r.session) throw new Error('Session expired — reload the page and sign in again.')
+  return r.session.access_token
+}
+
 async function runImport(mode: ImportMode, apply: boolean) {
   const file = importFiles[mode]
   if (!file || importBusy.value) return
   importBusy.value = true
   importError.value = null
   try {
-    const { data: sess } = await supabase.auth.getSession()
-    const token = sess.session?.access_token
-    if (!token) throw new Error('Not signed in.')
     const base = import.meta.env.VITE_SUPABASE_URL as string
-    const res = await fetch(
-      `${base}/functions/v1/cert-import?mode=${mode}&apply=${apply}`,
-      { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: file },
-    )
+    const send = async (token: string) =>
+      fetch(`${base}/functions/v1/cert-import?mode=${mode}&apply=${apply}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: file,
+      })
+    let res = await send(await freshToken())
+    if (res.status === 401) res = await send(await freshToken(true))
     const data = await res.json()
     if (!data.ok) throw new Error(String(data.error ?? 'Import failed'))
     importReport.value = { mode, apply, data }
@@ -401,9 +420,7 @@ async function callNotify(extra: Record<string, unknown>) {
   notifyBusy.value = true
   notifyError.value = null
   try {
-    const { data: sess } = await supabase.auth.getSession()
-    const token = sess.session?.access_token
-    if (!token) throw new Error('Not signed in.')
+    const token = await freshToken()
     const base = import.meta.env.VITE_SUPABASE_URL as string
     const res = await fetch(`${base}/functions/v1/cert-notify`, {
       method: 'POST',
@@ -628,7 +645,13 @@ const reportLines = computed<string[]>(() => {
             <strong>Paycom certifications export</strong>
             <span>Card classes → completions. Expirations snap to end of month; DSHS rows are compared, never written.</span>
           </div>
-          <input type="file" accept=".xlsx" @change="onImportFile('paycom', $event)" />
+          <label class="ac__imp-file">
+            <input type="file" accept=".xlsx" class="ac__imp-input" @change="onImportFile('paycom', $event)" />
+            <span class="btn ac__imp-pick"><Paperclip :size="13" :stroke-width="2" /> Choose file…</span>
+            <span class="ac__imp-name" :class="{ 'ac__imp-name--set': importFiles.paycom }">
+              {{ importFiles.paycom?.name ?? 'no file selected' }}
+            </span>
+          </label>
           <div class="ac__imp-btns">
             <button type="button" class="btn" :disabled="!importFiles.paycom || importBusy" @click="runImport('paycom', false)">Preview</button>
             <button type="button" class="btn btn--primary" :disabled="!importFiles.paycom || importBusy" @click="runImport('paycom', true)">Import</button>
@@ -639,7 +662,13 @@ const reportLines = computed<string[]>(() => {
             <strong>EMS1 jurisprudence / BBP report</strong>
             <span>Passed courses → jurisprudence and bloodborne pathogen dates. Takes the site's CSV download or xlsx. Real dates are never overwritten with older ones.</span>
           </div>
-          <input type="file" accept=".xlsx,.csv" @change="onImportFile('ems1', $event)" />
+          <label class="ac__imp-file">
+            <input type="file" accept=".xlsx,.csv" class="ac__imp-input" @change="onImportFile('ems1', $event)" />
+            <span class="btn ac__imp-pick"><Paperclip :size="13" :stroke-width="2" /> Choose file…</span>
+            <span class="ac__imp-name" :class="{ 'ac__imp-name--set': importFiles.ems1 }">
+              {{ importFiles.ems1?.name ?? 'no file selected' }}
+            </span>
+          </label>
           <div class="ac__imp-btns">
             <button type="button" class="btn" :disabled="!importFiles.ems1 || importBusy" @click="runImport('ems1', false)">Preview</button>
             <button type="button" class="btn btn--primary" :disabled="!importFiles.ems1 || importBusy" @click="runImport('ems1', true)">Import</button>
@@ -892,9 +921,44 @@ const reportLines = computed<string[]>(() => {
   line-height: 1.4;
   color: var(--color-muted);
 }
-.ac__imp-row input[type='file'] {
+.ac__imp-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.ac__imp-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.ac__imp-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none; /* the label handles the click */
+}
+.ac__imp-file:hover .ac__imp-pick {
+  border-color: var(--color-brand-600);
+}
+.ac__imp-file:focus-within .ac__imp-pick {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 1px;
+}
+.ac__imp-name {
   font-size: 11.5px;
-  max-width: 210px;
+  color: var(--color-muted);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ac__imp-name--set {
+  color: var(--color-ink);
+  font-weight: 600;
 }
 .ac__imp-btns {
   display: flex;
