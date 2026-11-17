@@ -622,7 +622,35 @@ function openEditAttendee(a: { id: string; studentName: string; studentEmail: st
   eaName.value = a.studentName
   eaEmail.value = a.studentEmail
   eaErr.value = null
+  eaRemoveArm.value = false
   eaOpen.value = true
+}
+
+/* Remove a checked-in attendee who couldn't actually attend (checked
+   in, then caught a call — Ashley Dodd, 2026-11-17). Deletes the
+   attendance row (same path as rejecting a walk-in) so the roster,
+   sign-in sheet and exports no longer include them; they can check in
+   fresh at the next class. Two-tap armed. */
+const eaRemoveArm = ref(false)
+async function removeAttendee(): Promise<void> {
+  if (eaBusy.value) return
+  if (!eaRemoveArm.value) {
+    eaRemoveArm.value = true
+    setTimeout(() => (eaRemoveArm.value = false), 4000)
+    return
+  }
+  eaBusy.value = true
+  eaErr.value = null
+  try {
+    await sessions.rejectAttendee(eaId.value)
+    eaOpen.value = false
+    if (s.value) await sessions.loadSessionDetail(s.value.sessionId)
+  } catch (err) {
+    eaErr.value = err instanceof Error ? err.message : 'Remove failed — try again.'
+  } finally {
+    eaBusy.value = false
+    eaRemoveArm.value = false
+  }
 }
 async function saveEditAttendee(): Promise<void> {
   if (eaBusy.value) return
@@ -2730,6 +2758,22 @@ function fmtSubmittedAt(ts: string) {
         <button class="btn btn-primary" :disabled="eaBusy" @click="saveEditAttendee">
           {{ eaBusy ? 'Saving…' : 'Save' }}
         </button>
+
+        <div class="ea-remove">
+          <p class="muted ea-remove__hint">
+            Checked in but couldn't attend (caught a call, left early)? Removing them takes
+            them off the roster, sign-in sheet and every export for this session — they can
+            check in again at the next class.
+          </p>
+          <button
+            class="btn ea-remove__btn"
+            :class="{ 'ea-remove__btn--armed': eaRemoveArm }"
+            :disabled="eaBusy"
+            @click="removeAttendee"
+          >
+            {{ eaRemoveArm ? 'Tap again to remove from roster' : 'Remove from roster' }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -4706,6 +4750,28 @@ select:focus {
   color: oklch(0.45 0.14 28);
   font-size: 13px;
   font-weight: 500;
+}
+
+/* "Fix attendee" danger zone: remove a checked-in no-show */
+.ea-remove {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed oklch(0.88 0.01 260);
+}
+.ea-remove__hint {
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+.ea-remove__btn {
+  border: 1px solid oklch(0.82 0.08 28);
+  background: none;
+  color: oklch(0.5 0.16 28);
+}
+.ea-remove__btn--armed {
+  background: oklch(0.5 0.16 28);
+  border-color: oklch(0.5 0.16 28);
+  color: #fff;
 }
 
 /* roster name → click to fix (half-names break the generated roster) */
