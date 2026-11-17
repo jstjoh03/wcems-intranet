@@ -215,6 +215,11 @@ const routes: RouteRecordRaw[] = [
     name: 'schedule',
     component: () => import('@/views/schedule/ScheduleView.vue'),
   },
+  {
+    path: '/my-certs',
+    name: 'my-certs',
+    component: () => import('@/views/MyCertsView.vue'),
+  },
   /* ── Redesigned Clinical Development section (phase 1) ───────────
      Soft-launched: reachable by URL for board viewers while the
      legacy board above stays in the nav. Views redirect non-viewers

@@ -172,6 +172,15 @@ const PAGE_ROUTES: SearchResult[] = [
     to: '/',
     hash: '#stations',
   },
+  {
+    id: 'page:my-certs',
+    title: 'My Certifications',
+    subtitle: 'Your cert wallet — cards, dates, reminders',
+    category: 'page',
+    icon: Settings,
+    to: '/my-certs',
+    keywords: 'certs certifications cards license expiration bls acls cpr upload wallet',
+  },
 ]
 
 /** Admin-only page routes — only surfaced if the user is admin. */

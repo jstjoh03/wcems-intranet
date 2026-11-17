@@ -115,6 +115,7 @@ const pages = computed<NavItem[]>(() => [
   { label: 'Upcoming Classes', to: '/training', icon: GraduationCap },
   { label: 'Training Library', to: '/training/recordings', icon: Film },
   { label: 'Required Training', to: '/training/required', icon: ShieldCheck },
+  { label: 'My Certifications', to: '/my-certs', icon: ShieldCheck },
   /* Role-targeted: editors → the full Clinical Development section,
      supervisors/FTOs → FTEP, crew → their own progress. Skills Day
      moved off the menu — evaluators reach it from the Training page. */
