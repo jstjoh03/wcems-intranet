@@ -458,6 +458,11 @@ export function gateItemsForTransition(
     }
     /* A date gate with a date filled in is complete. */
     if (g.kind === 'date' && status === 'pending' && row?.value) status = 'complete'
+    /* NEOP skills validation is signed off during the academy itself —
+       an EC candidate can't be in field training without it, so the
+       gate self-completes (Justin, 2026-11-17). A hand-set row still
+       wins: cycling it to pending/n.a. sticks. */
+    if (g.key === 'neop_skills' && status === 'untracked') status = 'complete'
     /* Letters of recommendation: typing "2" (or more) checks it off. */
     if (g.key === 'rec_letters' && status === 'pending') {
       const n = row?.value?.match(/\d+/)
@@ -495,7 +500,9 @@ export function gateItemsForTransition(
               ? `avg ${stats.dorAvg.toFixed(2)}`
               : g.key === 'rec_letters' && stats?.recLetters != null
                 ? `${stats.recLetters}/2`
-                : null),
+                : g.key === 'neop_skills' && !row
+                  ? 'signed off in academy'
+                  : null),
       completedAt: row?.completedAt ?? null,
       completedByName: row?.completedByName ?? null,
     }
