@@ -2,10 +2,13 @@
 //
 // Called by the ftep_recommendations_notify AFTER INSERT trigger over
 // pg_net (no JWT — MUST be deployed with verify_jwt OFF). Looks the
-// letter up by id, then pushes and emails every pipeline editor
-// (Justin / Heather's circle — self-maintaining via pipeline_editors):
+// letter up by id, then pushes and emails the CDO office:
 //   "Brittany Wooldridge filed an advancement recommendation
 //    (Release) for Tyler Lowery — 1 of 2 on file."
+//
+// Recipients are a FIXED list (Justin: "only Heather and myself",
+// 2026-11-17 — explicitly NOT the whole pipeline_editors circle).
+// Staffing change = edit RECIPIENT_EMAILS and redeploy.
 //
 // Secrets already set: VAPID_*, GRAPH_TENANT_ID, LIFECYCLE_CLIENT_ID,
 // LIFECYCLE_CLIENT_SECRET.
@@ -111,14 +114,17 @@ Deno.serve(async (req: Request) => {
 
   const headline = `${recommenderName} filed an advancement recommendation (${choice}) for ${traineeName}`
 
-  /* Recipients: the pipeline-editor circle, resolved server-side. */
-  const { data: editors } = await supabase
-    .from('pipeline_editors')
-    .select('user_id, app_users!pipeline_editors_user_id_fkey(id, email, full_name, active)')
+  /* Recipients: fixed CDO-office list, resolved to accounts server-side. */
+  const RECIPIENT_EMAILS = [
+    'justin.stjohn@wallercountyems.com',
+    'heather.fojt@wallercountyems.com',
+  ]
+  const { data: people } = await supabase
+    .from('app_users')
+    .select('id, email, full_name, active')
+    .in('email', RECIPIENT_EMAILS)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recips = ((editors ?? []) as any[])
-    .map((e) => e.app_users)
-    .filter((u) => u?.active && u?.email)
+  const recips = ((people ?? []) as any[]).filter((u) => u?.active && u?.email)
 
   /* Push to each editor's devices. */
   let pushed = 0
