@@ -183,6 +183,7 @@ const ADMIN_PAGE_ROUTES: SearchResult[] = [
   { id: 'page:admin-training', title: 'Manage Classes', subtitle: 'Admin', category: 'page', icon: GraduationCap, to: '/admin/training' },
   { id: 'page:admin-training-recordings', title: 'Manage Training Library', subtitle: 'Admin', category: 'page', icon: Film, to: '/admin/training-recordings' },
   { id: 'page:admin-quick-links', title: 'Manage Quick Links', subtitle: 'Admin', category: 'page', icon: LayoutGrid, to: '/admin/quick-links' },
+  { id: 'page:admin-qotw', title: 'Question of the Week', subtitle: 'Admin', category: 'page', icon: Settings, to: '/admin/qotw' },
 ]
 
 function matchesQuery(query: string, ...fields: Array<string | undefined>) {

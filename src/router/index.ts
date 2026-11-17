@@ -97,6 +97,12 @@ const routes: RouteRecordRaw[] = [
     meta: { adminOnly: true },
   },
   {
+    path: '/admin/qotw',
+    name: 'manage-qotw',
+    component: () => import('@/views/admin/ManageQotwView.vue'),
+    meta: { adminOnly: true },
+  },
+  {
     path: '/admin/quick-links',
     name: 'admin-quick-links',
     component: () => import('@/views/admin/ManageQuickLinksView.vue'),

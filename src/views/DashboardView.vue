@@ -10,6 +10,7 @@ import FeaturedQuickLinks from '@/components/dashboard/FeaturedQuickLinks.vue'
 import StationDirectory from '@/components/dashboard/StationDirectory.vue'
 import UpcomingTrainingCard from '@/components/dashboard/UpcomingTrainingCard.vue'
 import AnnouncementsCard from '@/components/dashboard/AnnouncementsCard.vue'
+import QuestionOfWeekCard from '@/components/dashboard/QuestionOfWeekCard.vue'
 import CallVolumeTile from '@/components/dashboard/CallVolumeTile.vue'
 import ComplianceCard from '@/components/dashboard/ComplianceCard.vue'
 import MihReferralCard from '@/components/dashboard/MihReferralCard.vue'
@@ -60,6 +61,9 @@ const showAnnouncements = computed(
       <div class="dash__main">
         <div v-if="showAnnouncements" id="announcements" class="reveal" style="animation-delay: 80ms">
           <AnnouncementsCard />
+        </div>
+        <div id="qotw" class="reveal" style="animation-delay: 95ms">
+          <QuestionOfWeekCard />
         </div>
         <div class="reveal" style="animation-delay: 110ms">
           <PeopleRow />

@@ -140,6 +140,7 @@ const adminPages: NavItem[] = [
   { label: 'Manage Admin Staff', to: '/admin/admin-staff', icon: Building2 },
   { label: 'Manage Quick Links', to: '/admin/quick-links', icon: LayoutGrid },
   { label: 'Kudos', to: '/admin/kudos', icon: Heart },
+  { label: 'Question of the Week', to: '/admin/qotw', icon: MessageCircleQuestion },
   { label: 'Badge Maker', to: '/admin/badge-maker', icon: IdCard },
   { label: 'Business Cards', to: '/admin/contact-cards', icon: QrCode },
   { label: 'Usage', to: '/admin/usage', icon: Activity },
