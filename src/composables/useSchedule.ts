@@ -1443,13 +1443,19 @@ async function loadRequests(): Promise<void> {
      queue, loading everyone's, had long since pushed it out. 53
      unresolved requests were invisible when this was found (J. White's
      Sept-imported Nov 12–13 vacation among them). */
+  /* The unresolved pass pages past Supabase's silent 1,000-row cap
+     (71 pending today, but an unresolved queue has no natural bound —
+     same failure class that un-counted FTEP days, 2026-11-16). */
   const [pend, recent] = await Promise.all([
-    supabase
-      .from('sched_requests')
-      .select('*')
-      .in('status', ['pending', 'partner_accepted'])
-      .order('created_at', { ascending: false })
-      .limit(1000),
+    allRows<Record<string, unknown>>((from, to) =>
+      supabase
+        .from('sched_requests')
+        .select('*')
+        .in('status', ['pending', 'partner_accepted'])
+        .order('created_at', { ascending: false })
+        .order('id')
+        .range(from, to),
+    ),
     supabase
       .from('sched_requests')
       .select('*')
@@ -1462,7 +1468,7 @@ async function loadRequests(): Promise<void> {
   }
   type ReqRow = NonNullable<typeof recent.data>[number]
   const byId = new Map<string, ReqRow>()
-  for (const row of [...(recent.data ?? []), ...(pend.data ?? [])]) {
+  for (const row of [...(recent.data ?? []), ...pend.rows] as ReqRow[]) {
     byId.set(row.id as string, row)
   }
   const merged = [...byId.values()].sort((a, b) =>
