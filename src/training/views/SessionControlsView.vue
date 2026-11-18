@@ -670,6 +670,44 @@ async function saveEditAttendee(): Promise<void> {
   }
 }
 
+/* Manually add someone to the check-in list — staff who taught or
+   attended but never hit the QR/paper flow (Justin, 2026-11-18). */
+const maOpen = ref(false)
+const maBusy = ref(false)
+const maErr = ref<string | null>(null)
+const maName = ref('')
+const maEmail = ref('')
+const maCert = ref<'Paramedic' | 'EMT' | ''>('')
+function openManualAdd(): void {
+  maName.value = ''
+  maEmail.value = ''
+  maCert.value = ''
+  maErr.value = null
+  maOpen.value = true
+}
+async function saveManualAdd(): Promise<void> {
+  if (maBusy.value || !s.value) return
+  if (!maName.value.trim() || !maEmail.value.trim()) {
+    maErr.value = 'Name and email are both required.'
+    return
+  }
+  maBusy.value = true
+  maErr.value = null
+  try {
+    await sessions.addManualAttendee(s.value.sessionId, {
+      studentName: maName.value,
+      studentEmail: maEmail.value,
+      certLevel: maCert.value || null,
+    })
+    maOpen.value = false
+    await sessions.loadSessionDetail(s.value.sessionId)
+  } catch (err) {
+    maErr.value = err instanceof Error ? err.message : 'Add failed — try again.'
+  } finally {
+    maBusy.value = false
+  }
+}
+
 async function saveHours() {
   if (!s.value || !hoursDirty.value) return
   hoursSaving.value = true
@@ -1907,6 +1945,9 @@ function fmtSubmittedAt(ts: string) {
         <div class="block-label roster-h">
           <span>Attendance roster</span>
           <span class="live"><span class="dot" /> Live</span>
+          <button class="addp" title="Add someone who attended but never checked in" @click="openManualAdd">
+            <Plus :size="13" /> Add person
+          </button>
           <div class="srch">
             <Search :size="14" />
             <input v-model="search" type="text" placeholder="Search" />
@@ -2777,6 +2818,42 @@ function fmtSubmittedAt(ts: string) {
       </div>
     </div>
 
+    <!-- ── Manually add to the check-in list ─────────────────────── -->
+    <div v-if="maOpen" class="modal" @click.self="maOpen = false">
+      <div class="modalbox">
+        <div class="modalbox__head">
+          <h3>Add to check-in list</h3>
+          <button class="iconbtn" aria-label="Close" @click="maOpen = false">
+            <X :size="17" />
+          </button>
+        </div>
+        <p class="muted modalbox__hint">
+          For someone who was here but never hit the QR or paper sign-in. They land on the
+          roster as checked in and count for the quiz, eval and CE like everyone else.
+        </p>
+        <label class="fld">
+          <span>Full name</span>
+          <input v-model="maName" type="text" placeholder="First Last" />
+        </label>
+        <label class="fld">
+          <span>Email</span>
+          <input v-model="maEmail" type="email" placeholder="name@wallercountyems.com" />
+        </label>
+        <label v-if="!isCardClass" class="fld">
+          <span>Cert level (picks their quiz)</span>
+          <select v-model="maCert">
+            <option value="">—</option>
+            <option value="Paramedic">Paramedic</option>
+            <option value="EMT">EMT</option>
+          </select>
+        </label>
+        <div v-if="maErr" class="edit__err">{{ maErr }}</div>
+        <button class="btn btn-primary" :disabled="maBusy" @click="saveManualAdd">
+          {{ maBusy ? 'Adding…' : 'Add as checked in' }}
+        </button>
+      </div>
+    </div>
+
     <div v-if="editOpen" class="modal" @click.self="editOpen = false">
       <div class="modalbox modalbox--wide">
         <div class="modalbox__head">
@@ -3587,6 +3664,25 @@ select:focus {
   50% {
     opacity: 0.3;
   }
+}
+.addp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.addp:hover {
+  border-color: var(--color-ink);
 }
 .srch {
   margin-left: auto;

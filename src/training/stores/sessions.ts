@@ -1072,6 +1072,45 @@ export const useSessionsStore = defineStore('sessions', () => {
     if (e) throw new Error(e.message)
   }
 
+  /** Manually add someone to the check-in list — for staff who taught,
+   *  precepted or attended but never hit the QR/paper flow. Lands
+   *  checked-in; matched to a portal account by email when one exists
+   *  so quiz/eval/CE crediting picks them up like anyone else. */
+  async function addManualAttendee(
+    sessionId: string,
+    fields: {
+      studentName: string
+      studentEmail: string
+      certLevel?: 'Paramedic' | 'EMT' | null
+    },
+  ) {
+    const email = fields.studentEmail.trim().toLowerCase()
+    const { data: existing } = await supabase
+      .from('training_attendance')
+      .select('id')
+      .eq('session_id', sessionId)
+      .ilike('student_email', email)
+      .maybeSingle()
+    if (existing?.id) throw new Error('They are already on the roster.')
+    const { data: au } = await supabase
+      .from('app_users')
+      .select('id')
+      .ilike('email', email)
+      .eq('active', true)
+      .maybeSingle()
+    const { error: e } = await supabase.from('training_attendance').insert({
+      session_id: sessionId,
+      student_name: fields.studentName.trim(),
+      student_email: email,
+      attendance_mode: 'InPerson',
+      status: 'CheckedIn',
+      phase: 'checkedin',
+      cert_level: fields.certLevel ?? null,
+      user_id: au?.id ?? null,
+    })
+    if (e) throw new Error(e.message)
+  }
+
   /** Same-day flip of the require_registration flag from Session
    *  Controls. The next check-in submission will honor the new value. */
   async function setRequireRegistration(sessionId: string, on: boolean) {
@@ -1340,6 +1379,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     savePsaScore,
     approveAttendee,
     rejectAttendee,
+    addManualAttendee,
     setRequireRegistration,
     closeCourse,
     cancelSession,
