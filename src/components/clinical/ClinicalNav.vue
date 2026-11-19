@@ -43,6 +43,7 @@ const sections = computed<Section[]>(() =>
         { label: 'People', to: '/clinical/people', exact: false },
         { label: 'Submissions', to: '/clinical/submissions', exact: false },
         { label: 'Exams', to: '/clinical/exams', exact: false },
+        { label: 'Reports', to: '/clinical/reports', exact: false },
       ]
     : [{ label: 'FTEP', to: '/clinical/ftep', exact: false }],
 )

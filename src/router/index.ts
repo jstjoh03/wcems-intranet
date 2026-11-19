@@ -260,6 +260,14 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/clinical/ClinicalThreadRedirectView.vue'),
   },
   {
+    /* Board-packet builder + archive. No role gate (like /clinical/pip):
+       RLS on the report tables decides; ClinicalNav only shows it to
+       clinical editors. */
+    path: '/clinical/reports',
+    name: 'clinical-reports',
+    component: () => import('@/views/clinical/TrainingReportsView.vue'),
+  },
+  {
     path: '/clinical/ftep',
     name: 'clinical-ftep',
     component: () => import('@/views/clinical/FtepHomeView.vue'),

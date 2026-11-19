@@ -25,19 +25,6 @@ const part = useQotwParticipation()
 
 const revealKey = ref<QotwAnswerKey | null>(null)
 
-watch(
-  current,
-  async (q) => {
-    if (!q) return
-    void load(q.id)
-    /* Already answered on an earlier visit? Pull the key for the reveal. */
-    if (votes.myVote(q.id) !== null || iCommented.value) {
-      revealKey.value = await loadKey(q.id)
-    }
-  },
-  { immediate: true },
-)
-
 const options = computed(() => current.value?.options ?? [])
 const voteCounts = computed(() =>
   current.value ? votes.counts(current.value.id, options.value.length) : [],
@@ -54,6 +41,22 @@ const locked = computed(() => mine.value !== null && !!revealKey.value)
    pick (Justin, 2026-11-17). Kiosks never answer, so they never show
    the spread — the station TV just advertises the question. */
 const showResults = computed(() => answered.value)
+
+/* Below the computeds it reads: with { immediate: true } this body runs
+   DURING setup, and reading iCommented any earlier is a TDZ crash that
+   took the whole card down on in-app revisits (seen 2026-11-19). */
+watch(
+  current,
+  async (q) => {
+    if (!q) return
+    void load(q.id)
+    /* Already answered on an earlier visit? Pull the key for the reveal. */
+    if (votes.myVote(q.id) !== null || iCommented.value) {
+      revealKey.value = await loadKey(q.id)
+    }
+  },
+  { immediate: true },
+)
 
 async function castVote(i: number) {
   const q = current.value

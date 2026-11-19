@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search, ChevronRight, CalendarDays, GraduationCap, BadgeCheck, School } from 'lucide-vue-next'
+import { Search, ChevronRight, CalendarDays, GraduationCap, BadgeCheck, School, FileText } from 'lucide-vue-next'
 import ClinicalNav from '@/components/clinical/ClinicalNav.vue'
 import PipelineActionCenter from '@/components/pipeline/PipelineActionCenter.vue'
 import { useClinical } from '@/composables/useClinical'
@@ -63,6 +63,7 @@ const today = new Date().toLocaleDateString('en-US', {
   month: 'long',
   day: 'numeric',
 })
+const reportMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
 /* ── Search with typeahead (kept from the hub) ─────────────────────── */
 const query = ref('')
@@ -456,6 +457,19 @@ function fmtMsgWhen(iso: string): string {
             <div v-if="comingUp.length === 0" class="ch__card-empty">
               Nothing on the 90-day horizon.
             </div>
+          </div>
+
+          <!-- Board packet: the monthly training report lives one click
+               away from the shared dashboard (Justin, 2026-11-19). -->
+          <div class="ch__card">
+            <div class="ch__card-hd">
+              <FileText :size="15" :stroke-width="2" />
+              Board report
+            </div>
+            <button type="button" class="ch__up" @click="router.push('/clinical/reports')">
+              <span class="ch__up-when">{{ reportMonthLabel }}</span>
+              <span class="ch__up-what">Monthly Training &amp; Education Report — open the builder &amp; archive</span>
+            </button>
           </div>
         </aside>
       </div>
