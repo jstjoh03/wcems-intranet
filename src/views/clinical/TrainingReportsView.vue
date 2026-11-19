@@ -99,8 +99,10 @@ function openEdit(row: ReportRow) {
   fErr.value = null
   formOpen.value = true
 }
-function num(v: string): number | null {
-  const t = v.trim()
+function num(v: string | number): number | null {
+  /* v-model on a type="number" input yields a Number (or '' when
+     cleared) — never assume string (live .trim() crash, 2026-11-19). */
+  const t = String(v ?? '').trim()
   if (t === '') return null
   const n = Number(t)
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
