@@ -67,7 +67,7 @@ const search = ref('')
 const showInactive = ref(false)
 const saving = ref(false)
 
-const ROLES: Role[] = ['crew', 'supervisor', 'admin']
+const ROLES: Role[] = ['crew', 'supervisor', 'admin', 'demo']
 const SHIFTS: Array<ShiftLetter | ''> = ['', 'A', 'B', 'C']
 
 function rowToUser(r: AppUserRow): AppUser & { active: boolean } {
@@ -198,6 +198,11 @@ async function save() {
   if (!draft.value || saving.value) return
   error.value = null
   saving.value = true
+  /* role and account_type travel together for demo: the role drives
+     permissions, the account type keeps the visitor out of the
+     directory/birthdays and roster-sync's deactivation sweep. */
+  if (draft.value.role === 'demo') draft.value.accountType = 'demo'
+  else if (draft.value.accountType === 'demo') draft.value.accountType = 'person'
   try {
     if (auth.usingDevStub) {
       /* Dev mode: mutate the local user list directly. */
@@ -470,6 +475,7 @@ onMounted(load)
             <select v-model="draft.accountType" class="me-form__input">
               <option value="person">Person (default)</option>
               <option value="kiosk">Station kiosk (rig / station mailbox)</option>
+              <option value="demo">Demo visitor (read-only admin tour)</option>
             </select>
           </label>
           <label class="me-form__field">

@@ -437,7 +437,11 @@ export function usePipeline() {
   /* Person-specific grant. Dev-stub: mirror the admin toggle so the
      role switcher can exercise both UIs. */
   const canEdit = computed(() =>
-    isLive ? (myUserId.value !== null && editorIds.value.includes(myUserId.value)) : auth.isAdmin,
+    /* A demo visitor renders the editor surfaces (the DB's demo guards
+       abort any actual write), so the admin tour shows the real thing. */
+    isLive
+      ? (myUserId.value !== null && editorIds.value.includes(myUserId.value)) || auth.isDemo
+      : auth.isAdmin,
   )
 
   const myRecord = computed<PipelinePerson | null>(

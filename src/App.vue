@@ -42,6 +42,11 @@ const showAssistant = computed(
 </script>
 
 <template>
+  <!-- Demo visitors see the whole portal; the database blocks their
+       writes, and this strip says so before they find out by error. -->
+  <div v-if="auth.isDemo" class="demo-banner" role="status">
+    Demo mode — read-only. You're seeing live screens; any change will be declined.
+  </div>
   <AppShell v-if="useShell">
     <RouterView v-slot="{ Component }">
       <Transition name="page" mode="out-in">
@@ -58,3 +63,19 @@ const showAssistant = computed(
   <component :is="AssistantPanel" v-if="AssistantPanel && showAssistant" />
   <component :is="ScoutMascot" v-if="ScoutMascot && showAssistant" />
 </template>
+
+<style scoped>
+.demo-banner {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  background: var(--color-ink, #182644);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-align: center;
+  padding: 7px 14px;
+  border-bottom: 2px solid var(--color-accent-strong, #a8842c);
+}
+</style>

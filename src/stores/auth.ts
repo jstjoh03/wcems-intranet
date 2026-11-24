@@ -191,10 +191,13 @@ export const useAuthStore = defineStore('auth', () => {
   const usingDevStub = ref(false)
 
   const role = computed<Role | null>(() => appUser.value?.role ?? null)
-  const isAdmin = computed(() => role.value === 'admin')
+  /* 'demo' is a read-only admin for VISIBILITY: every admin surface
+     renders, and the database's demo guards abort any write. */
+  const isAdmin = computed(() => role.value === 'admin' || role.value === 'demo')
   const isSupervisor = computed(
-    () => role.value === 'supervisor' || role.value === 'admin',
+    () => role.value === 'supervisor' || isAdmin.value,
   )
+  const isDemo = computed(() => role.value === 'demo')
   const isAuthenticated = computed(() => appUser.value !== null)
   /* Convenience flag for hiding write UI (reactions/comments/profile
      editor/push subscribe/etc.) on shared rig/station accounts. */
@@ -445,6 +448,7 @@ export const useAuthStore = defineStore('auth', () => {
     isSupervisor,
     isAuthenticated,
     isKiosk,
+    isDemo,
     init,
     refresh,
     updateOwnStation,
